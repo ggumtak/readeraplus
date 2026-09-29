@@ -3,7 +3,6 @@ package com.ggumtak.readeraplus.engine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.lang.management.ManagementFactory
 import kotlin.random.Random
 
 /**
@@ -91,18 +90,18 @@ class TypesetterPerfTest {
 
     @Test
     fun countingAllocatesAlmostNothingPerChar() {
-        val bean = ManagementFactory.getThreadMXBean() as? com.sun.management.ThreadMXBean ?: return
-        if (!bean.isThreadAllocatedMemorySupported) return
+        // java.lang.management is not on the Android unit-test compile classpath: reach it reflectively and skip
+        // the test where the JVM doesn't expose per-thread allocation counters.
+        val allocated = threadAllocatedBytes() ?: return
         val content = koreanSection(1_000_000, seed = 5)
         val ts = Typesetter(FakeMeasurer(), comet)
         repeat(3) { ts.countPages(content) }
-        val tid = Thread.currentThread().id
-        val before = bean.getThreadAllocatedBytes(tid)
+        val before = allocated()
         ts.countPages(content)
-        val countBytes = bean.getThreadAllocatedBytes(tid) - before
-        val before2 = bean.getThreadAllocatedBytes(tid)
+        val countBytes = allocated() - before
+        val before2 = allocated()
         val layout = ts.layout(content)
-        val layoutBytes = bean.getThreadAllocatedBytes(tid) - before2
+        val layoutBytes = allocated() - before2
         val lines = layout.pages.sumOf { it.lines.size }
         println(
             "ALLOC engine: countPages ${countBytes / 1024} KB, layout ${layoutBytes / 1024} KB " +
@@ -112,5 +111,20 @@ class TypesetterPerfTest {
         assertTrue("countPages allocated $countBytes bytes", countBytes < 256 * 1024)
         // Layout: the advances array (4 bytes/char) + LineInfo/PageInfo objects; nothing per char beyond that.
         assertTrue("layout allocated $layoutBytes bytes", layoutBytes < content.length * 4L + lines * 120L + 1_000_000L)
+    }
+
+    /** Returns a reader of the current thread's allocated-bytes counter, or null if unavailable. */
+    private fun threadAllocatedBytes(): (() -> Long)? = try {
+        val bean = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean").invoke(null)
+        val iface = Class.forName("com.sun.management.ThreadMXBean")
+        if (!iface.isInstance(bean) || iface.getMethod("isThreadAllocatedMemorySupported").invoke(bean) != true) {
+            null
+        } else {
+            val get = iface.getMethod("getThreadAllocatedBytes", Long::class.javaPrimitiveType)
+            val tid = Thread.currentThread().id
+            { (get.invoke(bean, tid) as Long) }
+        }
+    } catch (t: Throwable) {
+        null
     }
 }
