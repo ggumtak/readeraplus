@@ -332,12 +332,22 @@ as you like, same package & signatures).
   `Typesetter` + an `AndroidTextMeasurer` built from a small ReaderSettings (fontSizeSp such that ≈ 18 lines fit,
   default font, lineHeight 1.5, paragraph spacing 0.6, indent 0, LEFT, margins 8%), draw page 0 on white with
   a 1px grey border — like ReadEra's mini first page.
-- **Eink.fullRefresh(view)**: try vendor hooks once (cached, all reflection wrapped in try/catch):
-  Rockchip `getSystemService("eink")` → `sendOneFullFrame()`; Onyx `View.refreshScreen`/EpdController;
-  NTX `postInvalidateDelayed(delay,l,t,r,b,mode)`; otherwise the universal fallback: draw a full black frame
-  (overlay foreground drawable or a flag the view honours), wait ~2 frames (`postDelayed` ~100 ms), then
-  remove it and invalidate. Must never crash.
-
+- **Eink** (all reflection cached once and wrapped in try/catch; must never crash):
+  - **Bigme "xrz" framework first** (the Comet is very likely a Bigme ODM design; verified on Bigme Android 14
+    firmware to be callable from normal apps): `Class.forName("xrz.framework.manager.XrzEinkManager")`,
+    instance via its `(Context)` constructor (application context). Methods (by name, reflectively):
+    `setRefreshModeByView(View, int)`, `setRefreshModeByWindow(Window, int)`, static `forceGlobalRefresh(int)`.
+    Mode constants: GC16=4, CLEAN=176, HD=177, DEFAULT=178, FAST=179, REGAL=180. Add public
+    `Eink.prepareReaderView(view: View)` (sets HD 177 on the page view when available; no-op elsewhere) and
+    `Eink.vendorName(): String?` ("Bigme xrz" / "Rockchip" / "Onyx" / null) for a debug/info row.
+    Never call the persistent `DisplayPolicyManager.setRefreshModeForPackage`.
+  - `Eink.fullRefresh(view)`: Bigme → `forceGlobalRefresh(4)` (fallback 176); Rockchip
+    `getSystemService("eink")` → `sendOneFullFrame()`; Onyx `View.refreshScreen`/EpdController; NTX
+    `postInvalidateDelayed(delay,l,t,r,b,mode)`; otherwise (and additionally when no vendor hook succeeded) the
+    universal fallback: draw a full black frame (overlay/foreground drawable), wait ~2 frames (`postDelayed`
+    ~100 ms), then remove it and invalidate.
+- Set `textLocale = Locale.KOREAN` on every TextPaint (Korean glyph variants for Hanja in fallback CJK fonts).
+- Never use `Charset.forName("CP949")` anywhere (Android ICU maps it to a wrong IBM table) — use MS949.
 Tests: font name-table parser (build a minimal sfnt in-test), stroke math, anything pure. (Most of render is
 Android-native: keep it simple and correct.)
 
@@ -423,6 +433,10 @@ Owns `ui/library/`. `LibraryActivity` (launcher, `singleTask`).
 - **Permissions**: API 30+: if `!Environment.isExternalStorageManager()` show a panel explaining 모든 파일
   접근 권한 with a button → `Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION` (package URI; fallback
   `ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION`); API ≤ 29: `requestPermissions(READ_EXTERNAL_STORAGE)`.
+  If the settings intent can't be resolved (some e-reader firmwares hide it) fall back to the generic
+  `ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION`, then offer adding folders via SAF `ACTION_OPEN_DOCUMENT_TREE`
+  (persist the tree permission; convert `primary:X` to a path) and show the adb hint
+  `adb shell appops set com.ggumtak.readeraplus MANAGE_EXTERNAL_STORAGE allow`.
   After granted (onResume) → scan automatically. Auto-rescan in background on start if the last scan (raw pref
   `lastScanAt`) is > 30 min old; show "스캔 중… N" in a status row (no spinner).
 - 파일 열기: `ACTION_OPEN_DOCUMENT` (mime `application/epub+zip`, `text/plain`, `*/*`) → copy to

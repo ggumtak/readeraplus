@@ -123,6 +123,10 @@ object Covers {
 
 /** E-ink helpers. */
 object Eink {
-    /** Forces a full panel refresh on [view] (brief black/white flash, then redraw). */
+    /** Forces a full panel refresh on [view] (vendor hook, else a brief black frame then redraw). */
     fun fullRefresh(view: View): Unit = TODO("render")
+    /** Asks the vendor e-ink framework for a high-quality refresh mode on the page view (no-op if unsupported). */
+    fun prepareReaderView(view: View): Unit = TODO("render")
+    /** Detected vendor e-ink API ("Bigme xrz", "Rockchip", "Onyx", ...) or null. */
+    fun vendorName(): String? = TODO("render")
 }
