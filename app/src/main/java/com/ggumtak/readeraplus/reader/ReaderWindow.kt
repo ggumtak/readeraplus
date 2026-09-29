@@ -1,0 +1,197 @@
+package com.ggumtak.readeraplus.reader
+
+import android.app.Activity
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.view.WindowManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import android.provider.Settings as SystemSettings
+
+/** Window setup for the reader: edge-to-edge, fullscreen, cutouts, brightness. */
+internal object ReaderWindow {
+
+    /** One-time window flags (call before setContentView). */
+    fun setup(activity: Activity) {
+        val w = activity.window
+        if (Build.VERSION.SDK_INT >= 28) {
+            w.attributes = w.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+        // We lay out edge-to-edge and pad for insets ourselves (the Comet cuts off apps that ignore them).
+        if (Build.VERSION.SDK_INT >= 30) {
+            w.setDecorFitsSystemWindows(false)
+        }
+        w.setWindowAnimations(0)
+    }
+
+    fun applyFullscreen(activity: Activity, fullscreen: Boolean) {
+        val w = activity.window
+        if (Build.VERSION.SDK_INT >= 30) {
+            w.setDecorFitsSystemWindows(false)
+            val c = w.insetsController ?: return
+            if (fullscreen) {
+                c.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                c.hide(WindowInsets.Type.systemBars())
+            } else {
+                c.show(WindowInsets.Type.systemBars())
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            run {
+                var flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                if (fullscreen) {
+                    flags = flags or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                }
+                w.decorView.systemUiVisibility = flags
+            }
+        }
+    }
+
+    /** [value] 0..1, or < 0 for the system brightness. */
+    fun applyBrightness(activity: Activity, value: Float) {
+        val w = activity.window
+        val lp = w.attributes
+        val target = if (value < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else value.coerceIn(0.01f, 1f)
+        if (lp.screenBrightness != target) {
+            lp.screenBrightness = target
+            w.attributes = lp
+        }
+    }
+
+    /** Current system brightness as 0..1 (approximate; used as the start of a manual adjustment). */
+    fun systemBrightness(activity: Activity): Float = try {
+        SystemSettings.System.getInt(activity.contentResolver, SystemSettings.System.SCREEN_BRIGHTNESS, 128) / 255f
+    } catch (t: Throwable) {
+        0.5f
+    }
+
+    /**
+     * Insets to keep the page and chrome clear of: cutouts always, system bars only when they are shown.
+     * API 30+: [WindowInsets.getInsets] only reports *visible* bars (hidden and swipe-revealed transient bars
+     * count as 0), so asking for system bars even in fullscreen costs nothing, and keeps the page clear of a
+     * navigation bar that a vendor firmware refuses to hide (the Comet cut-off-bottom-bar problem).
+     */
+    fun insetsOf(insets: WindowInsets, fullscreen: Boolean): IntArray {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            return intArrayOf(i.left, i.top, i.right, i.bottom)
+        }
+        if (fullscreen) {
+            if (Build.VERSION.SDK_INT >= 28) {
+                val c = insets.displayCutout
+                if (c != null) return intArrayOf(c.safeInsetLeft, c.safeInsetTop, c.safeInsetRight, c.safeInsetBottom)
+            }
+            return IntArray(4)
+        }
+        @Suppress("DEPRECATION")
+        return intArrayOf(
+            insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
+            insets.systemWindowInsetRight, insets.systemWindowInsetBottom,
+        )
+    }
+}
+
+/**
+ * Keeps the screen on while reading and lets it go after (system screen-off timeout + 10 min) without
+ * interaction. [poke] on every touch/key/page turn is cheap (no re-posting while a check is pending).
+ */
+internal class ScreenOnKeeper(private val activity: Activity) {
+    private val handler = Handler(Looper.getMainLooper())
+    private var flagOn = false
+    private var scheduled = false
+    private var lastPoke = 0L
+    private var timeoutMs = DEFAULT_TIMEOUT
+    private var disposed = false
+
+    var enabled = false
+        set(v) {
+            field = v
+            if (v) poke() else release()
+        }
+
+    private val check: Runnable = object : Runnable {
+        override fun run() {
+            scheduled = false
+            val idle = SystemClock.uptimeMillis() - lastPoke
+            if (idle >= timeoutMs) {
+                clearFlag()
+            } else {
+                scheduled = true
+                handler.postDelayed(this, timeoutMs - idle)
+            }
+        }
+    }
+
+    fun poke() {
+        if (!enabled || disposed) return
+        lastPoke = SystemClock.uptimeMillis()
+        if (!flagOn) {
+            activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            flagOn = true
+        }
+        if (!scheduled) {
+            timeoutMs = computeTimeout()
+            scheduled = true
+            handler.postDelayed(check, timeoutMs)
+        }
+    }
+
+    fun release() {
+        handler.removeCallbacks(check)
+        scheduled = false
+        clearFlag()
+    }
+
+    /** The activity is gone: drop the pending check (it holds the activity) and ignore later pokes. */
+    fun dispose() {
+        disposed = true
+        release()
+    }
+
+    private fun clearFlag() {
+        if (flagOn) {
+            activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            flagOn = false
+        }
+    }
+
+    private fun computeTimeout(): Long {
+        val system = try {
+            SystemSettings.System.getInt(activity.contentResolver, SystemSettings.System.SCREEN_OFF_TIMEOUT, 60_000).toLong()
+        } catch (t: Throwable) {
+            60_000L
+        }
+        return system.coerceIn(15_000L, 60 * 60_000L) + EXTRA_MS
+    }
+
+    companion object {
+        const val EXTRA_MS = 10 * 60_000L
+        private const val DEFAULT_TIMEOUT = 11 * 60_000L
+    }
+}
+
+/** Fire-and-forget background writes (positions, bookmarks) that must outlive the activity. */
+internal object ReaderIo {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    fun launch(block: suspend () -> Unit): Job = scope.launch {
+        try {
+            block()
+        } catch (t: Throwable) {
+            Log.w("ReaderIo", "background task failed", t)
+        }
+    }
+}

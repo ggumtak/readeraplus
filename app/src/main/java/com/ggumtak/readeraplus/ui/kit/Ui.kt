@@ -24,7 +24,6 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.PopupWindow
 import android.widget.SeekBar
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 
@@ -171,12 +170,8 @@ fun Context.row(title: String, summary: String? = null, trailing: View? = null, 
 }
 
 fun Context.switchRow(title: String, summary: String?, checked: Boolean, onChange: (Boolean) -> Unit): LinearLayout {
-    val sw = Switch(this).apply {
-        isChecked = checked
-        thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(Ink.BLACK, Ink.WHITE))
-        trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(Ink.GRAY, Ink.DISABLED))
-        setOnCheckedChangeListener { _, v -> onChange(v) }
-    }
+    val sw = InkToggle(this).apply { isChecked = checked }
+    sw.onChange = onChange
     return row(title, summary, sw) { sw.toggle() }
 }
 

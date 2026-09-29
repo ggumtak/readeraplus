@@ -78,6 +78,8 @@ enum class TapZoneMode {
     LEFT_RIGHT,
     /** Anywhere = next page (centre = menu, a narrow left edge strip = previous). */
     ALL_NEXT,
+    /** Anywhere = previous page (centre = menu, a narrow right edge strip = next). */
+    ALL_PREV,
     /** Top half = previous, bottom half = next, centre = menu. */
     TOP_BOTTOM,
     /** User 3x3 grid (AppSettings.customTapZones). */
@@ -109,6 +111,10 @@ data class AppSettings(
         TapAction.PREV, TapAction.MENU, TapAction.NEXT,
         TapAction.PREV, TapAction.NEXT, TapAction.NEXT,
     ),
+    /** Swap next/previous for tap zones (keys are unaffected). */
+    val invertTaps: Boolean = false,
+    /** ReadEra's pin: keep the reader menu bars visible while page taps still turn pages. */
+    val pinChrome: Boolean = false,
     val swipeToTurn: Boolean = true,
     /** Swipe also vertically (up = next). */
     val verticalSwipe: Boolean = false,

@@ -71,6 +71,8 @@ object Settings {
         prefs.edit().apply {
             putString("a.tapZoneMode", s.tapZoneMode.name)
             putString("a.customTapZones", s.customTapZones.joinToString(",") { it.name })
+            putBoolean("a.invertTaps", s.invertTaps)
+            putBoolean("a.pinChrome", s.pinChrome)
             putBoolean("a.swipeToTurn", s.swipeToTurn)
             putBoolean("a.verticalSwipe", s.verticalSwipe)
             putBoolean("a.volumeKeysTurn", s.volumeKeysTurn)
@@ -163,6 +165,8 @@ object Settings {
         return AppSettings(
             tapZoneMode = enumOr(p.getString("a.tapZoneMode", null), d.tapZoneMode),
             customTapZones = zones,
+            invertTaps = p.getBoolean("a.invertTaps", d.invertTaps),
+            pinChrome = p.getBoolean("a.pinChrome", d.pinChrome),
             swipeToTurn = p.getBoolean("a.swipeToTurn", d.swipeToTurn),
             verticalSwipe = p.getBoolean("a.verticalSwipe", d.verticalSwipe),
             volumeKeysTurn = p.getBoolean("a.volumeKeysTurn", d.volumeKeysTurn),
