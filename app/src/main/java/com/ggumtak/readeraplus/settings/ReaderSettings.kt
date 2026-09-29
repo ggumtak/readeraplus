@@ -23,7 +23,8 @@ data class ReaderSettings(
     /** Letter spacing, per-mille of em (0 = normal). */
     val letterSpacingPm: Int = 0,
     val align: Align = Align.JUSTIFY,
-    val lineBreak: LineBreakMode = LineBreakMode.WORD,
+    /** CHAR = 글자 단위 like ReadEra (tight justified lines); WORD = 어절 단위 (keep-all). */
+    val lineBreak: LineBreakMode = LineBreakMode.CHAR,
     val marginLeftDp: Int = 18,
     val marginRightDp: Int = 18,
     val marginTopDp: Int = 16,

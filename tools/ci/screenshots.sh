@@ -42,8 +42,8 @@ tap_label "읽기 설정" contains && shot 14_reading_settings 2 && back
 adb shell input tap 360 720; sleep 1
 tap_label "목차" contains && shot 15_toc 3 && back
 adb shell input tap 360 720; sleep 1
-if tap_label "검색" contains; then sleep 1; adb shell input text "English" ; adb shell input keyevent KEYCODE_ENTER; shot 16_search 4; back; back; fi
-adb shell input swipe 300 700 300 700 900; shot 17_selection 2; back
+if tap_label "검색" contains; then sleep 1; adb shell input text "English" ; adb shell input keyevent KEYCODE_ENTER; shot 16_search 4; back; fi
+sleep 1; adb shell input swipe 300 700 300 700 900; shot 17_selection 2; back
 
 log "reader epub"
 adb shell am start -W -a android.intent.action.VIEW -t application/epub+zip -d file:///sdcard/Download/sample.epub -n $PKG/.reader.ReaderActivity | tee -a shots/steps.txt
@@ -64,9 +64,9 @@ log "library after reading"
 adb shell am start -W -n $PKG/.ui.library.LibraryActivity | tee -a shots/steps.txt
 shot 40_library_after 5
 
-log "settings"
-adb shell am start -W -n $PKG/.ui.settings.SettingsActivity | tee -a shots/steps.txt
-shot 50_settings 3
+log "settings (via drawer; SettingsActivity is not exported)"
+tap_label "메뉴" && sleep 1 && tap_label "설정" && shot 50_settings 3
+back
 
 adb logcat -d > shots/logcat.txt
 adb logcat -d -b crash > shots/crash.txt

@@ -63,6 +63,18 @@ object LayoutKeys {
         widowOrphanControl = s.widowOrphanControl,
     )
 
+    /**
+     * Rough chars per page for estimates before counting: full-width Hangul cells per line × lines per page,
+     * minus ~25% for paragraph ends, spacing and word gaps.
+     */
+    fun charsPerPageHint(c: LayoutConfig, emPx: Float): Int {
+        if (!(emPx > 0f) || c.width <= 0 || c.height <= 0) return PageCounts.DEFAULT_CHARS_PER_PAGE
+        val perLine = c.width / emPx
+        val lineH = emPx * (if (c.lineHeightEm > 0f) c.lineHeightEm else 1.7f)
+        val lines = c.height / lineH
+        return (perLine * lines * 0.75f).toInt().coerceAtLeast(20)
+    }
+
     /** Settings with every field that does NOT change the layout normalised away. */
     private fun layoutPart(s: ReaderSettings): ReaderSettings = s.copy(
         invert = false,

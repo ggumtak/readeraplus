@@ -483,15 +483,21 @@ class TypesetterTest {
     }
 
     @Test
-    fun hugeSpaceGapsSwitchToCharExpansionOrNone() {
-        // One inner space, 34px of slack > 1.2 em per space -> spread over the 9 char gaps instead.
+    fun wideWordGapsStayOnSpacesNotLetters() {
+        // One inner space with 34px (1.7 em) of slack: Korean widens the word gap rather than letter-spacing.
         val b = SectionBuilder()
         b.para("가나다라마 바사아자 차카타파하")
         val l = layout(b.build(), cfg(width = 220, align = Align.JUSTIFY, lineBreak = LineBreakMode.WORD))
         val first = textLines(l)[0]
         assertEquals("가나다라마 바사아자", l.content.text.substring(first.start, first.end))
-        assertEquals(LineInfo.EXPAND_CHARS, first.expandMode)
+        assertEquals(LineInfo.EXPAND_SPACES, first.expandMode)
         assertEquals(220f, LineGeometry.charPositions(l, first, FloatArray(16)), 0.01f)
+        // No spaces and a lot of slack: letters are not stretched visibly -> left ragged.
+        val b3 = SectionBuilder()
+        b3.para("가나다 " + "abcdefghijklmnopqrstuvwxyzabcdefghij")
+        val l3 = layout(b3.build(), cfg(width = 200, align = Align.JUSTIFY, lineBreak = LineBreakMode.WORD))
+        val l3first = textLines(l3)[0]
+        assertTrue(l3first.expandMode != LineInfo.EXPAND_CHARS || l3first.justifyExtra <= 0.15f * 20f + 0.001f)
         // A single short word followed by an unbreakable long one: too much slack -> not justified.
         val b2 = SectionBuilder()
         b2.para("가 abcdefghijklmnopq")

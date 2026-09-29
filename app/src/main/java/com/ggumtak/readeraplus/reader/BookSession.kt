@@ -167,6 +167,7 @@ class BookSession(
         cache.clear()
         lru.clear()
         counts.reset()
+        counts.charsPerPageHint = LayoutKeys.charsPerPageHint(generation!!.config, TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, settings.fontSizeSp, dm))
         layoutKey = null
     }
 

@@ -72,9 +72,24 @@ class PageCounts(approxChars: IntArray) {
 
     fun charLength(section: Int): Int = if (section in 0 until size) chars[section] else 0
 
-    /** Pages per char of the counted sections (fallback ~700 chars per page before anything is known). */
-    fun pagesPerChar(): Double =
-        if (knownChars > 0 && knownPages > 0) knownPages.toDouble() / knownChars else 1.0 / DEFAULT_CHARS_PER_PAGE
+    /**
+     * Expected chars per page for the current page geometry and font size (set by the session); the prior for
+     * estimates until enough text has been counted.
+     */
+    var charsPerPageHint: Int = DEFAULT_CHARS_PER_PAGE
+        set(v) {
+            field = v.coerceIn(20, 20_000)
+            prefix = null
+        }
+
+    /**
+     * Pages per char: the counted sections' ratio blended with [PRIOR_PAGES] pages at [charsPerPageHint], so a
+     * few tiny sections counted first (a title line = 1 page) can't blow the estimate up by orders of magnitude.
+     */
+    fun pagesPerChar(): Double {
+        val hint = charsPerPageHint.toDouble()
+        return (knownPages + PRIOR_PAGES) / (knownChars + PRIOR_PAGES * hint)
+    }
 
     /** Exact count when known, else the estimate (≥ 1). */
     fun pages(section: Int): Int {
@@ -191,5 +206,7 @@ class PageCounts(approxChars: IntArray) {
 
     companion object {
         const val DEFAULT_CHARS_PER_PAGE = 700
+        /** Weight of the geometry prior in pages (see [pagesPerChar]). */
+        const val PRIOR_PAGES = 4.0
     }
 }

@@ -18,6 +18,10 @@ import com.ggumtak.readeraplus.engine.BreakClass.ZWSP
  * advances). Owned by one [Typesetter]; grown on demand and never shrunk, so steady-state layout allocates
  * nothing but the retained results.
  */
+/** Justification limits (in em): word gaps may grow a lot, letter gaps only slightly. */
+internal const val MAX_SPACE_EXTRA_EM = 3f
+internal const val MAX_CHAR_EXTRA_EM = 0.15f
+
 internal class TypesetBuffers {
     // Advances scratch for countPages (holds one block at a time).
     @JvmField var scratch = FloatArray(4096)
@@ -701,9 +705,11 @@ internal class TypesetPass(
         while (fns < e && BreakClass.isExpandSpace(t[fns])) fns++
         var spaces = 0
         for (k in fns until e) if (BreakClass.isExpandSpace(t[k])) spaces++
+        // Korean typesetting widens word gaps; spreading slack between letters ("R e a d e r") reads badly, so
+        // letters only absorb slack when it is barely visible. Absurd gaps leave the line ragged instead.
         if (spaces > 0) {
             val ex = slack / spaces
-            if (ex <= 1.2f * em || e - s < 2) {
+            if (ex <= MAX_SPACE_EXTRA_EM * em || e - s < 2) {
                 jMode = LineInfo.EXPAND_SPACES
                 jExtra = ex
                 return
@@ -713,7 +719,7 @@ internal class TypesetPass(
         for (k in s until e) if (a[k - base] > 0f) vis++
         if (vis >= 2) {
             val ex = slack / (vis - 1)
-            if (ex <= 0.6f * em) {
+            if (ex <= MAX_CHAR_EXTRA_EM * em) {
                 jMode = LineInfo.EXPAND_CHARS
                 jExtra = ex
             }

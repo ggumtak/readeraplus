@@ -42,9 +42,10 @@ class PageCountsTest {
     fun estimatesUseCountedRatio() {
         val c = PageCounts(intArrayOf(1000, 3000, 2000))
         assertFalse(c.isComplete)
-        // before anything is known: default ratio
-        assertEquals(Math.round(3000.0 / PageCounts.DEFAULT_CHARS_PER_PAGE).toInt(), c.pages(1))
-        c.set(0, 4, 1000) // 250 chars per page
+        c.charsPerPageHint = 250
+        // before anything is known: the geometry hint
+        assertEquals(12, c.pages(1))
+        c.set(0, 4, 1000) // 250 chars per page, same as the hint
         assertEquals(12, c.pages(1))
         assertEquals(8, c.pages(2))
         assertEquals(24, c.total())
@@ -127,5 +128,15 @@ class PageCountsTest {
         assertEquals(7, c.pagesLeftUntil(0, 2, 5, 2, 0, true))
         // next chapter = next section start while on the last page
         assertEquals(0, c.pagesLeftUntil(0, 4, 5, 1, 0, true))
+    }
+
+    @Test
+    fun tinyFirstSectionDoesNotExplodeTheEstimate() {
+        // A 10-char title section counted first (1 page) must not make a 7M-char book look like 700k pages.
+        val c = PageCounts(intArrayOf(10, 7_000_000))
+        c.charsPerPageHint = 400
+        c.set(0, 1, 10)
+        val est = c.pages(1)
+        assertTrue("estimate $est", est in 10_000..25_000)
     }
 }
