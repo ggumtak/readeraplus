@@ -1,0 +1,362 @@
+package com.ggumtak.readeraplus.data
+
+import com.ggumtak.readeraplus.format.BookFormat
+import com.ggumtak.readeraplus.settings.LibrarySort
+import java.text.Normalizer
+
+/** A SELECT with its positional (string) arguments, as passed to `SQLiteDatabase.rawQuery`. */
+internal class SqlQuery(val sql: String, val args: Array<String>) {
+    override fun toString(): String = "$sql  -- ${args.joinToString()}"
+}
+
+/**
+ * All SQL used by the data module, as constants or pure builders (JVM-testable; SQLite itself only runs
+ * on the device). Keep in sync with [LibrarySchema].
+ */
+internal object LibrarySql {
+
+    /** Column list mapped by [BookRows]; the order is part of the contract with [BookRows]. */
+    const val BOOK_COLUMNS = "id, path, file_name, title, author, series, series_index, format, size, mtime, " +
+        "added_at, last_read_at, pos_section, pos_offset, progress, favorite, to_read, have_read, trashed, " +
+        "review, encoding, language, reading_seconds"
+
+    const val BOOK_COLUMN_COUNT = 23
+
+    // ---- books: reads ----
+    const val SELECT_BOOK_BY_ID = "SELECT $BOOK_COLUMNS FROM books WHERE id = ?"
+    const val SELECT_BOOK_BY_PATH = "SELECT $BOOK_COLUMNS FROM books WHERE path = ?"
+    const val SELECT_LAST_OPENED =
+        "SELECT $BOOK_COLUMNS FROM books WHERE last_read_at > 0 AND trashed = 0 ORDER BY last_read_at DESC, id DESC LIMIT 1"
+    /** Every book + its meta_locked flag (column index [BOOK_COLUMN_COUNT]); used by the backup. */
+    const val SELECT_ALL_BOOKS_FOR_BACKUP = "SELECT $BOOK_COLUMNS, meta_locked FROM books ORDER BY id"
+    /** Minimal state of every book for scan / import matching. */
+    const val SELECT_SCAN_STATE = "SELECT id, path, size, mtime, trashed, file_name, last_read_at FROM books"
+    const val SELECT_TRASHED_IDS = "SELECT id, path FROM books WHERE trashed = 1"
+    const val SELECT_PATH_BY_ID = "SELECT path FROM books WHERE id = ?"
+    const val SELECT_ID_BY_PATH = "SELECT id FROM books WHERE path = ?"
+    /**
+     * Entries a newly opened file may have been moved from (same name and size, not trashed), most recently
+     * read first. Args: file_name, size.
+     */
+    const val SELECT_MOVE_CANDIDATES = "SELECT id, path, mtime FROM books WHERE file_name = ? AND size = ? AND trashed = 0 " +
+        "ORDER BY last_read_at DESC, id DESC"
+    /**
+     * Books carrying anything the user made (reading history, flags, edits, review, bookmarks, quotes,
+     * collections): the scanner never drops these just because their folder was excluded.
+     */
+    const val SELECT_IDS_WITH_USER_DATA = "SELECT id FROM books WHERE last_read_at > 0 OR favorite = 1 OR to_read = 1 " +
+        "OR have_read = 1 OR review <> '' OR encoding <> '' OR meta_locked = 1 OR reading_seconds > 0 " +
+        "UNION SELECT book_id FROM bookmarks UNION SELECT book_id FROM quotes UNION SELECT book_id FROM book_collections"
+    const val COUNT_LIBRARY = "SELECT COUNT(*) FROM books WHERE trashed = 0"
+
+    // ---- books: writes ----
+    /** Args: path, file_name, folder, title, author, series, series_index, format, size, mtime, added_at, language. */
+    const val INSERT_BOOK = "INSERT OR IGNORE INTO books(path, file_name, folder, title, author, series, series_index, " +
+        "format, size, mtime, added_at, language) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    /** A moved file (scan). OR IGNORE: a concurrent insert of the new path wins. Args: path, id. */
+    const val UPDATE_BOOK_PATH = "UPDATE OR IGNORE books SET path = ? WHERE id = ?"
+    /** Args: file_name, folder, format, size, mtime, id. */
+    const val UPDATE_BOOK_FILE = "UPDATE books SET file_name = ?, folder = ?, format = ?, size = ?, mtime = ? WHERE id = ?"
+    /** Metadata refresh from the file (skipped once the user edited it). Args: title, author, series, series_index, language, id. */
+    const val UPDATE_BOOK_META =
+        "UPDATE books SET title = ?, author = ?, series = ?, series_index = ?, language = ? WHERE id = ? AND meta_locked = 0"
+    /** User edit. Args: title, author, series, series_index, id. */
+    const val UPDATE_BOOK_META_USER =
+        "UPDATE books SET title = ?, author = ?, series = ?, series_index = ?, meta_locked = 1 WHERE id = ?"
+    /** Args: pos_section, pos_offset, progress, last_read_at, id. */
+    const val UPDATE_POSITION =
+        "UPDATE books SET pos_section = ?, pos_offset = ?, progress = ?, last_read_at = ? WHERE id = ?"
+    /** Args: seconds, id. */
+    const val ADD_READING_TIME = "UPDATE books SET reading_seconds = reading_seconds + ? WHERE id = ?"
+    const val SET_FAVORITE = "UPDATE books SET favorite = ? WHERE id = ?"
+    const val SET_TO_READ_ON = "UPDATE books SET to_read = 1, have_read = 0 WHERE id = ?"
+    const val SET_TO_READ_OFF = "UPDATE books SET to_read = 0 WHERE id = ?"
+    const val SET_HAVE_READ_ON = "UPDATE books SET have_read = 1, to_read = 0 WHERE id = ?"
+    const val SET_HAVE_READ_OFF = "UPDATE books SET have_read = 0 WHERE id = ?"
+    const val SET_TRASHED = "UPDATE books SET trashed = ? WHERE id = ?"
+    const val SET_REVIEW = "UPDATE books SET review = ? WHERE id = ?"
+    const val SET_ENCODING = "UPDATE books SET encoding = ? WHERE id = ?"
+    const val RESET_PROGRESS = "UPDATE books SET last_read_at = 0, pos_section = 0, pos_offset = 0, progress = 0, " +
+        "have_read = 0, to_read = 0, reading_seconds = 0 WHERE id = ?"
+    const val DELETE_BOOK = "DELETE FROM books WHERE id = ?"
+    /**
+     * Backup restore. Args: favorite, to_read, have_read, trashed, review (blank keeps the current one), encoding,
+     * reading_seconds (the larger value wins), added_at (the earlier value wins), id.
+     */
+    const val RESTORE_FLAGS = "UPDATE books SET favorite = ?, to_read = ?, have_read = ?, trashed = ?, " +
+        "review = COALESCE(NULLIF(?, ''), review), encoding = ?, reading_seconds = MAX(reading_seconds, ?), " +
+        "added_at = MIN(added_at, ?) WHERE id = ?"
+
+    // ---- bookmarks ----
+    const val SELECT_BOOKMARKS = "SELECT id, book_id, section, char_offset, snippet, created_at, note FROM bookmarks " +
+        "WHERE book_id = ? ORDER BY section, char_offset, id"
+    const val SELECT_ALL_BOOKMARKS = "SELECT id, book_id, section, char_offset, snippet, created_at, note FROM bookmarks " +
+        "ORDER BY book_id, section, char_offset, id"
+    /** Args: book_id, section, char_offset, snippet, note, created_at. */
+    const val INSERT_BOOKMARK =
+        "INSERT INTO bookmarks(book_id, section, char_offset, snippet, note, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    const val DELETE_BOOKMARK = "DELETE FROM bookmarks WHERE id = ?"
+    const val UPDATE_BOOKMARK_NOTE = "UPDATE bookmarks SET note = ? WHERE id = ?"
+    const val DELETE_BOOKMARKS_OF_BOOK = "DELETE FROM bookmarks WHERE book_id = ?"
+
+    // ---- quotes ----
+    const val SELECT_QUOTES = "SELECT id, book_id, section, start_offset, end_offset, quote_text, note, created_at " +
+        "FROM quotes WHERE book_id = ? ORDER BY section, start_offset, end_offset, id"
+    const val SELECT_ALL_QUOTES = "SELECT id, book_id, section, start_offset, end_offset, quote_text, note, created_at " +
+        "FROM quotes ORDER BY book_id, section, start_offset, end_offset, id"
+    /** Args: book_id, section, start_offset, end_offset, quote_text, note, created_at. */
+    const val INSERT_QUOTE = "INSERT INTO quotes(book_id, section, start_offset, end_offset, quote_text, note, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?)"
+    const val DELETE_QUOTE = "DELETE FROM quotes WHERE id = ?"
+    const val UPDATE_QUOTE_NOTE = "UPDATE quotes SET note = ? WHERE id = ?"
+    const val DELETE_QUOTES_OF_BOOK = "DELETE FROM quotes WHERE book_id = ?"
+
+    // ---- collections ----
+    /** id, name, created_at, number of (non-trashed) books. */
+    const val SELECT_COLLECTIONS = "SELECT c.id, c.name, c.created_at, COUNT(b.id) FROM collections c " +
+        "LEFT JOIN book_collections bc ON bc.collection_id = c.id " +
+        "LEFT JOIN books b ON b.id = bc.book_id AND b.trashed = 0 " +
+        "GROUP BY c.id, c.name, c.created_at"
+    const val SELECT_COLLECTION_BY_NAME = "SELECT id, name, created_at FROM collections WHERE name = ? COLLATE NOCASE"
+    const val SELECT_COLLECTION_BY_ID = "SELECT id, name, created_at FROM collections WHERE id = ?"
+    const val SELECT_COLLECTION_NAMES = "SELECT name FROM collections ORDER BY id"
+    /** Args: name, created_at. */
+    const val INSERT_COLLECTION = "INSERT INTO collections(name, created_at) VALUES (?, ?)"
+    const val RENAME_COLLECTION = "UPDATE collections SET name = ? WHERE id = ?"
+    const val DELETE_COLLECTION = "DELETE FROM collections WHERE id = ?"
+    const val DELETE_MEMBERSHIPS_OF_COLLECTION = "DELETE FROM book_collections WHERE collection_id = ?"
+    const val DELETE_MEMBERSHIPS_OF_BOOK = "DELETE FROM book_collections WHERE book_id = ?"
+    const val SELECT_COLLECTIONS_OF_BOOK = "SELECT collection_id FROM book_collections WHERE book_id = ?"
+    /** book_id, collection name. */
+    const val SELECT_ALL_MEMBERSHIPS = "SELECT bc.book_id, c.name FROM book_collections bc " +
+        "JOIN collections c ON c.id = bc.collection_id ORDER BY bc.book_id, c.name"
+    /**
+     * Args: book_id, collection_id. Only when both exist, so a racing delete can't leave a dangling membership
+     * (which would list the book on the collections shelf without any collection).
+     */
+    const val INSERT_MEMBERSHIP = "INSERT OR IGNORE INTO book_collections(book_id, collection_id) " +
+        "SELECT b.id, c.id FROM books b, collections c WHERE b.id = ? AND c.id = ?"
+    const val DELETE_MEMBERSHIP = "DELETE FROM book_collections WHERE book_id = ? AND collection_id = ?"
+
+    // ---- page counts ----
+    const val SELECT_PAGE_COUNTS = "SELECT counts, updated_at FROM page_counts WHERE book_id = ? AND layout_key = ?"
+    /** Args: updated_at, book_id, layout_key. */
+    const val TOUCH_PAGE_COUNTS = "UPDATE page_counts SET updated_at = ? WHERE book_id = ? AND layout_key = ?"
+    /** Args: book_id, layout_key, counts, updated_at. */
+    const val REPLACE_PAGE_COUNTS =
+        "INSERT OR REPLACE INTO page_counts(book_id, layout_key, counts, updated_at) VALUES (?, ?, ?, ?)"
+    /** Keeps the [MAX_PAGE_COUNT_KEYS] newest layout keys of a book. Args: book_id, book_id. */
+    const val PRUNE_PAGE_COUNTS = "DELETE FROM page_counts WHERE book_id = ? AND layout_key NOT IN (" +
+        "SELECT layout_key FROM page_counts WHERE book_id = ? ORDER BY updated_at DESC LIMIT 3)"
+    const val MAX_PAGE_COUNT_KEYS = 3
+    const val DELETE_PAGE_COUNTS_OF_BOOK = "DELETE FROM page_counts WHERE book_id = ?"
+
+    // ---- ignored (removed-but-kept) files ----
+    const val SELECT_IGNORED = "SELECT path FROM ignored"
+    /** Args: path, removed_at. */
+    const val INSERT_IGNORED = "INSERT OR REPLACE INTO ignored(path, removed_at) VALUES (?, ?)"
+    const val DELETE_IGNORED = "DELETE FROM ignored WHERE path = ?"
+
+    // ---- pragmas ----
+    const val PRAGMA_SYNCHRONOUS = "PRAGMA synchronous=NORMAL"
+
+    // ---- shelf queries ----
+
+    private const val NOT_TRASHED = "trashed = 0"
+    private const val LIKE_ESCAPE = '\\'
+    private const val MAX_TOKENS = 8
+    /** Longer words are cut (SQLite rejects LIKE patterns over 50 000 bytes; no title needs more). */
+    const val MAX_TOKEN_CHARS = 100
+
+    /** Escapes `%`, `_` and the escape char itself for `LIKE ? ESCAPE '\'`. */
+    fun escapeLike(s: String): String {
+        if (s.indexOf('%') < 0 && s.indexOf('_') < 0 && s.indexOf(LIKE_ESCAPE) < 0) return s
+        val sb = StringBuilder(s.length + 8)
+        for (c in s) {
+            if (c == '%' || c == '_' || c == LIKE_ESCAPE) sb.append(LIKE_ESCAPE)
+            sb.append(c)
+        }
+        return sb.toString()
+    }
+
+    /** Whitespace-separated search words (NFC, distinct, at most [MAX_TOKENS] of at most [MAX_TOKEN_CHARS]). */
+    fun searchTokens(query: String): List<String> {
+        val q = nfc(query).trim()
+        if (q.isEmpty()) return emptyList()
+        val out = ArrayList<String>(4)
+        for (w in q.split(WHITESPACE)) {
+            val t = MetaInfo.truncate(w, MAX_TOKEN_CHARS)
+            if (t.isEmpty() || t in out) continue
+            out += t
+            if (out.size == MAX_TOKENS) break
+        }
+        return out
+    }
+
+    /** SQL condition for a shelf (without group / search filters). */
+    fun shelfWhere(shelf: Shelf): String = when (shelf) {
+        Shelf.READING_NOW -> "last_read_at > 0 AND have_read = 0 AND trashed = 0"
+        Shelf.ALL, Shelf.AUTHORS, Shelf.FORMATS, Shelf.FOLDERS -> NOT_TRASHED
+        Shelf.FAVORITES -> "favorite = 1 AND trashed = 0"
+        Shelf.TO_READ -> "to_read = 1 AND trashed = 0"
+        Shelf.HAVE_READ -> "have_read = 1 AND trashed = 0"
+        Shelf.SERIES -> "series IS NOT NULL AND series <> '' AND trashed = 0"
+        Shelf.COLLECTIONS -> "id IN (SELECT book_id FROM book_collections) AND trashed = 0"
+        Shelf.DOWNLOADS -> "(path LIKE '%/Download/%' OR path LIKE '%/Downloads/%') AND trashed = 0"
+        Shelf.TRASH -> "trashed = 1"
+    }
+
+    /** Column condition narrowing a grouped shelf to one group (null for shelves without groups). */
+    fun groupWhere(shelf: Shelf): String? = when (shelf) {
+        Shelf.AUTHORS -> "author = ?"
+        Shelf.SERIES -> "series = ?"
+        Shelf.COLLECTIONS -> "id IN (SELECT book_id FROM book_collections WHERE collection_id = ?)"
+        Shelf.FORMATS -> "format = ?"
+        Shelf.FOLDERS -> "folder = ?"
+        else -> null
+    }
+
+    /** The bound value for [groupWhere]: formats accept their name or label in any case. */
+    fun groupArg(shelf: Shelf, group: String): String = when (shelf) {
+        Shelf.FORMATS -> BookFormat.entries.firstOrNull {
+            it.name.equals(group.trim(), ignoreCase = true) || it.label.equals(group.trim(), ignoreCase = true)
+        }?.name ?: group
+        Shelf.COLLECTIONS -> group.trim()
+        else -> group
+    }
+
+    /** ORDER BY clause; READING_NOW is always most-recent-first. */
+    fun orderBy(shelf: Shelf, sort: LibrarySort): String {
+        val s = if (shelf == Shelf.READING_NOW) LibrarySort.RECENT else sort
+        return when (s) {
+            LibrarySort.RECENT -> "last_read_at DESC, added_at DESC, id DESC"
+            LibrarySort.TITLE -> "title COLLATE NOCASE, id"
+            LibrarySort.AUTHOR -> "author = '', author COLLATE NOCASE, title COLLATE NOCASE, id"
+            LibrarySort.ADDED -> "added_at DESC, id DESC"
+            LibrarySort.SIZE -> "size DESC, title COLLATE NOCASE, id"
+            LibrarySort.PROGRESS -> "progress DESC, last_read_at DESC, id DESC"
+        }
+    }
+
+    /** The books SELECT for a shelf / group / search query. */
+    fun booksQuery(q: LibraryQuery, sort: LibrarySort): SqlQuery {
+        val args = ArrayList<String>()
+        val sb = StringBuilder(256)
+        sb.append("SELECT ").append(BOOK_COLUMNS).append(" FROM books WHERE ").append(shelfWhere(q.shelf))
+        val group = q.group
+        val gw = groupWhere(q.shelf)
+        if (group != null && gw != null) {
+            sb.append(" AND ").append(gw)
+            args += groupArg(q.shelf, group)
+        }
+        for (t in searchTokens(q.query)) {
+            val pattern = "%" + escapeLike(t) + "%"
+            sb.append(" AND (title LIKE ? ESCAPE '\\' OR author LIKE ? ESCAPE '\\' OR file_name LIKE ? ESCAPE '\\')")
+            args += pattern
+            args += pattern
+            args += pattern
+        }
+        sb.append(" ORDER BY ").append(orderBy(q.shelf, sort))
+        return SqlQuery(sb.toString(), args.toTypedArray())
+    }
+
+    /** `SELECT COUNT(*)` for the books a [LibraryQuery] lists. */
+    fun countQuery(q: LibraryQuery): SqlQuery {
+        val full = booksQuery(q, LibrarySort.RECENT)
+        val where = full.sql.substring(full.sql.indexOf(" FROM books WHERE "), full.sql.lastIndexOf(" ORDER BY "))
+        return SqlQuery("SELECT COUNT(*)$where", full.args)
+    }
+
+    /** Shelves in the column order of [shelfCountsQuery]. */
+    val COUNTED_SHELVES: List<Shelf> = Shelf.entries.toList()
+
+    /**
+     * One row with a count per shelf ([COUNTED_SHELVES] order): books for plain shelves, groups for grouped
+     * ones (matching [groupsQuery]: unknown author is a group, collections include empty ones).
+     */
+    fun shelfCountsQuery(): String {
+        val cols = COUNTED_SHELVES.map { s ->
+            when (s) {
+                Shelf.AUTHORS -> "COUNT(DISTINCT CASE WHEN trashed = 0 THEN author END)"
+                Shelf.SERIES -> "COUNT(DISTINCT CASE WHEN ${shelfWhere(Shelf.SERIES)} THEN series END)"
+                Shelf.FORMATS -> "COUNT(DISTINCT CASE WHEN trashed = 0 THEN format END)"
+                Shelf.FOLDERS -> "COUNT(DISTINCT CASE WHEN trashed = 0 THEN folder END)"
+                Shelf.COLLECTIONS -> "(SELECT COUNT(*) FROM collections)"
+                else -> "IFNULL(SUM(CASE WHEN ${shelfWhere(s)} THEN 1 ELSE 0 END), 0)"
+            }
+        }
+        return "SELECT " + cols.joinToString(", ") + " FROM books"
+    }
+
+    const val SELECT_COLLECTION_MEMBER_IDS = "SELECT DISTINCT book_id FROM book_collections"
+
+    /**
+     * Group rows of a grouped shelf: columns (key, label-or-null, count). Null for shelves without groups.
+     * Final ordering is done in Kotlin (natural order).
+     */
+    fun groupsQuery(shelf: Shelf): String? = when (shelf) {
+        Shelf.AUTHORS -> "SELECT author, NULL, COUNT(*) FROM books WHERE trashed = 0 GROUP BY author"
+        Shelf.SERIES ->
+            "SELECT series, NULL, COUNT(*) FROM books WHERE series IS NOT NULL AND series <> '' AND trashed = 0 GROUP BY series"
+        Shelf.FORMATS -> "SELECT format, NULL, COUNT(*) FROM books WHERE trashed = 0 GROUP BY format"
+        Shelf.FOLDERS -> "SELECT folder, NULL, COUNT(*) FROM books WHERE trashed = 0 GROUP BY folder"
+        Shelf.COLLECTIONS -> "SELECT c.id, c.name, COUNT(b.id) FROM collections c " +
+            "LEFT JOIN book_collections bc ON bc.collection_id = c.id " +
+            "LEFT JOIN books b ON b.id = bc.book_id AND b.trashed = 0 " +
+            "GROUP BY c.id, c.name"
+        else -> null
+    }
+
+    const val UNKNOWN_AUTHOR = "작가 미상"
+
+    /** Builds a [ShelfGroup] from a [groupsQuery] row. */
+    fun groupRow(shelf: Shelf, key: String?, name: String?, count: Int): ShelfGroup {
+        val k = key ?: ""
+        val label = when (shelf) {
+            Shelf.AUTHORS -> k.ifBlank { UNKNOWN_AUTHOR }
+            Shelf.FORMATS -> BookFormat.entries.firstOrNull { it.name == k }?.label ?: k
+            Shelf.COLLECTIONS -> name ?: k
+            else -> k
+        }
+        return ShelfGroup(k, label, count)
+    }
+
+    /** Orders groups: natural order by label; unknown author last. */
+    fun sortGroups(shelf: Shelf, groups: List<ShelfGroup>): List<ShelfGroup> {
+        val byLabel = Comparator<ShelfGroup> { a, b -> NaturalOrder.compare(a.label, b.label) }
+        return if (shelf == Shelf.AUTHORS) {
+            groups.sortedWith(compareBy<ShelfGroup> { it.key.isBlank() }.then(byLabel))
+        } else {
+            groups.sortedWith(byLabel)
+        }
+    }
+
+    /**
+     * Final in-memory ordering on top of SQL's: natural title order ("2권" before "10권") for TITLE and
+     * AUTHOR sorts, series index order inside a series group. Stable for everything else.
+     */
+    fun sortBooks(books: List<Book>, q: LibraryQuery, sort: LibrarySort): List<Book> {
+        if (books.size < 2 || q.shelf == Shelf.READING_NOW) return books
+        val byTitle = Comparator<Book> { a, b -> NaturalOrder.compare(a.title, b.title) }
+        return when {
+            q.shelf == Shelf.SERIES && q.group != null && (sort == LibrarySort.TITLE || sort == LibrarySort.AUTHOR) ->
+                books.sortedWith(
+                    compareBy<Book> { it.seriesIndex == null }
+                        .thenBy { it.seriesIndex ?: 0f }
+                        .then(byTitle),
+                )
+            sort == LibrarySort.TITLE -> books.sortedWith(byTitle)
+            sort == LibrarySort.AUTHOR -> books.sortedWith(
+                compareBy<Book> { it.author.isBlank() }
+                    .then { a, b -> NaturalOrder.compare(a.author, b.author) }
+                    .then(byTitle),
+            )
+            else -> books
+        }
+    }
+
+    private val WHITESPACE = Regex("\\s+")
+
+    fun nfc(s: String): String =
+        if (Normalizer.isNormalized(s, Normalizer.Form.NFC)) s else Normalizer.normalize(s, Normalizer.Form.NFC)
+}

@@ -1,83 +1,507 @@
 package com.ggumtak.readeraplus.data
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
+import android.os.Environment
+import android.util.Log
+import com.ggumtak.readeraplus.format.BookFormat
+import com.ggumtak.readeraplus.format.DocMeta
+import com.ggumtak.readeraplus.format.Documents
+import com.ggumtak.readeraplus.render.Covers
 import com.ggumtak.readeraplus.settings.LibrarySort
 import java.io.File
+import java.io.IOException
 
 /**
- * CONTRACT STUB — the library repository (SQLite). Implemented by the data module owner.
- * All functions are blocking and must be called off the main thread (Dispatchers.IO), except init().
- * Thread-safe. See docs/ARCHITECTURE.md "data".
+ * The library repository (SQLite, see [LibrarySchema]). All functions are blocking and must be called off the
+ * main thread (Dispatchers.IO), except [init]. Thread-safe: one [SQLiteDatabase] shared by all threads (SQLite
+ * serialises writers; WAL lets readers run alongside), multi-statement changes run in transactions.
  */
 object Library {
-    fun init(context: Context): Unit = TODO("data")
+    private const val TAG = "Library"
+
+    /** Max stored lengths (defensive caps; UI passes much shorter strings). */
+    private const val MAX_SNIPPET = DataLimits.SNIPPET
+    private const val MAX_NOTE = DataLimits.NOTE
+    private const val MAX_QUOTE = DataLimits.QUOTE
+    private const val MAX_REVIEW = DataLimits.REVIEW
+    private const val MAX_COLLECTION_NAME = DataLimits.COLLECTION_NAME
+    /** A single addReadingTime call never adds more than a day (guards against clock jumps). */
+    private const val MAX_READING_ADD_S = 24L * 3600
+    /** Page-count rows are "touched" on read at most this often (LRU order without a write per open). */
+    private const val TOUCH_INTERVAL_MS = 60_000L
+
+    @Volatile private var helper: LibraryDb? = null
+    @Volatile private var appContext: Context? = null
+    @Volatile private var primaryRootCache: String? = null
+
+    /** Cheap (no disk IO on the caller's thread): creates the helper and opens the file in the background. */
+    fun init(context: Context) {
+        if (helper != null) return
+        synchronized(this) {
+            if (helper != null) return
+            val app = context.applicationContext ?: context
+            appContext = app
+            val h = LibraryDb(app)
+            helper = h
+            // Normal priority on purpose: the first library query blocks on this open, so a background-priority
+            // thread would be starved by the busy startup (priority inversion on a slow CPU).
+            val warm = Thread({
+                try {
+                    h.writableDatabase
+                } catch (t: Throwable) {
+                    Log.w(TAG, "database warm-up failed", t)
+                }
+            }, "library-db-open")
+            warm.isDaemon = true
+            warm.start()
+        }
+    }
+
+    internal fun db(): SQLiteDatabase =
+        (helper ?: throw IllegalStateException("Library.init() was not called")).writableDatabase
+
+    internal fun context(): Context? = appContext
+
+    /** Primary shared storage root (`/storage/emulated/<user>`), used to normalise alias paths. */
+    internal fun primaryRoot(): String {
+        primaryRootCache?.let { return it }
+        val r = try {
+            @Suppress("DEPRECATION")
+            Environment.getExternalStorageDirectory()?.absolutePath
+        } catch (_: Throwable) {
+            null
+        }
+        val root = r?.takeIf { it.startsWith("/") && it.length > 1 }?.trimEnd('/') ?: DataPaths.PRIMARY_ROOT
+        primaryRootCache = root
+        return root
+    }
+
+    internal fun normalizePath(path: String): String = DataPaths.normalize(path, primaryRoot())
 
     // ---- books ----
-    fun books(query: LibraryQuery, sort: LibrarySort): List<Book> = TODO("data")
-    fun groups(shelf: Shelf): List<ShelfGroup> = TODO("data")
-    fun book(id: Long): Book? = TODO("data")
-    fun bookByPath(path: String): Book? = TODO("data")
+
+    fun books(query: LibraryQuery, sort: LibrarySort): List<Book> {
+        val q = LibrarySql.booksQuery(query, sort)
+        val list = db().queryList(q.sql, q.args.takeIf { it.isNotEmpty() }, BookRows::book)
+        return LibrarySql.sortBooks(list, query, sort)
+    }
+
+    fun groups(shelf: Shelf): List<ShelfGroup> {
+        val sql = LibrarySql.groupsQuery(shelf) ?: return emptyList()
+        val rows = db().queryList(sql, null) { c ->
+            LibrarySql.groupRow(
+                shelf,
+                if (c.isNull(0)) null else c.getString(0),
+                if (c.isNull(1)) null else c.getString(1),
+                c.getInt(2),
+            )
+        }
+        return LibrarySql.sortGroups(shelf, rows)
+    }
+
+    /** Number of books [query] lists (cheap COUNT, no rows mapped). */
+    fun countBooks(query: LibraryQuery): Int {
+        val q = LibrarySql.countQuery(query)
+        return db().queryFirst(q.sql, q.args.takeIf { it.isNotEmpty() }) { it.getInt(0) } ?: 0
+    }
+
+    /**
+     * Drawer counts of every shelf in one query: number of books for plain shelves, number of groups
+     * (= `groups(shelf).size`) for grouped shelves.
+     */
+    fun shelfCounts(): Map<Shelf, Int> {
+        val shelves = LibrarySql.COUNTED_SHELVES
+        return db().queryFirst(LibrarySql.shelfCountsQuery(), null) { c ->
+            val m = LinkedHashMap<Shelf, Int>(shelves.size * 2)
+            for (i in shelves.indices) m[shelves[i]] = if (c.isNull(i)) 0 else c.getInt(i)
+            m
+        } ?: shelves.associateWith { 0 }
+    }
+
+    /** Drops every stored page count ("캐시 비우기"); they are recomputed when books are opened. */
+    fun clearPageCounts() {
+        db().execSQL("DELETE FROM page_counts")
+    }
+
+    /** Ids of books that belong to at least one collection. */
+    fun collectionMemberIds(): Set<Long> =
+        db().queryList(LibrarySql.SELECT_COLLECTION_MEMBER_IDS, null) { it.getLong(0) }.toHashSet()
+
+    fun book(id: Long): Book? = db().queryFirst(LibrarySql.SELECT_BOOK_BY_ID, args(id), BookRows::book)
+
+    fun bookByPath(path: String): Book? {
+        val db = db()
+        db.queryFirst(LibrarySql.SELECT_BOOK_BY_PATH, arrayOf(path), BookRows::book)?.let { return it }
+        val norm = normalizePath(path)
+        if (norm == path) return null
+        return db.queryFirst(LibrarySql.SELECT_BOOK_BY_PATH, arrayOf(norm), BookRows::book)
+    }
+
     /** Inserts or refreshes a file (reads metadata via Documents.readMeta when new/changed). */
-    fun addOrUpdateFile(file: File): Book? = TODO("data")
-    fun savePosition(bookId: Long, section: Int, offset: Int, progress: Float): Unit = TODO("data")
-    fun addReadingTime(bookId: Long, seconds: Long): Unit = TODO("data")
-    fun setFavorite(bookId: Long, value: Boolean): Unit = TODO("data")
-    fun setToRead(bookId: Long, value: Boolean): Unit = TODO("data")
-    fun setHaveRead(bookId: Long, value: Boolean): Unit = TODO("data")
-    fun setTrashed(bookId: Long, value: Boolean): Unit = TODO("data")
-    fun setReview(bookId: Long, text: String): Unit = TODO("data")
-    fun setEncoding(bookId: Long, encoding: String): Unit = TODO("data")
-    fun updateMeta(bookId: Long, title: String, author: String, series: String?, seriesIndex: Float?): Unit = TODO("data")
+    fun addOrUpdateFile(file: File): Book? = addOrUpdate(file, explicit = true)
+
+    /**
+     * [explicit] = the user asked for this file (open / import): clears a "removed from library" mark so the
+     * file becomes a normal library entry again.
+     */
+    internal fun addOrUpdate(file: File, explicit: Boolean): Book? {
+        val path = normalizePath(file.absolutePath)
+        val f = File(path)
+        val format = BookFormat.forFile(f.name) ?: return null
+        val db = db()
+        if (!f.isFile) return db.queryFirst(LibrarySql.SELECT_BOOK_BY_PATH, arrayOf(path), BookRows::book)
+        val size = f.length()
+        val mtime = f.lastModified()
+        if (explicit) db.exec(LibrarySql.DELETE_IGNORED, path)
+        val existing = db.queryFirst(LibrarySql.SELECT_BOOK_BY_PATH, arrayOf(path), BookRows::book)
+        if (existing != null && existing.sizeBytes == size && existing.modifiedAt == mtime) return existing
+        val info = FileInfo(path, f.name, format, size, mtime)
+        if (existing == null) {
+            // Moved with a file manager and opened before the next scan: keep the old entry's history (the scan
+            // would otherwise see the new path as known and drop the old entry with its bookmarks / quotes).
+            val from = movedEntry(db, info)
+            if (from != null) {
+                val meta = if (from.mtime == mtime) null else readMeta(f)
+                db.inTransaction { moveFile(this, from.id, info, meta) }
+                db.queryFirst(LibrarySql.SELECT_BOOK_BY_PATH, arrayOf(path), BookRows::book)?.let { return it }
+            }
+        }
+        val meta = readMeta(f)
+        db.inTransaction { writeFile(this, info, meta, existing?.id) }
+        return db.queryFirst(LibrarySql.SELECT_BOOK_BY_PATH, arrayOf(path), BookRows::book)
+    }
+
+    private class MoveCandidate(val id: Long, val path: String, val mtime: Long)
+
+    /** A library entry [info]'s file was moved from (same name + size, its own file verifiably gone), or null. */
+    private fun movedEntry(db: SQLiteDatabase, info: FileInfo): MoveCandidate? {
+        val candidates = db.queryList(LibrarySql.SELECT_MOVE_CANDIDATES, arrayOf(info.fileName, info.size.toString())) {
+            MoveCandidate(it.getLong(0), it.getString(1) ?: "", it.getLong(2))
+        }
+        if (candidates.isEmpty()) return null
+        val ctx = appContext ?: return null
+        return FileScanner.movedFrom(candidates, { it.path }, info.path, FileScanner.absenceTrust(ctx)) { p ->
+            try {
+                File(p).exists()
+            } catch (_: Throwable) {
+                true
+            }
+        }
+    }
+
+    /** Parser metadata, never throwing (unreadable / malformed files get a file-name title). */
+    internal fun readMeta(f: File): MetaInfo {
+        // TXT: the parser would only read 64 KB to sniff a charset the library doesn't store.
+        if (!MetaInfo.needsParser(BookFormat.forFile(f.name))) return MetaInfo.from(null, f.name)
+        val meta: DocMeta? = try {
+            Documents.readMeta(f)
+        } catch (t: Throwable) {
+            Log.w(TAG, "readMeta failed: ${f.name}: $t")
+            null
+        }
+        return MetaInfo.from(meta, f.name)
+    }
+
+    /**
+     * Inserts [info] or refreshes the existing row (must run inside a transaction). Returns the book id, or -1.
+     * A changed file loses its cached page counts; user-edited metadata is kept.
+     */
+    internal fun writeFile(db: SQLiteDatabase, info: FileInfo, meta: MetaInfo, existingId: Long?): Long {
+        var id = existingId ?: -1L
+        if (id <= 0) {
+            id = db.insertRow(
+                LibrarySql.INSERT_BOOK,
+                info.path, info.fileName, info.folder, meta.title, meta.author, meta.series, meta.seriesIndex,
+                info.format.name, info.size, info.mtime, System.currentTimeMillis(), meta.language,
+            )
+            if (id > 0) return id
+            // Row appeared concurrently (INSERT OR IGNORE): refresh it instead.
+            id = db.queryFirst(LibrarySql.SELECT_ID_BY_PATH, arrayOf(info.path)) { it.getLong(0) } ?: return -1
+        }
+        db.exec(LibrarySql.UPDATE_BOOK_FILE, info.fileName, info.folder, info.format.name, info.size, info.mtime, id)
+        db.exec(LibrarySql.UPDATE_BOOK_META, meta.title, meta.author, meta.series, meta.seriesIndex, meta.language, id)
+        db.exec(LibrarySql.DELETE_PAGE_COUNTS_OF_BOOK, id)
+        return id
+    }
+
+    /**
+     * Re-points entry [id] to a moved file (must run inside a transaction). [meta] null = same content
+     * (unchanged mtime): metadata and page counts stay; otherwise they are refreshed like a changed file.
+     */
+    internal fun moveFile(db: SQLiteDatabase, id: Long, info: FileInfo, meta: MetaInfo?) {
+        if (db.exec(LibrarySql.UPDATE_BOOK_PATH, info.path, id) == 0) return
+        db.exec(LibrarySql.UPDATE_BOOK_FILE, info.fileName, info.folder, info.format.name, info.size, info.mtime, id)
+        if (meta != null) {
+            db.exec(LibrarySql.UPDATE_BOOK_META, meta.title, meta.author, meta.series, meta.seriesIndex, meta.language, id)
+            db.exec(LibrarySql.DELETE_PAGE_COUNTS_OF_BOOK, id)
+        }
+    }
+
+    fun savePosition(bookId: Long, section: Int, offset: Int, progress: Float) {
+        val p = if (progress.isNaN()) 0f else progress.coerceIn(0f, 1f)
+        db().exec(
+            LibrarySql.UPDATE_POSITION,
+            section.coerceAtLeast(0), offset.coerceAtLeast(0), p, System.currentTimeMillis(), bookId,
+        )
+    }
+
+    fun addReadingTime(bookId: Long, seconds: Long) {
+        if (seconds <= 0) return
+        db().exec(LibrarySql.ADD_READING_TIME, seconds.coerceAtMost(MAX_READING_ADD_S), bookId)
+    }
+
+    fun setFavorite(bookId: Long, value: Boolean) {
+        db().exec(LibrarySql.SET_FAVORITE, value, bookId)
+    }
+
+    /** Setting "to read" clears "have read". */
+    fun setToRead(bookId: Long, value: Boolean) {
+        db().exec(if (value) LibrarySql.SET_TO_READ_ON else LibrarySql.SET_TO_READ_OFF, bookId)
+    }
+
+    /** Setting "have read" clears "to read"; progress is left untouched. */
+    fun setHaveRead(bookId: Long, value: Boolean) {
+        db().exec(if (value) LibrarySql.SET_HAVE_READ_ON else LibrarySql.SET_HAVE_READ_OFF, bookId)
+    }
+
+    fun setTrashed(bookId: Long, value: Boolean) {
+        db().exec(LibrarySql.SET_TRASHED, value, bookId)
+    }
+
+    fun setReview(bookId: Long, text: String) {
+        db().exec(LibrarySql.SET_REVIEW, cap(text.trimEnd(), MAX_REVIEW), bookId)
+    }
+
+    /** Forced TXT encoding ("" = auto). Cached page counts of the old decoding are dropped. */
+    fun setEncoding(bookId: Long, encoding: String) {
+        val db = db()
+        db.inTransaction {
+            exec(LibrarySql.SET_ENCODING, encoding.trim(), bookId)
+            exec(LibrarySql.DELETE_PAGE_COUNTS_OF_BOOK, bookId)
+        }
+    }
+
+    /** User edit of the metadata; kept across file refreshes. Blank title → file name. */
+    fun updateMeta(bookId: Long, title: String, author: String, series: String?, seriesIndex: Float?) {
+        val db = db()
+        var t = MetaInfo.clean(title, 500)
+        if (t.isEmpty()) {
+            val path = db.queryFirst(LibrarySql.SELECT_PATH_BY_ID, args(bookId)) { it.getString(0) } ?: return
+            t = MetaInfo.titleFromFileName(path)
+        }
+        val a = MetaInfo.clean(author, 300)
+        val s = series?.let { MetaInfo.clean(it, 500) }?.ifEmpty { null }
+        val i = if (s == null) null else seriesIndex?.takeIf { it.isFinite() }
+        db.exec(LibrarySql.UPDATE_BOOK_META_USER, t, a, s, i, bookId)
+    }
+
     /** Clears position/progress/flags ("읽은 기록 초기화"). */
-    fun resetProgress(bookId: Long): Unit = TODO("data")
+    fun resetProgress(bookId: Long) {
+        db().exec(LibrarySql.RESET_PROGRESS, bookId)
+    }
+
     /** Removes the entry (and its bookmarks/quotes/caches); deletes the file too when [deleteFile]. */
-    fun remove(bookId: Long, deleteFile: Boolean): Unit = TODO("data")
-    fun emptyTrash(deleteFiles: Boolean): Unit = TODO("data")
-    fun lastOpened(): Book? = TODO("data")
+    fun remove(bookId: Long, deleteFile: Boolean) {
+        val db = db()
+        val path = db.queryFirst(LibrarySql.SELECT_PATH_BY_ID, args(bookId)) { it.getString(0) } ?: return
+        if (deleteFile) deleteFileOrThrow(path)
+        val now = System.currentTimeMillis()
+        db.inTransaction {
+            deleteBookRows(this, bookId)
+            // A kept file must not come back with the next scan; a deleted one may be re-created later.
+            if (deleteFile) exec(LibrarySql.DELETE_IGNORED, path) else insertRow(LibrarySql.INSERT_IGNORED, path, now)
+        }
+        invalidateCover(bookId)
+    }
+
+    fun emptyTrash(deleteFiles: Boolean) {
+        val db = db()
+        val trashed = db.queryList(LibrarySql.SELECT_TRASHED_IDS, null) { it.getLong(0) to (it.getString(1) ?: "") }
+        if (trashed.isEmpty()) return
+        val removed = ArrayList<Pair<Long, String>>(trashed.size)
+        var failed = 0
+        for (entry in trashed) {
+            if (deleteFiles) {
+                try {
+                    deleteFileOrThrow(entry.second)
+                } catch (e: IOException) {
+                    failed++
+                    continue
+                }
+            }
+            removed += entry
+        }
+        val now = System.currentTimeMillis()
+        db.inTransaction {
+            for ((id, path) in removed) {
+                deleteBookRows(this, id)
+                if (deleteFiles) exec(LibrarySql.DELETE_IGNORED, path) else insertRow(LibrarySql.INSERT_IGNORED, path, now)
+            }
+        }
+        for ((id, _) in removed) invalidateCover(id)
+        if (failed > 0) throw IOException("파일 ${failed}개를 삭제하지 못했습니다")
+    }
+
+    fun lastOpened(): Book? = db().queryFirst(LibrarySql.SELECT_LAST_OPENED, null, BookRows::book)
+
+    /** Deletes a book row and everything hanging off it (must run inside a transaction). */
+    internal fun deleteBookRows(db: SQLiteDatabase, bookId: Long) {
+        db.exec(LibrarySql.DELETE_BOOKMARKS_OF_BOOK, bookId)
+        db.exec(LibrarySql.DELETE_QUOTES_OF_BOOK, bookId)
+        db.exec(LibrarySql.DELETE_MEMBERSHIPS_OF_BOOK, bookId)
+        db.exec(LibrarySql.DELETE_PAGE_COUNTS_OF_BOOK, bookId)
+        db.exec(LibrarySql.DELETE_BOOK, bookId)
+    }
+
+    private fun deleteFileOrThrow(path: String) {
+        if (path.isEmpty()) return
+        val f = File(path)
+        if (f.exists() && !f.delete() && f.exists()) throw IOException("파일을 삭제할 수 없습니다: ${f.name}")
+    }
+
+    internal fun invalidateCover(bookId: Long) {
+        val ctx = appContext ?: return
+        try {
+            Covers.invalidate(ctx, bookId)
+        } catch (t: Throwable) {
+            Log.w(TAG, "cover invalidate failed: $t")
+        }
+    }
+
+    /** Number of (non-trashed) books. */
+    internal fun count(): Int = db().queryFirst(LibrarySql.COUNT_LIBRARY, null) { it.getInt(0) } ?: 0
 
     // ---- bookmarks & quotes ----
-    fun bookmarks(bookId: Long): List<Bookmark> = TODO("data")
-    fun addBookmark(bookId: Long, section: Int, offset: Int, snippet: String): Bookmark = TODO("data")
-    fun deleteBookmark(id: Long): Unit = TODO("data")
-    fun updateBookmarkNote(id: Long, note: String): Unit = TODO("data")
-    fun quotes(bookId: Long): List<Quote> = TODO("data")
-    fun addQuote(bookId: Long, section: Int, start: Int, end: Int, text: String, note: String = ""): Quote = TODO("data")
-    fun deleteQuote(id: Long): Unit = TODO("data")
-    fun updateQuoteNote(id: Long, note: String): Unit = TODO("data")
+
+    fun bookmarks(bookId: Long): List<Bookmark> =
+        db().queryList(LibrarySql.SELECT_BOOKMARKS, args(bookId), BookRows::bookmark)
+
+    fun addBookmark(bookId: Long, section: Int, offset: Int, snippet: String): Bookmark {
+        val now = System.currentTimeMillis()
+        val s = cap(snippet.trim(), MAX_SNIPPET)
+        val sec = section.coerceAtLeast(0)
+        val off = offset.coerceAtLeast(0)
+        val id = db().insertRow(LibrarySql.INSERT_BOOKMARK, bookId, sec, off, s, "", now)
+        return Bookmark(id = id, bookId = bookId, section = sec, offset = off, snippet = s, createdAt = now)
+    }
+
+    fun deleteBookmark(id: Long) {
+        db().exec(LibrarySql.DELETE_BOOKMARK, id)
+    }
+
+    fun updateBookmarkNote(id: Long, note: String) {
+        db().exec(LibrarySql.UPDATE_BOOKMARK_NOTE, cap(note.trim(), MAX_NOTE), id)
+    }
+
+    fun quotes(bookId: Long): List<Quote> = db().queryList(LibrarySql.SELECT_QUOTES, args(bookId), BookRows::quote)
+
+    fun addQuote(bookId: Long, section: Int, start: Int, end: Int, text: String, note: String = ""): Quote {
+        val now = System.currentTimeMillis()
+        val s = minOf(start, end).coerceAtLeast(0)
+        val e = maxOf(start, end).coerceAtLeast(0)
+        val t = cap(text, MAX_QUOTE)
+        val n = cap(note.trim(), MAX_NOTE)
+        val sec = section.coerceAtLeast(0)
+        val id = db().insertRow(LibrarySql.INSERT_QUOTE, bookId, sec, s, e, t, n, now)
+        return Quote(id = id, bookId = bookId, section = sec, start = s, end = e, text = t, note = n, createdAt = now)
+    }
+
+    fun deleteQuote(id: Long) {
+        db().exec(LibrarySql.DELETE_QUOTE, id)
+    }
+
+    fun updateQuoteNote(id: Long, note: String) {
+        db().exec(LibrarySql.UPDATE_QUOTE_NOTE, cap(note.trim(), MAX_NOTE), id)
+    }
 
     // ---- collections ----
-    fun collections(): List<BookCollection> = TODO("data")
-    fun createCollection(name: String): BookCollection = TODO("data")
-    fun renameCollection(id: Long, name: String): Unit = TODO("data")
-    fun deleteCollection(id: Long): Unit = TODO("data")
-    fun collectionsOf(bookId: Long): Set<Long> = TODO("data")
-    fun setInCollection(bookId: Long, collectionId: Long, member: Boolean): Unit = TODO("data")
+
+    fun collections(): List<BookCollection> =
+        db().queryList(LibrarySql.SELECT_COLLECTIONS, null, BookRows::collection)
+            .sortedWith { a, b -> NaturalOrder.compare(a.name, b.name) }
+
+    /** Creates a collection; an existing one with the same name (ignoring case) is returned instead. */
+    fun createCollection(name: String): BookCollection {
+        val n = collectionName(name)
+        require(n.isNotEmpty()) { "컬렉션 이름이 비어 있습니다" }
+        val db = db()
+        return db.inTransaction {
+            val existing = queryFirst(LibrarySql.SELECT_COLLECTION_BY_NAME, arrayOf(n), BookRows::collection)
+            existing ?: run {
+                val now = System.currentTimeMillis()
+                BookCollection(insertRow(LibrarySql.INSERT_COLLECTION, n, now), n, now, 0)
+            }
+        }
+    }
+
+    /** Id of the collection named [name] (case-insensitive), creating it (no own transaction). -1 for blank names. */
+    internal fun ensureCollection(db: SQLiteDatabase, name: String, createdAt: Long): Long {
+        val n = collectionName(name)
+        if (n.isEmpty()) return -1
+        val existing = db.queryFirst(LibrarySql.SELECT_COLLECTION_BY_NAME, arrayOf(n)) { it.getLong(0) }
+        return existing ?: db.insertRow(LibrarySql.INSERT_COLLECTION, n, createdAt)
+    }
+
+    /** Throws (SQLiteConstraintException) when another collection already has [name]. */
+    fun renameCollection(id: Long, name: String) {
+        val n = collectionName(name)
+        require(n.isNotEmpty()) { "컬렉션 이름이 비어 있습니다" }
+        db().exec(LibrarySql.RENAME_COLLECTION, n, id)
+    }
+
+    fun deleteCollection(id: Long) {
+        db().inTransaction {
+            exec(LibrarySql.DELETE_MEMBERSHIPS_OF_COLLECTION, id)
+            exec(LibrarySql.DELETE_COLLECTION, id)
+        }
+    }
+
+    fun collectionsOf(bookId: Long): Set<Long> =
+        db().queryList(LibrarySql.SELECT_COLLECTIONS_OF_BOOK, args(bookId)) { it.getLong(0) }.toHashSet()
+
+    fun setInCollection(bookId: Long, collectionId: Long, member: Boolean) {
+        if (member) {
+            db().insertRow(LibrarySql.INSERT_MEMBERSHIP, bookId, collectionId)
+        } else {
+            db().exec(LibrarySql.DELETE_MEMBERSHIP, bookId, collectionId)
+        }
+    }
+
+    internal fun collectionName(name: String): String = MetaInfo.clean(name, MAX_COLLECTION_NAME)
+
+    /** Identity of a collection name, folded like the `name` column's NOCASE collation (ASCII only). */
+    internal fun collectionKey(name: String): String = MetaInfo.asciiLower(collectionName(name))
 
     // ---- caches ----
+
     /** Per-section page counts for a layout key (see reader), or null. */
-    fun pageCounts(bookId: Long, layoutKey: String): IntArray? = TODO("data")
-    fun savePageCounts(bookId: Long, layoutKey: String, counts: IntArray): Unit = TODO("data")
-}
+    fun pageCounts(bookId: Long, layoutKey: String): IntArray? {
+        val db = db()
+        val row = db.queryFirst(LibrarySql.SELECT_PAGE_COUNTS, arrayOf(bookId.toString(), layoutKey)) {
+            it.getBlob(0) to it.getLong(1)
+        } ?: return null
+        val counts = PageCountCodec.decode(row.first) ?: return null
+        val now = System.currentTimeMillis()
+        if (now - row.second > TOUCH_INTERVAL_MS || now < row.second) {
+            try {
+                db.exec(LibrarySql.TOUCH_PAGE_COUNTS, now, bookId, layoutKey)
+            } catch (t: Throwable) {
+                Log.w(TAG, "page count touch failed: $t")
+            }
+        }
+        return counts
+    }
 
-/**
- * CONTRACT STUB — finds book files on storage and syncs them into Library.
- */
-object FileScanner {
-    /** Scans roots (AppSettings.scanFolders or primary storage), adds new files, drops vanished ones.
-     *  Calls [progress] with the number of files found so far. Returns number of books in library. */
-    fun scan(context: Context, progress: (Int) -> Unit = {}): Int = TODO("data")
+    /** Stores counts for [layoutKey]; only the 3 most recently used keys per book are kept. */
+    fun savePageCounts(bookId: Long, layoutKey: String, counts: IntArray) {
+        val blob = PageCountCodec.encode(counts)
+        val now = System.currentTimeMillis()
+        db().inTransaction {
+            insertRow(LibrarySql.REPLACE_PAGE_COUNTS, bookId, layoutKey, blob, now)
+            exec(LibrarySql.PRUNE_PAGE_COUNTS, bookId, bookId)
+        }
+    }
 
-    /** Default roots when the user configured none. */
-    fun defaultRoots(context: Context): List<File> = TODO("data")
-}
-
-/**
- * CONTRACT STUB — JSON export/import of library state (flags, positions, bookmarks, quotes,
- * collections, reviews) + settings.
- */
-object Backup {
-    /** Writes a backup JSON to [out]. */
-    fun export(context: Context, out: java.io.OutputStream): Unit = TODO("data")
-    /** Restores from JSON; books are matched by path, then by file name + size. Returns restored book count. */
-    fun import(context: Context, input: java.io.InputStream): Int = TODO("data")
+    internal fun cap(s: String, max: Int): String = MetaInfo.truncate(s, max)
 }

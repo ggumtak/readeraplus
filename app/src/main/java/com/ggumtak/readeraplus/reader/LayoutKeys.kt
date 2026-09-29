@@ -49,7 +49,8 @@ object LayoutKeys {
         return PageGeometry(viewW, viewH, left, top, w, h)
     }
 
-    fun config(s: ReaderSettings, g: PageGeometry): LayoutConfig = LayoutConfig(
+    /** [txt]: TXT books always honour their parser's block hints (centred scene breaks, headings). */
+    fun config(s: ReaderSettings, g: PageGeometry, txt: Boolean = false): LayoutConfig = LayoutConfig(
         width = g.contentWidth,
         height = g.contentHeight,
         lineHeightEm = s.lineHeightPct / 100f,
@@ -57,7 +58,7 @@ object LayoutKeys {
         indentEm = s.indentPct / 100f,
         align = s.align,
         lineBreak = s.lineBreak,
-        publisherStyles = s.epubPublisherStyles,
+        publisherStyles = txt || s.epubPublisherStyles,
         maxImageHeightFraction = 1f,
         widowOrphanControl = s.widowOrphanControl,
     )

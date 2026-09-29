@@ -763,13 +763,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     /** Ids of books that belong to any collection (blocking). */
-    private fun collectionMemberIds(): Set<Long> {
-        val set = HashSet<Long>()
-        for (c in Library.collections()) {
-            Library.books(LibraryQuery(Shelf.COLLECTIONS, c.id.toString()), LibrarySort.TITLE).forEach { set += it.id }
-        }
-        return set
-    }
+    private fun collectionMemberIds(): Set<Long> = Library.collectionMemberIds()
 
     /** Marks derived data stale after a change (counts, collection icons) and reloads the list. */
     internal fun changed(collections: Boolean = false) {
@@ -876,14 +870,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         if (countsJob?.isActive == true) return
         countsJob = scope.launch {
             val c = withContext(Dispatchers.IO) {
-                runCatching {
-                    val map = LinkedHashMap<Shelf, Int>()
-                    for (s in Shelf.entries) {
-                        map[s] = if (LibraryText.isGrouped(s)) Library.groups(s).size
-                        else Library.books(LibraryQuery(s), LibrarySort.TITLE).size
-                    }
-                    map
-                }.getOrNull()
+                runCatching { Library.shelfCounts() }.getOrNull()
             }
             if (c != null) {
                 counts = c

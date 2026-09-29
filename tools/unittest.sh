@@ -8,6 +8,8 @@
 #   --own path   module mode (see typecheck.sh); also restricts compiled tests to test/<path>
 #   TestClass    fully qualified names; default = every *Test.kt compiled
 set -euo pipefail
+# kotlinc needs a larger heap for the whole tree plus tests.
+export JAVA_OPTS="${JAVA_OPTS:--Xmx3g}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TC="${TC_DIR:-/opt/tc}"
 PKG=com/ggumtak/readeraplus

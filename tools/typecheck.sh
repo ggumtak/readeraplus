@@ -9,6 +9,8 @@
 #   --skip <path> keeps the snapshot version of a path inside an owned one (e.g. --own reader --skip reader/extras)
 #   --own may repeat. Snapshot dir: $CONTRACTS (default /opt/tc/contracts), made by tools/snapshot_contracts.sh
 set -euo pipefail
+# kotlinc needs a larger heap for the whole tree plus tests.
+export JAVA_OPTS="${JAVA_OPTS:--Xmx3g}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TC="${TC_DIR:-/opt/tc}"
 PKG=com/ggumtak/readeraplus

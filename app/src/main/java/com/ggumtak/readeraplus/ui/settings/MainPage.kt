@@ -174,6 +174,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
                         }
                     }
                     Settings.raw().edit().putLong(SettingsActivity.PREF_CACHE_EPOCH, System.currentTimeMillis()).apply()
+                    runCatching { com.ggumtak.readeraplus.data.Library.clearPageCounts() }
                     total
                 }
                 cacheBusy = false

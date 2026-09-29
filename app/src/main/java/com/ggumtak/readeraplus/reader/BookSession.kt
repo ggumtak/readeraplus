@@ -13,6 +13,7 @@ import com.ggumtak.readeraplus.engine.SectionContent
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.engine.Typesetter
 import com.ggumtak.readeraplus.format.BookDocument
+import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.render.AndroidTextMeasurer
 import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.render.FontSource
@@ -161,7 +162,7 @@ class BookSession(
         val statusPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, settings.statusFontSizeSp, dm)
         val g = LayoutKeys.geometry(settings, viewW, viewH, dm.density, statusPx)
         genCounter++
-        generation = Generation(genCounter, settings, g, LayoutKeys.config(settings, g), dm.density)
+        generation = Generation(genCounter, settings, g, LayoutKeys.config(settings, g, txt = document.format == BookFormat.TXT), dm.density)
         invalidateJobs()
         cache.clear()
         lru.clear()

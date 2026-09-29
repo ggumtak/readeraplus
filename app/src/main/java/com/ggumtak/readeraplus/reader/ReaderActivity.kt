@@ -415,6 +415,7 @@ class ReaderActivity : Activity(), ReaderHost {
                     if (session === s && !s.isClosed) showError("페이지를 배치하지 못했습니다.")
                     return@launch
                 }
+                preloadImages(s, l, l.pageForOffset(b.posOffset))
                 showPage(sec, l, l.pageForOffset(b.posOffset), Nav.OPEN, anchorOffset = b.posOffset.coerceIn(0, l.content.length))
                 afterOpen()
             } catch (e: CancellationException) {
@@ -604,8 +605,24 @@ class ReaderActivity : Activity(), ReaderHost {
                 layoutFailed(s)
                 return@launch
             }
+            preloadImages(s, l, targetPage(l, offset, pageIndex))
+            if (session !== s) return@launch
             display(sec, l, offset, pageIndex, kind)
         }
+    }
+
+    private fun targetPage(l: SectionLayout, offset: Int, pageIndex: Int): Int = when {
+        pageIndex == -2 -> l.pageCount - 1
+        pageIndex >= 0 -> pageIndex
+        else -> l.pageForOffset(offset.coerceIn(0, l.content.length))
+    }
+
+    /** Decodes the images of the page about to be shown on the IO pool so onDraw never decodes them. */
+    private suspend fun preloadImages(s: BookSession, l: SectionLayout, pageIndex: Int) {
+        val p = l.pages.getOrNull(pageIndex) ?: return
+        if (p.lines.none { it.imageBlock != null }) return
+        val r = safely { s.renderer() } ?: return
+        withContext(Dispatchers.IO) { runCatching { r.preload(l, pageIndex) } }
     }
 
     /** A foreground layout returned nothing although the session is still current. */
