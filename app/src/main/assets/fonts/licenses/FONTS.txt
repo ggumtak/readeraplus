@@ -1,0 +1,13 @@
+Bundled fonts (unmodified). All are licensed under the SIL Open Font License 1.1 (see OFL-1.1.txt).
+The font files are not sold separately; they are bundled for use inside this app only.
+
+- RIDIBatang (리디바탕) — Copyright (c) RIDI Corp. Designed by Sandoll. SIL OFL 1.1.
+- Nanum Myeongjo / Nanum Barun Gothic (나눔명조 / 나눔바른고딕) — Copyright (c) NHN Corporation / NAVER Corp.,
+  Reserved Font Names Nanum, NanumMyeongjo, NanumBarunGothic. SIL OFL 1.1 (see NanumFonts-OFL.txt).
+- MaruBuri (마루 부리) — Copyright (c) NAVER Corp. SIL OFL 1.1.
+- Iropke Batang (이롭게 바탕체) — Copyright (c) iropke. Reserved Font Names "이롭게 바탕체", "Iropke Batang". SIL OFL 1.1.
+- Hakgyoansim Bareonbatang (학교안심 바른바탕) — Copyright (c) Korea Education and Research Information Service (KERIS). SIL OFL 1.1.
+- Pretendard — Copyright (c) Kil Hyung-jin, Reserved Font Name 'Pretendard'. SIL OFL 1.1 (see Pretendard-OFL.txt).
+- SUIT — Copyright (c) SUNN, Reserved Font Name SUIT. SIL OFL 1.1 (see SUIT-OFL.txt).
+
+Icons: Material Symbols by Google, Apache License 2.0.

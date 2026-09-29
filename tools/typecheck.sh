@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Local compile check without the Android SDK: compiles app sources with kotlinc against the
+# Robolectric android-all jar (Maven Central) and a stand-in R class. CI does the real build.
+#
+# Usage:
+#   tools/typecheck.sh                      # whole app/src/main/java
+#   tools/typecheck.sh --own ui/library     # module mode: live files under the owned paths (relative to
+#                                           # the package root) + the frozen contract snapshot for the rest
+#   --own may repeat. Snapshot dir: $CONTRACTS (default /opt/tc/contracts), made by tools/snapshot_contracts.sh
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TC="${TC_DIR:-/opt/tc}"
+PKG=com/ggumtak/readeraplus
+LIVE="$ROOT/app/src/main/java"
+CONTRACTS="${CONTRACTS:-$TC/contracts}"
+OWN=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --own) OWN+=("$2"); shift 2 ;;
+    *) echo "unknown arg $1"; exit 2 ;;
+  esac
+done
+TAG=$( (IFS=_; echo "${OWN[*]:-all}") | tr '/.' '__')
+OUT="${TC_OUT:-$ROOT/tools/out}/$TAG"
+rm -rf "$OUT" && mkdir -p "$OUT/gen" "$OUT/src"
+python3 "$ROOT/tools/gen_r.py" "$ROOT/app/src/main/res" com.ggumtak.readeraplus "$OUT/gen" >/dev/null
+if [ ${#OWN[@]} -eq 0 ]; then
+  SRC=("$LIVE")
+else
+  # contract snapshot minus owned paths, plus live owned paths
+  cp -r "$CONTRACTS/." "$OUT/src/"
+  for o in "${OWN[@]}"; do rm -rf "$OUT/src/$PKG/$o"; done
+  for o in "${OWN[@]}"; do
+    if [ -e "$LIVE/$PKG/$o" ]; then mkdir -p "$(dirname "$OUT/src/$PKG/$o")"; cp -r "$LIVE/$PKG/$o" "$OUT/src/$PKG/$o"; fi
+  done
+  SRC=("$OUT/src")
+fi
+CP="$TC/android-all-15.jar:$TC/kotlinx-coroutines-core-jvm-1.9.0.jar"
+"$TC/kotlinc/bin/kotlinc" -nowarn -jvm-target 17 -Xjdk-release=17 -no-reflect \
+  -cp "$CP" -d "$OUT/classes" "${SRC[@]}" "$OUT/gen" 2>&1 \
+  | grep -v "^warning:" | grep -v "Picked up JAVA_TOOL_OPTIONS" \
+  | sed "s#$OUT/src/#app/src/main/java/#g" || true
