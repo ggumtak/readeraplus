@@ -6,6 +6,7 @@
 #   tools/typecheck.sh                      # whole app/src/main/java
 #   tools/typecheck.sh --own ui/library     # module mode: live files under the owned paths (relative to
 #                                           # the package root) + the frozen contract snapshot for the rest
+#   --skip <path> keeps the snapshot version of a path inside an owned one (e.g. --own reader --skip reader/extras)
 #   --own may repeat. Snapshot dir: $CONTRACTS (default /opt/tc/contracts), made by tools/snapshot_contracts.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,10 +14,11 @@ TC="${TC_DIR:-/opt/tc}"
 PKG=com/ggumtak/readeraplus
 LIVE="$ROOT/app/src/main/java"
 CONTRACTS="${CONTRACTS:-$TC/contracts}"
-OWN=()
+OWN=(); SKIP=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --own) OWN+=("$2"); shift 2 ;;
+    --skip) SKIP+=("$2"); shift 2 ;;
     *) echo "unknown arg $1"; exit 2 ;;
   esac
 done
@@ -32,6 +34,10 @@ else
   for o in "${OWN[@]}"; do rm -rf "$OUT/src/$PKG/$o"; done
   for o in "${OWN[@]}"; do
     if [ -e "$LIVE/$PKG/$o" ]; then mkdir -p "$(dirname "$OUT/src/$PKG/$o")"; cp -r "$LIVE/$PKG/$o" "$OUT/src/$PKG/$o"; fi
+  done
+  for k in "${SKIP[@]}"; do
+    rm -rf "$OUT/src/$PKG/$k" "$OUT/test/$PKG/$k" 2>/dev/null || true
+    if [ -e "$CONTRACTS/$PKG/$k" ]; then mkdir -p "$(dirname "$OUT/src/$PKG/$k")"; cp -r "$CONTRACTS/$PKG/$k" "$OUT/src/$PKG/$k"; fi
   done
   SRC=("$OUT/src")
 fi

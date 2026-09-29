@@ -74,4 +74,7 @@ kotlin {
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     testImplementation("junit:junit:4.13.2")
+    // Real (pure-Java) framework classes for JVM tests, matching tools/unittest.sh; org.json explicitly too.
+    testImplementation("org.json:json:20240303")
+    testImplementation("org.robolectric:android-all:15-robolectric-12650502")
 }

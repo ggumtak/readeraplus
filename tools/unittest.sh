@@ -14,10 +14,11 @@ PKG=com/ggumtak/readeraplus
 LIVE="$ROOT/app/src/main/java"
 TESTS="$ROOT/app/src/test/java"
 CONTRACTS="${CONTRACTS:-$TC/contracts}"
-OWN=(); CLASSES=()
+OWN=(); SKIP=(); CLASSES=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --own) OWN+=("$2"); shift 2 ;;
+    --skip) SKIP+=("$2"); shift 2 ;;
     *) CLASSES+=("$1"); shift ;;
   esac
 done
@@ -34,6 +35,10 @@ else
   for o in "${OWN[@]}"; do
     if [ -e "$LIVE/$PKG/$o" ]; then mkdir -p "$(dirname "$OUT/src/$PKG/$o")"; cp -r "$LIVE/$PKG/$o" "$OUT/src/$PKG/$o"; fi
     if [ -e "$TESTS/$PKG/$o" ]; then mkdir -p "$(dirname "$OUT/test/$PKG/$o")"; cp -r "$TESTS/$PKG/$o" "$OUT/test/$PKG/$o"; fi
+  done
+  for k in "${SKIP[@]}"; do
+    rm -rf "$OUT/src/$PKG/$k" "$OUT/test/$PKG/$k" 2>/dev/null || true
+    if [ -e "$CONTRACTS/$PKG/$k" ]; then mkdir -p "$(dirname "$OUT/src/$PKG/$k")"; cp -r "$CONTRACTS/$PKG/$k" "$OUT/src/$PKG/$k"; fi
   done
 fi
 CP="$TC/android-all-15.jar:$TC/kotlinx-coroutines-core-jvm-1.9.0.jar:$TC/junit-4.13.2.jar:$TC/hamcrest-core-1.3.jar"

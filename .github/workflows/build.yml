@@ -77,3 +77,47 @@ jobs:
             --prerelease \
             --title "ReaderaPlus build ${GITHUB_RUN_NUMBER}" \
             --notes "Automatic build from ${GITHUB_REF_NAME} @ ${GITHUB_SHA}"
+
+  # On-demand emulator run (workflow_dispatch, or a commit message containing "[screens]"): drives the app with
+  # adb and publishes screenshots + logs to the "ci-screens" prerelease for review.
+  screenshots:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[screens]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ReaderaPlus-apk
+          path: dist
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run app on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash tools/ci/screenshots.sh
+
+      - name: Publish screenshots
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la shots || exit 0
+          cd shots && zip -q ../shots.zip * && cd ..
+          gh release delete ci-screens --yes --cleanup-tag || true
+          gh release create ci-screens shots.zip shots/*.png \
+            --target "${GITHUB_SHA}" --prerelease \
+            --title "CI screenshots (automated test run ${GITHUB_RUN_NUMBER})" \
+            --notes "Automated emulator screenshots for development. Not an app release."
