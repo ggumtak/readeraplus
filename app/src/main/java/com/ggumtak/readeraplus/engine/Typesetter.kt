@@ -132,6 +132,57 @@ object LineGeometry {
         return out ?: emptyList()
     }
 
+    /**
+     * Top of a text line's glyph band (content-box px): where the ink of the line's letters roughly starts. The line
+     * box ([LineInfo.top]..[LineInfo.bottom]) also holds the half-leading above and below, which is blank paper at
+     * airy line heights; selection, highlights and long-press use the band instead.
+     */
+    fun bandTop(layout: SectionLayout, ln: LineInfo): Float = ln.baseline - 0.95f * bandEm(layout, ln)
+
+    /** Bottom of a text line's glyph band (content-box px); see [bandTop]. */
+    fun bandBottom(layout: SectionLayout, ln: LineInfo): Float = ln.baseline + 0.30f * bandEm(layout, ln)
+
+    /** em × heading scale of [ln]: its line box is lineHeightEm·em·scale tall (LineInfo carries no ascent). */
+    private fun bandEm(layout: SectionLayout, ln: LineInfo): Float =
+        (ln.bottom - ln.top) / maxOf(1f, layout.config.lineHeightEm)
+
+    /**
+     * Offset of a visible, non-space char whose glyph (its advance × the line's glyph band, grown by [slop] px on every
+     * side) contains (x, y) in content-box coordinates, or -1. Unlike [hitTest] it never snaps to the nearest line or
+     * char: margins, line gaps, paragraph gaps, the blank tail of a short line, images and rules all return -1.
+     */
+    fun glyphAt(layout: SectionLayout, page: PageInfo, x: Float, y: Float, slop: Float): Int {
+        val lines = page.lines
+        var ln: LineInfo? = null
+        for (idx in lines.indices) {
+            val l = lines[idx]
+            if (y >= l.top && y < l.bottom) {
+                ln = l
+                break
+            }
+        }
+        if (ln == null || ln.imageBlock != null || ln.isRule || ln.end <= ln.start) return -1
+        if (y < bandTop(layout, ln) - slop || y > bandBottom(layout, ln) + slop) return -1
+        val adv = layout.advances
+        val t = layout.content.text
+        var best = -1
+        var bestDist = Float.MAX_VALUE
+        walk(layout, ln) { i, xi, next ->
+            if (i < t.length && adv[i] > 0f && x >= xi - slop && x <= next + slop) {
+                val c = t[i]
+                if (c != OBJECT_CHAR && !Character.isWhitespace(c) && !Character.isSpaceChar(c)) {
+                    val d = if (x < xi) xi - x else if (x > next) x - next else 0f
+                    if (d < bestDist) {
+                        best = i
+                        bestDist = d
+                    }
+                }
+            }
+            xi > x + slop
+        }
+        return best
+    }
+
     /** Word boundaries around [offset] for long-press selection: returns packed (start shl 32 | end). */
     fun wordAt(text: String, offset: Int): Long {
         val len = text.length
