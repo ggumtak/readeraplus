@@ -101,6 +101,9 @@ internal fun Context.compactToggle(text: String, selected: Boolean, onClick: (Vi
         minHeight = dp(28)
         minWidth = dp(40)
         setPadding(dp(7), 0, dp(7), 0)
+        // Reserve the BOLD (selected) width up front: selecting a toggle never widens it and shifts its neighbours.
+        val boldWidth = android.text.TextPaint(paint).apply { typeface = Typeface.DEFAULT_BOLD }.measureText(text)
+        minWidth = maxOf(dp(40), Math.ceil(boldWidth.toDouble()).toInt() + paddingLeft + paddingRight)
         setOnClickListener(onClick)
         setCompactToggle(this, selected)
     }

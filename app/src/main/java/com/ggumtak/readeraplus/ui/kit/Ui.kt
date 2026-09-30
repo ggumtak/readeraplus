@@ -283,7 +283,26 @@ fun Context.switchRow(title: String, summary: String?, checked: Boolean, onChang
     return row(title, summary, sw) { sw.toggle() }
 }
 
-/** "−  value  +" stepper. [format] renders the value; returns the row. */
+/**
+ * Gives a stepper's value label a FIXED width wide enough for every value in [min, max] (step [step]), so the
+ * − / + buttons never move while the value changes (repeated taps stay on the same spot).
+ */
+fun TextView.lockWidthForValues(min: Float, max: Float, step: Float, format: (Float) -> String) {
+    val p = paint
+    var widest = 0f
+    val lo = minOf(min, max)
+    val hi = maxOf(min, max)
+    val n = if (step > 0f) ((hi - lo) / step).toInt().coerceIn(0, 2000) else 0
+    // Sample every step (at most ~2000 labels, measured once when the row is built).
+    for (i in 0..n) widest = maxOf(widest, p.measureText(format(lo + i * step)))
+    widest = maxOf(widest, p.measureText(format(hi)))
+    val w = Math.ceil(widest.toDouble()).toInt() + paddingLeft + paddingRight + context.dp(6)
+    minWidth = w
+    maxWidth = w
+    layoutParams = (layoutParams as? LinearLayout.LayoutParams ?: LinearLayout.LayoutParams(w, WRAP_CONTENT)).apply { width = w }
+}
+
+/** "−  value  +" stepper. [format] renders the value; returns the row. The value box has a fixed width. */
 fun Context.stepperRow(
     title: String,
     value: Float,
@@ -294,7 +313,8 @@ fun Context.stepperRow(
     onChange: (Float) -> Unit,
 ): LinearLayout {
     var v = value
-    val valueText = label(format(v), 17f).apply { gravity = Gravity.CENTER; minWidth = dp(72) }
+    val valueText = label(format(v), 17f, maxLines = 1).apply { gravity = Gravity.CENTER }
+    valueText.lockWidthForValues(min, max, step, format)
     fun set(nv: Float) {
         v = (Math.round(nv / step) * step).coerceIn(min, max)
         valueText.text = format(v)

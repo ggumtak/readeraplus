@@ -35,6 +35,7 @@ import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.label
+import com.ggumtak.readeraplus.ui.kit.lockWidthForValues
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.prompt
@@ -479,10 +480,9 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         var v = value
         val row = ctx.compactRow()
         row.addView(ctx.compactLabelBlock(title), lp(0, WRAP_CONTENT, 1f))
-        val valueView = ctx.label(format(v), Compact.VALUE_SP, maxLines = 1).apply {
-            gravity = Gravity.CENTER
-            minWidth = ctx.dp(52)
-        }
+        val valueView = ctx.label(format(v), Compact.VALUE_SP, maxLines = 1).apply { gravity = Gravity.CENTER }
+        // Fixed width for the widest possible value: the − / + buttons stay put while tapping repeatedly.
+        valueView.lockWidthForValues(min, max, step, format)
         fun set(nv: Float) {
             val s = Fmt.stepFloat(nv, step, min, max)
             if (s == v) return
@@ -491,7 +491,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             onChange(v)
         }
         row.addView(ctx.compactIcon(R.drawable.ic_do_not_disturb_on, "$title 줄이기") { set(v - step) })
-        row.addView(valueView, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        row.addView(valueView)
         row.addView(ctx.compactIcon(R.drawable.ic_add_circle, "$title 늘리기") { set(v + step) })
         return row
     }

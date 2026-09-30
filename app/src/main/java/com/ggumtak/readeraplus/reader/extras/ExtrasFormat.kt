@@ -85,22 +85,8 @@ internal object Fmt {
         return if (a % 10 == 0) "$sign${a / 10}%" else "$sign${a / 10}.${a % 10}%"
     }
 
-    /** "400 · 보통". */
-    fun weight(w: Int): String {
-        val name = when (w) {
-            100 -> "가장 가늘게"
-            200 -> "매우 가늘게"
-            300 -> "가늘게"
-            400 -> "보통"
-            500 -> "중간"
-            600 -> "약간 굵게"
-            700 -> "굵게"
-            800 -> "매우 굵게"
-            900 -> "가장 굵게"
-            else -> null
-        }
-        return if (name == null) w.toString() else "$w · $name"
-    }
+    /** Font weight as a plain number ("500"): short and constant-width, so steppers never shift. */
+    fun weight(w: Int): String = w.toString()
 
     /** TTS rate/pitch "1.0x". */
     fun rate(v: Float): String {
