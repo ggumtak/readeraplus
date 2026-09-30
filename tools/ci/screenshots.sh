@@ -39,8 +39,7 @@ adb shell input tap 600 900; shot 12_txt_tap_right 2
 adb shell input tap 360 720; shot 13_txt_chrome 2
 dump; cp /tmp/ui.xml shots/ui_reader_chrome.xml 2>/dev/null
 tap_label "읽기 설정" contains && shot 14_reading_settings 2 && back
-adb shell input tap 360 720; sleep 1
-tap_label "목차" contains && shot 15_toc 3 && back
+tap_label "목차" contains || { adb shell input tap 360 720; sleep 1; tap_label "목차" contains; } && shot 15_toc 3 && back
 adb shell input tap 360 720; sleep 1
 if tap_label "검색" contains; then sleep 1; adb shell input text "English" ; adb shell input keyevent KEYCODE_ENTER; shot 16_search 4; back; fi
 sleep 1; adb shell input swipe 300 700 300 700 900; shot 17_selection 2; back
@@ -65,7 +64,7 @@ adb shell am start -W -n $PKG/.ui.library.LibraryActivity | tee -a shots/steps.t
 shot 40_library_after 5
 
 log "settings (via drawer; SettingsActivity is not exported)"
-tap_label "메뉴" && sleep 1 && tap_label "설정" && shot 50_settings 3
+tap_label "더보기" contains && sleep 1 && tap_label "설정" && shot 50_settings 3
 back
 
 adb logcat -d > shots/logcat.txt
