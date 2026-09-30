@@ -18,5 +18,9 @@ object FontCatalog {
     /** Uses the device's default serif/sans (no asset). */
     const val SYSTEM_SERIF = "system:serif"
     const val SYSTEM_SANS = "system:sans"
-    const val DEFAULT_ID = "ridibatang"
+    /**
+     * The default reading font (= `ReaderSettings().fontId`), also the fallback for a missing font id (FontManager)
+     * and the face of generated covers (Covers): one inflated CJK typeface serves the library and the first book.
+     */
+    const val DEFAULT_ID = "nanummyeongjo"
 }

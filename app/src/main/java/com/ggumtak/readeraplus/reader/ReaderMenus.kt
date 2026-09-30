@@ -8,6 +8,7 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.BookFileProvider
 import com.ggumtak.readeraplus.data.Library
+import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
 import com.ggumtak.readeraplus.ui.kit.MenuItem
@@ -37,18 +38,18 @@ internal fun ReaderActivity.showOverflowMenu(anchor: View) {
         // After the popup has disappeared from the panel, or its outline stays as ghosting.
         MenuItem("화면 새로고침", R.drawable.ic_refresh) { refreshAfterDraw(POPUP_GONE_MS) },
         MenuItem("내 리뷰", R.drawable.ic_rate_review) { guarded { ReaderPanels.showReview(this) } },
-        MenuItem("…에 추가", R.drawable.ic_playlist_add) { showAddMenu(anchor, bk) },
-        MenuItem("문서 속성", R.drawable.ic_info) { guarded { ReaderPanels.showDocumentInfo(this, bk, document) } },
+        MenuItem("컬렉션·목록에 추가", R.drawable.ic_playlist_add) { showAddMenu(anchor, bk) },
+        MenuItem("책 정보", R.drawable.ic_info) { guarded { ReaderPanels.showDocumentInfo(this, bk, document) } },
         MenuItem("파일 공유", R.drawable.ic_share) { shareBookFile(bk) },
         MenuItem("휴지통으로 이동", R.drawable.ic_delete) { confirmTrash(bk) },
-        MenuItem("일반 설정", R.drawable.ic_settings) { guarded { SettingsActivity.open(this) } },
+        MenuItem("설정", R.drawable.ic_settings) { guarded { SettingsActivity.open(this) } },
     )
     guarded { popupMenu(anchor, items, widthDp = 260) }
 }
 
 private const val POPUP_GONE_MS = 120L
 
-/** "…에 추가": favourites / to read / have read toggles and collections. */
+/** "컬렉션·목록에 추가": favourites / to read / have read toggles and collections. */
 private fun ReaderActivity.showAddMenu(anchor: View, book: Book) {
     val id = book.id
     scope.launch {
@@ -63,11 +64,11 @@ private fun ReaderActivity.showAddMenu(anchor: View, book: Book) {
             MenuItem("즐겨찾기", if (b.favorite) R.drawable.ic_star_fill else R.drawable.ic_star) {
                 flag(if (b.favorite) "즐겨찾기에서 뺐습니다" else "즐겨찾기에 추가했습니다") { Library.setFavorite(id, !b.favorite) }
             },
-            MenuItem("읽을 문서", if (b.toRead) R.drawable.ic_schedule_fill else R.drawable.ic_schedule) {
-                flag(if (b.toRead) "읽을 문서에서 뺐습니다" else "읽을 문서에 추가했습니다") { Library.setToRead(id, !b.toRead) }
+            MenuItem(Shelf.TO_READ.label, if (b.toRead) R.drawable.ic_schedule_fill else R.drawable.ic_schedule) {
+                flag(shelfMessage(Shelf.TO_READ, !b.toRead)) { Library.setToRead(id, !b.toRead) }
             },
-            MenuItem("읽던 문서", if (b.haveRead) R.drawable.ic_done_all_fill else R.drawable.ic_done_all) {
-                flag(if (b.haveRead) "읽던 문서에서 뺐습니다" else "읽던 문서에 추가했습니다") { Library.setHaveRead(id, !b.haveRead) }
+            MenuItem(Shelf.HAVE_READ.label, if (b.haveRead) R.drawable.ic_done_all_fill else R.drawable.ic_done_all) {
+                flag(shelfMessage(Shelf.HAVE_READ, !b.haveRead)) { Library.setHaveRead(id, !b.haveRead) }
             },
             MenuItem("컬렉션…", R.drawable.ic_library_books) { showCollections(id) },
         )
@@ -75,6 +76,10 @@ private fun ReaderActivity.showAddMenu(anchor: View, book: Book) {
         if (!isFinishing && !isDestroyed && anchor.isAttachedToWindow) guarded { popupMenu(anchor, items, widthDp = 240) }
     }
 }
+
+/** "읽을 책에 추가했습니다" / "다 읽은 책에서 뺐습니다" (the shelf labels end in 책, so the particles are fixed). */
+internal fun shelfMessage(shelf: Shelf, added: Boolean): String =
+    if (added) "${shelf.label}에 추가했습니다" else "${shelf.label}에서 뺐습니다"
 
 private fun ReaderActivity.flag(message: String, write: () -> Unit) {
     ReaderIo.launch { write() }

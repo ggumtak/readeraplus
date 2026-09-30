@@ -32,6 +32,12 @@ internal object LibrarySql {
     /** Minimal state of every book for scan / import matching. */
     const val SELECT_SCAN_STATE = "SELECT id, path, size, mtime, trashed, file_name, last_read_at FROM books"
     const val SELECT_TRASHED_IDS = "SELECT id, path FROM books WHERE trashed = 1"
+    /**
+     * "다음 권" by series (T1-2): the next indexes of a series, nearest first (the first whose file exists wins).
+     * Args: series, series_index (the stored Float widened to Double, as text), id of the current book.
+     */
+    const val SELECT_SERIES_NEXT = "SELECT $BOOK_COLUMNS FROM books WHERE series = ? AND series_index > ? AND id <> ? " +
+        "AND trashed = 0 ORDER BY series_index, id LIMIT 8"
     const val SELECT_PATH_BY_ID = "SELECT path FROM books WHERE id = ?"
     const val SELECT_ID_BY_PATH = "SELECT id FROM books WHERE path = ?"
     /**
@@ -46,7 +52,8 @@ internal object LibrarySql {
      */
     const val SELECT_IDS_WITH_USER_DATA = "SELECT id FROM books WHERE last_read_at > 0 OR favorite = 1 OR to_read = 1 " +
         "OR have_read = 1 OR review <> '' OR encoding <> '' OR meta_locked = 1 OR reading_seconds > 0 " +
-        "UNION SELECT book_id FROM bookmarks UNION SELECT book_id FROM quotes UNION SELECT book_id FROM book_collections"
+        "UNION SELECT book_id FROM bookmarks UNION SELECT book_id FROM quotes UNION SELECT book_id FROM book_collections " +
+        "UNION SELECT book_id FROM book_prefs UNION SELECT book_id FROM reading_log"
     const val COUNT_LIBRARY = "SELECT COUNT(*) FROM books WHERE trashed = 0"
 
     // ---- books: writes ----
@@ -69,9 +76,11 @@ internal object LibrarySql {
     /** Args: seconds, id. */
     const val ADD_READING_TIME = "UPDATE books SET reading_seconds = reading_seconds + ? WHERE id = ?"
     const val SET_FAVORITE = "UPDATE books SET favorite = ? WHERE id = ?"
+    /** Clears have_read too: run [CLEAR_FINISHED_AT] and [PRUNE_BOOK_PREFS] with it. */
     const val SET_TO_READ_ON = "UPDATE books SET to_read = 1, have_read = 0 WHERE id = ?"
     const val SET_TO_READ_OFF = "UPDATE books SET to_read = 0 WHERE id = ?"
     const val SET_HAVE_READ_ON = "UPDATE books SET have_read = 1, to_read = 0 WHERE id = ?"
+    /** Run [CLEAR_FINISHED_AT] and [PRUNE_BOOK_PREFS] with it (a finish time belongs to a finished book only). */
     const val SET_HAVE_READ_OFF = "UPDATE books SET have_read = 0 WHERE id = ?"
     const val SET_TRASHED = "UPDATE books SET trashed = ? WHERE id = ?"
     const val SET_REVIEW = "UPDATE books SET review = ? WHERE id = ?"
@@ -150,6 +159,68 @@ internal object LibrarySql {
         "SELECT layout_key FROM page_counts WHERE book_id = ? ORDER BY updated_at DESC LIMIT 3)"
     const val MAX_PAGE_COUNT_KEYS = 3
     const val DELETE_PAGE_COUNTS_OF_BOOK = "DELETE FROM page_counts WHERE book_id = ?"
+
+    // ---- reading log (v2, T1-6): one row per (day, book), day = local yyyymmdd ----
+    /** Upsert, step 1 (SQLite 3.18 has no UPSERT). Args: seconds, pages, chars, day, book_id. */
+    const val LOG_ADD = "UPDATE reading_log SET seconds = seconds + ?, pages = pages + ?, chars = chars + ? " +
+        "WHERE day = ? AND book_id = ?"
+    /**
+     * Upsert, step 2, when [LOG_ADD] or [LOG_RESTORE] changed no row. Only for a book that still exists, so a write
+     * racing the book's removal leaves no orphan row. Args: day, seconds, pages, chars, book_id.
+     */
+    const val LOG_INSERT = "INSERT INTO reading_log(day, book_id, seconds, pages, chars) " +
+        "SELECT ?, id, ?, ?, ? FROM books WHERE id = ?"
+    /** Backup restore: the larger value of each column wins, so restoring twice adds nothing. Args as [LOG_ADD]. */
+    const val LOG_RESTORE = "UPDATE reading_log SET seconds = MAX(seconds, ?), pages = MAX(pages, ?), " +
+        "chars = MAX(chars, ?) WHERE day = ? AND book_id = ?"
+    /** seconds, pages, chars, number of days. Args: from day, to day (inclusive). */
+    const val SELECT_LOG_TOTALS = "SELECT IFNULL(SUM(seconds), 0), IFNULL(SUM(pages), 0), IFNULL(SUM(chars), 0), " +
+        "COUNT(DISTINCT day) FROM reading_log WHERE day BETWEEN ? AND ?"
+    /** seconds, chars of one book. Args: book_id, from day, to day. */
+    const val SELECT_LOG_BOOK_TOTALS = "SELECT IFNULL(SUM(seconds), 0), IFNULL(SUM(chars), 0) FROM reading_log " +
+        "WHERE book_id = ? AND day BETWEEN ? AND ?"
+    /** day, seconds, pages, chars, ascending. Args: from day, to day. */
+    const val SELECT_LOG_DAYS = "SELECT day, SUM(seconds), SUM(pages), SUM(chars) FROM reading_log " +
+        "WHERE day BETWEEN ? AND ? GROUP BY day ORDER BY day"
+    /** book_id, seconds, pages, chars; most seconds first, books still in the library only. Args: from day, to day. */
+    const val SELECT_LOG_PER_BOOK = "SELECT l.book_id, SUM(l.seconds), SUM(l.pages), SUM(l.chars) FROM reading_log l " +
+        "JOIN books b ON b.id = l.book_id WHERE l.day BETWEEN ? AND ? GROUP BY l.book_id " +
+        "ORDER BY SUM(l.seconds) DESC, l.book_id"
+    /** Every row, for the backup: book_id, day, seconds, pages, chars. */
+    const val SELECT_ALL_LOG = "SELECT book_id, day, seconds, pages, chars FROM reading_log ORDER BY book_id, day"
+    const val DELETE_LOG_OF_BOOK = "DELETE FROM reading_log WHERE book_id = ?"
+
+    // ---- book prefs (v2, T1-9 / T1-2): at most one row per book, created by the first write ----
+    /** The open path's one extra read (primary key). */
+    const val SELECT_TXT_OVERRIDE = "SELECT txt_override FROM book_prefs WHERE book_id = ?"
+    /** A finish time counts only while the book is marked have_read (guards rows older builds left behind). */
+    const val SELECT_FINISHED_AT = "SELECT p.finished_at FROM book_prefs p JOIN books b ON b.id = p.book_id " +
+        "WHERE p.book_id = ? AND b.have_read = 1"
+    /** book_id, finished_at; newest first. Args: from ms (inclusive), to ms (exclusive). */
+    const val SELECT_FINISHED_BETWEEN = "SELECT p.book_id, p.finished_at FROM book_prefs p " +
+        "JOIN books b ON b.id = p.book_id WHERE p.finished_at >= ? AND p.finished_at < ? AND p.finished_at > 0 " +
+        "AND b.trashed = 0 AND b.have_read = 1 ORDER BY p.finished_at DESC, p.book_id DESC"
+    /** txt_override, finished_at, episode_label of one book. */
+    const val SELECT_BOOK_PREFS = "SELECT txt_override, finished_at, episode_label FROM book_prefs WHERE book_id = ?"
+    /** Every row, for the backup: book_id, txt_override, finished_at, episode_label. */
+    const val SELECT_ALL_BOOK_PREFS = "SELECT book_id, txt_override, finished_at, episode_label FROM book_prefs " +
+        "ORDER BY book_id"
+    /** One-column writes: UPDATE first; when no row changed, the matching INSERT (for an existing book only). */
+    const val SET_PREFS_TXT = "UPDATE book_prefs SET txt_override = ? WHERE book_id = ?"
+    const val INSERT_PREFS_TXT = "INSERT INTO book_prefs(book_id, txt_override) SELECT id, ? FROM books WHERE id = ?"
+    const val SET_PREFS_FINISHED = "UPDATE book_prefs SET finished_at = ? WHERE book_id = ?"
+    const val INSERT_PREFS_FINISHED = "INSERT INTO book_prefs(book_id, finished_at) SELECT id, ? FROM books WHERE id = ?"
+    const val SET_PREFS_EPISODE = "UPDATE book_prefs SET episode_label = ? WHERE book_id = ?"
+    const val INSERT_PREFS_EPISODE = "INSERT INTO book_prefs(book_id, episode_label) SELECT id, ? FROM books WHERE id = ?"
+    /** Backup restore of a whole row. Args: txt_override, finished_at, episode_label, book_id. */
+    const val SET_PREFS_ROW = "UPDATE book_prefs SET txt_override = ?, finished_at = ?, episode_label = ? WHERE book_id = ?"
+    const val INSERT_PREFS_ROW = "INSERT INTO book_prefs(book_id, txt_override, finished_at, episode_label) " +
+        "SELECT id, ?, ?, ? FROM books WHERE id = ?"
+    const val CLEAR_FINISHED_AT = "UPDATE book_prefs SET finished_at = 0 WHERE book_id = ?"
+    /** Drops a row that no longer holds anything (keeps the table as small as the set of books with prefs). */
+    const val PRUNE_BOOK_PREFS = "DELETE FROM book_prefs WHERE book_id = ? AND txt_override IS NULL AND finished_at = 0 " +
+        "AND episode_label IS NULL"
+    const val DELETE_BOOK_PREFS_OF_BOOK = "DELETE FROM book_prefs WHERE book_id = ?"
 
     // ---- ignored (removed-but-kept) files ----
     const val SELECT_IGNORED = "SELECT path FROM ignored"

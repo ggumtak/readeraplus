@@ -2,6 +2,11 @@ package com.ggumtak.readeraplus.reader
 
 import android.view.KeyEvent
 import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.EINK_MODE_FAST
+import com.ggumtak.readeraplus.settings.EINK_MODE_HD
+import com.ggumtak.readeraplus.settings.EINK_MODE_SYSTEM
+import com.ggumtak.readeraplus.settings.KeyHold
+import com.ggumtak.readeraplus.settings.TapAction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -83,5 +88,90 @@ class KeyMapTest {
         assertTrue(KeyMap.isVolumeKey(KeyEvent.KEYCODE_VOLUME_DOWN))
         assertFalse(KeyMap.isVolumeKey(KeyEvent.KEYCODE_PAGE_DOWN))
         assertFalse(KeyMap.isVolumeKey(KeyEvent.KEYCODE_VOLUME_MUTE))
+    }
+
+    @Test
+    fun bindingsComeFirstThenLearnedThenBuiltIn() {
+        val a = d.copy(
+            keyBindings = mapOf(KeyEvent.KEYCODE_VOLUME_UP to TapAction.TOC, 290 to TapAction.NEXT_CHAPTER),
+            nextPageKeys = setOf(290, KeyEvent.KEYCODE_F5),
+        )
+        assertEquals(TapAction.TOC, KeyMap.action(KeyEvent.KEYCODE_VOLUME_UP, false, a))
+        assertEquals(TapAction.NEXT_CHAPTER, KeyMap.action(290, false, a))
+        assertEquals(TapAction.NEXT, KeyMap.action(KeyEvent.KEYCODE_F5, false, a))
+        assertEquals(TapAction.NEXT, KeyMap.action(KeyEvent.KEYCODE_VOLUME_DOWN, false, a))
+        assertEquals(TapAction.PREV, KeyMap.action(KeyEvent.KEYCODE_SPACE, true, a))
+        assertEquals(TapAction.MENU, KeyMap.action(KeyEvent.KEYCODE_MENU, false, a))
+        assertEquals(TapAction.NONE, KeyMap.action(KeyEvent.KEYCODE_A, false, a))
+    }
+
+    @Test
+    fun aVolumeBindingOverridesVolumeKeysTurnAndNoneLeavesTheKeyToTheSystem() {
+        val a = d.copy(
+            volumeKeysTurn = false,
+            keyBindings = mapOf(KeyEvent.KEYCODE_VOLUME_DOWN to TapAction.NEXT, KeyEvent.KEYCODE_PAGE_DOWN to TapAction.NONE),
+        )
+        assertEquals(TapAction.NEXT, KeyMap.action(KeyEvent.KEYCODE_VOLUME_DOWN, false, a))
+        assertEquals(TapAction.NONE, KeyMap.action(KeyEvent.KEYCODE_VOLUME_UP, false, a))
+        assertEquals(TapAction.NONE, KeyMap.action(KeyEvent.KEYCODE_PAGE_DOWN, false, a))
+        assertTrue(KeyMap.isAssigned(KeyEvent.KEYCODE_VOLUME_DOWN, a))
+        assertFalse(KeyMap.isAssigned(KeyEvent.KEYCODE_VOLUME_UP, a))
+        assertTrue(KeyMap.isAssigned(KeyEvent.KEYCODE_F5, d.copy(prevPageKeys = setOf(KeyEvent.KEYCODE_F5))))
+    }
+
+    @Test
+    fun builtInKeysAreKnownWhateverTheSettings() {
+        assertTrue(KeyMap.isBuiltIn(KeyEvent.KEYCODE_VOLUME_UP))
+        assertTrue(KeyMap.isBuiltIn(KeyEvent.KEYCODE_PAGE_DOWN))
+        assertTrue(KeyMap.isBuiltIn(KeyEvent.KEYCODE_ENTER))
+        assertFalse(KeyMap.isBuiltIn(KeyEvent.KEYCODE_F5))
+        assertFalse(KeyMap.isBuiltIn(290))
+    }
+
+    @Test
+    fun repeatPaceFollowsTheEinkMode() {
+        assertEquals(250L, KeyMap.repeatMs(EINK_MODE_SYSTEM))
+        assertEquals(250L, KeyMap.repeatMs(EINK_MODE_HD))
+        assertEquals(150L, KeyMap.repeatMs(EINK_MODE_FAST))
+    }
+
+    @Test
+    fun heldKeyRepeatsAtTheGivenPace() {
+        val h = HeldKey()
+        val k = KeyEvent.KEYCODE_VOLUME_DOWN
+        assertEquals(HeldKey.Step.TURN, h.down(k, 0, 1000, KeyHold.REPEAT, 250))
+        assertEquals(HeldKey.Step.TURN, h.down(k, 1, 1500, KeyHold.REPEAT, 250))
+        assertEquals(HeldKey.Step.NONE, h.down(k, 2, 1550, KeyHold.REPEAT, 250))
+        assertEquals(HeldKey.Step.NONE, h.down(k, 5, 1749, KeyHold.REPEAT, 250))
+        assertEquals(HeldKey.Step.TURN, h.down(k, 6, 1750, KeyHold.REPEAT, 250))
+        // A fresh press is never paced.
+        h.up(k)
+        assertEquals(HeldKey.Step.TURN, h.down(k, 0, 1760, KeyHold.REPEAT, 250))
+    }
+
+    @Test
+    fun heldKeyHoldActsOnceAtTheFirstRepeat() {
+        for (hold in listOf(KeyHold.CHAPTER, KeyHold.TEN)) {
+            val h = HeldKey()
+            assertEquals(HeldKey.Step.TURN, h.down(24, 0, 0, hold, 250))
+            assertEquals(HeldKey.Step.HOLD, h.down(24, 1, 500, hold, 250))
+            for (r in 2..20) assertEquals(HeldKey.Step.NONE, h.down(24, r, 500L + r * 50, hold, 250))
+            h.up(24)
+            assertEquals(HeldKey.Step.TURN, h.down(24, 0, 3000, hold, 250))
+            assertEquals(HeldKey.Step.HOLD, h.down(24, 1, 3500, hold, 250))
+        }
+        val single = HeldKey()
+        assertEquals(HeldKey.Step.TURN, single.down(24, 0, 0, KeyHold.SINGLE, 250))
+        for (r in 1..10) assertEquals(HeldKey.Step.NONE, single.down(24, r, 450L + r * 50, KeyHold.SINGLE, 250))
+    }
+
+    @Test
+    fun repeatsOfAnotherOrADroppedPressDoNothing() {
+        val h = HeldKey()
+        assertEquals(HeldKey.Step.TURN, h.down(24, 0, 0, KeyHold.REPEAT, 250))
+        assertEquals(HeldKey.Step.NONE, h.down(25, 3, 900, KeyHold.REPEAT, 250))
+        h.cancel()
+        assertEquals(HeldKey.Step.NONE, h.down(24, 1, 1000, KeyHold.REPEAT, 250))
+        assertEquals(HeldKey.Step.NONE, h.down(24, 1, 1000, KeyHold.CHAPTER, 250))
     }
 }

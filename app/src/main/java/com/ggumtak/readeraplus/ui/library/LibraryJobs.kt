@@ -105,7 +105,7 @@ internal object LibraryJobs {
                     if (throttle.ready(SystemClock.elapsedRealtime())) progress()
                 }
                 Settings.raw().edit().putLong(PREF_LAST_SCAN, System.currentTimeMillis()).apply()
-                if (scanAnnounce) msg = "스캔 완료: 문서 ${total}개"
+                if (scanAnnounce) msg = LibraryText.scanDoneMessage(total)
             } catch (_: FileScanner.Stopped) {
                 stopped = true
             } catch (t: Throwable) {

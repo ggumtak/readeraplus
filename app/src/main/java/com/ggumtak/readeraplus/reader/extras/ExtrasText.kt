@@ -1,9 +1,11 @@
 package com.ggumtak.readeraplus.reader.extras
 
 import com.ggumtak.readeraplus.engine.OBJECT_CHAR
+import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.reader.ChapterIndex
 
 /*
- * Pure text helpers for the reader extras (search, TTS sentence splitting, utterance ids).
+ * Pure text helpers for the reader extras (search, TTS sentence splitting, utterance ids, TTS time and episodes).
  * No android.* imports: unit-tested on the JVM.
  */
 
@@ -227,5 +229,98 @@ internal object UtteranceId {
         if (digits == 0 || field != 4) return null
         out[4] = v
         return out
+    }
+}
+
+/**
+ * TTS time while the reader is in the background (T1-6 / T1-11): the reader's own tracker counts nothing then, so
+ * the controller counts the time it actually speaks (start / stop timestamps, `elapsedRealtime`), the pages it turns
+ * and the characters it starts speaking, and hands whole seconds to the reading log. Pure; main thread.
+ */
+internal class SpeakClock {
+    private var since = -1L
+    private var ms = 0L
+    var pages = 0
+        private set
+    var chars = 0L
+        private set
+
+    val running: Boolean get() = since >= 0
+
+    fun start(now: Long) {
+        if (since < 0) since = now
+    }
+
+    fun stop(now: Long) {
+        if (since < 0) return
+        ms += (now - since).coerceAtLeast(0L)
+        since = -1L
+    }
+
+    fun addPage() {
+        pages++
+    }
+
+    fun addChars(n: Int) {
+        if (n > 0) chars += n
+    }
+
+    /**
+     * What was counted up to [now], as (whole seconds, pages, chars), keeping the part-second remainder (and the
+     * clock running when it was); null when there is nothing to report.
+     */
+    fun take(now: Long): Triple<Long, Int, Long>? {
+        if (since >= 0) {
+            ms += (now - since).coerceAtLeast(0L)
+            since = now
+        }
+        val s = ms / 1000L
+        if (s <= 0L && pages == 0 && chars == 0L) return null
+        ms -= s * 1000L
+        val out = Triple(s, pages, chars)
+        pages = 0
+        chars = 0L
+        return out
+    }
+}
+
+/** Episode bookkeeping of TTS on a [ChapterIndex] (sleep timer "이 화 / 2화 끝까지", the notification's title). Pure. */
+internal object TtsChapters {
+    /** (section, offset) as one comparable number. */
+    fun pack(section: Int, offset: Int): Long = (section.toLong() shl 32) or (offset.toLong() and 0xFFFFFFFFL)
+
+    /**
+     * Where speech started at (section, offset) stops after [count] episodes: the start of the [count]-th TOC entry
+     * after it. Null when the book ends first (or there is no TOC): no stop, speech runs to the end.
+     */
+    fun boundary(ch: ChapterIndex, section: Int, offset: Int, count: Int): DocPosition? {
+        if (count <= 0) return null
+        var s = section
+        var o = offset
+        repeat(count) {
+            val i = ch.nextAfter(s, o)
+            if (i < 0) return null
+            s = ch.section(i)
+            o = ch.offset(i)
+        }
+        return DocPosition(s, o)
+    }
+
+    /** Episode starts after (section, offset) up to and including [stop] (1 = this episode is the last); 0 without a stop. */
+    fun left(ch: ChapterIndex, section: Int, offset: Int, stop: DocPosition?): Int {
+        if (stop == null) return 0
+        val end = pack(stop.section, stop.offset)
+        var n = 0
+        var s = section
+        var o = offset
+        while (n < 100) {
+            val i = ch.nextAfter(s, o)
+            if (i < 0) break
+            s = ch.section(i)
+            o = ch.offset(i)
+            if (pack(s, o) > end) break
+            n++
+        }
+        return n
     }
 }

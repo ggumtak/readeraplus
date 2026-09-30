@@ -39,7 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * "글꼴" chooser: every font rendered in its own typeface, plus "폰트 추가…" (SAF import through
+ * "글꼴" chooser: every font rendered in its own typeface, plus "글꼴 추가…" (SAF import through
  * [FontImportFragment]) and a shortcut to the font management page. From the reading-settings popup it is a compact
  * drop-down list under the row ([CompactList]); without an anchor, a dialog with a sample line per font.
  */
@@ -102,7 +102,7 @@ internal object FontChooser {
             }
             rows += ListEntry(font.name, checked = font.id == currentId, typeface = tf, note = note) { onPick(font.id) }
         }
-        rows += ListEntry("폰트 추가…", action = true) { FontImportFragment.start(activity, onPick) }
+        rows += ListEntry("글꼴 추가…", action = true) { FontImportFragment.start(activity, onPick) }
         rows += ListEntry("글꼴 관리", action = true) { SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS) }
         CompactList.show(activity, anchor, rows, widthPx, rightInsetPx)
     }
@@ -135,12 +135,12 @@ internal object FontChooser {
             }
         }
         val dialog = activity.alert()
-            .setTitle("폰트 페이스")
+            .setTitle("글꼴")
             .setAdapter(adapter) { d, which ->
                 d.dismiss()
                 onPick(entries[which].first.id)
             }
-            .setNeutralButton("폰트 추가…") { _, _ -> FontImportFragment.start(activity, onPick) }
+            .setNeutralButton("글꼴 추가…") { _, _ -> FontImportFragment.start(activity, onPick) }
             .setPositiveButton("글꼴 관리") { _, _ -> SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS) }
             .setNegativeButton("닫기", null)
             .showNoAnim()
@@ -181,7 +181,7 @@ internal object FontChooser {
             scope.cancel()
             if (activity.isDestroyed) return@launch
             result.onSuccess { info ->
-                activity.toast("'${info.name}' 폰트를 추가했습니다")
+                activity.toast("'${info.name}' 글꼴을 추가했습니다")
                 if (onPick != null) {
                     onPick(info.id)
                 } else {

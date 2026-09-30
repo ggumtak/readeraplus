@@ -11,14 +11,18 @@ import com.ggumtak.readeraplus.format.TocEntry
  * Queries are linear scans (TOCs have at most a few thousand entries) and tolerate unsorted TOCs.
  */
 class ChapterIndex(entries: List<TocEntry>, sectionCount: Int) {
-    private val valid = entries.filter { it.section in 0 until sectionCount }
-    val size: Int = valid.size
-    private val titles = Array(size) { valid[it].title }
-    private val sections = IntArray(size) { valid[it].section }
-    private val offsets = IntArray(size) { valid[it].offset.coerceAtLeast(0) }
-    private val anchors = Array(size) { valid[it].anchor?.takeIf { a -> a.isNotEmpty() } }
+    /** TOC index (in `entries`) of each entry kept. */
+    private val tocIndices = entries.indices.filter { entries[it].section in 0 until sectionCount }.toIntArray()
+    val size: Int = tocIndices.size
+    private val titles = Array(size) { entries[tocIndices[it]].title }
+    private val sections = IntArray(size) { entries[tocIndices[it]].section }
+    private val offsets = IntArray(size) { entries[tocIndices[it]].offset.coerceAtLeast(0) }
+    private val anchors = Array(size) { entries[tocIndices[it]].anchor?.takeIf { a -> a.isNotEmpty() } }
 
     fun title(i: Int): String = titles[i]
+
+    /** Index of entry [i] in the document's TOC (the TOC dialog's rows, Episodes): entries outside the book are skipped here. */
+    fun tocIndex(i: Int): Int = tocIndices[i]
     fun section(i: Int): Int = sections[i]
     fun offset(i: Int): Int = offsets[i]
     fun position(i: Int): DocPosition = DocPosition(sections[i], offsets[i])

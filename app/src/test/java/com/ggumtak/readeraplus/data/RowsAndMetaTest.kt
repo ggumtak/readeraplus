@@ -111,7 +111,12 @@ class RowsAndMetaTest {
         assertArrayEquals(IntArray(0), PageCountCodec.decode(PageCountCodec.encode(IntArray(0))))
         assertNull(PageCountCodec.decode(ByteArray(5)))
         assertNull(PageCountCodec.decode(null))
-        assertNull(PageCountCodec.decode(PageCountCodec.encode(intArrayOf(3, -1))))
+        // R2 (A2): partial counts keep -1 for sections not counted yet; anything lower is corrupt.
+        val partial = intArrayOf(3, -1, 0, -1)
+        assertArrayEquals(partial, PageCountCodec.decode(PageCountCodec.encode(partial)))
+        assertEquals(-1, PageCountCodec.UNKNOWN)
+        assertNull(PageCountCodec.decode(PageCountCodec.encode(intArrayOf(3, -2))))
+        assertNull(PageCountCodec.decode(PageCountCodec.encode(intArrayOf(Int.MIN_VALUE))))
         // Little-endian layout is part of the stored format.
         assertArrayEquals(byteArrayOf(1, 0, 0, 0, 0, 1, 0, 0), PageCountCodec.encode(intArrayOf(1, 256)))
     }

@@ -1,9 +1,12 @@
 package com.ggumtak.readeraplus.reader.extras
 
+import com.ggumtak.readeraplus.data.TxtOverride
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.StylePreset
+import com.ggumtak.readeraplus.settings.UserStyle
+import com.ggumtak.readeraplus.settings.UserStyles
 import com.ggumtak.readeraplus.ui.kit.isNoSpace
 import com.ggumtak.readeraplus.ui.kit.ownMessage
 import com.ggumtak.readeraplus.ui.kit.userMessage
@@ -114,10 +117,10 @@ internal object Fmt {
         return clean.coerceIn(min, max)
     }
 
-    /** "없음" or "N개 규칙" for TXT replace rules (comment lines start with #). */
+    /** "없음" or "N개 켜짐" for TXT replace rules: the rules the parser applies ([RuleList.enabledCount]). */
     fun rulesLabel(rules: String): String {
-        val n = rules.lineSequence().count { it.isNotBlank() && !it.trimStart().startsWith("#") }
-        return if (n == 0) "없음" else "${n}개 규칙"
+        val n = RuleList.enabledCount(rules)
+        return if (n == 0) "없음" else "${n}개 켜짐"
     }
 
     /** Number of non-comment rule lines without "=>" or whose pattern does not compile. */
@@ -288,11 +291,11 @@ internal object GoToText {
 
 /** Error texts the extras show (never a raw exception message: platform ones are English and may hold paths). */
 internal object ErrorText {
-    /** "폰트를 추가할 수 없습니다: 글꼴 파일이 너무 큽니다" (just the first part when there is nothing useful to add). */
+    /** "글꼴을 추가할 수 없습니다: 글꼴 파일이 너무 큽니다" (just the first part when there is nothing useful to add). */
     fun fontImport(t: Throwable): String {
         val why = ownReason(t)
             ?: if (t is IOException || t is SecurityException || t is OutOfMemoryError || isNoSpace(t)) userMessage(t) else null
-        return if (why != null) "폰트를 추가할 수 없습니다: $why" else "폰트를 추가할 수 없습니다"
+        return if (why != null) "글꼴을 추가할 수 없습니다: $why" else "글꼴을 추가할 수 없습니다"
     }
 
     /**
@@ -332,13 +335,16 @@ internal object SearchText {
 
 /**
  * Size / placement maths of the compact reading-settings popup and the drop-down lists it opens (px in the reader
- * window). Sized for the ~6" 360×720 dp e-ink screen: at most 86% of the width (≤ 330 dp) and 55% of the height.
+ * window). Sized for the ~6" 360×720 dp e-ink screen: the whole width but a 4 dp gap on each side (≤ 420 dp, A9: a
+ * narrower popup left a strip of clipped page text beside it) and at most 55% of the height, so the lower half of the
+ * page stays in view as the preview.
  */
 internal object PopupGeometry {
     /** Rows of the popup's main section: 스타일, 글꼴, 글자 크기, 굵기, 줄 간격, 문단 간격, 들여쓰기, 정렬, 줄바꿈, 더보기. */
     const val MAIN_ROWS = 10
-    const val WIDTH_FRACTION = 0.86f
-    const val MAX_WIDTH_DP = 330
+    /** Space left beside the popup, both sides together (dp): it sits 4 dp inside the right edge. */
+    const val SIDE_GAP_DP = 8
+    const val MAX_WIDTH_DP = 420
     const val HEIGHT_FRACTION = 0.55f
     /** Smallest useful height (dp) when the space under the anchor is short (landscape / split screen). */
     const val MIN_HEIGHT_DP = 160
@@ -348,9 +354,9 @@ internal object PopupGeometry {
     /** Top and maximum (or actual, for a list) height. */
     class Placement(val top: Int, val height: Int)
 
-    /** Popup width: min(86% of [screenW], 330 dp), never wider than the screen. */
+    /** Popup width: min([screenW] − 8 dp, 420 dp), never wider than the screen. */
     fun width(screenW: Int, density: Float): Int =
-        minOf((screenW * WIDTH_FRACTION).toInt(), (MAX_WIDTH_DP * density).roundToInt(), screenW).coerceAtLeast(1)
+        minOf(screenW - (SIDE_GAP_DP * density).roundToInt(), (MAX_WIDTH_DP * density).roundToInt(), screenW).coerceAtLeast(1)
 
     /**
      * The settings popup under the top bar whose bottom edge is at [anchorBottom]: its top and max height
@@ -387,10 +393,194 @@ internal object PopupGeometry {
         (anchorRight - width).coerceIn(0, (screenW - width).coerceAtLeast(0))
 }
 
-/** Which one-tap style preset the settings currently match (shown inverted in the popup's "스타일" row). */
+/**
+ * Which style the settings currently match (shown inverted in the popup's "스타일" row: the one-tap presets and the
+ * "내 스타일" button), and the list edits of the saved styles (T1-8; [UserStyles.MAX] at most, names unique).
+ */
 internal object StyleChoice {
+    /** Label of the saved-styles button when no saved style matches. */
+    const val USER_LABEL = "내 스타일"
+
     /** The first preset whose typography equals [s] exactly, or null ("사용자 설정"). */
     fun selected(s: ReaderSettings): StylePreset? = StylePreset.entries.firstOrNull { it.matches(s) }
+
+    /** The first saved style [s] looks exactly like, or null. */
+    fun selectedUser(s: ReaderSettings, styles: List<UserStyle>): UserStyle? = styles.firstOrNull { it.matches(s) }
+
+    /** The saved-styles button text: the matching style's name, else "내 스타일". */
+    fun userLabel(match: UserStyle?): String = match?.name ?: USER_LABEL
+
+    /** Whether one more style can be saved under [name] (a new name needs a free slot; an existing one is replaced). */
+    fun canSave(list: List<UserStyle>, name: String): Boolean = list.size < UserStyles.MAX || list.any { it.name == name }
+
+    /** [list] with [style] in place of the style of the same name, or appended (the caller checked [canSave]). */
+    fun put(list: List<UserStyle>, style: UserStyle): List<UserStyle> {
+        val i = list.indexOfFirst { it.name == style.name }
+        return if (i >= 0) list.toMutableList().also { it[i] = style } else (list + style).take(UserStyles.MAX)
+    }
+
+    /** [list] with style [old] renamed to [newName] (cleaned), or null when the name is empty or taken by another. */
+    fun rename(list: List<UserStyle>, old: String, newName: String): List<UserStyle>? {
+        val n = UserStyles.cleanName(newName)
+        if (n.isEmpty() || (n != old && list.any { it.name == n })) return null
+        return list.map { if (it.name == old) it.copy(name = n) else it }
+    }
+
+    fun remove(list: List<UserStyle>, name: String): List<UserStyle> = list.filter { it.name != name }
+}
+
+/**
+ * The TXT options of the reading-settings popup (T1-9): what it shows are the book's effective values
+ * (`Settings.reader.withTxt(override)`); what it stores is the override those values need. Pure, unit-tested.
+ */
+internal object TxtEdits {
+    /** [s] with the TXT parse options of [src] (the seven fields a [TxtOverride] can hold); the rest of [s] kept. */
+    fun withTxtFrom(s: ReaderSettings, src: ReaderSettings): ReaderSettings {
+        if (sameTxt(s, src)) return s
+        return s.copy(
+            txtBlankLines = src.txtBlankLines,
+            txtStripIndent = src.txtStripIndent,
+            txtJoinWrappedLines = src.txtJoinWrappedLines,
+            txtDetectChapters = src.txtDetectChapters,
+            txtChapterRegex = src.txtChapterRegex,
+            txtEmphasizeHeadings = src.txtEmphasizeHeadings,
+            txtReplaceRules = src.txtReplaceRules,
+        )
+    }
+
+    fun sameTxt(a: ReaderSettings, b: ReaderSettings): Boolean =
+        a.txtBlankLines == b.txtBlankLines && a.txtStripIndent == b.txtStripIndent &&
+            a.txtJoinWrappedLines == b.txtJoinWrappedLines && a.txtDetectChapters == b.txtDetectChapters &&
+            a.txtChapterRegex == b.txtChapterRegex && a.txtEmphasizeHeadings == b.txtEmphasizeHeadings &&
+            a.txtReplaceRules == b.txtReplaceRules
+
+    /**
+     * The override that makes [global] read like [eff]: only the options that differ (so the book keeps following the
+     * defaults it agrees with); null when there is no difference ("이 책 설정 지우기" then has nothing to clear).
+     */
+    fun overrideFor(global: ReaderSettings, eff: ReaderSettings): TxtOverride? {
+        val o = TxtOverride(
+            blankLines = eff.txtBlankLines.takeIf { it != global.txtBlankLines },
+            stripIndent = eff.txtStripIndent.takeIf { it != global.txtStripIndent },
+            joinWrapped = eff.txtJoinWrappedLines.takeIf { it != global.txtJoinWrappedLines },
+            detectChapters = eff.txtDetectChapters.takeIf { it != global.txtDetectChapters },
+            chapterRegex = eff.txtChapterRegex.takeIf { it != global.txtChapterRegex },
+            emphasizeHeadings = eff.txtEmphasizeHeadings.takeIf { it != global.txtEmphasizeHeadings },
+            replaceRules = eff.txtReplaceRules.takeIf { it != global.txtReplaceRules },
+        )
+        return if (o.isEmpty) null else o
+    }
+
+    /** The rule text after appending [rule] to [rules] (a line of its own); [rules] unchanged when it already has it. */
+    fun appendRule(rules: String, rule: String): String {
+        val body = rules.trimEnd()
+        if (body.lineSequence().any { it.trim() == rule.trim() }) return rules
+        return if (body.isEmpty()) rule else "$body\n$rule"
+    }
+}
+
+/** Korean particles after a word the app quotes (a selected phrase, a style name). Pure. */
+internal object Josa {
+    /** "이" after a final consonant, "가" after a vowel, "이(가)" when the word ends in something else. */
+    fun iGa(word: String): String = pick(word, "이", "가", "이(가)")
+
+    /** "을" / "를" / "을(를)". */
+    fun eulReul(word: String): String = pick(word, "을", "를", "을(를)")
+
+    private fun pick(word: String, consonant: String, vowel: String, unknown: String): String {
+        val c = word.lastOrNull { it.isLetterOrDigit() } ?: return unknown
+        return when {
+            c in '가'..'힣' -> if ((c - '가') % 28 != 0) consonant else vowel
+            // 영 일 삼 육 칠 팔 end in a consonant; 이 사 오 구 do not.
+            c in '0'..'9' -> if (c in "013678") consonant else vowel
+            else -> unknown
+        }
+    }
+}
+
+/**
+ * The TTS voice list (A13): Korean voices first, then the book's language, with readable names such as
+ * "한국어 · 목소리 2 (고음질, 오프라인)" instead of engine ids. Pure (android.speech.tts.Voice is mapped by the caller).
+ */
+internal object VoiceChoice {
+    /** One engine voice: [lang] is the ISO 639 code, [language] its name in Korean ("한국어"). */
+    class Info(
+        val name: String,
+        val lang: String,
+        val language: String,
+        val quality: Int,
+        val network: Boolean,
+        val notInstalled: Boolean,
+    )
+
+    /**
+     * The voices to offer, in order, with their labels: Korean ("ko") first, then [bookLang]'s; every voice when
+     * neither has any. Within a language by engine name, numbered from 1.
+     */
+    fun list(voices: List<Info>, bookLang: String?): List<Pair<Info, String>> {
+        val book = bookLang?.lowercase()?.takeIf { it.isNotBlank() && it != "ko" }
+        var pick = voices.filter { it.lang == "ko" || (book != null && it.lang == book) }
+        if (pick.isEmpty()) pick = voices
+        val sorted = pick.sortedWith(compareBy<Info>({ rank(it.lang, book) }, { it.language }, { it.lang }, { it.name }))
+        val counts = HashMap<String, Int>()
+        return sorted.map { v ->
+            val n = (counts[v.lang] ?: 0) + 1
+            counts[v.lang] = n
+            v to label(v, n)
+        }
+    }
+
+    fun label(v: Info, number: Int): String {
+        val notes = listOfNotNull(quality(v.quality), if (v.network) "온라인" else "오프라인", if (v.notInstalled) "설치 필요" else null)
+        return "${v.language.ifBlank { v.lang }} · 목소리 $number (${notes.joinToString(", ")})"
+    }
+
+    /** android.speech.tts.Voice.QUALITY_*: 400+ high, 300 normal, below low. */
+    fun quality(q: Int): String = when {
+        q >= 400 -> "고음질"
+        q >= 300 -> "보통 음질"
+        else -> "저음질"
+    }
+
+    private fun rank(lang: String, book: String?): Int = when (lang) {
+        "ko" -> 0
+        book -> 1
+        else -> 2
+    }
+}
+
+/**
+ * The TTS sleep timer choices (T1-11): 끔 / 15 / 30 / 45 / 60 / 90분 / 이 화 끝까지 / 2화 끝까지. Chapters
+ * ([AppSettings.ttsSleepChapters]) win over minutes. Pure.
+ */
+internal object SleepChoice {
+    class Option(val minutes: Int, val chapters: Int, val label: String)
+
+    val OPTIONS: List<Option> = listOf(0, 15, 30, 45, 60, 90).map { Option(it, 0, Fmt.minutes(it)) } +
+        Option(0, 1, "이 화 끝까지") + Option(0, 2, "2화 끝까지")
+
+    /** Chooser index of the saved values; -1 when they are not among the options (an older build's 10 / 120분). */
+    fun indexOf(minutes: Int, chapters: Int): Int =
+        if (chapters > 0) OPTIONS.indexOfFirst { it.chapters == chapters } else OPTIONS.indexOfFirst { it.chapters == 0 && it.minutes == minutes }
+
+    /** Row summary: "끔", "30분", "이 화 끝까지", "2화 끝까지". */
+    fun summary(minutes: Int, chapters: Int): String = when {
+        chapters == 1 -> "이 화 끝까지"
+        chapters >= 2 -> "${chapters}화 끝까지"
+        else -> Fmt.minutes(minutes)
+    }
+
+    /**
+     * The control bar's note while the timer runs: "3분 후 멈춤" ([remainingMs], rounded up), "이 화 끝나면 멈춤" /
+     * "다음 화 끝나면 멈춤" ([chaptersLeft] boundaries to go); "" when no timer runs.
+     */
+    fun barNote(remainingMs: Long, chaptersLeft: Int): String = when {
+        chaptersLeft == 1 -> "이 화 끝나면 멈춤"
+        chaptersLeft == 2 -> "다음 화 끝나면 멈춤"
+        chaptersLeft > 2 -> "${chaptersLeft}화 뒤 멈춤"
+        remainingMs > 0 -> "${(remainingMs + 59_999L) / 60_000L}분 후 멈춤"
+        else -> ""
+    }
 }
 
 /**

@@ -38,6 +38,12 @@ class SettingsActivity : Activity() {
         const val PAGE_LOOKUP = "lookup"
         /** Version, licenses, device info. */
         const val PAGE_ABOUT = "about"
+        /** "Wi-Fi로 책 받기" (T1-12): the upload server runs only while this page is shown and resumed. */
+        const val PAGE_WIFI = "wifi"
+        /** "읽기 기록" (T1-6): reading statistics, heatmap, finished books. */
+        const val PAGE_STATS = "stats"
+        /** "TXT 기본 정리 설정" (T1-9): the global TXT options every book without its own override uses. */
+        const val PAGE_TXT_DEFAULTS = "txt_defaults"
 
         /**
          * Raw pref (Long, epoch millis) bumped by "캐시 비우기". Modules that cache derived data outside cacheDir
@@ -57,6 +63,10 @@ class SettingsActivity : Activity() {
         internal const val REQ_FONT_IMPORT = 4301
         internal const val REQ_STORAGE_PERMISSION = 4401
 
+        /**
+         * Opens settings on [page] (null = the main list; an id this build doesn't know opens the main list too).
+         * Callable from any activity: the library drawer (PAGE_STATS, PAGE_WIFI, PAGE_ABOUT), the reader.
+         */
         fun open(context: Context, page: String? = null) {
             context.startActivity(
                 Intent(context, SettingsActivity::class.java)

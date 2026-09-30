@@ -3,6 +3,8 @@ package com.ggumtak.readeraplus.render
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
@@ -23,7 +25,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Draws a laid-out page. The page's content box is placed at (contentLeft, contentTop) in canvas coordinates.
- * Colours: black text on white, or white on black when settings.invert.
+ * Colours: black text on white, or white on black when settings.invert (pictures then drawn inverted too).
  *
  * Glyph positions come exclusively from [LineGeometry.charPositions]; text is drawn in segments split at
  * style changes and justification points, so selection/search/TTS geometry and drawing always agree.
@@ -68,7 +70,10 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         style = Paint.Style.STROKE
         strokeWidth = onePx
     }
-    private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
+    /** Pictures; in night mode through the shared inverting filter (T1-3f): no white box glaring on a black page. */
+    private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG).apply {
+        if (invert) colorFilter = nightImageFilter
+    }
     private val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     /** Background-coloured edge that keeps the ribbon apart from glyphs it touches (tiny margins, no header). */
     private val ribbonHalo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -91,6 +96,12 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private var headerSrc: String? = null
     private var headerAvail = -1f
     private var headerText: CharSequence = ""
+
+    /** Footer left text last fitted: chars of it drawn ([FooterFit]), or -1 = draw [footerCut] (redraws reuse them). */
+    private var footerSrc: String? = null
+    private var footerAvail = -1f
+    private var footerEnd = 0
+    private var footerCut: CharSequence = ""
 
     init {
         val fm = statusPaint.fontMetrics
@@ -218,12 +229,27 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val rightW = left + cw - x
         if (!fl.isNullOrEmpty()) {
             val avail = cw - rightW - (if (rightW > 0f) statusPaint.textSize else 0f)
-            if (statusPaint.measureText(fl) <= avail) {
-                canvas.drawText(fl, left, baseline, statusPaint)
-            } else if (avail > 0f) {
-                val t = TextUtils.ellipsize(fl, statusPaint, avail, TextUtils.TruncateAt.END)
-                canvas.drawText(t, 0, t.length, left, baseline, statusPaint)
-            }
+            if (avail > 0f) drawFooterLeft(canvas, fl, avail, left, baseline)
+        }
+    }
+
+    /**
+     * The footer's left text (page label, 회차, pages left, time left, joined by [FOOTER_SEP]) in [avail] px: whole
+     * items from the start while they fit — an item that doesn't fit is left out, not cut — and an ellipsized first
+     * item when even that one is too long. Fitted once per text and width: redraws of the same page (TTS highlight,
+     * selection) measure and allocate nothing.
+     */
+    private fun drawFooterLeft(canvas: Canvas, fl: String, avail: Float, x: Float, baseline: Float) {
+        if (avail != footerAvail || fl != footerSrc) {
+            footerSrc = fl
+            footerAvail = avail
+            footerEnd = FooterFit.end(fl, FOOTER_SEP, avail) { a, b -> statusPaint.measureText(fl, a, b) }
+            footerCut = if (footerEnd < 0) TextUtils.ellipsize(fl, statusPaint, avail, TextUtils.TruncateAt.END) else ""
+        }
+        if (footerEnd >= 0) {
+            canvas.drawText(fl, 0, footerEnd, x, baseline, statusPaint)
+        } else {
+            canvas.drawText(footerCut, 0, footerCut.length, x, baseline, statusPaint)
         }
     }
 
@@ -551,6 +577,46 @@ internal object BatteryMath {
 
 /** Separator between the footer's right text and the battery (the same as the reader's footer strings use). */
 private const val FOOTER_SEP = "  ·  "
+
+/**
+ * The night-mode picture filter (T1-3f): RGB inverted, alpha kept. One instance for every renderer; created on the
+ * first inverted page (a native object: never at class load).
+ */
+private val nightImageFilter: ColorMatrixColorFilter by lazy {
+    ColorMatrixColorFilter(
+        ColorMatrix(
+            floatArrayOf(
+                -1f, 0f, 0f, 0f, 255f,
+                0f, -1f, 0f, 0f, 255f,
+                0f, 0f, -1f, 0f, 255f,
+                0f, 0f, 0f, 1f, 0f,
+            ),
+        ),
+    )
+}
+
+/**
+ * How much of the footer's left text fits (pure, unit-tested): the text is items joined by a separator, and the
+ * footer shows whole items only.
+ */
+internal object FooterFit {
+    /**
+     * Chars of [text] to draw in [avail] px: all of it when it fits, else the longest run of whole [sep]-separated
+     * items from the start (without the separator after it), else -1 when not even the first item fits (the caller
+     * ellipsizes). [width] measures text[start, end); inline, so the measuring lambda costs no allocation.
+     */
+    inline fun end(text: String, sep: String, avail: Float, width: (Int, Int) -> Float): Int {
+        if (width(0, text.length) <= avail) return text.length
+        var fit = -1
+        var cut = if (sep.isEmpty()) -1 else text.indexOf(sep)
+        while (cut > 0) {
+            if (width(0, cut) > avail) break
+            fit = cut
+            cut = text.indexOf(sep, cut + sep.length)
+        }
+        return fit
+    }
+}
 
 /** Background decoder for the images of neighbouring pages (one low-priority thread, latest request only). */
 private val imagePrefetcher = LatestTaskRunner("page-image-prefetch")

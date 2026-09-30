@@ -2,6 +2,7 @@ package com.ggumtak.readeraplus.reader
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
 import android.view.Gravity
@@ -27,7 +28,7 @@ import com.ggumtak.readeraplus.ui.kit.vertical
 
 /**
  * Reader chrome (hidden by default): a top panel with actions, book title and a brightness row, and a bottom
- * panel with the page label, rotation lock, bookmark toggle and a page seek bar. White, 1px black lines,
+ * panel with the page label, rotation lock, bookmark toggle and a seek row ([이전 화] seek bar [다음 화]). White, 1px black lines,
  * no animation. Both panels swallow touches so taps never fall through to the page. While the seek bar is dragged
  * a full-width preview box floats just above the bottom panel (outside the panels, so their heights never change).
  */
@@ -44,6 +45,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         fun onBrightness(value: Float, done: Boolean)
         fun onBrightnessCollapsed(collapsed: Boolean)
         fun onPageLabel()
+        /** [이전 화] / [다음 화] beside the seek bar (T1-5): the previous / next chapter start, no return chip. */
+        fun onChapter(next: Boolean)
         fun onRotation()
         fun onRotationChooser()
         fun onBookmark()
@@ -156,11 +159,14 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
         }
         // The label takes all the room left of the buttons (≈ 208dp on the 360dp-wide Comet), so
-        // "12345 / 23259" fits; it is centred in that room rather than across the whole width.
+        // "12345 / 23259" fits; it is centred in that room rather than across the whole width. Underlined: it is
+        // the way into 페이지 이동 (A13).
         pageLabel = ctx.label("", 18f, bold = true, maxLines = 1).apply {
             gravity = Gravity.CENTER
             setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
             minHeight = ctx.dp(48)
+            paintFlags = paintFlags or Paint.UNDERLINE_TEXT_FLAG
+            contentDescription = "페이지 이동"
             background = pressableBackground()
             setOnClickListener { actions.onPageLabel() }
         }
@@ -205,7 +211,11 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
                 }
             })
         }
-        bottom.addView(seek, lp())
+        val seekRow = ctx.horizontal()
+        seekRow.addView(ctx.iconButton(R.drawable.ic_skip_previous, "이전 화") { actions.onChapter(false) })
+        seekRow.addView(seek, lp(0, WRAP_CONTENT, 1f))
+        seekRow.addView(ctx.iconButton(R.drawable.ic_skip_next, "다음 화") { actions.onChapter(true) })
+        bottom.addView(seekRow, lp())
         setBrightnessCollapsed(false)
     }
 

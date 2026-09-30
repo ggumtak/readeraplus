@@ -39,29 +39,29 @@ class ExtrasMessagesTest {
 
     @Test
     fun fontImportKeepsTheAppsOwnKoreanReason() {
-        assertEquals("폰트를 추가할 수 없습니다: TTF/OTF 글꼴 파일이 아닙니다",
+        assertEquals("글꼴을 추가할 수 없습니다: TTF/OTF 글꼴 파일이 아닙니다",
             ErrorText.fontImport(IllegalArgumentException("TTF/OTF 글꼴 파일이 아닙니다")))
-        assertEquals("폰트를 추가할 수 없습니다: 글꼴 폴더를 만들 수 없습니다",
+        assertEquals("글꼴을 추가할 수 없습니다: 글꼴 폴더를 만들 수 없습니다",
             ErrorText.fontImport(IOException("글꼴 폴더를 만들 수 없습니다")))
     }
 
     @Test
     fun fontImportNeverShowsPlatformText() {
         val fnf = ErrorText.fontImport(FileNotFoundException("/storage/emulated/0/Download/x.ttf: open failed: ENOENT"))
-        assertEquals("폰트를 추가할 수 없습니다: 파일을 찾을 수 없습니다", fnf)
-        assertEquals("폰트를 추가할 수 없습니다: 파일 접근 권한이 없습니다",
+        assertEquals("글꼴을 추가할 수 없습니다: 파일을 찾을 수 없습니다", fnf)
+        assertEquals("글꼴을 추가할 수 없습니다: 파일 접근 권한이 없습니다",
             ErrorText.fontImport(SecurityException("Permission Denial: opening provider com.android.x")))
-        assertEquals("폰트를 추가할 수 없습니다: 저장 공간이 부족합니다",
+        assertEquals("글꼴을 추가할 수 없습니다: 저장 공간이 부족합니다",
             ErrorText.fontImport(IOException("write failed: ENOSPC (No space left on device)")))
         // A full disk wins over a Korean message, and nothing useful to add leaves only the first part.
-        assertEquals("폰트를 추가할 수 없습니다: 저장 공간이 부족합니다",
+        assertEquals("글꼴을 추가할 수 없습니다: 저장 공간이 부족합니다",
             ErrorText.fontImport(IOException("복사 실패", IOException("ENOSPC"))))
-        assertEquals("폰트를 추가할 수 없습니다", ErrorText.fontImport(IllegalStateException("Unknown URI content://x")))
-        assertEquals("폰트를 추가할 수 없습니다", ErrorText.fontImport(RuntimeException()))
+        assertEquals("글꼴을 추가할 수 없습니다", ErrorText.fontImport(IllegalStateException("Unknown URI content://x")))
+        assertEquals("글꼴을 추가할 수 없습니다", ErrorText.fontImport(RuntimeException()))
         // Korean in a platform message (a file name) does not make it the app's own sentence.
-        assertEquals("폰트를 추가할 수 없습니다: 파일을 찾을 수 없습니다",
+        assertEquals("글꼴을 추가할 수 없습니다: 파일을 찾을 수 없습니다",
             ErrorText.fontImport(FileNotFoundException("/storage/emulated/0/Download/나눔명조.ttf: open failed: EACCES (Permission denied)")))
-        assertEquals("폰트를 추가할 수 없습니다: 파일을 찾을 수 없습니다",
+        assertEquals("글꼴을 추가할 수 없습니다: 파일을 찾을 수 없습니다",
             ErrorText.fontImport(FileNotFoundException("Missing file for primary:Download/나눔글꼴.ttf at /storage/emulated/0/Download/나눔글꼴.ttf")))
         for (t in listOf(IllegalStateException("Unknown URI"), FileNotFoundException("/sdcard/a.ttf"))) {
             val s = ErrorText.fontImport(t)

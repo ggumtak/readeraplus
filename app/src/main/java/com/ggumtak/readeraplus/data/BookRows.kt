@@ -76,22 +76,28 @@ internal object BookRows {
     )
 }
 
-/** Page-count arrays ⇄ BLOB (little-endian int32 per section). */
+/**
+ * Page-count arrays ⇄ BLOB (little-endian int32 per section). Since R2 (A2) an array may be partial: [UNKNOWN]
+ * marks a section not counted yet (the reader's `PageCounts.setKnown` takes only the entries ≥ 0).
+ */
 internal object PageCountCodec {
+    /** A section whose pages were not counted yet. */
+    const val UNKNOWN = -1
+
     fun encode(counts: IntArray): ByteArray {
         val buf = ByteBuffer.allocate(counts.size * 4).order(ByteOrder.LITTLE_ENDIAN)
         for (v in counts) buf.putInt(v)
         return buf.array()
     }
 
-    /** Null when the blob is malformed (length not a multiple of 4, or a negative count). */
+    /** Null when the blob is malformed (length not a multiple of 4, or a value below [UNKNOWN]). */
     fun decode(blob: ByteArray?): IntArray? {
         if (blob == null || blob.size % 4 != 0) return null
         val buf = ByteBuffer.wrap(blob).order(ByteOrder.LITTLE_ENDIAN)
         val out = IntArray(blob.size / 4)
         for (i in out.indices) {
             val v = buf.getInt()
-            if (v < 0) return null
+            if (v < UNKNOWN) return null
             out[i] = v
         }
         return out

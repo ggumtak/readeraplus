@@ -74,15 +74,18 @@ class CompactSettingsTest {
     // ------------------------------------------------------------------ popup size maths
 
     @Test
-    fun popupWidthIs86PercentCappedAt330dp() {
-        // 720 px wide at 2.0 (360 dp): 86% = 619 px (309 dp) < 330 dp.
-        assertEquals(619, PopupGeometry.width(720, 2f))
-        // 1600 px at 2.0 (800 dp): capped at 330 dp.
-        assertEquals(660, PopupGeometry.width(1600, 2f))
+    fun popupWidthIsTheScreenLess8dpCappedAt420dp() {
+        // A9: the Comet, 720 px wide at 2.0 (360 dp): 352 dp, a 4 dp gap on each side (no clipped page text beside it).
+        assertEquals(704, PopupGeometry.width(720, 2f))
+        // 1600 px at 2.0 (800 dp): capped at 420 dp.
+        assertEquals(840, PopupGeometry.width(1600, 2f))
         // 1080 px at 3.0 (360 dp).
-        assertEquals(928, PopupGeometry.width(1080, 3f))
+        assertEquals(1056, PopupGeometry.width(1080, 3f))
+        // 840 px at 2.0 (420 dp): 412 dp, still the gap rule.
+        assertEquals(824, PopupGeometry.width(840, 2f))
         assertTrue(PopupGeometry.width(100, 2f) <= 100)
         assertEquals(1, PopupGeometry.width(0, 2f))
+        assertEquals(1, PopupGeometry.width(10, 2f))
     }
 
     @Test

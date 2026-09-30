@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- API 31+ system splash screen: plain white, no icon, so a cold start is one e-ink update instead of 2-3 (the
+         animated icon and its exit animation are several). It only shows on process / task starts (launcher, a file
+         manager opening a book), never when the library opens a book. ReaderTheme and the dialog themes inherit
+         AppTheme, so they get these too. LibraryActivity / ReaderActivity also remove the splash view without an
+         exit animation (splashScreen.setOnExitAnimationListener { it.remove() }). -->
+    <style name="AppTheme" parent="Base.AppTheme">
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="android:windowSplashScreenBackground">@android:color/white</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@android:color/white</item>
+    </style>
+</resources>

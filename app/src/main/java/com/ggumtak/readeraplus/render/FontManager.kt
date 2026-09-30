@@ -88,7 +88,12 @@ object FontManager {
         return out
     }
 
-    /** Font entry for [id], or null if unknown / no longer present / not a readable font file. */
+    /**
+     * Font entry for [id], or null if unknown / no longer present / not a readable font file. Bundled and system ids
+     * are a map lookup. A `user:` id's first lookup lists the font folders and reads that file's name table (disk IO):
+     * the reader makes it in its open IO block (A12-2), so later lookups on the main thread (layout key, renderer,
+     * typeface) only find cached entries. Any thread.
+     */
     fun font(id: String): FontInfo? {
         builtIn[id]?.let { return it }
         if (!id.startsWith(FontFiles.USER_PREFIX)) return null

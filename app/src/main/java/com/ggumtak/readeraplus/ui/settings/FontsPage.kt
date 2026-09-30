@@ -125,7 +125,7 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         val userDir = File(activity.filesDir, "fonts").absolutePath
         for (f in fonts) listBox.addView(fontRow(f, faces[f.id], f.id == current, f.path.startsWith("$userDir/")))
         if (fonts.none { it.id == current }) {
-            missingNote = ctx.note("현재 글꼴('$current')을 찾을 수 없어 기본 글꼴(리디바탕)로 표시됩니다.").also(listBox::addView)
+            missingNote = ctx.note("현재 글꼴('$current')을 찾을 수 없어 기본 글꼴(나눔명조)로 표시됩니다.").also(listBox::addView)
         }
     }
 

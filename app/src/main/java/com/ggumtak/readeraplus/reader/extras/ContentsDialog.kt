@@ -1,14 +1,25 @@
 package com.ggumtak.readeraplus.reader.extras
 
+import android.app.AlertDialog
 import android.app.Dialog
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.TextPaint
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-import android.widget.AbsListView
 import android.widget.BaseAdapter
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -18,25 +29,41 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Bookmark
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.Quote
+import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
+import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.Settings
+import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.InkNumPad
+import com.ggumtak.readeraplus.ui.kit.InkPager
+import com.ggumtak.readeraplus.ui.kit.InkPagerBar
 import com.ggumtak.readeraplus.ui.kit.MenuItem
+import com.ggumtak.readeraplus.ui.kit.NumPadState
+import com.ggumtak.readeraplus.ui.kit.alert
+import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.einkListView
 import com.ggumtak.readeraplus.ui.kit.fullScreenDialog
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
+import com.ggumtak.readeraplus.ui.kit.inkPagerKeys
+import com.ggumtak.readeraplus.ui.kit.inkPaging
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.popupMenu
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
+import com.ggumtak.readeraplus.ui.kit.prompt
+import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
+import com.ggumtak.readeraplus.ui.library.LibraryText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
@@ -45,7 +72,12 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Full-screen 목차 · 북마크 · 인용문 dialog. */
+/**
+ * Full-screen 목차 · 북마크 · 인용문 dialog. Every list is paged a screen at a time ([InkPager]: pager bar, page keys,
+ * a drag is one page jump). The TOC tab (T1-1) has a header — "540화 · 지금 123화" with [지금] [화 번호] [검색], the
+ * time left (T1-7) and, for a confidently numbered TOC, "빠진 화 3개 · 중복 1개 ›" — and marks the entries before the
+ * current one in gray.
+ */
 internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private val ctx = host.activity
     /**
@@ -60,11 +92,33 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private val tabLabels = arrayOfNulls<TextView>(3)
     private val tabBars = arrayOfNulls<View>(3)
     private val tabViews = arrayOfNulls<View>(3)
+    /** The tabs' list pagers (null while a tab loads or is empty): the page keys move the selected one. */
+    private val pagers = arrayOfNulls<InkPager>(3)
     private var tab = initialTab.coerceIn(0, 2)
     private lateinit var shareAll: View
     private var quotes: List<Quote> = emptyList()
+    /** Episode numbers of the book's TOC (BookInsightsHost), null while unknown or without a TOC. */
+    private var episodes: Episodes? = null
+    /** The TOC tab once built (its header is filled in when the episodes arrive late). */
+    private var tocTab: TocTab? = null
 
     fun show() {
+        val insights = host as? BookInsightsHost
+        if (doc0 == null || doc0.toc.isEmpty() || insights == null) {
+            open()
+            return
+        }
+        // The TOC header shows the episode numbers: a first parse (≈ 20 ms) is waited for briefly, so the dialog opens
+        // complete in one e-ink update; a slower one shows the plain header and fills it in when done.
+        EpisodeWait.run(host, if (tab == 0) EpisodeWait.PANEL_WAIT_MS else 0L) { e, timedOut ->
+            if (ctx.isFinishing || ctx.isDestroyed || stale()) return@run
+            episodes = e
+            open()
+            if (timedOut) insights.episodes { late -> if (dialog.isShowing && !stale()) applyEpisodes(late) }
+        }
+    }
+
+    private fun open() {
         val root = ctx.vertical { setBackgroundColor(Ink.WHITE) }
         // toolbar
         val bar = ctx.horizontal { minimumHeight = ctx.dp(56); setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
@@ -97,19 +151,10 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         root.addView(body, lp(MATCH_PARENT, 0, 1f))
         dialog = ctx.fullScreenDialog(root)
         dialog.setOnDismissListener { scope.cancel() }
-        dialog.pageKeysScroll({ currentList() })
+        dialog.inkPagerKeys({ pagers[tab] }, { code -> ListKeys.direction(code, Settings.app) })
         select(tab)
         dialog.show()
         PanelRegistry.dialog(ctx, dialog)
-    }
-
-    /** The list of the selected tab (bookmarks / quotes wrap theirs in a FrameLayout), or null while loading. */
-    private fun currentList(): ListView? {
-        val v = tabViews[tab] ?: return null
-        if (v is ListView) return v
-        val g = v as? ViewGroup ?: return null
-        for (i in 0 until g.childCount) (g.getChildAt(i) as? ListView)?.let { return it }
-        return null
     }
 
     /**
@@ -149,66 +194,293 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         if (!stale()) host.goTo(pos, remember = true)
     }
 
+    /** A list with its pager bar below it (the bar is the list's page indicator and ◀ / ▶ buttons). */
+    private fun pagedList(tabIndex: Int, list: ListView): LinearLayout {
+        val col = ctx.vertical()
+        col.addView(list, lp(MATCH_PARENT, 0, 1f))
+        val bar = InkPagerBar(ctx)
+        col.addView(bar)
+        pagers[tabIndex] = list.inkPaging(bar)
+        return col
+    }
+
     // ------------------------------------------------------------------ 목차
 
     private fun buildToc(): View {
-        val doc = host.document ?: return ctx.emptyMessage("문서를 여는 중입니다…")
-        val toc = doc.toc
-        if (toc.isEmpty()) {
+        val doc = host.document ?: return ctx.emptyMessage("책을 여는 중입니다…")
+        if (doc.toc.isEmpty()) {
             val hint = if (doc.format == BookFormat.TXT) "\n\n읽기 설정에서 '챕터 자동 인식'을 켜거나\n챕터 규칙(정규식)을 추가해 보세요" else ""
-            return ctx.emptyMessage("이 문서에는 목차가 없습니다$hint")
+            return ctx.emptyMessage("이 책에는 목차가 없습니다$hint")
         }
-        val n = toc.size
-        val secs = IntArray(n) { toc[it].section }
-        // -1 = not resolved yet (anchor), shown with the section start meanwhile.
-        val offs = IntArray(n) { if (toc[it].anchor == null) toc[it].offset.coerceAtLeast(0) else -1 }
-        val labels = arrayOfNulls<String>(n)
-        val here = host.currentPosition()
-        var current = currentIndex(secs, offs, here)
+        return TocTab(doc).also { tocTab = it }.view
+    }
 
-        val list = ctx.einkListView()
-        val adapter = object : BaseAdapter() {
-            override fun getCount() = n
-            override fun getItem(position: Int) = toc[position]
-            override fun getItemId(position: Int) = position.toLong()
+    /** Episodes that arrived after the dialog showed (a slow first parse). */
+    private fun applyEpisodes(e: Episodes?) {
+        if (e == null || episodes != null) return
+        episodes = e
+        tocTab?.episodesChanged()
+    }
+
+    /** The TOC tab: header, entry list (paged) and its state. */
+    private inner class TocTab(private val doc: BookDocument) {
+        private val toc = doc.toc
+        private val n = toc.size
+        private val secs = IntArray(n) { toc[it].section }
+        /** -1 = not resolved yet (anchor), shown with the section start meanwhile. */
+        private val offs = IntArray(n) { if (toc[it].anchor == null) toc[it].offset.coerceAtLeast(0) else -1 }
+        private val labels = arrayOfNulls<String>(n)
+        private val here = host.currentPosition()
+        private var current = currentIndex(secs, offs, here)
+        /** TOC indices listed while a title filter is on (null = every entry). */
+        private var rows: IntArray? = null
+        private var query = ""
+        private var normTitles: Array<String>? = null
+
+        private val list = ctx.einkListView()
+        private val summary = ctx.label("", 15f, maxLines = 1)
+        private val nowBtn = headerButton("지금") { pager.showRow(current.coerceAtLeast(0), CURRENT_ROW) }
+        private val numBtn = headerButton("화 번호") { askEpisode() }
+        private val searchBtn = headerButton("검색") { askFilter() }
+        private val allBtn = headerButton("전체 보기") { clearFilter() }
+        private val timeLine = infoLine(Ink.GRAY)
+        private val gapsLine = infoLine(Ink.BLACK).apply {
+            paintFlags = paintFlags or Paint.UNDERLINE_TEXT_FLAG
+            setOnClickListener { episodes?.let { showGaps(it) } }
+        }
+        private val noMatch = ctx.emptyMessage("")
+        private val adapter = object : BaseAdapter() {
+            override fun getCount() = rows?.size ?: n
+            override fun getItem(position: Int) = toc[indexAt(position)]
+            override fun getItemId(position: Int) = indexAt(position).toLong()
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val row = (convertView as? LinearLayout) ?: tocRow()
-                val e = toc[position]
+                val i = indexAt(position)
+                val e = toc[i]
                 val marker = row.findViewWithTag<TextView>("marker")
                 val title = row.findViewWithTag<TextView>("title")
                 val page = row.findViewWithTag<TextView>("page")
-                val cur = position == current
+                val cur = i == current
                 row.setPadding(ctx.dp(8) + ctx.dp(16) * (e.level - 1).coerceIn(0, 6), 0, ctx.dp(16), 0)
                 marker.visibility = if (cur) View.VISIBLE else View.INVISIBLE
                 title.text = e.title.ifBlank { "(제목 없음)" }
                 title.typeface = if (cur) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                val lbl = labels[position] ?: tocPageLabel(secs[position], offs[position].coerceAtLeast(0))
-                    .also { if (offs[position] >= 0) labels[position] = it }
+                // Read episodes (before the current one) in gray.
+                title.setTextColor(if (current >= 0 && i < current) Ink.GRAY else Ink.BLACK)
+                val lbl = labels[i] ?: tocPageLabel(secs[i], offs[i].coerceAtLeast(0))
+                    .also { if (offs[i] >= 0) labels[i] = it }
                 page.text = lbl
                 return row
             }
         }
-        list.adapter = adapter
-        list.setOnItemClickListener { _, _, position, _ ->
-            val off = offs[position]
+        val view: View
+        val pager: InkPager
+
+        init {
+            val col = ctx.vertical()
+            val head = ctx.horizontal { setPadding(ctx.dp(16), 0, ctx.dp(10), 0) }
+            head.addView(summary, lp(0, WRAP_CONTENT, 1f))
+            for (b in listOf(nowBtn, numBtn, searchBtn, allBtn)) {
+                head.addView(b, lp(WRAP_CONTENT, ctx.dp(28)).apply { leftMargin = ctx.dp(6) })
+            }
+            allBtn.visibility = View.GONE
+            col.addView(head, lp(MATCH_PARENT, ctx.dp(HEADER_DP)))
+            col.addView(timeLine, lp(MATCH_PARENT, ctx.dp(INFO_DP)))
+            col.addView(gapsLine, lp(MATCH_PARENT, ctx.dp(INFO_DP)))
+            col.addView(ctx.hairline())
+            val frame = FrameLayout(ctx)
+            frame.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            noMatch.visibility = View.GONE
+            frame.addView(noMatch, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
+            col.addView(frame, lp(MATCH_PARENT, 0, 1f))
+            list.adapter = adapter
+            list.setOnItemClickListener { _, _, position, _ -> openEntry(indexAt(position)) }
+            val bar = InkPagerBar(ctx)
+            col.addView(bar)
+            pager = list.inkPaging(bar)
+            pagers[0] = pager
+            view = col
+
+            // The time left is read once: the page does not move while the dialog shows.
+            val insights = host as? BookInsightsHost
+            val time = insights?.let {
+                TocText.timeLeft(runCatching { it.minutesLeft(false) }.getOrNull(), runCatching { it.minutesLeft(true) }.getOrNull())
+            }
+            timeLine.text = time.orEmpty()
+            timeLine.visibility = if (time != null) View.VISIBLE else View.GONE
+            renderHeader()
+            if (current > CURRENT_ROW) pager.showRow(current, CURRENT_ROW)
+            startResolving()
+        }
+
+        private fun indexAt(position: Int): Int = rows?.get(position) ?: position
+
+        /** Summary, buttons and the gaps line for the current episodes / filter. */
+        private fun renderHeader() {
+            val e = episodes
+            val usable = e != null && e.usableForJump
+            val filtering = rows != null
+            summary.text = when {
+                filtering -> TocText.filterSummary(query, rows?.size ?: 0)
+                usable && e != null -> TocText.summary(n, current, e.maxNumber, if (current >= 0) e.numberAt(current) else -1)
+                else -> TocText.summary(n, current, -1, -1)
+            }
+            nowBtn.visibility = if (filtering) View.GONE else View.VISIBLE
+            numBtn.visibility = if (!filtering && usable) View.VISIBLE else View.GONE
+            allBtn.visibility = if (filtering) View.VISIBLE else View.GONE
+            val gaps = if (e != null && e.confident) TocText.gapsLine(e.gaps().size, e.dupes().size) else null
+            gapsLine.text = gaps.orEmpty()
+            gapsLine.visibility = if (gaps != null) View.VISIBLE else View.GONE
+        }
+
+        fun episodesChanged() {
+            renderHeader()
+        }
+
+        private fun openEntry(i: Int, then: (() -> Unit)? = null) {
+            val off = offs[i]
             if (off >= 0) {
-                goAndClose(DocPosition(secs[position], off))
+                goAndClose(DocPosition(secs[i], off))
+                then?.invoke()
             } else {
                 scope.launch {
-                    val p = withContext(Dispatchers.Default) { runCatching { doc.resolveToc(toc[position]) }.getOrNull() }
-                    goAndClose(p ?: DocPosition(secs[position], 0))
+                    val p = withContext(Dispatchers.Default) { runCatching { doc.resolveToc(toc[i]) }.getOrNull() }
+                    goAndClose(p ?: DocPosition(secs[i], 0))
+                    then?.invoke()
                 }
             }
         }
-        val initialFirst = if (current > 3) current - 3 else 0
-        if (initialFirst > 0) list.setSelection(initialFirst)
 
-        // Anchored entries (EPUB 'ch05.xhtml#toc_5') are resolved on demand, never all up front: resolving every
-        // entry converts almost every section of the book when page counts came from the cache (nothing converted
-        // yet). First the current section's entries (▶ marker) and the rows on screen, then whatever is scrolled
-        // into view; one list refresh per batch, and only when a page label or the marker actually changed.
-        if (offs.any { it < 0 }) {
+        /** [화 번호]: the number pad, then the entry (or the next higher number, said so after the jump). */
+        private fun askEpisode() {
+            val e = episodes ?: return
+            val lo = e.minNumber.coerceAtLeast(0)
+            val hi = e.maxNumber
+            val pad = InkNumPad.show(ctx, "이동할 화 번호", "$lo–${hi}화", NumPadState.lengthFor(hi)) { v ->
+                val i = e.find(v)
+                if (i < 0 || stale()) {
+                    TocText.missing(v)
+                } else {
+                    val found = e.numbers[i]
+                    openEntry(i) { if (found != v) noteAfterJump(host, TocText.jumped(v, found)) }
+                    null
+                }
+            }
+            PanelRegistry.dialog(ctx, pad)
+        }
+
+        /** [검색]: titles containing the words, ignoring case and spaces (the system keyboard: Hangul needs it). */
+        private fun askFilter() {
+            ctx.prompt("목차 검색", query, "제목에 들어간 말") { q -> applyFilter(q) }
+        }
+
+        private fun applyFilter(raw: String) {
+            val q = raw.trim()
+            val norm = TocText.normalize(q)
+            if (norm.isEmpty()) {
+                clearFilter()
+                return
+            }
+            val titles = normTitles ?: Array(n) { TocText.normalize(toc[it].title) }.also { normTitles = it }
+            val out = IntList(64)
+            for (i in 0 until n) if (titles[i].contains(norm)) out.add(i)
+            query = q
+            rows = out.toArray()
+            noMatch.text = TocText.noMatch(q)
+            noMatch.visibility = if (out.size == 0) View.VISIBLE else View.GONE
+            renderHeader()
+            adapter.notifyDataSetChanged()
+            pager.showRow(0)
+        }
+
+        private fun clearFilter(showCurrent: Boolean = true) {
+            if (rows == null) return
+            rows = null
+            query = ""
+            noMatch.visibility = View.GONE
+            renderHeader()
+            adapter.notifyDataSetChanged()
+            if (showCurrent) pager.showRow(current.coerceAtLeast(0), CURRENT_ROW)
+        }
+
+        /** Shows TOC entry [i] as the 4th row (a number of the gaps dialog). */
+        private fun reveal(i: Int) {
+            if (i < 0) return
+            clearFilter(showCurrent = false)
+            pager.showRow(i, CURRENT_ROW)
+        }
+
+        /** "빠진 화: 57, 120, 121 / 중복: 88화 (2번)"; a number shows its place in the list (the next entry for a gap). */
+        private fun showGaps(e: Episodes) {
+            val gaps = e.gaps()
+            val dupes = e.dupes()
+            var shown: AlertDialog? = null
+            val sb = SpannableStringBuilder()
+            fun link(text: String, target: Int) {
+                val start = sb.length
+                sb.append(text)
+                sb.setSpan(object : ClickableSpan() {
+                    override fun onClick(widget: View) {
+                        shown?.dismiss()
+                        reveal(e.find(target))
+                    }
+
+                    override fun updateDrawState(ds: TextPaint) {
+                        ds.color = Ink.BLACK
+                        ds.isUnderlineText = true
+                    }
+                }, start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            fun heading(text: String) {
+                val start = sb.length
+                sb.append(text)
+                sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                sb.append('\n')
+            }
+            if (gaps.isNotEmpty()) {
+                heading("빠진 화 ${gaps.size}개")
+                TocText.runs(gaps).forEachIndexed { k, r ->
+                    if (k > 0) sb.append(", ")
+                    link(TocText.runLabel(r), r.first)
+                }
+            }
+            if (dupes.isNotEmpty()) {
+                if (sb.isNotEmpty()) sb.append("\n\n")
+                heading("중복 ${dupes.size}개")
+                var k = 0
+                for ((num, times) in dupes) {
+                    if (k++ > 0) sb.append(", ")
+                    link("${num}화 (${times}번)", num)
+                }
+            }
+            val noteStart = sb.length
+            sb.append("\n\n번호를 누르면 목차에서 그 자리를 보여 줍니다")
+            sb.setSpan(ForegroundColorSpan(Ink.GRAY), noteStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            val text = ctx.label(sb, 16f).apply {
+                setLineSpacing(0f, 1.35f)
+                movementMethod = LinkMovementMethod.getInstance()
+                highlightColor = Color.TRANSPARENT
+            }
+            val box = ctx.vertical { setPadding(ctx.dp(24), ctx.dp(8), ctx.dp(24), ctx.dp(8)) }
+            box.addView(text, lp())
+            val d = ctx.alert().setTitle("빠진 화 · 중복")
+                .setView(ctx.einkScroll(box))
+                .setPositiveButton("닫기", null)
+                .showNoAnim()
+            shown = d
+            PanelRegistry.dialog(ctx, d)
+        }
+
+        /**
+         * Anchored entries (EPUB 'ch05.xhtml#toc_5') are resolved on demand, never all up front: resolving every
+         * entry converts almost every section of the book when page counts came from the cache (nothing converted
+         * yet). First the current section's entries (▶ marker) and the rows on screen, then whatever is paged into
+         * view; one list refresh per batch, and only when a page label or the marker actually changed.
+         */
+        private fun startResolving() {
+            if (offs.none { it < 0 }) return
             val requested = BooleanArray(n)
+            val initialFirst = if (current > CURRENT_ROW) current - CURRENT_ROW else 0
             var resolving: Job? = null
             lateinit var resolveVisible: Runnable
             fun resolve(indices: IntArray) {
@@ -237,23 +509,27 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                     if (newCurrent != current) {
                         current = newCurrent
                         changed = true
-                        // Not scrolled by the user yet: keep the current chapter in view.
-                        if (newCurrent >= 0 && list.firstVisiblePosition == initialFirst) {
-                            val sel = if (newCurrent > 3) newCurrent - 3 else 0
-                            if (sel != initialFirst) list.setSelection(sel)
+                        renderHeader()
+                        // Not paged by the user yet: keep the current chapter in view.
+                        if (newCurrent >= 0 && rows == null && list.firstVisiblePosition == initialFirst) {
+                            val sel = if (newCurrent > CURRENT_ROW) newCurrent - CURRENT_ROW else 0
+                            if (sel != initialFirst) pager.showRow(newCurrent, CURRENT_ROW)
                         }
                     }
                     if (changed) adapter.notifyDataSetChanged()
                     resolving = null
-                    list.post(resolveVisible) // rows scrolled in meanwhile
+                    list.post(resolveVisible) // rows paged in meanwhile
                 }
             }
             resolveVisible = Runnable {
                 if (resolving != null || !scope.isActive) return@Runnable
+                val count = adapter.count
+                if (count == 0) return@Runnable
                 val first = list.firstVisiblePosition
                 val last = if (list.childCount > 0) list.lastVisiblePosition else first + 20
                 val want = IntList(32)
-                for (i in (first - 2).coerceAtLeast(0)..(last + 6).coerceAtMost(n - 1)) {
+                for (p in (first - 2).coerceAtLeast(0)..(last + 6).coerceAtMost(count - 1)) {
+                    val i = indexAt(p)
                     if (offs[i] < 0 && !requested[i]) want.add(i)
                 }
                 if (want.size > 0) resolve(want.toArray())
@@ -262,29 +538,28 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             for (i in 0 until n) if (offs[i] < 0 && secs[i] == here.section) first.add(i)
             for (i in initialFirst until minOf(n, initialFirst + 24)) if (offs[i] < 0 && secs[i] != here.section) first.add(i)
             if (first.size > 0) resolve(first.toArray())
-            list.setOnScrollListener(object : AbsListView.OnScrollListener {
-                override fun onScrollStateChanged(view: AbsListView, scrollState: Int) {}
-                override fun onScroll(view: AbsListView, firstVisible: Int, visibleCount: Int, totalCount: Int) {
-                    list.removeCallbacks(resolveVisible)
-                    list.postDelayed(resolveVisible, 150)
-                }
-            })
+            pager.onMoved = {
+                list.removeCallbacks(resolveVisible)
+                list.postDelayed(resolveVisible, 150)
+            }
         }
-        return list
+    }
+
+    private fun headerButton(text: String, onClick: () -> Unit): TextView = ctx.label(text, 14f).apply {
+        gravity = Gravity.CENTER
+        setPadding(ctx.dp(10), 0, ctx.dp(10), 0)
+        // No pressed state: what the button does is the feedback (one e-ink update).
+        background = ctx.borderBox(radiusDp = 3f)
+        setOnClickListener { onClick() }
+    }
+
+    private fun infoLine(color: Int): TextView = ctx.label("", 14f, color = color, maxLines = 1).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(ctx.dp(16), 0, ctx.dp(16), 0)
     }
 
     private fun tocPageLabel(section: Int, offset: Int): String =
         PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull())
-
-    private fun currentIndex(secs: IntArray, offs: IntArray, here: DocPosition): Int {
-        var best = -1
-        for (i in secs.indices) {
-            val s = secs[i]
-            val o = offs[i].coerceAtLeast(0)
-            if (s < here.section || (s == here.section && o <= here.offset)) best = i
-        }
-        return best
-    }
 
     private fun tocRow(): LinearLayout = ctx.horizontal {
         minimumHeight = ctx.dp(52)
@@ -297,6 +572,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     // ------------------------------------------------------------------ 북마크
 
     private fun loadBookmarks(container: FrameLayout) {
+        val keep = pagers[1]?.list?.firstVisiblePosition ?: 0
+        pagers[1] = null
         container.removeAllViews()
         container.addView(ctx.emptyMessage("불러오는 중…"))
         val bookId = book.id
@@ -306,7 +583,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             tabLabels[1]?.text = if (list.isEmpty()) "북마크" else "북마크 ${list.size}"
             container.removeAllViews()
             if (list.isEmpty()) {
-                container.addView(ctx.emptyMessage("북마크가 없습니다\n\n화면 오른쪽 위 모서리를 누르거나\n메뉴에서 북마크를 추가하세요"))
+                container.addView(ctx.emptyMessage(TocText.noBookmarks(Settings.app.bookmarkByTouch)))
                 return@launch
             }
             val lv = ctx.einkListView()
@@ -331,7 +608,9 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 bookmarkMenu(view, list[position], container)
                 true
             }
-            container.addView(lv, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            container.addView(pagedList(1, lv), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            // Reloaded after an edit: stay where the user was.
+            if (keep > 0) pagers[1]?.showRow(keep)
         }
     }
 
@@ -359,6 +638,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     // ------------------------------------------------------------------ 인용문
 
     private fun loadQuotes(container: FrameLayout) {
+        val keep = pagers[2]?.list?.firstVisiblePosition ?: 0
+        pagers[2] = null
         container.removeAllViews()
         container.addView(ctx.emptyMessage("불러오는 중…"))
         val bookId = book.id
@@ -395,7 +676,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 quoteMenu(view, list[position], container)
                 true
             }
-            container.addView(lv, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            container.addView(pagedList(2, lv), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            if (keep > 0) pagers[2]?.showRow(keep)
         }
     }
 
@@ -475,6 +757,13 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull()).ifEmpty { "-" }
 
     companion object {
+        /** [지금] and a jump show the entry as the 4th row: the three above give context. */
+        const val CURRENT_ROW = 3
+        const val HEADER_DP = 36
+        const val INFO_DP = 26
+        /** A message after a jump waits for the dialog to go (the reader's window gets the focus back). */
+        const val NOTE_DELAY_MS = 300L
+
         /**
          * [all] is the book's complete, freshly loaded quote list: stores it in [QuoteCache] and re-sends the quote
          * highlights of [section] to the page (owner "quotes").
@@ -483,6 +772,201 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             runCatching { QuoteCache.put(host.book.id, all) }
             val hl = all.filter { it.section == section }.map { Highlight(it.start, it.end, HighlightKind.QUOTE) }
             runCatching { host.setHighlights("quotes", section, hl) }
+        }
+
+        /**
+         * A message after a jump from a dialog, once the reader has the focus back: a toast while a dialog has the
+         * focus is the platform's fading one (an e-ink smear), the in-window box needs the reader's window.
+         */
+        fun noteAfterJump(host: ReaderHost, text: String) {
+            val ctx = host.activity
+            host.pageView.postDelayed({ if (!ctx.isFinishing && !ctx.isDestroyed) ctx.toast(text) }, NOTE_DELAY_MS)
+        }
+
+        /** [currentIndex] over [doc]'s TOC, anchored entries taken at their section start (the go-to dialog). */
+        fun currentIndex(doc: BookDocument, here: DocPosition): Int {
+            val toc = doc.toc
+            return currentIndex(IntArray(toc.size) { toc[it].section }, IntArray(toc.size) { if (toc[it].anchor == null) toc[it].offset else 0 }, here)
+        }
+
+        /** Index of the TOC entry the reading position [here] is in: the last one at or before it; -1 if none. */
+        fun currentIndex(secs: IntArray, offs: IntArray, here: DocPosition): Int {
+            var best = -1
+            for (i in secs.indices) {
+                val s = secs[i]
+                val o = offs[i].coerceAtLeast(0)
+                if (s < here.section || (s == here.section && o <= here.offset)) best = i
+            }
+            return best
+        }
+    }
+}
+
+/**
+ * Waits a moment for the open book's [Episodes] before a panel shows (T1-1), so it opens complete: one e-ink update
+ * instead of a header that changes right after. Main thread only.
+ */
+internal object EpisodeWait {
+    /** Longest wait for a first parse before the panel shows without it (≈ 20 ms for 2,000 titles). */
+    const val PANEL_WAIT_MS = 200L
+
+    private var pending: Job? = null
+
+    /**
+     * Runs [ready] once with the episodes — at once when already parsed — or, after [waitMs], with null and
+     * `timedOut` = true (the caller then asks [BookInsightsHost.episodes] again to fill in a late result). A host
+     * without [BookInsightsHost] gets `ready(null, false)` at once. Closing the book ([ReaderPanels.dismissAll]) drops
+     * a pending wait; a second request while one waits is dropped (a double tap opens one panel).
+     */
+    fun run(host: ReaderHost, waitMs: Long, ready: (episodes: Episodes?, timedOut: Boolean) -> Unit) {
+        if (pending?.isActive == true) return
+        val insights = host as? BookInsightsHost
+        if (insights == null) {
+            ready(null, false)
+            return
+        }
+        val job = Job()
+        val handler = Handler(Looper.getMainLooper())
+        var sync = true
+        var arrived = false
+        var syncResult: Episodes? = null
+        val timeout = Runnable {
+            if (!job.isActive) return@Runnable
+            job.complete()
+            ready(null, true)
+        }
+        insights.episodes { e ->
+            if (arrived) return@episodes
+            arrived = true
+            if (sync) {
+                syncResult = e
+                return@episodes
+            }
+            handler.removeCallbacks(timeout)
+            // Posted: the host's listener catches exceptions, and a failing panel must not be silent.
+            handler.post {
+                if (!job.isActive) return@post
+                job.complete()
+                ready(e, false)
+            }
+        }
+        sync = false
+        if (arrived) {
+            ready(syncResult, false)
+            return
+        }
+        pending = job
+        PanelRegistry.job(host.activity, job)
+        if (waitMs <= 0L) handler.post(timeout) else handler.postDelayed(timeout, waitMs)
+    }
+}
+
+/** Hardware page keys of the paged lists (TOC, 북마크, 인용문, search results). Pure; unit-tested. */
+internal object ListKeys {
+    /**
+     * +1 next page, -1 previous, 0 not a page key. A key bound to 다음 / 이전 페이지 (or 화) pages; a key bound to
+     * "없음(시스템에 맡김)" stays the system's; otherwise the volume keys (when they turn pages), PAGE_UP / DOWN and the
+     * learned page keys, like the library. BACK / ESCAPE / HOME are never taken.
+     */
+    fun direction(keyCode: Int, app: AppSettings): Int {
+        if (keyCode == KeyEvent.KEYCODE_BACK || keyCode == KeyEvent.KEYCODE_ESCAPE || keyCode == KeyEvent.KEYCODE_HOME) return 0
+        when (if (app.keyBindings.isEmpty()) null else app.keyBindings[keyCode]) {
+            TapAction.NEXT, TapAction.NEXT_CHAPTER -> return 1
+            TapAction.PREV, TapAction.PREV_CHAPTER -> return -1
+            TapAction.NONE -> return 0
+            else -> {}
+        }
+        return LibraryText.keyDirection(keyCode, app.volumeKeysTurn, app.invertVolumeKeys, app.nextPageKeys, app.prevPageKeys)
+    }
+}
+
+/** Texts of the TOC tab (header, filter, gaps dialog, jump notes). Pure; unit-tested. */
+internal object TocText {
+    /**
+     * Header summary: "540화 · 지금 123화" when the episodes are usable ([maxNumber] ≥ 0; [currentNumber] -1 leaves out
+     * "지금"), else "목차 612개 · 지금 87번째" ([current] = TOC index, -1 before the first entry: "목차 612개").
+     */
+    fun summary(count: Int, current: Int, maxNumber: Int, currentNumber: Int): String = when {
+        maxNumber >= 0 && currentNumber >= 0 -> "${maxNumber}화 · 지금 ${currentNumber}화"
+        maxNumber >= 0 -> "${maxNumber}화"
+        current >= 0 -> "목차 ${count}개 · 지금 ${current + 1}번째"
+        else -> "목차 ${count}개"
+    }
+
+    /** "남은 시간  이 화 3분 · 책 7시간" (either part may be missing); null when both are unknown. */
+    fun timeLeft(episodeMinutes: Int?, bookMinutes: Int?): String? {
+        val parts = ArrayList<String>(2)
+        if (episodeMinutes != null) parts += "이 화 ${ReaderFormat.duration(episodeMinutes)}"
+        if (bookMinutes != null) parts += "책 ${ReaderFormat.duration(bookMinutes)}"
+        return if (parts.isEmpty()) null else "남은 시간  " + parts.joinToString(" · ")
+    }
+
+    /** "빠진 화 3개 · 중복 1개 ›" (either part alone), or null when there is nothing to report. */
+    fun gapsLine(gaps: Int, dupes: Int): String? {
+        val parts = ArrayList<String>(2)
+        if (gaps > 0) parts += "빠진 화 ${gaps}개"
+        if (dupes > 0) parts += "중복 ${dupes}개"
+        return if (parts.isEmpty()) null else parts.joinToString(" · ") + " ›"
+    }
+
+    /** "'외전' 12개" while the list is filtered. */
+    fun filterSummary(query: String, count: Int): String = "‘$query’ ${count}개"
+
+    /** "'외전'이 들어간 제목이 없습니다". */
+    fun noMatch(query: String): String = "‘$query’${subjectParticle(query)} 들어간 제목이 없습니다"
+
+    /** Lowercase without any whitespace: titles are matched ignoring case and spaces. */
+    fun normalize(s: String): String {
+        val sb = StringBuilder(s.length)
+        for (c in s) if (!Character.isWhitespace(c) && c != '　' && c != ' ') sb.append(c.lowercaseChar())
+        return sb.toString()
+    }
+
+    /** Ascending [nums] as runs: 3 or more consecutive numbers make one range ("120–125"); pairs stay two numbers. */
+    fun runs(nums: List<Int>): List<IntRange> {
+        val out = ArrayList<IntRange>()
+        var i = 0
+        while (i < nums.size) {
+            var j = i
+            while (j + 1 < nums.size && nums[j + 1] == nums[j] + 1) j++
+            if (j - i >= 2) {
+                out += nums[i]..nums[j]
+            } else {
+                for (k in i..j) out += nums[k]..nums[k]
+            }
+            i = j + 1
+        }
+        return out
+    }
+
+    /** "57" or "120–125". */
+    fun runLabel(r: IntRange): String = if (r.first == r.last) "${r.first}" else "${r.first}–${r.last}"
+
+    /** The go-to dialog's [화] hint: "1–540화 · 지금 123화" ([current] -1: without "지금"). */
+    fun episodeHint(min: Int, max: Int, current: Int): String =
+        "${min.coerceAtLeast(0)}–${max}화" + if (current >= 0) " · 지금 ${current}화" else ""
+
+    /** After a jump to the next higher episode: "57화가 없어 58화로 이동했습니다". */
+    fun jumped(asked: Int, found: Int): String = "${asked}화가 없어 ${found}화로 이동했습니다"
+
+    /** No such episode and none above it: "541화가 없습니다". */
+    fun missing(n: Int): String = "${n}화가 없습니다"
+
+    /** The bookmark tab's empty text; the corner tap is mentioned only when it is on ("북마크 모서리 터치"). */
+    fun noBookmarks(byTouch: Boolean): String =
+        if (byTouch) "북마크가 없습니다\n\n화면 오른쪽 위 모서리를 누르거나\n메뉴에서 북마크를 추가하세요"
+        else "북마크가 없습니다\n\n메뉴에서 북마크를 추가하세요"
+
+    /**
+     * 이 / 가 after [word]: by the final consonant of a last Hangul syllable, or of a last digit as read in Korean
+     * (영 일 삼 육 칠 팔 end in one); "이(가)" for anything else.
+     */
+    fun subjectParticle(word: String): String {
+        val c = word.trimEnd().lastOrNull() ?: return "이(가)"
+        return when {
+            c in '가'..'힣' -> if ((c - '가') % 28 != 0) "이" else "가"
+            c in '0'..'9' -> if (c in "013678") "이" else "가"
+            else -> "이(가)"
         }
     }
 }

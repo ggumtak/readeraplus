@@ -2,6 +2,7 @@ package com.ggumtak.readeraplus.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.database.sqlite.SQLiteDatabase
 import android.util.Log
 import com.ggumtak.readeraplus.settings.Settings
 import java.io.File
@@ -10,8 +11,8 @@ import java.io.OutputStream
 import java.io.OutputStreamWriter
 
 /**
- * JSON export/import of library state (flags, positions, bookmarks, quotes,
- * collections, reviews) + settings. File format: see [BackupJson] / [SettingsJson].
+ * JSON export/import of library state (flags, positions, bookmarks, quotes, collections, reviews, reading log,
+ * per-book prefs) + settings. File format: see [BackupJson] / [SettingsJson].
  */
 object Backup {
     private const val TAG = "Backup"
@@ -33,9 +34,20 @@ object Backup {
         }.groupBy({ it.first }, { it.second })
         val collectionNames = db.queryList(LibrarySql.SELECT_COLLECTION_NAMES, null) { it.getString(0) ?: "" }
             .filter { it.isNotBlank() }
+        val logs = db.queryList(LibrarySql.SELECT_ALL_LOG, null) { c ->
+            c.getLong(0) to BackupLogDay(c.getInt(1), c.getLong(2), c.getInt(3), c.getLong(4))
+        }.groupBy({ it.first }, { it.second })
+        val prefs = HashMap<Long, BackupPrefs>()
+        db.queryList(LibrarySql.SELECT_ALL_BOOK_PREFS, null) { c ->
+            c.getLong(0) to BackupPrefs(
+                txtOverride = if (c.isNull(1)) null else TxtOverride.fromJson(c.getString(1)),
+                finishedAt = c.getLong(2),
+                episodeLabel = if (c.isNull(3)) null else c.getString(3),
+            )
+        }.forEach { (id, p) -> if (!p.isEmpty) prefs[id] = p }
 
         val settings = try {
-            SettingsJson.settingsToJson(Settings.reader, Settings.app, Settings.raw().all)
+            SettingsJson.settingsToJson(Settings.reader, Settings.app, Settings.raw().all, Settings.userStyles)
         } catch (t: Throwable) {
             Log.w(TAG, "settings export failed", t)
             null
@@ -49,6 +61,8 @@ object Backup {
                     memberships[b.id].orEmpty(),
                     bookmarks[b.id].orEmpty(),
                     quotes[b.id].orEmpty(),
+                    logs[b.id].orEmpty(),
+                    prefs[b.id],
                 )
             },
             collections = collectionNames,
@@ -188,6 +202,13 @@ object Backup {
                         }
                     }
                 }
+                for (d in b.readingLog) {
+                    // The larger value of each column wins: restoring the same backup twice adds nothing.
+                    if (exec(LibrarySql.LOG_RESTORE, d.seconds, d.pages, d.chars, d.day, id) == 0) {
+                        insertRow(LibrarySql.LOG_INSERT, d.day, d.seconds, d.pages, d.chars, id)
+                    }
+                }
+                restorePrefs(this, id, b)
                 if (b.quotes.isNotEmpty()) {
                     val existing = HashMap<String, Quote>()
                     for (q in queryList(LibrarySql.SELECT_QUOTES, args(id), BookRows::quote)) {
@@ -212,6 +233,20 @@ object Backup {
         }
     }
 
+    /** [b]'s prefs over the book's current row ([BackupJson.mergePrefs]); must run inside a transaction. */
+    private fun restorePrefs(db: SQLiteDatabase, id: Long, b: BackupBook) {
+        val current = db.queryFirst(LibrarySql.SELECT_BOOK_PREFS, args(id)) { c ->
+            PrefsRow(if (c.isNull(0)) null else c.getString(0), c.getLong(1), if (c.isNull(2)) null else c.getString(2))
+        }
+        val merged = BackupJson.mergePrefs(current, b.prefs, b.haveRead)
+        if (merged == current) return
+        if (merged == null) {
+            db.exec(LibrarySql.DELETE_BOOK_PREFS_OF_BOOK, id)
+        } else if (db.exec(LibrarySql.SET_PREFS_ROW, merged.txtOverride, merged.finishedAt, merged.episodeLabel, id) == 0) {
+            db.insertRow(LibrarySql.INSERT_PREFS_ROW, merged.txtOverride, merged.finishedAt, merged.episodeLabel, id)
+        }
+    }
+
     private fun applySettings(s: org.json.JSONObject) {
         try {
             s.optJSONObject("reader")?.let { Settings.saveReader(SettingsJson.readerFromJson(it, Settings.reader)) }
@@ -222,6 +257,12 @@ object Backup {
             s.optJSONObject("app")?.let { Settings.saveApp(SettingsJson.appFromJson(it, Settings.app)) }
         } catch (t: Throwable) {
             Log.w(TAG, "app settings restore failed", t)
+        }
+        try {
+            // Typed like reader/app (the in-memory list must change too); absent in older backups = keep the device's.
+            SettingsJson.userStylesFromJson(s)?.let { Settings.saveUserStyles(it) }
+        } catch (t: Throwable) {
+            Log.w(TAG, "user styles restore failed", t)
         }
         try {
             val prefs = Settings.raw()

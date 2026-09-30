@@ -2,17 +2,34 @@ package com.ggumtak.readeraplus.reader
 
 /**
  * Counts page turns and decides when to flash a full e-ink refresh (pure, unit-tested).
- * [every] = 0 disables the periodic refresh; [onChapter] refreshes when a new chapter is shown.
+ * [every] = 0 disables the periodic refresh; [onChapter] refreshes when a new chapter is shown. Every trigger is
+ * opt-in (spec rule 5): with the defaults nothing here ever asks for a flash.
  */
 class EinkCadence(var every: Int = 0, var onChapter: Boolean = false) {
     private var turns = 0
+    /** Picture coverage of the page shown last ([imageDue]). */
+    private var lastCoverage = 0f
 
-    /** Call once per displayed page turn. Returns true when a full refresh should follow. */
-    fun onTurn(chapterChanged: Boolean): Boolean {
-        if (onChapter && chapterChanged) {
+    /**
+     * Call once per displayed page turn. Returns true when a full refresh should follow: a new chapter
+     * ([onChapter]), a picture page ([imageDue], T1-3c) or the [every]-th turn. At most one refresh per turn; each
+     * restarts the count.
+     */
+    fun onTurn(chapterChanged: Boolean, imageDue: Boolean = false): Boolean {
+        if ((onChapter && chapterChanged) || imageDue) {
             turns = 0
             return true
         }
+        return count()
+    }
+
+    /**
+     * A panel over the page closed (TOC, search, the reading-settings popup, the chrome; T1-3d): it counts as one
+     * turn toward [every], so a refresh that falls due clears the panel's ghost. Nothing without a cadence.
+     */
+    fun onPanelClosed(): Boolean = count()
+
+    private fun count(): Boolean {
         if (every <= 0) return false
         turns++
         if (turns >= every) {
@@ -20,6 +37,17 @@ class EinkCadence(var every: Int = 0, var onChapter: Boolean = false) {
             return true
         }
         return false
+    }
+
+    /**
+     * T1-3c, only with AppSettings.einkFlashImages on: [coverage] is the picture share of the page just shown
+     * (render.ImageCoverage); true when it is a picture page, or when the share changed by as much from the page
+     * before (a picture leaves its ghost on the next text page). Records [coverage] for the next call.
+     */
+    fun imageDue(coverage: Float): Boolean {
+        val prev = lastCoverage
+        lastCoverage = coverage
+        return coverage >= IMAGE_COVERAGE || Math.abs(coverage - prev) >= IMAGE_COVERAGE
     }
 
     /** A manual refresh restarts the count. */
@@ -30,6 +58,16 @@ class EinkCadence(var every: Int = 0, var onChapter: Boolean = false) {
     companion object {
         /** Turns closer together than this are fast flipping: a due full refresh waits until they stop. */
         const val RAPID_TURN_MS = 450L
+
+        /** Picture share of a page (or change of it between two pages) that makes a picture page (T1-3c). */
+        const val IMAGE_COVERAGE = 0.075f
+
+        /**
+         * The cadence for the page's colours (T1-3b): [night] (AppSettings.einkRefreshEveryNight) while [inverted],
+         * unless it is negative ("낮과 같게"), else [day] (AppSettings.einkRefreshEvery).
+         */
+        fun everyFor(day: Int, night: Int, inverted: Boolean): Int =
+            if (inverted && night >= 0) night else day
 
         /**
          * Delay before a due full refresh: none while reading normally, but while pages are being flipped fast (the

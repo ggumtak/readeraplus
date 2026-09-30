@@ -21,6 +21,23 @@ internal data class BackupQuote(
     val createdAt: Long,
 )
 
+/** One day of a book's reading log (T1-6); [day] = local yyyymmdd. */
+internal data class BackupLogDay(val day: Int, val seconds: Long, val pages: Int, val chars: Long)
+
+/** A book's `book_prefs` row (T1-9 / T1-2 / T2-13). [finishedAt] 0 = not finished. */
+internal data class BackupPrefs(
+    val txtOverride: TxtOverride? = null,
+    val finishedAt: Long = 0,
+    val episodeLabel: String? = null,
+) {
+    val isEmpty: Boolean get() = txtOverride == null && finishedAt <= 0 && episodeLabel == null
+}
+
+/** A `book_prefs` row as stored ([txtOverride] = the column's JSON text); see [BackupJson.mergePrefs]. */
+internal data class PrefsRow(val txtOverride: String?, val finishedAt: Long, val episodeLabel: String?) {
+    val isEmpty: Boolean get() = txtOverride == null && finishedAt <= 0 && episodeLabel == null
+}
+
 /** One library entry in a backup file. */
 internal data class BackupBook(
     val path: String,
@@ -50,6 +67,10 @@ internal data class BackupBook(
     val collections: List<String> = emptyList(),
     val bookmarks: List<BackupBookmark> = emptyList(),
     val quotes: List<BackupQuote> = emptyList(),
+    /** Reading log rows, ascending by day (R2; absent in older backups). */
+    val readingLog: List<BackupLogDay> = emptyList(),
+    /** The book's prefs row (R2; null in older backups and for books without one). */
+    val prefs: BackupPrefs? = null,
 )
 
 internal class BackupData(
@@ -64,10 +85,18 @@ internal class BackupData(
 /**
  * Backup file ⇄ model mapping (org.json; pure). Reading is tolerant: missing / wrong-typed fields fall back to
  * defaults, JSON nulls are treated as missing, non-object array items are skipped.
+ *
+ * R2 added two optional per-book keys (so the format version stays 1: older builds ignore them, older backups lack
+ * them): `readingLog` (`[{day, seconds, pages, chars}]`) and `prefs` (`{txtOverride: {…}, finishedAt,
+ * episodeLabel}`), both written only when the book has any.
  */
 internal object BackupJson {
     const val FORMAT = "readeraplus-backup"
     const val VERSION = 1
+
+    /** Log rows kept per book on restore (≈ 27 years of daily reading). */
+    private const val MAX_LOG_DAYS = 10_000
+    private const val MAX_DAY_SECONDS = 24L * 3600
 
     fun fromBook(
         b: Book,
@@ -75,6 +104,8 @@ internal object BackupJson {
         collections: List<String>,
         bookmarks: List<Bookmark>,
         quotes: List<Quote>,
+        readingLog: List<BackupLogDay> = emptyList(),
+        prefs: BackupPrefs? = null,
     ): BackupBook = BackupBook(
         path = b.path,
         fileName = b.fileName,
@@ -102,6 +133,8 @@ internal object BackupJson {
         collections = collections,
         bookmarks = bookmarks.map { BackupBookmark(it.section, it.offset, it.snippet, it.note, it.createdAt) },
         quotes = quotes.map { BackupQuote(it.section, it.start, it.end, it.text, it.note, it.createdAt) },
+        readingLog = readingLog.sortedBy { it.day },
+        prefs = prefs?.takeUnless { it.isEmpty },
     )
 
     fun toJson(data: BackupData): JSONObject {
@@ -168,6 +201,26 @@ internal object BackupJson {
             )
         }
         o.put("quotes", qs)
+        if (b.readingLog.isNotEmpty()) {
+            val log = JSONArray()
+            for (d in b.readingLog) {
+                log.put(
+                    JSONObject()
+                        .put("day", d.day)
+                        .put("seconds", d.seconds)
+                        .put("pages", d.pages)
+                        .put("chars", d.chars),
+                )
+            }
+            o.put("readingLog", log)
+        }
+        b.prefs?.takeUnless { it.isEmpty }?.let { p ->
+            val po = JSONObject()
+            p.txtOverride?.let { po.put("txtOverride", JSONObject(it.toJson())) }
+            if (p.finishedAt > 0) po.put("finishedAt", p.finishedAt)
+            p.episodeLabel?.let { po.put("episodeLabel", it) }
+            o.put("prefs", po)
+        }
         return o
     }
 
@@ -261,7 +314,72 @@ internal object BackupJson {
             collections = strings(o.optJSONArray("collections")),
             bookmarks = bookmarks,
             quotes = quotes,
+            readingLog = logFromJson(o.optJSONArray("readingLog")),
+            prefs = o.optJSONObject("prefs")?.let(::prefsFromJson),
         )
+    }
+
+    /**
+     * Log rows of a backup entry: malformed days and empty rows dropped, values clamped (a book can't be read more
+     * than 24 h a day), a day listed twice merged (the larger value of each column), ascending, capped.
+     */
+    fun logFromJson(arr: JSONArray?): List<BackupLogDay> {
+        if (arr == null || arr.length() == 0) return emptyList()
+        val byDay = java.util.TreeMap<Int, BackupLogDay>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val day = int(o, "day", 0)
+            if (!ReadingLog.isDay(day)) continue
+            val d = BackupLogDay(
+                day = day,
+                seconds = long(o, "seconds", 0L).coerceIn(0L, MAX_DAY_SECONDS),
+                pages = int(o, "pages", 0).coerceAtLeast(0),
+                chars = long(o, "chars", 0L).coerceAtLeast(0L),
+            )
+            if (d.seconds == 0L && d.pages == 0 && d.chars == 0L) continue
+            val prev = byDay[day]
+            byDay[day] = if (prev == null) {
+                d
+            } else {
+                BackupLogDay(day, maxOf(prev.seconds, d.seconds), maxOf(prev.pages, d.pages), maxOf(prev.chars, d.chars))
+            }
+        }
+        val out = ArrayList(byDay.values)
+        return if (out.size > MAX_LOG_DAYS) out.subList(out.size - MAX_LOG_DAYS, out.size).toList() else out
+    }
+
+    /** A backup entry's prefs; null when nothing usable is in it. `txtOverride` may be an object or its JSON text. */
+    fun prefsFromJson(o: JSONObject): BackupPrefs? {
+        val override = when (val v = o.opt("txtOverride")) {
+            is JSONObject -> v.toString()
+            is String -> v
+            else -> null
+        }?.takeIf { it.length <= BookPrefs.MAX_OVERRIDE_CHARS }?.let(TxtOverride::fromJson)
+        val p = BackupPrefs(
+            txtOverride = override,
+            finishedAt = long(o, "finishedAt", 0L).coerceAtLeast(0L),
+            episodeLabel = strOrNull(o, "episodeLabel")?.let { MetaInfo.clean(it, BookPrefs.MAX_EPISODE_LABEL) }
+                ?.ifEmpty { null },
+        )
+        return if (p.isEmpty) null else p
+    }
+
+    /**
+     * The `book_prefs` row after restoring a backup entry over [current] (pure; null = no row now): the backup's
+     * override and episode label win when it has them; the finish time is the backup's when it has one, but always
+     * 0 when the restored book isn't [haveRead] (a finish time belongs to a finished book). Null when nothing is left.
+     */
+    fun mergePrefs(current: PrefsRow?, backup: BackupPrefs?, haveRead: Boolean): PrefsRow? {
+        val merged = PrefsRow(
+            txtOverride = backup?.txtOverride?.let(BookPrefs::overrideJson) ?: current?.txtOverride,
+            finishedAt = when {
+                !haveRead -> 0L
+                backup != null && backup.finishedAt > 0 -> backup.finishedAt
+                else -> current?.finishedAt ?: 0L
+            },
+            episodeLabel = backup?.episodeLabel ?: current?.episodeLabel,
+        )
+        return if (merged.isEmpty) null else merged
     }
 
     // ---- tolerant field access (JSON null = missing) ----

@@ -29,7 +29,10 @@ import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
+import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.InkPager
+import com.ggumtak.readeraplus.ui.kit.InkPagerBar
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.einkListView
 import com.ggumtak.readeraplus.ui.kit.frameLp
@@ -37,6 +40,8 @@ import com.ggumtak.readeraplus.ui.kit.fullScreenDialog
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.inkCursor
+import com.ggumtak.readeraplus.ui.kit.inkPagerKeys
+import com.ggumtak.readeraplus.ui.kit.inkPaging
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
@@ -53,8 +58,9 @@ import java.lang.ref.SoftReference
 import java.lang.ref.WeakReference
 
 /**
- * In-book full-text search: streaming results (snippet with the hit in bold + page number), last query and
- * results kept in memory per open document, and a small bar over the page to step through hits (‹ ›).
+ * In-book full-text search: streaming results (snippet with the hit in bold + page number) paged a screen at a time
+ * ([InkPager]), last query and results kept in memory per open document, and a small bar over the page to step through
+ * hits (‹ ›).
  */
 internal object SearchPanel {
     const val MAX_RESULTS = 1000
@@ -81,7 +87,7 @@ internal object SearchPanel {
     fun show(host: ReaderHost, initialQuery: String) {
         // host.book throws while no book is open (between books): only read it once a document is there.
         val doc = host.document ?: run {
-            host.activity.toast("문서를 여는 중입니다")
+            host.activity.toast("책을 여는 중입니다")
             return
         }
         val prev = last?.takeIf { it.docRef.get() === doc && it.bookId == host.book.id }
@@ -164,6 +170,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
     private val doc0 = host.document
     private val bookId = runCatching { host.book.id }.getOrDefault(-1L)
     private lateinit var list: ListView
+    private lateinit var pager: InkPager
     private val scope = MainScope()
     private var job: Job? = null
     private lateinit var dialog: Dialog
@@ -230,6 +237,9 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         empty = ctx.emptyMessage("")
         frame.addView(empty, frame.frameLp(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
         root.addView(frame, lp(MATCH_PARENT, 0, 1f))
+        val pagerBar = InkPagerBar(ctx)
+        root.addView(pagerBar)
+        pager = list.inkPaging(pagerBar)
 
         dialog = ctx.fullScreenDialog(root)
         dialog.setOnDismissListener {
@@ -239,7 +249,9 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         }
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         // While typing, only the volume keys page the results (a learned key may be an ordinary text key).
-        dialog.pageKeysScroll({ list }) { ev -> edit.isFocused && !KeyMap.isVolumeKey(ev.keyCode) }
+        dialog.inkPagerKeys({ pager }, { code -> ListKeys.direction(code, Settings.app) }) { ev ->
+            edit.isFocused && !KeyMap.isVolumeKey(ev.keyCode)
+        }
 
         val st = state
         when {
@@ -275,7 +287,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         val doc = host.document
         if (doc == null || doc !== doc0) {
             // No document, or another one than this dialog was opened for (the book changed underneath).
-            status.text = "문서를 여는 중입니다. 잠시 후 다시 검색하세요."
+            status.text = "책을 여는 중입니다. 잠시 후 다시 검색하세요."
             return
         }
         job?.cancel()
@@ -284,6 +296,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         state = st
         SearchPanel.remember(st)
         adapter.notifyDataSetChanged()
+        list.setSelection(0)
         resume(st)
     }
 

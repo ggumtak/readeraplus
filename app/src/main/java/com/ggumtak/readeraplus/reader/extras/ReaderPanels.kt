@@ -7,6 +7,7 @@ import android.content.ContextWrapper
 import android.view.View
 import android.widget.PopupWindow
 import com.ggumtak.readeraplus.data.Book
+import com.ggumtak.readeraplus.data.TxtOverride
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.reader.ReaderHost
 import kotlinx.coroutines.Job
@@ -42,9 +43,18 @@ object ReaderPanels {
         InfoDialogs.review(host)
     }
 
-    /** Document properties dialog (also used from the library with document == null). */
+    /** "책 정보" dialog (also used from the library with document == null). */
     fun showDocumentInfo(activity: Activity, book: Book, document: BookDocument?) {
         InfoDialogs.documentInfo(activity, book, document)
+    }
+
+    /**
+     * "책 정보 편집" (A8): the one metadata editor (제목 · 작가 · 시리즈 · 시리즈 번호), used by 책 정보 and by the library's
+     * book menu (which drops its own editor). Saves with `Library.updateMeta` on IO and invalidates the cover;
+     * [onSaved] runs on the main thread after a successful save (the library reloads its list there). Main thread.
+     */
+    fun editBookInfo(activity: Activity, book: Book, onSaved: (() -> Unit)? = null) {
+        InfoDialogs.editMeta(activity, book, onSaved)
     }
 
     /**
@@ -112,6 +122,72 @@ interface PageJumpHost {
      * page whose footer reads N%. Remembers the old position for the "돌아가기" chip. Main thread only.
      */
     fun goToProgress(fraction: Float)
+}
+
+/**
+ * Optional [ReaderHost] capability (R2, T1-1 / T1-7), checked with `host as? BookInsightsHost` (or
+ * `activity as? BookInsightsHost` where only the activity is known, e.g. 책 정보). Implemented by ReaderActivity
+ * (READER_A); used by the TOC header, the go-to dialog and 책 정보 (EXTRAS_NAV). Main thread only.
+ */
+interface BookInsightsHost {
+    /**
+     * The open book's [Episodes] (BookSession.episodes: parsed once per session on Dispatchers.Default by whichever
+     * asks first, never on the open path). [onReady] runs on the main thread — at once when already parsed — with
+     * null when the book has no TOC or parsing failed. A caller that went away meanwhile checks that itself.
+     */
+    fun episodes(onReady: (Episodes?) -> Unit)
+
+    /**
+     * Minutes left at [charsPerMinute] to the end of the current episode (false: the next TOC entry after the page)
+     * or of the book (true); null when unknown (no TOC for the episode scope, no page shown yet). O(1) for the book
+     * (suffix sums of section lengths), 1–3 sections of arithmetic for the episode. Format with ReaderFormat.duration.
+     */
+    fun minutesLeft(bookScope: Boolean): Int?
+
+    /**
+     * The reading speed behind [minutesLeft] (characters per minute): ReadingLog.cpm(book) loaded in afterOpen on IO
+     * and updated at each pause, or ReadingLog.DEFAULT_CPM until known. 책 정보 shows "예상 약 104시간" with it.
+     */
+    fun charsPerMinute(): Int
+}
+
+/**
+ * Optional [ReaderHost] capability (R2, T1-9 / T1-10): TXT options for the open book only. Implemented by
+ * ReaderActivity (READER_A); used by the reading-settings popup ("TXT 파일 · 이 책에만 적용") and the selection's
+ * "이 문구 지우기" (EXTRAS_TOOLS). Main thread only.
+ *
+ * The effective settings of the book are `Settings.reader.withTxt(txtOverride)`; the popup shows them in its TXT
+ * rows. [ReaderHost.applySettings] keeps taking GLOBAL settings (typography, status bar, …): the host saves them and
+ * applies them merged with the override.
+ */
+interface TxtOverrideHost {
+    /** This book's override (BookPrefs, read in the open path's IO block), or null when it follows the defaults. */
+    val txtOverride: TxtOverride?
+
+    /**
+     * Makes [o] this book's override (null or empty = follow the defaults again): saved with BookPrefs on IO, and the
+     * book is re-parsed only when the effective parse options changed (position kept by its char fraction). Other
+     * books' TXT indexes are untouched. Callers debounce bursts of changes (the popup's reparse debounce) — each
+     * re-parse of a 14 MB file costs about a second. [onApplied] runs on the main thread once the book shows the
+     * result (right away when nothing had to be re-parsed); not at all when the re-open fails or the book closes.
+     */
+    fun applyTxtOverride(o: TxtOverride?, onApplied: (() -> Unit)? = null)
+
+    /**
+     * "모든 TXT 기본값으로 저장": the effective TXT options become the global defaults (Settings.saveReader) and this
+     * book's override is cleared. Nothing is re-parsed here (the effective options are unchanged); other TXT books
+     * pick up the new defaults (and rebuild their index) when next opened.
+     */
+    fun saveTxtAsDefaults()
+}
+
+/**
+ * Optional [ReaderHost] capability (R2, T1-2): the end-of-book panel. Implemented by ReaderActivity (READER_A); TTS
+ * (EXTRAS_TOOLS) calls it when speech reaches the end of the book, as "next" on the last page does. Main thread only.
+ */
+interface ReaderEndHost {
+    /** Shows the end panel ("다 읽었습니다", 다음 권, 완독 처리, …), marking the book finished when so configured. */
+    fun showBookEnd()
 }
 
 /**

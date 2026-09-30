@@ -303,7 +303,11 @@ fun TextView.lockWidthForValues(min: Float, max: Float, step: Float, format: (Fl
     layoutParams = (layoutParams as? LinearLayout.LayoutParams ?: LinearLayout.LayoutParams(w, WRAP_CONTENT)).apply { width = w }
 }
 
-/** "−  value  +" stepper. [format] renders the value; returns the row. The value box has a fixed width. */
+/**
+ * "−  value  +" stepper. [format] renders the value; returns the row. The value box has a fixed width. A tap that
+ * would leave the value unchanged (− at [min], + at [max]) does nothing: no redraw and no [onChange] (no save, no
+ * re-layout behind it).
+ */
 fun Context.stepperRow(
     title: String,
     value: Float,
@@ -317,7 +321,9 @@ fun Context.stepperRow(
     val valueText = label(format(v), 17f, maxLines = 1).apply { gravity = Gravity.CENTER }
     valueText.lockWidthForValues(min, max, step, format, minPx = dp(72))
     fun set(nv: Float) {
-        v = (Math.round(nv / step) * step).coerceIn(min, max)
+        val n = (Math.round(nv / step) * step).coerceIn(min, max)
+        if (n == v) return
+        v = n
         valueText.text = format(v)
         onChange(v)
     }
@@ -329,6 +335,10 @@ fun Context.stepperRow(
     return row(title, null, box)
 }
 
+/**
+ * Title over a 0..[max] slider. The thumb is a plain black dot: the platform thumb is an animated selector (it grows
+ * on press and shrinks on release, several e-ink updates) and the split track redraws a gap around it.
+ */
 fun Context.sliderRow(title: String, value: Int, max: Int, onChange: (Int) -> Unit): LinearLayout {
     val col = vertical { setPadding(dp(16), dp(10), dp(16), dp(10)) }
     col.addView(label(title, 17f))
@@ -336,7 +346,16 @@ fun Context.sliderRow(title: String, value: Int, max: Int, onChange: (Int) -> Un
         this.max = max
         progress = value
         progressTintList = ColorStateList.valueOf(Ink.BLACK)
-        thumbTintList = ColorStateList.valueOf(Ink.BLACK)
+        progressBackgroundTintList = ColorStateList.valueOf(Ink.GRAY)
+        thumb = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Ink.BLACK)
+            val d = dp(20)
+            setSize(d, d)
+        }
+        thumbOffset = dp(10)
+        background = null
+        splitTrack = false
         setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) { if (fromUser) onChange(p) }
             override fun onStartTrackingTouch(s: SeekBar) {}
@@ -438,13 +457,17 @@ fun Context.chooser(title: String, options: List<String>, selected: Int, onPick:
         .showNoAnim()
 }
 
-/** Text input dialog. */
+/**
+ * Text input dialog (system keyboard: for text, Hangul included; numbers use the non-frozen `InkNumPad`). The caret
+ * stays hidden until the user touches the field ([inkCursor]): a blinking caret is an e-ink update twice a second.
+ */
 fun Context.prompt(title: String, initial: String = "", hint: String = "", onOk: (String) -> Unit) {
     val edit = android.widget.EditText(this).apply {
         setText(initial)
         this.hint = hint
         setSelection(initial.length)
         setSingleLine(false)
+        inkCursor(singleLine = false)
     }
     val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(edit) }
     alert().setTitle(title).setView(box)

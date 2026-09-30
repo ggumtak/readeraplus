@@ -8,17 +8,37 @@ import com.ggumtak.readeraplus.engine.LineBreakMode
 /**
  * Persistence for ReaderSettings / AppSettings in SharedPreferences. Values are cached in memory;
  * listeners are notified on the main thread caller's thread after save.
+ *
+ * Loading is tolerant: a key that is missing (a field newer than the saved prefs) or holds an unknown enum name
+ * takes the field's default. The first [app] read happens on the main thread during a cold start, so [loadApp]
+ * only reads plain values; the saved styles' JSON is parsed separately, on the first [userStyles] access.
  */
 object Settings {
     private const val PREFS = "settings"
+
+    /** Prefs key of the saved styles (a JSON array, see [UserStyles]); backed up as a typed list, not a raw pref. */
+    const val KEY_USER_STYLES = "a.userStyles"
+
+    /** Where TTS voices were stored before [AppSettings.ttsVoice] existed (read as the fallback). */
+    private const val LEGACY_TTS_VOICE = "extras.ttsVoice"
+
     private lateinit var prefs: SharedPreferences
 
     @Volatile private var readerCache: ReaderSettings? = null
     @Volatile private var appCache: AppSettings? = null
+    @Volatile private var userStylesCache: List<UserStyle>? = null
     private val listeners = mutableListOf<() -> Unit>()
 
     fun init(context: Context) {
         if (!::prefs.isInitialized) prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    }
+
+    /** Test hook: [p] becomes the store and every cached value is dropped. */
+    internal fun initForTest(p: SharedPreferences) {
+        prefs = p
+        readerCache = null
+        appCache = null
+        userStylesCache = null
     }
 
     val reader: ReaderSettings
@@ -26,6 +46,25 @@ object Settings {
 
     val app: AppSettings
         get() = appCache ?: loadApp().also { appCache = it }
+
+    /**
+     * The saved styles ("내 스타일"), at most [UserStyles.MAX], oldest first. Parsed from JSON on the first access
+     * (the reading-settings popup's style row), never as part of [app]: keep it off cold-start paths.
+     */
+    val userStyles: List<UserStyle>
+        get() = userStylesCache ?: UserStyles.parse(prefs.getString(KEY_USER_STYLES, null)).also { userStylesCache = it }
+
+    /**
+     * Replaces the saved styles (only the first [UserStyles.MAX] are kept). Listeners are not notified: saving a style
+     * changes no applied setting.
+     */
+    fun saveUserStyles(list: List<UserStyle>) {
+        val kept = list.take(UserStyles.MAX)
+        userStylesCache = kept
+        prefs.edit().apply {
+            if (kept.isEmpty()) remove(KEY_USER_STYLES) else putString(KEY_USER_STYLES, UserStyles.toJson(kept).toString())
+        }.apply()
+    }
 
     fun saveReader(s: ReaderSettings) {
         readerCache = s
@@ -49,6 +88,8 @@ object Settings {
             putBoolean("r.showFooter", s.showFooter)
             putBoolean("r.footerPage", s.footerPage)
             putBoolean("r.footerChapterLeft", s.footerChapterLeft)
+            putBoolean("r.footerEpisode", s.footerEpisode)
+            putInt("r.footerTimeLeft", s.footerTimeLeft)
             putBoolean("r.footerPercent", s.footerPercent)
             putBoolean("r.footerClock", s.footerClock)
             putBoolean("r.footerBattery", s.footerBattery)
@@ -79,20 +120,31 @@ object Settings {
             putBoolean("a.invertVolumeKeys", s.invertVolumeKeys)
             putStringSet("a.nextPageKeys", s.nextPageKeys.map { it.toString() }.toSet())
             putStringSet("a.prevPageKeys", s.prevPageKeys.map { it.toString() }.toSet())
+            putString("a.keyBindings", encodeKeyBindings(s.keyBindings))
+            putString("a.keyHold", s.keyHold.name)
             putBoolean("a.longPressSelect", s.longPressSelect)
+            putInt("a.longPressMs", s.longPressMs)
             putBoolean("a.bookmarkByTouch", s.bookmarkByTouch)
             putBoolean("a.invertByTouch", s.invertByTouch)
             putBoolean("a.fullscreen", s.fullscreen)
             putBoolean("a.keepScreenOn", s.keepScreenOn)
             putBoolean("a.brightnessSwipe", s.brightnessSwipe)
             putBoolean("a.openLastOnStart", s.openLastOnStart)
+            putBoolean("a.autoMarkFinished", s.autoMarkFinished)
             putInt("a.einkRefreshEvery", s.einkRefreshEvery)
             putInt("a.einkMode", s.einkMode)
             putBoolean("a.einkRefreshOnChapter", s.einkRefreshOnChapter)
+            putInt("a.einkRefreshMethod", s.einkRefreshMethod)
+            putInt("a.einkFlashMs", s.einkFlashMs)
+            putInt("a.einkRefreshEveryNight", s.einkRefreshEveryNight)
+            putBoolean("a.einkFlashImages", s.einkFlashImages)
             putInt("a.autoTurnSeconds", s.autoTurnSeconds)
             putFloat("a.ttsRate", s.ttsRate)
             putFloat("a.ttsPitch", s.ttsPitch)
             putInt("a.ttsSleepMinutes", s.ttsSleepMinutes)
+            putInt("a.ttsSleepChapters", s.ttsSleepChapters)
+            putBoolean("a.ttsHighlight", s.ttsHighlight)
+            putString("a.ttsVoice", s.ttsVoice)
             putString("a.webSearchUrl", s.webSearchUrl)
             putString("a.librarySort", s.librarySort.name)
             putString("a.libraryListMode", s.libraryListMode.name)
@@ -141,6 +193,8 @@ object Settings {
             showFooter = p.getBoolean("r.showFooter", d.showFooter),
             footerPage = p.getBoolean("r.footerPage", d.footerPage),
             footerChapterLeft = p.getBoolean("r.footerChapterLeft", d.footerChapterLeft),
+            footerEpisode = p.getBoolean("r.footerEpisode", d.footerEpisode),
+            footerTimeLeft = p.getInt("r.footerTimeLeft", d.footerTimeLeft),
             footerPercent = p.getBoolean("r.footerPercent", d.footerPercent),
             footerClock = p.getBoolean("r.footerClock", d.footerClock),
             footerBattery = p.getBoolean("r.footerBattery", d.footerBattery),
@@ -174,20 +228,31 @@ object Settings {
             invertVolumeKeys = p.getBoolean("a.invertVolumeKeys", d.invertVolumeKeys),
             nextPageKeys = p.getStringSet("a.nextPageKeys", null)?.mapNotNull { it.toIntOrNull() }?.toSet() ?: d.nextPageKeys,
             prevPageKeys = p.getStringSet("a.prevPageKeys", null)?.mapNotNull { it.toIntOrNull() }?.toSet() ?: d.prevPageKeys,
+            keyBindings = decodeKeyBindings(p.getString("a.keyBindings", null)),
+            keyHold = enumOr(p.getString("a.keyHold", null), d.keyHold),
             longPressSelect = p.getBoolean("a.longPressSelect", d.longPressSelect),
+            longPressMs = p.getInt("a.longPressMs", d.longPressMs),
             bookmarkByTouch = p.getBoolean("a.bookmarkByTouch", d.bookmarkByTouch),
             invertByTouch = p.getBoolean("a.invertByTouch", d.invertByTouch),
             fullscreen = p.getBoolean("a.fullscreen", d.fullscreen),
             keepScreenOn = p.getBoolean("a.keepScreenOn", d.keepScreenOn),
             brightnessSwipe = p.getBoolean("a.brightnessSwipe", d.brightnessSwipe),
             openLastOnStart = p.getBoolean("a.openLastOnStart", d.openLastOnStart),
+            autoMarkFinished = p.getBoolean("a.autoMarkFinished", d.autoMarkFinished),
             einkRefreshEvery = p.getInt("a.einkRefreshEvery", d.einkRefreshEvery),
             einkMode = p.getInt("a.einkMode", d.einkMode),
             einkRefreshOnChapter = p.getBoolean("a.einkRefreshOnChapter", d.einkRefreshOnChapter),
+            einkRefreshMethod = p.getInt("a.einkRefreshMethod", d.einkRefreshMethod),
+            einkFlashMs = p.getInt("a.einkFlashMs", d.einkFlashMs),
+            einkRefreshEveryNight = p.getInt("a.einkRefreshEveryNight", d.einkRefreshEveryNight),
+            einkFlashImages = p.getBoolean("a.einkFlashImages", d.einkFlashImages),
             autoTurnSeconds = p.getInt("a.autoTurnSeconds", d.autoTurnSeconds),
             ttsRate = p.getFloat("a.ttsRate", d.ttsRate),
             ttsPitch = p.getFloat("a.ttsPitch", d.ttsPitch),
             ttsSleepMinutes = p.getInt("a.ttsSleepMinutes", d.ttsSleepMinutes),
+            ttsSleepChapters = p.getInt("a.ttsSleepChapters", d.ttsSleepChapters),
+            ttsHighlight = p.getBoolean("a.ttsHighlight", d.ttsHighlight),
+            ttsVoice = p.getString("a.ttsVoice", null) ?: p.getString(LEGACY_TTS_VOICE, null) ?: d.ttsVoice,
             webSearchUrl = p.getString("a.webSearchUrl", d.webSearchUrl) ?: d.webSearchUrl,
             librarySort = enumOr(p.getString("a.librarySort", null), d.librarySort),
             libraryListMode = enumOr(p.getString("a.libraryListMode", null), d.libraryListMode),
@@ -200,4 +265,27 @@ object Settings {
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =
         if (name == null) default else enumValues<E>().firstOrNull { it.name == name } ?: default
+
+    /** [AppSettings.keyBindings] as stored: "24:NEXT,25:PREV" (sorted by key code; "" when empty). */
+    fun encodeKeyBindings(map: Map<Int, TapAction>): String =
+        map.entries.sortedBy { it.key }.joinToString(",") { "${it.key}:${it.value.name}" }
+
+    /**
+     * Inverse of [encodeKeyBindings]. Tolerant: blank → empty; entries with a bad key code or an unknown action name
+     * are skipped (a newer build's action read by an older one); for a repeated key code the last entry wins.
+     */
+    fun decodeKeyBindings(text: String?): Map<Int, TapAction> {
+        if (text.isNullOrBlank()) return emptyMap()
+        val out = LinkedHashMap<Int, TapAction>()
+        for (part in text.split(',')) {
+            val colon = part.indexOf(':')
+            if (colon <= 0) continue
+            val code = part.substring(0, colon).trim().toIntOrNull() ?: continue
+            if (code <= 0) continue
+            val name = part.substring(colon + 1).trim()
+            val action = TapAction.entries.firstOrNull { it.name == name } ?: continue
+            out[code] = action
+        }
+        return out
+    }
 }

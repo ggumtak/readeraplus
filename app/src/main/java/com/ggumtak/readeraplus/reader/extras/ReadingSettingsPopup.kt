@@ -23,13 +23,17 @@ import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.ReaderHost
+import com.ggumtak.readeraplus.reader.withTxt
 import com.ggumtak.readeraplus.render.Covers
 import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.StylePreset
 import com.ggumtak.readeraplus.settings.TapZoneMode
+import com.ggumtak.readeraplus.settings.UserStyle
+import com.ggumtak.readeraplus.settings.UserStyles
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
@@ -40,6 +44,7 @@ import com.ggumtak.readeraplus.ui.kit.lockWidthForValues
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.prompt
+import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 import com.ggumtak.readeraplus.ui.settings.SettingsActivity
@@ -51,16 +56,22 @@ import kotlinx.coroutines.withContext
 import java.lang.ref.WeakReference
 
 /**
- * Compact reading-settings popup for the ~6" 360×720 dp e-ink screen: min(86% of the width, 330 dp) wide, at most
- * 55% of the height (scrolls), at the top right. The reader's bars are hidden while it opens (unless pinned; then it
- * sits under the top bar) so the lower half of the page stays in view as the preview. Plain 36 dp rows split by 1px
- * lines, the value and its "− +" buttons on the label's row, no card boxes, black on white, no animations: the main
- * section ([PopupGeometry.MAIN_ROWS] rows) is 360 dp, half the screen, and needs no scrolling.
+ * Compact reading-settings popup for the ~6" 360×720 dp e-ink screen: the screen's width but 4 dp on each side
+ * (≤ 420 dp, [PopupGeometry.width]), at most 55% of the height (scrolls), at the top right. The reader's bars are
+ * hidden while it opens (unless pinned; then it sits under the top bar) so the lower half of the page stays in view as
+ * the preview. Plain 36 dp rows split by 1px lines, the value and its "− +" buttons on the label's row, no card boxes,
+ * black on white, no animations: the main section ([PopupGeometry.MAIN_ROWS] rows) is 360 dp, half the screen, and
+ * needs no scrolling.
  *
- * Order: 스타일 (one-tap presets, the matching one inverted), 글꼴, 글자 크기, 굵기, 줄 간격, 문단 간격, 들여쓰기,
- * 정렬, 줄바꿈, then a collapsed "더보기" with everything else (page turning, letter spacing, margins, status bar,
- * invert, TXT / EPUB options, 기본값 복원, 일반 설정). Every change is applied through [ReaderHost.applySettings];
- * steppers are debounced (250 ms) so repeated taps cost one re-layout.
+ * Order: 스타일 ([웹소설] [전자책] [종이책] [내 스타일 ▾]; the matching one inverted), 글꼴, 글자 크기, 굵기, 줄 간격,
+ * 문단 간격, 들여쓰기, 정렬, 줄바꿈, then a collapsed "더보기" with everything else (page turning, letter spacing,
+ * margins, status bar, invert, TXT / EPUB options, 기본값 복원, 넘김·화면 설정).
+ *
+ * Every change but the TXT options is applied through [ReaderHost.applySettings] with the GLOBAL settings; steppers
+ * are debounced (250 ms) so repeated taps cost one re-layout. The TXT options of a TXT book are this book's own
+ * (T1-9, "TXT 파일 · 이 책에만 적용", through [TxtOverrideHost]): the rows show the effective values and a change
+ * becomes the book's override after the reparse debounce (one re-parse of this book per burst of taps; the global
+ * defaults and other books' indexes stay untouched). A host without [TxtOverrideHost] edits the global options.
  */
 internal class ReadingSettingsPopup(private val host: ReaderHost, private val anchor: View) {
     private val ctx = host.activity
@@ -70,12 +81,22 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     private val handler = Handler(Looper.getMainLooper())
     private var dirty = false
     private val applyRunnable = Runnable { flush() }
+    /** Per-book TXT options (T1-9); null = the host has none: the TXT rows edit the global settings in [cur]. */
+    private val txtHost: TxtOverrideHost? = host as? TxtOverrideHost
+    /** The TXT options the rows show: the book's effective ones (per book), else [cur]'s. Only its TXT fields count. */
+    private var txt: ReaderSettings = txtHost?.let { Settings.reader.withTxt(it.txtOverride) } ?: cur
+    private var txtDirty = false
+    private val txtRunnable = Runnable { flushTxt() }
+    /** "모든 TXT 기본값으로 저장" / "이 책 설정 지우기": gray while the book has no TXT options of its own. */
+    private val txtActionLabels = ArrayList<TextView>(2)
     private val scope = MainScope()
     private var popup: PopupWindow? = null
     private lateinit var scroll: MaxHeightScrollView
     private var popupWidth = 0
     /** The "스타일" toggles, re-marked after every change (a tweak can make the settings match / leave a preset). */
     private val presetButtons = ArrayList<Pair<StylePreset, TextView>>()
+    /** "내 스타일 ▾": the matching saved style's name (inverted), else "내 스타일". */
+    private var userButton: TextView? = null
 
     fun show() {
         current?.get()?.dismiss()
@@ -114,8 +135,11 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setOnDismissListener {
                 flush()
+                flushTxt()
                 scope.cancel()
                 presetButtons.clear()
+                userButton = null
+                txtActionLabels.clear()
                 if (current?.get() === this@ReadingSettingsPopup) current = null
             }
         }
@@ -159,8 +183,48 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         handler.removeCallbacks(applyRunnable)
         if (!dirty) return
         dirty = false
-        host.applySettings(cur)
+        // Global settings only: with per-book TXT options the popup never edits the global ones, and they may have
+        // changed underneath ("모든 TXT 기본값으로 저장"): always pass the saved ones on.
+        host.applySettings(if (txtHost != null) TxtEdits.withTxtFrom(cur, Settings.reader) else cur)
     }
+
+    /** A TXT option changed: this book's override after the reparse debounce ([immediate]: now), or the global one. */
+    private fun updateTxt(next: ReaderSettings, immediate: Boolean = false) {
+        if (TxtEdits.sameTxt(next, txt)) return
+        txt = next
+        if (txtHost == null) {
+            update(TxtEdits.withTxtFrom(cur, next))
+            return
+        }
+        txtDirty = true
+        handler.removeCallbacks(txtRunnable)
+        if (immediate) flushTxt() else handler.postDelayed(txtRunnable, PARSE_DEBOUNCE_MS)
+        refreshTxtActions()
+    }
+
+    /** Hands the pending TXT change to the host: the override the effective values need (one re-parse, if any). */
+    private fun flushTxt() {
+        handler.removeCallbacks(txtRunnable)
+        if (!txtDirty) return
+        txtDirty = false
+        val h = txtHost ?: return
+        if (!sameBook()) return
+        h.applyTxtOverride(TxtEdits.overrideFor(Settings.reader, txt))
+    }
+
+    /** Whether the book has TXT options of its own (pending ones included). */
+    private fun hasOwnTxt(): Boolean {
+        val h = txtHost ?: return false
+        return TxtEdits.overrideFor(Settings.reader, txt) != null || (!txtDirty && h.txtOverride?.isEmpty == false)
+    }
+
+    private fun refreshTxtActions() {
+        val on = hasOwnTxt()
+        for (v in txtActionLabels) v.setTextColor(if (on) Ink.BLACK else Ink.GRAY)
+    }
+
+    /** The reader still shows the book this popup was opened for. */
+    private fun sameBook(): Boolean = runCatching { host.book.id }.getOrNull() == book.id
 
     private fun rebuild() {
         val y = scroll.scrollY
@@ -186,12 +250,26 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         if (presetButtons.isEmpty()) return
         val sel = StyleChoice.selected(cur)
         for ((p, v) in presetButtons) setCompactToggle(v, p == sel)
+        userButton?.let { markUserButton(it, StyleChoice.selectedUser(cur, Settings.userStyles)) }
+    }
+
+    /** Applies saved style [u] (a pending stepper change first), like a preset: one re-layout. */
+    private fun applyUserStyle(u: UserStyle) {
+        flush()
+        val next = u.applyTo(cur)
+        if (next == cur) {
+            refreshPresets()
+            return
+        }
+        update(next)
+        rebuild()
     }
 
     // ------------------------------------------------------------------ content
 
     private fun buildContent(): LinearLayout {
         presetButtons.clear()
+        txtActionLabels.clear()
         val root = ctx.vertical { setBackgroundColor(Ink.WHITE) }
         root.addView(styleRow(), lp())
         addTypography(root)
@@ -213,7 +291,108 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             presetButtons += p to b
             row.addView(b, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = ctx.dp(4) })
         }
+        // The saved styles are read (parsed) here, on the popup's first use: never on the reader's cold start.
+        val mine = ctx.label(StyleChoice.USER_LABEL, Compact.TOGGLE_SP, maxLines = 1).apply {
+            gravity = Gravity.CENTER
+            minHeight = ctx.dp(28)
+            setPadding(ctx.dp(6), 0, ctx.dp(2), 0)
+            compoundDrawablePadding = 0
+            ctx.getDrawable(R.drawable.ic_arrow_drop_down)?.mutate()?.let { d ->
+                d.setBounds(0, 0, ctx.dp(18), ctx.dp(18))
+                setCompoundDrawablesRelative(null, null, d, null)
+            }
+            contentDescription = "내 스타일: 저장한 스타일 고르기 · 저장 · 관리"
+            setOnClickListener { userStylesMenu(row) }
+        }
+        userButton = mine
+        markUserButton(mine, StyleChoice.selectedUser(cur, Settings.userStyles))
+        // Fixed width: a long style name is cut ("…"), and choosing a style never moves the presets.
+        row.addView(mine, LinearLayout.LayoutParams(ctx.dp(USER_BUTTON_DP), WRAP_CONTENT).apply { leftMargin = ctx.dp(4) })
         return row
+    }
+
+    private fun markUserButton(v: TextView, match: UserStyle?) {
+        val label = StyleChoice.userLabel(match)
+        if (v.text.toString() != label) v.text = label
+        val selected = match != null
+        if (v.isSelected == selected && v.background != null) return
+        setCompactToggle(v, selected)
+        v.compoundDrawablesRelative[2]?.setTint(if (selected) Ink.WHITE else Ink.BLACK)
+    }
+
+    // ------------------------------------------------------------------ 내 스타일 (T1-8)
+
+    private fun userStylesMenu(row: View) {
+        val list = Settings.userStyles
+        val entries = ArrayList<ListEntry>(list.size + 2)
+        for (u in list) entries += ListEntry(u.name, checked = u.matches(cur)) { applyUserStyle(u) }
+        entries += ListEntry("현재 설정을 새 스타일로 저장…", action = true) { saveNewStyle() }
+        if (list.isNotEmpty()) entries += ListEntry("관리…", action = true) { manageStyles() }
+        list(row, entries)
+    }
+
+    private fun saveUserStyles(list: List<UserStyle>) {
+        Settings.saveUserStyles(list)
+        refreshPresets()
+    }
+
+    private fun saveNewStyle() {
+        val list = Settings.userStyles
+        if (list.size >= UserStyles.MAX) {
+            ctx.toast("스타일은 ${UserStyles.MAX}개까지 저장할 수 있습니다. '관리…'에서 하나를 지운 뒤 저장하세요")
+            return
+        }
+        val suggested = UserStyles.defaultName(list)
+        ctx.prompt("새 스타일 이름", suggested, "${UserStyles.MAX_NAME}자까지") { text ->
+            val now = Settings.userStyles
+            val name = UserStyles.cleanName(text).ifEmpty { suggested }
+            val style = UserStyle.from(name, cur)
+            when {
+                now.any { it.name == name } ->
+                    ctx.confirm("같은 이름의 스타일", "'$name' 스타일을 현재 설정으로 덮어쓸까요?", "덮어쓰기") {
+                        saveUserStyles(StyleChoice.put(Settings.userStyles, style))
+                    }
+                !StyleChoice.canSave(now, name) -> ctx.toast("스타일은 ${UserStyles.MAX}개까지 저장할 수 있습니다")
+                else -> saveUserStyles(StyleChoice.put(now, style))
+            }
+        }
+    }
+
+    /** "관리…": each saved style offers 이름 바꾸기 / 현재 설정으로 덮어쓰기 / 삭제. */
+    private fun manageStyles() {
+        val list = Settings.userStyles
+        if (list.isEmpty()) return
+        PanelRegistry.dialog(
+            ctx,
+            ctx.alert().setTitle("내 스타일 관리")
+                .setItems(list.map { it.name }.toTypedArray()) { _, which -> list.getOrNull(which)?.let { styleActions(it) } }
+                .setNegativeButton("닫기", null)
+                .showNoAnim(),
+        )
+    }
+
+    private fun styleActions(u: UserStyle) {
+        val acts = arrayOf("이름 바꾸기", "현재 설정으로 덮어쓰기", "삭제")
+        PanelRegistry.dialog(
+            ctx,
+            ctx.alert().setTitle(u.name)
+                .setItems(acts) { _, which ->
+                    when (which) {
+                        0 -> ctx.prompt("스타일 이름 바꾸기", u.name, "${UserStyles.MAX_NAME}자까지") { text ->
+                            val next = StyleChoice.rename(Settings.userStyles, u.name, text)
+                            if (next == null) ctx.toast("이름이 비었거나 이미 있는 이름입니다") else saveUserStyles(next)
+                        }
+                        1 -> ctx.confirm("현재 설정으로 덮어쓰기", "'${u.name}' 스타일을 지금 설정으로 바꿀까요?", "덮어쓰기") {
+                            saveUserStyles(StyleChoice.put(Settings.userStyles, UserStyle.from(u.name, cur)))
+                        }
+                        else -> ctx.confirm("스타일 삭제", "'${u.name}' 스타일을 지울까요?", "삭제") {
+                            saveUserStyles(StyleChoice.remove(Settings.userStyles, u.name))
+                        }
+                    }
+                }
+                .setNegativeButton("취소", null)
+                .showNoAnim(),
+        )
     }
 
     private fun addTypography(root: LinearLayout) {
@@ -265,7 +444,8 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         }
         text = ctx.label(if (moreExpanded) "접기" else "더보기", Compact.LABEL_SP, bold = true)
         row.addView(text)
-        row.addView(ctx.label("화면 터치 · 여백 · 상태 표시 · TXT · EPUB", Compact.SUMMARY_SP, color = Ink.GRAY, maxLines = 1).apply {
+        val kinds = if (showTxt()) "TXT · EPUB" else "EPUB"
+        row.addView(ctx.label("화면 터치 · 여백 · 상태 표시 · $kinds", Compact.SUMMARY_SP, color = Ink.GRAY, maxLines = 1).apply {
             setPadding(ctx.dp(10), 0, ctx.dp(4), 0)
         }, lp(0, WRAP_CONTENT, 1f))
         arrow = ctx.icon(if (moreExpanded) R.drawable.ic_expand_less else R.drawable.ic_expand_more, 22)
@@ -285,10 +465,16 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             addEpub(root)
         } else {
             addEpub(root)
-            addTxt(root)
+            if (showTxt()) addTxt(root)
         }
         addFooter(root)
     }
+
+    /**
+     * The TXT rows: always in a TXT book; in an EPUB only for a host without per-book TXT options (they would edit
+     * nothing this book uses; the defaults have their own page, "TXT 기본 정리 설정").
+     */
+    private fun showTxt(): Boolean = book.format == BookFormat.TXT || txtHost == null
 
     private fun addPageTurning(root: LinearLayout) {
         val app = Settings.app
@@ -354,62 +540,101 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     }
 
     private fun addTxt(root: LinearLayout) {
-        root.addView(ctx.compactHeader("TXT 파일"), lp())
+        val perBook = txtHost != null && book.format == BookFormat.TXT
+        root.addView(ctx.compactHeader(if (perBook) "TXT 파일 · 이 책에만 적용" else "TXT 파일"), lp())
         if (book.format == BookFormat.TXT) {
-            root.addView(dropdownRow("인코딩 (이 책)", encodingShort(book.encoding)) { row, _ ->
+            root.addView(dropdownRow(if (perBook) "인코딩" else "인코딩 (이 책)", encodingShort(book.encoding)) { row, _ ->
                 val options = listOf("") + TxtDocuments.ENCODINGS
                 list(row, options.map { enc ->
                     ListEntry(encodingLabel(enc), checked = enc == book.encoding) { changeEncoding(enc) }
                 })
             })
         }
-        root.addView(dropdownRow("빈 줄 처리", blankLabel(cur.txtBlankLines)) { row, value ->
+        root.addView(dropdownRow("빈 줄 처리", blankLabel(txt.txtBlankLines)) { row, value ->
             val modes = listOf(ParseOptions.BLANK_AUTO, ParseOptions.BLANK_REMOVE_ALL, ParseOptions.BLANK_COLLAPSE, ParseOptions.BLANK_KEEP)
             list(row, modes.map { m ->
-                ListEntry(blankLabel(m), checked = m == cur.txtBlankLines) {
-                    update(cur.copy(txtBlankLines = m))
+                ListEntry(blankLabel(m), checked = m == txt.txtBlankLines) {
+                    updateTxt(txt.copy(txtBlankLines = m))
                     value.text = blankLabel(m)
                 }
             })
         })
-        root.addView(switchRow("원본 들여쓰기 제거", cur.txtStripIndent, "파일의 앞 공백 대신 들여쓰기 설정 사용") { v ->
-            update(cur.copy(txtStripIndent = v))
+        root.addView(switchRow("원본 들여쓰기 제거", txt.txtStripIndent, "파일의 앞 공백 대신 들여쓰기 설정 사용") { v ->
+            updateTxt(txt.copy(txtStripIndent = v))
         })
-        root.addView(segmentRow("끊어진 줄 합치기", listOf(joinLabel(1) to 1, joinLabel(2) to 2, joinLabel(0) to 0), cur.txtJoinWrappedLines) {
-            update(cur.copy(txtJoinWrappedLines = it))
+        root.addView(segmentRow("끊어진 줄 합치기", listOf(joinLabel(1) to 1, joinLabel(2) to 2, joinLabel(0) to 0), txt.txtJoinWrappedLines) {
+            updateTxt(txt.copy(txtJoinWrappedLines = it))
         })
-        root.addView(switchRow("챕터 자동 인식", cur.txtDetectChapters, "목차 만들기 (1화, 제1장, 프롤로그 …)") { v ->
-            update(cur.copy(txtDetectChapters = v))
+        root.addView(switchRow("챕터 자동 인식", txt.txtDetectChapters, "목차 만들기 (1화, 제1장, 프롤로그 …)") { v ->
+            updateTxt(txt.copy(txtDetectChapters = v))
         })
-        root.addView(switchRow("챕터 제목 강조", cur.txtEmphasizeHeadings, "굵게 · 크게 · 가운데") { v ->
-            update(cur.copy(txtEmphasizeHeadings = v))
+        root.addView(switchRow("챕터 제목 강조", txt.txtEmphasizeHeadings, "굵게 · 크게 · 가운데") { v ->
+            updateTxt(txt.copy(txtEmphasizeHeadings = v))
         })
-        root.addView(dropdownRow("챕터 규칙 (정규식)", cur.txtChapterRegex.ifBlank { "없음" }) { _, value ->
-            ctx.prompt("챕터 규칙 (정규식)", cur.txtChapterRegex, "예: ^제\\s*\\d+\\s*화.*") { text ->
+        root.addView(dropdownRow("챕터 규칙 (정규식)", txt.txtChapterRegex.ifBlank { "없음" }) { _, value ->
+            ctx.prompt("챕터 규칙 (정규식)", txt.txtChapterRegex, "예: ^제\\s*\\d+\\s*화.*") { text ->
                 val t = text.trim()
                 val err = if (t.isEmpty()) null else runCatching { Regex(t) }.exceptionOrNull()
                 if (err != null) {
                     ctx.toast(ErrorText.regex(err))
                 } else {
-                    update(cur.copy(txtChapterRegex = t))
+                    updateTxt(txt.copy(txtChapterRegex = t))
                     value.text = t.ifBlank { "없음" }
                 }
             }
         })
-        root.addView(dropdownRow("치환 규칙", Fmt.rulesLabel(cur.txtReplaceRules)) { _, value ->
-            ctx.multilinePrompt(
-                "치환 규칙",
-                cur.txtReplaceRules,
-                "패턴 => 바꿀 내용",
-                minLines = 5,
-                message = "한 줄에 하나씩 '정규식 => 바꿀 내용'. #으로 시작하는 줄은 주석입니다.",
-            ) { text ->
-                val bad = Fmt.invalidRuleCount(text)
-                update(cur.copy(txtReplaceRules = text.trimEnd()))
-                value.text = Fmt.rulesLabel(text)
-                if (bad > 0) ctx.toast("잘못된 규칙 ${bad}개는 무시됩니다")
+        root.addView(dropdownRow("치환 규칙", Fmt.rulesLabel(txt.txtReplaceRules)) { _, value ->
+            // A pending stepper change goes first: the manager is a full-screen window over the page.
+            flush()
+            RulesDialog.show(ctx, if (perBook) "치환 규칙 · 이 책" else "치환 규칙", txt.txtReplaceRules) { text ->
+                // Saved also when the popup went away meanwhile, as long as the same book is shown.
+                if (!sameBook()) return@show
+                updateTxt(txt.copy(txtReplaceRules = text.trimEnd()), immediate = true)
+                value.text = Fmt.rulesLabel(txt.txtReplaceRules)
             }
         })
+        if (perBook) {
+            root.addView(actionRow("모든 TXT 기본값으로 저장", "이 책의 설정을 모든 TXT 파일에 사용") { saveTxtAsDefaults() })
+            root.addView(actionRow("이 책 설정 지우기 (기본값 사용)", null) { clearBookTxt() })
+            refreshTxtActions()
+        }
+    }
+
+    /** "모든 TXT 기본값으로 저장": the effective options become the defaults; the book's own options are cleared. */
+    private fun saveTxtAsDefaults() {
+        val h = txtHost ?: return
+        if (!hasOwnTxt()) {
+            ctx.toast("이 책은 이미 기본값을 따릅니다")
+            return
+        }
+        ctx.confirm(
+            "모든 TXT 기본값으로 저장",
+            "이 책의 TXT 정리 설정을 모든 TXT 파일의 기본값으로 저장할까요? 다른 TXT 책은 다음에 열 때 새 설정으로 다시 정리됩니다.",
+            "저장",
+        ) {
+            if (popup?.isShowing != true || !sameBook()) return@confirm
+            flushTxt()
+            h.saveTxtAsDefaults()
+            txt = Settings.reader.withTxt(h.txtOverride)
+            refreshTxtActions()
+        }
+    }
+
+    /** "이 책 설정 지우기 (기본값 사용)": the book follows the TXT defaults again (re-parsed when that differs). */
+    private fun clearBookTxt() {
+        val h = txtHost ?: return
+        if (!hasOwnTxt()) {
+            ctx.toast("이 책은 이미 기본값을 따릅니다")
+            return
+        }
+        ctx.confirm("이 책 설정 지우기", "이 책에만 적용한 TXT 설정(치환 규칙 포함)을 지우고 기본값을 사용할까요?", "지우기") {
+            if (popup?.isShowing != true || !sameBook()) return@confirm
+            handler.removeCallbacks(txtRunnable)
+            txtDirty = false
+            h.applyTxtOverride(null)
+            txt = Settings.reader
+            rebuild()
+        }
     }
 
     private fun addEpub(root: LinearLayout) {
@@ -425,13 +650,15 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             background = ctx.compactRowBackground(pressable = false, topLine = true)
         }
         row.addView(footerButton("기본값 복원") {
-            ctx.confirm("기본값 복원", "읽기 설정을 모두 기본값으로 되돌릴까요?", "복원") {
-                update(ReaderSettings())
+            ctx.confirm("기본값 복원", "글꼴 · 간격 · 여백 · 상태 표시를 기본값으로 되돌릴까요? TXT 정리 설정은 그대로입니다.", "복원") {
+                // TXT options stay: resetting them would re-parse every TXT book on its next open.
+                update(TxtEdits.withTxtFrom(ReaderSettings(), cur))
                 rebuild()
             }
         }, lp(0, WRAP_CONTENT, 1f).apply { rightMargin = ctx.dp(8) })
-        row.addView(footerButton("일반 설정") {
+        row.addView(footerButton("넘김·화면 설정") {
             flush()
+            flushTxt()
             popup?.dismiss()
             SettingsActivity.open(ctx, SettingsActivity.PAGE_PAGE_TURNING)
         }, lp(0, WRAP_CONTENT, 1f))
@@ -453,6 +680,18 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         }
         row.addView(valueView, lp(0, WRAP_CONTENT, 1f))
         row.addView(ctx.icon(R.drawable.ic_arrow_drop_down, 22))
+        return row
+    }
+
+    /** A tappable row with a bold action label (and an optional summary); no value. */
+    private fun actionRow(title: String, summary: String?, onClick: () -> Unit): LinearLayout {
+        val row = ctx.compactRow { onClick() }
+        val block = ctx.compactLabelBlock(title, summary)
+        (block as? TextView ?: (block as? LinearLayout)?.getChildAt(0) as? TextView)?.let { t ->
+            t.typeface = android.graphics.Typeface.DEFAULT_BOLD
+            txtActionLabels += t
+        }
+        row.addView(block, lp(0, WRAP_CONTENT, 1f))
         return row
     }
 
@@ -530,11 +769,26 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             c.addView(r, lp())
         }
         item("쪽수 (12 / 3259)", cur.footerPage) { cur.copy(footerPage = it) }
+        item("회차 (123/540화)", cur.footerEpisode) { cur.copy(footerEpisode = it) }
         item("챕터 남은 쪽수", cur.footerChapterLeft) { cur.copy(footerChapterLeft = it) }
+        c.addView(timeLeftRow(), lp())
         item("진행률 (%)", cur.footerPercent) { cur.copy(footerPercent = it) }
         item("시계", cur.footerClock) { cur.copy(footerClock = it) }
         item("배터리", cur.footerBattery) { cur.copy(footerBattery = it) }
         return c
+    }
+
+    /** "남은 시간" (T1-7): [끔] [이 화] [책], indented like the status items above and below it. */
+    private fun timeLeftRow(): LinearLayout {
+        val options = listOf(
+            "끔" to ReaderSettings.TIME_LEFT_OFF,
+            "이 화" to ReaderSettings.TIME_LEFT_EPISODE,
+            "책" to ReaderSettings.TIME_LEFT_BOOK,
+        )
+        val row = segmentRow("남은 시간", options, cur.footerTimeLeft) { update(cur.copy(footerTimeLeft = it)) }
+        // Lines up with the check boxes' labels (12 dp indent + 20 dp box + 10 dp gap).
+        row.setPadding(ctx.dp(Compact.PAD_DP + 12 + 20 + 10), row.paddingTop, row.paddingRight, row.paddingBottom)
+        return row
     }
 
     private fun footerButton(text: String, onClick: (View) -> Unit): TextView = ctx.label(text, Compact.LABEL_SP, bold = true).apply {
@@ -567,6 +821,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                 ctx.toast("인코딩을 저장하지 못했습니다")
                 return@launch
             }
+            flushTxt()
             popup?.dismiss()
             // The host caches the Book (and its encoding); reopening the activity re-reads it from the library.
             ctx.toast("인코딩: ${encodingLabel(enc)} — 다시 여는 중…")
@@ -590,6 +845,8 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         private const val DEBOUNCE_MS = 250L
         private const val PARSE_DEBOUNCE_MS = 600L
         private const val VALUE_TAG = "value"
+        /** Width of "내 스타일 ▾" (a saved style's name, cut to fit). */
+        private const val USER_BUTTON_DP = 96
         /** Weak: a popup left open when the reader is destroyed must not pin the activity. */
         private var current: WeakReference<ReadingSettingsPopup>? = null
         /** "더보기" open / closed, kept for the process (the next popup opens the same way). */

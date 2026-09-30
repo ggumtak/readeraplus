@@ -2,9 +2,9 @@ package com.ggumtak.readeraplus.reader
 
 import android.content.Context
 import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import android.util.TypedValue
-import com.ggumtak.readeraplus.BuildConfig
 import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.engine.FontMetricsPx
@@ -18,6 +18,8 @@ import com.ggumtak.readeraplus.engine.TextMeasurer
 import com.ggumtak.readeraplus.engine.Typesetter
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.BookFormat
+import com.ggumtak.readeraplus.format.epub.EpubBook
+import com.ggumtak.readeraplus.reader.extras.Episodes
 import com.ggumtak.readeraplus.render.AndroidTextMeasurer
 import com.ggumtak.readeraplus.render.FontCatalog
 import com.ggumtak.readeraplus.render.FontManager
@@ -37,6 +39,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -49,6 +52,10 @@ import java.util.concurrent.TimeUnit
  * requests and prefetch, so its measurer is single-threaded); page counting runs on a background-priority
  * "reader-count" thread with its own measurer. Results come back to the main thread and are dropped when the
  * generation changed in the meantime.
+ *
+ * Settings ([initialSettings], [updateSettings]) are the book's EFFECTIVE settings: the global ones merged with the
+ * book's own TXT options (`Settings.reader.withTxt(override)`, T1-9), so the parse, the layout and the page-count key
+ * all follow what this book actually uses.
  */
 class BookSession(
     private val context: Context,
@@ -117,6 +124,8 @@ class BookSession(
     @Volatile private var liveGenId = 0
     private var viewW = 0
     private var viewH = 0
+    /** Uptime when the current generation was created (partial counts are saved only for settled layouts). */
+    private var generationBornAt = 0L
 
     private val scope = MainScope()
     private var genJob: Job = SupervisorJob(scope.coroutineContext[Job])
@@ -136,6 +145,24 @@ class BookSession(
     private val pending = HashMap<Int, Pending>()
     private var countJob: Job? = null
     private var closed = false
+
+    /**
+     * Sections whose content could not be loaded or typeset in this session (any thread): they show and count as
+     * their error page, which is never written to the page-count cache.
+     */
+    private val failedSections: MutableSet<Int> = ConcurrentHashMap.newKeySet()
+    /** Counted sections of [layoutKey] already in the cache (loaded or saved), so an unchanged array isn't rewritten. */
+    private var savedKnown = 0
+    /** Page-count saves run on ReaderIo's pool: a save older than one already written is dropped (see [saveCounts]). */
+    private var saveSeq = 0
+    private val saveLock = Any()
+    private var writtenSeq = 0 // guarded by saveLock
+
+    /** Chapter span of the last [charsLeftInChapter] query (packed positions); empty until the first one. */
+    private var spanFrom = Long.MAX_VALUE
+    private var spanTo = Long.MIN_VALUE
+
+    private val episodesOnce = Once<Episodes>()
 
     // Confined to the layout thread.
     private var layoutGenId = -1
@@ -178,6 +205,7 @@ class BookSession(
         val g = LayoutKeys.geometry(settings, viewW, viewH, dm.density, statusPx)
         genCounter++
         liveGenId = genCounter
+        generationBornAt = SystemClock.uptimeMillis()
         generation = Generation(genCounter, settings, g, LayoutKeys.config(settings, g, txt = document.format == BookFormat.TXT), dm.density)
         invalidateJobs()
         cache.clear()
@@ -185,6 +213,7 @@ class BookSession(
         counts.reset()
         counts.charsPerPageHint = LayoutKeys.charsPerPageHint(generation!!.config, TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, settings.fontSizeSp, dm))
         layoutKey = null
+        savedKnown = 0
     }
 
     private fun invalidateJobs() {
@@ -304,7 +333,7 @@ class BookSession(
             cache.remove(victim)
         }
         counts.set(section, layout.pageCount, layout.content.length)
-        chapters.resolveAnchors(section, layout.content.anchors)
+        resolveAnchors(section, layout.content.anchors)
         if (fresh && cache[section] === layout) {
             try {
                 listener?.onSectionStored(section, layout)
@@ -330,6 +359,7 @@ class BookSession(
             throw e
         } catch (t: Throwable) {
             Log.w(TAG, "typesetting failed for section $section", t)
+            failedSections.add(section)
             Typesetter(m, gen.config).layout(errorContent(t))
         }
     }
@@ -354,6 +384,7 @@ class BookSession(
             throw e
         } catch (t: Throwable) {
             Log.w(TAG, "counting failed for section $section", t)
+            failedSections.add(section)
             val pages = try {
                 Typesetter(m, gen.config).countPages(errorContent(t))
             } catch (_: Throwable) {
@@ -396,6 +427,7 @@ class BookSession(
             Loaded(document.loadSection(section), false)
         } catch (t: Throwable) {
             Log.w(TAG, "loadSection($section) failed", t)
+            failedSections.add(section)
             Loaded(errorContent(t), true)
         }
 
@@ -407,8 +439,8 @@ class BookSession(
     // ------------------------------------------------------------------ page counting
 
     /**
-     * Loads cached page counts for the current generation or counts every section in the background
-     * (starting after [countDelayMs] so the first pages and prefetches win the CPU), then saves them.
+     * Loads cached page counts for the current generation and counts the sections they lack in the background
+     * (starting after [countDelayMs] so the first pages and prefetches win the CPU), saving as it goes.
      */
     fun startCounting(countDelayMs: Long = 0) {
         if (closed) return
@@ -426,10 +458,17 @@ class BookSession(
         }
     }
 
+    /**
+     * A2: the cache may hold a partial array (-1 = not counted yet), so counting resumes where the last session
+     * stopped. Order ([CountOrder]): the section on screen, 3 samples at 25 / 50 / 75 %, then the rest in order.
+     * The counts are saved every [SAVE_EVERY] counted sections, when complete, and on [close] (partial arrays only
+     * for a settled layout, see [saveCounts]).
+     */
     private suspend fun countAll(gen: Generation, countDelayMs: Long) {
         val key = withContext(Dispatchers.IO) { computeKey(gen) }
         if (gen !== generation) return
         layoutKey = key
+        savedKnown = 0
         if (counts.isComplete) {
             // Every section was already laid out in the foreground (small book).
             notifyCounts(true)
@@ -445,24 +484,58 @@ class BookSession(
             }
         }
         if (gen !== generation) return
-        if (saved != null && counts.setAll(saved)) {
-            notifyCounts(true)
-            return
+        if (saved != null && saved.size == sectionCount) {
+            counts.setKnown(saved)
+            savedKnown = PageCounts.countedIn(saved)
+            if (counts.isComplete) {
+                notifyCounts(true)
+                saveCounts(key) // only when the foreground counted what the cache lacked
+                return
+            }
+            if (savedKnown > 0) notifyCounts(false)
         }
         if (countDelayMs > 0) delay(countDelayMs)
-        var anyFailed = false
-        for (i in 0 until sectionCount) {
+        if (gen !== generation || closed) return
+        // The section on screen, unless its foreground layout is still running (it counts itself when stored).
+        val shown = protectedSection.takeIf { it >= 0 && !pending.containsKey(it) } ?: -1
+        val order = CountOrder.plan(sectionCount, shown, samplableSections())
+        var sinceSave = 0
+        for (i in order) {
             if (gen !== generation || closed) return
             if (counts.isKnown(i)) continue
             val r = withContext(countDispatcher) { countOnThread(gen, i) }
             if (gen !== generation) return
-            if (r.failed) anyFailed = true
             if (!counts.isKnown(i)) counts.set(i, r.pages, if (r.chars >= 0) r.chars else counts.charLength(i))
-            chapters.resolveAnchors(i, r.anchors)
-            notifyCounts(counts.isComplete)
+            resolveAnchors(i, r.anchors)
+            val complete = counts.isComplete
+            notifyCounts(complete)
+            if (complete) break
+            if (++sinceSave >= SAVE_EVERY) {
+                sinceSave = 0
+                saveCounts(key)
+            }
         }
-        // Counts that include error pages (a section that could not be read this time) are not cached.
-        if (!anyFailed) saveCounts(key)
+        saveCounts(key)
+    }
+
+    /**
+     * Sections the counter may sample out of order (see [CountOrder.plan]): null (all) for TXT; for an EPUB only the
+     * sections that are a whole spine item, none when the split plan can't be read.
+     */
+    private fun samplableSections(): BooleanArray? {
+        if (document.format != BookFormat.EPUB) return null
+        val out = BooleanArray(sectionCount)
+        val parts = try {
+            (document as? EpubBook)?.partCounts
+        } catch (t: Throwable) {
+            null
+        } ?: return out
+        var first = 0
+        for (n in parts) {
+            if (n == 1 && first < sectionCount) out[first] = true
+            first += n
+        }
+        return if (first == sectionCount) out else BooleanArray(sectionCount)
     }
 
     private fun notifyCounts(complete: Boolean) {
@@ -473,15 +546,39 @@ class BookSession(
         }
     }
 
-    private suspend fun saveCounts(key: String) {
-        val arr = counts.toArray() ?: return
+    /**
+     * Saves this generation's counts under [key] when they hold more than the cache has (partial: -1 for sections
+     * not counted yet or counted as an error page). The array is copied here on the main thread; the write runs on
+     * [ReaderIo] (outlives the activity) and is dropped when a later save of this session was written first.
+     * Incomplete counts are saved only for a layout that has lasted [SAVE_SETTLE_MS]: the cache keeps 3 keys per
+     * book, and saving every font size tried in the settings popup (or every TXT option, each a new session) would
+     * push out the complete counts of the layout the reader goes back to.
+     */
+    private fun saveCounts(key: String) {
+        if (key != layoutKey) return
+        val known = counts.knownCount
+        val age = SystemClock.uptimeMillis() - generationBornAt
+        if (!CountSaves.due(known, savedKnown, counts.isComplete, age)) return
+        val arr = counts.toArray()
+        val counted = CountSaves.maskFailed(arr, failedSections)
+        savedKnown = known
+        if (counted <= 0) return
         val id = book.id
-        withContext(Dispatchers.IO) {
-            try {
-                Library.savePageCounts(id, key, arr)
-            } catch (t: Throwable) {
-                Log.w(TAG, "savePageCounts failed", t)
+        val seq = ++saveSeq
+        ReaderIo.launch {
+            synchronized(saveLock) {
+                if (seq > writtenSeq) {
+                    Library.savePageCounts(id, key, arr)
+                    writtenSeq = seq
+                }
             }
+        }
+    }
+
+    private fun resolveAnchors(section: Int, anchors: Map<String, Int>) {
+        if (chapters.resolveAnchors(section, anchors)) {
+            spanFrom = Long.MAX_VALUE
+            spanTo = Long.MIN_VALUE
         }
     }
 
@@ -514,7 +611,7 @@ class BookSession(
         val fontScale = context.resources.configuration.fontScale
         return LayoutKeys.keyFor(
             forLayout(gen.settings), document.format, book.encoding, gen.geometry, gen.density,
-            "$fontIdentity|file=$bookFile|fs=$fontScale", BuildConfig.VERSION_CODE,
+            "$fontIdentity|file=$bookFile|fs=$fontScale", LayoutKeys.ALGO_VERSION,
         )
     }
 
@@ -537,6 +634,73 @@ class BookSession(
         return if (w == s.fontWeight) s else s.copy(fontWeight = w)
     }
 
+    /**
+     * The book's episode numbers ([Episodes.of] over `document.toc` titles; index = TOC index), parsed once per
+     * session on Dispatchers.Default by whichever asks first — the TOC dialog (via BookInsightsHost) or the footer's
+     * 회차 item — and then reused. Never on the open path (≈ 20 ms for 2,000 titles on the device).
+     * [onReady] runs on the main thread: immediately when already parsed, else when parsing ends (callers asking
+     * meanwhile are queued, one parse only); with null when the TOC is empty, parsing threw, or the session closed.
+     * Main thread only.
+     */
+    fun episodes(onReady: (Episodes?) -> Unit) {
+        val deliver: (Episodes?) -> Unit = { e ->
+            try {
+                onReady(e)
+            } catch (t: Throwable) {
+                Log.w(TAG, "episodes listener failed", t)
+            }
+        }
+        if (closed) {
+            deliver(null)
+            return
+        }
+        episodesOnce.get(deliver) {
+            val toc = document.toc
+            if (toc.isEmpty()) {
+                episodesOnce.complete(null)
+            } else {
+                scope.launch {
+                    val parsed = withContext(Dispatchers.Default) {
+                        try {
+                            Episodes.of(toc.map { it.title })
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "episode parse failed", t)
+                            null
+                        }
+                    }
+                    episodesOnce.complete(parsed)
+                }
+            }
+        }
+    }
+
+    /**
+     * Characters from (section, offset) to the end of the book (T1-7 "책 7시간 20분"; EPUB sections not laid out yet
+     * count with their estimated length). O(1): see [PageCounts.charsFrom]. Main thread.
+     */
+    fun charsLeftInBook(section: Int, offset: Int): Long = counts.charsFrom(section, offset)
+
+    /**
+     * Characters from (section, offset) to where the next TOC entry starts, or to the end of the book after the last
+     * one (T1-7 "이 화 3분"). The chapter around the position is looked up once ([ChapterIndex] scans the TOC) and
+     * reused while later queries stay inside it, so a page turn within a chapter costs O(1); anchors resolved by a
+     * layout or the counter invalidate it. Main thread.
+     */
+    fun charsLeftInChapter(section: Int, offset: Int): Long {
+        val p = packPosition(section, offset)
+        if (p < spanFrom || p >= spanTo) {
+            val cur = chapters.indexAt(section, offset)
+            val next = chapters.nextAfter(section, offset)
+            spanFrom = if (cur >= 0) packPosition(chapters.section(cur), chapters.offset(cur)) else Long.MIN_VALUE
+            spanTo = if (next >= 0) packPosition(chapters.section(next), chapters.offset(next)) else Long.MAX_VALUE
+        }
+        val to = spanTo
+        if (to == Long.MAX_VALUE) return counts.charsFrom(section, offset)
+        return counts.charsBetween(section, offset, (to ushr 32).toInt(), (to and 0xFFFFFFFFL).toInt())
+    }
+
     /** Drops decoded images (memory pressure). */
     fun trimMemory() {
         try {
@@ -547,17 +711,21 @@ class BookSession(
     }
 
     /**
-     * Cancels all work and closes the document once the worker threads are idle (the close runs on the layout
-     * thread after any in-flight layout and after the counting thread finished its current section).
+     * Saves the page counts so far, cancels all work and closes the document once the worker threads are idle (the
+     * close runs on the layout thread after any in-flight layout and after the counting thread finished its current
+     * section). Callers still waiting for [episodes] get null.
      */
     fun close() {
         if (closed) return
+        // What this generation counted so far (partial while counting ran), so the next open resumes from there.
+        layoutKey?.let { saveCounts(it) }
         closed = true
         liveGenId = -1
         invalidateJobs()
         scope.cancel()
         cache.clear()
         lru.clear()
+        episodesOnce.complete(null)
         val doc = document
         val imgs = images
         val counter = countExec
@@ -592,6 +760,14 @@ class BookSession(
         const val MAX_CACHED = 4
         /** How often a foreground layout is retried while the generation keeps changing underneath. */
         private const val MAX_ATTEMPTS = 8
+        /** Partial page counts are saved after this many sections counted in the background (A2). */
+        const val SAVE_EVERY = 25
+        /** Age a layout generation needs before its partial page counts are saved (see [saveCounts]). */
+        const val SAVE_SETTLE_MS = 30_000L
+
+        /** (section, offset) as one comparable Long, like [ChapterIndex] orders positions. */
+        private fun packPosition(section: Int, offset: Int): Long =
+            (section.toLong() shl 32) or (offset.toLong() and 0xFFFFFFFFL)
 
         private fun setPriority(p: Int) {
             try {
@@ -599,5 +775,69 @@ class BookSession(
             } catch (_: Throwable) {
             }
         }
+    }
+}
+
+/** When and what [BookSession] writes to the page-count cache (A2). Pure. */
+internal object CountSaves {
+    /**
+     * True when counts with [known] counted sections should be written: they hold more than the cache has
+     * ([savedKnown]), and they are [complete] or their layout generation is [ageMs] ≥ [BookSession.SAVE_SETTLE_MS] old.
+     */
+    fun due(known: Int, savedKnown: Int, complete: Boolean, ageMs: Long): Boolean =
+        known > savedKnown && (complete || ageMs >= BookSession.SAVE_SETTLE_MS)
+
+    /**
+     * Turns the entries of [failed] sections (counted as their error page) in [arr] into -1, so they are counted again
+     * next time instead of being cached. Returns the counts left in [arr].
+     */
+    fun maskFailed(arr: IntArray, failed: Collection<Int>): Int {
+        for (s in failed) if (s in arr.indices) arr[s] = -1
+        var n = 0
+        for (v in arr) if (v >= 1) n++
+        return n
+    }
+}
+
+/**
+ * A value computed once, on demand ([BookSession.episodes]): the first [get] starts the computation, callers asking
+ * while it runs are queued, and every one of them gets the single result from [complete] — as does every later
+ * caller, at once. Main thread only (the computation reports back through [complete] on the main thread); callbacks
+ * must not throw.
+ */
+internal class Once<T : Any> {
+    private var state = IDLE
+    private var value: T? = null
+    private var waiters: ArrayList<(T?) -> Unit>? = null
+
+    val isDone: Boolean get() = state == DONE
+
+    /** Delivers the value to [onReady]: now when known, else on [complete]. Only the first call runs [start]. */
+    fun get(onReady: (T?) -> Unit, start: () -> Unit) {
+        when (state) {
+            DONE -> onReady(value)
+            RUNNING -> waiters?.add(onReady)
+            else -> {
+                state = RUNNING
+                waiters = arrayListOf(onReady)
+                start()
+            }
+        }
+    }
+
+    /** Sets the result (null = none) and hands it to the waiting callers. Only the first call counts. */
+    fun complete(result: T?) {
+        if (state == DONE) return
+        state = DONE
+        value = result
+        val w = waiters ?: return
+        waiters = null
+        for (cb in w) cb(result)
+    }
+
+    private companion object {
+        const val IDLE = 0
+        const val RUNNING = 1
+        const val DONE = 2
     }
 }

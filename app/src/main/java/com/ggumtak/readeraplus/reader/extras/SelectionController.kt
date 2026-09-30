@@ -21,19 +21,21 @@ import android.widget.PopupWindow
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.Quote
+import com.ggumtak.readeraplus.data.TxtOverride
 import com.ggumtak.readeraplus.engine.LineGeometry
 import com.ggumtak.readeraplus.engine.LineInfo
 import com.ggumtak.readeraplus.engine.OBJECT_CHAR
 import com.ggumtak.readeraplus.engine.PageInfo
 import com.ggumtak.readeraplus.engine.RectPx
 import com.ggumtak.readeraplus.engine.SectionLayout
+import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocPosition
-import com.ggumtak.readeraplus.reader.PageView
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
@@ -43,6 +45,7 @@ import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
+import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.sp
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
@@ -54,8 +57,10 @@ import kotlin.math.hypot
 
 /**
  * Long-press text selection with two draggable handles and an action popup
- * (copy, quote, note, share, search, dictionary/translate, web search, read aloud).
- * The selection is limited to the current page of the current section; highlight owner "selection".
+ * (copy, quote, note, share, search, dictionary/translate, web search, read aloud, and in a TXT book "이 문구 지우기").
+ * The selection is limited to the current page of the current section; highlight owner "selection". A second long
+ * press while a selection shows waits [AppSettings.longPressMs][com.ggumtak.readeraplus.settings.AppSettings.longPressMs],
+ * like the page's own.
  */
 class SelectionController(private val host: ReaderHost) {
     // Resolved lazily: the host may construct this before its own properties are initialised.
@@ -169,7 +174,7 @@ class SelectionController(private val host: ReaderHost) {
                 downX = ev.x
                 downY = ev.y
                 main.removeCallbacks(reselect)
-                main.postDelayed(reselect, PageView.LONG_PRESS_MS)
+                main.postDelayed(reselect, longPressMs())
             }
             MotionEvent.ACTION_MOVE -> {
                 if (fromLongPress) {
@@ -339,9 +344,14 @@ class SelectionController(private val host: ReaderHost) {
         }
     }
 
+    /** "길게 누르기 시간" (AppSettings.longPressMs), clamped like the page's own long press. */
+    private fun longPressMs(): Long = runCatching { Settings.app.longPressMs }.getOrDefault(DEFAULT_LONG_PRESS_MS)
+        .coerceIn(MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS).toLong()
+
     // ------------------------------------------------------------------ action popup
 
-    private class Action(val label: String, val icon: Int, val run: () -> Unit)
+    /** [enabled] false: shown gray; a tap explains why instead of acting. */
+    private class Action(val label: String, val icon: Int, val enabled: Boolean = true, val run: () -> Unit)
 
     private fun actionList(): List<Action> {
         val list = ArrayList<Action>(10)
@@ -364,6 +374,13 @@ class SelectionController(private val host: ReaderHost) {
         list += Action("사전·번역", R.drawable.ic_translate) { lookUp() }
         list += Action("웹 검색", R.drawable.ic_travel_explore) { webSearch() }
         if (onReadAloud != null || TtsRegistry.get(host) != null) list += Action("여기서 읽기", R.drawable.ic_volume_up) { readAloud() }
+        if (host is TxtOverrideHost && runCatching { host.book.format }.getOrNull() == BookFormat.TXT) {
+            // Rules apply per source line: a selection across a line break can't become one (T1-10).
+            val oneLine = selectionIsOneLine()
+            list += Action("문구 지우기", R.drawable.ic_delete_forever, enabled = oneLine) {
+                if (oneLine) deletePhrase() else ctx.toast("여러 줄은 한 번에 지울 수 없습니다. 한 줄 안에서 고르세요")
+            }
+        }
         return list
     }
 
@@ -391,8 +408,14 @@ class SelectionController(private val host: ReaderHost) {
                 minimumWidth = ctx.dp(62)
                 setOnClickListener { a.run() }
             }
-            cell.addView(ctx.icon(a.icon, 24))
-            cell.addView(ctx.label(a.label, 12f, maxLines = 1).apply { gravity = Gravity.CENTER; setPadding(0, ctx.dp(4), 0, 0) })
+            val color = if (a.enabled) Ink.BLACK else Ink.DISABLED
+            cell.addView(ctx.icon(a.icon, 24, tint = color))
+            cell.addView(ctx.label(a.label, 12f, color = color, maxLines = 1).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, ctx.dp(4), 0, 0)
+                // A longer label shrinks to the cell instead of being cut ("문구 지우기").
+                setAutoSizeTextTypeUniformWithConfiguration(9, 12, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+            })
             row?.addView(cell, LinearLayout.LayoutParams(ctx.dp(62), WRAP_CONTENT))
         }
 
@@ -488,6 +511,59 @@ class SelectionController(private val host: ReaderHost) {
         if (t.isNotEmpty()) TextActions.webSearch(ctx, t.take(200))
     }
 
+    /** The selection holds no line break (a paragraph end in the laid-out text). */
+    private fun selectionIsOneLine(): Boolean {
+        val text = host.currentLayout?.content?.text ?: return false
+        val s = selStart.coerceIn(0, text.length)
+        val e = selEnd.coerceIn(s, text.length)
+        for (i in s until e) if (text[i] == '\n' || text[i] == '\r') return false
+        return true
+    }
+
+    /**
+     * "이 문구 지우기" (T1-10): a replacement rule for this book only (TxtOverrideHost) that deletes the whole source line
+     * ("줄 전체 지우기") or just the phrase ("이 문구만"), then one re-parse of the book. Afterwards the section shown is
+     * checked once: rules match source lines before wrapped lines are joined and spaces tidied, so a phrase shaped
+     * differently in the file may survive — the user is told so.
+     */
+    private fun deletePhrase() {
+        val h = host as? TxtOverrideHost ?: return
+        if (!selectionIsOneLine()) return
+        val phrase = selectedText()
+        val bookId = runCatching { host.book.id }.getOrNull() ?: return
+        clear()
+        if (phrase.isEmpty()) return
+        val shown = if (phrase.length > PHRASE_SHOWN) phrase.take(PHRASE_SHOWN) + "…" else phrase
+        val d = ctx.alert().setTitle("이 문구 지우기")
+            .setMessage("‘$shown’${Josa.iGa(phrase)} 들어간 줄을 이 책에서 지웁니다.\n\n줄 전체를 지우거나 이 문구만 지울 수 있습니다. '치환 규칙'에서 되돌릴 수 있습니다.")
+            .setPositiveButton("줄 전체 지우기") { _, _ -> addPhraseRule(h, bookId, phrase, wholeLine = true) }
+            .setNeutralButton("이 문구만") { _, _ -> addPhraseRule(h, bookId, phrase, wholeLine = false) }
+            .setNegativeButton("취소", null)
+            .showNoAnim()
+        PanelRegistry.dialog(ctx, d)
+    }
+
+    private fun addPhraseRule(h: TxtOverrideHost, bookId: Long, phrase: String, wholeLine: Boolean) {
+        if (runCatching { host.book.id }.getOrNull() != bookId) return
+        val rule = RuleLiteral.build(phrase, wholeLine) ?: return
+        val o = h.txtOverride ?: TxtOverride()
+        val rules = o.replaceRules ?: Settings.reader.txtReplaceRules
+        val next = TxtEdits.appendRule(rules, rule)
+        if (next == rules) {
+            ctx.toast("이미 같은 규칙이 있습니다")
+            return
+        }
+        h.applyTxtOverride(o.copy(replaceRules = next)) {
+            if (runCatching { host.book.id }.getOrNull() != bookId) return@applyTxtOverride
+            val text = host.currentLayout?.content?.text ?: return@applyTxtOverride
+            if (text.indexOf(phrase) >= 0) {
+                ctx.toast("원본 줄과 모양이 달라 지우지 못했습니다 (줄 합치기·공백 정리 때문일 수 있음)")
+            } else {
+                ctx.toast("지웠습니다. '치환 규칙'에서 되돌릴 수 있습니다")
+            }
+        }
+    }
+
     private fun readAloud() {
         val pos = DocPosition(section, selStart)
         clear()
@@ -579,17 +655,27 @@ class SelectionController(private val host: ReaderHost) {
     }
 
     /**
-     * Refreshes [QuoteCache] once per controller (i.e. per opened book), off the main thread. Until it arrives the
-     * cached list (if any) is used; edits made through this module keep the cache current afterwards.
+     * Makes sure [QuoteCache] holds this book's quotes: the reader fills it with the rows it loads when the book opens
+     * (A12-4: one quote query per open), so the controller queries only when it is still empty (e.g. that load
+     * failed), once, off the main thread. Edits made through this module keep the cache current afterwards.
      */
     private fun ensureQuotes() {
         if (quotesRequested) return
         val bookId = runCatching { host.book.id }.getOrNull() ?: return
         quotesRequested = true
+        if (QuoteCache.get(bookId) != null) return
         scope.launch {
             val list = withContext(Dispatchers.IO) { runCatching { Library.quotes(bookId) }.getOrNull() }
             if (list != null) QuoteCache.put(bookId, list) else quotesRequested = false
         }
+    }
+
+    private companion object {
+        const val DEFAULT_LONG_PRESS_MS = 500
+        const val MIN_LONG_PRESS_MS = 200
+        const val MAX_LONG_PRESS_MS = 2000
+        /** Longest phrase quoted in the "이 문구 지우기" dialog (the rule holds all of it). */
+        const val PHRASE_SHOWN = 40
     }
 }
 

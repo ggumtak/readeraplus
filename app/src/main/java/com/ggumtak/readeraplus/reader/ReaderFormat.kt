@@ -42,6 +42,74 @@ object ReaderFormat {
     fun chapterLeft(pages: Int): String = if (pages <= 0) "챕터 마지막 쪽" else "챕터 ${pages}쪽 남음"
 
     /**
+     * The footer's left part (R2): the page label, the episode counter ("123/540화", T1-5), the pages left in the
+     * chapter and the time left ("이 화 3분", T1-7), each when given, joined with [SEP]; null when there is nothing.
+     * Built with one StringBuilder: the footer asks for it on every turn.
+     */
+    fun footerLeft(pageLabel: String?, episode: String?, chapterPagesLeft: Int?, timeLeft: String?): String? {
+        val sb = StringBuilder(48)
+        appendPart(sb, pageLabel)
+        appendPart(sb, episode)
+        if (chapterPagesLeft != null) appendPart(sb, chapterLeft(chapterPagesLeft))
+        appendPart(sb, timeLeft)
+        return if (sb.isEmpty()) null else sb.toString()
+    }
+
+    private fun appendPart(sb: StringBuilder, part: String?) {
+        if (part == null) return
+        if (sb.isNotEmpty()) sb.append(SEP)
+        sb.append(part)
+    }
+
+    /**
+     * The footer's 회차 item (T1-5): "123/540화" — the episode [number] of the current TOC entry over the book's
+     * [maxNumber] — when the titles carry numbers ([numbered]) and this entry has one, else "87/612", the entry's
+     * place ([index], 0-based) among [count] TOC entries.
+     */
+    fun episodeLabel(numbered: Boolean, number: Int, maxNumber: Int, index: Int, count: Int): String =
+        if (numbered && number > 0) "$number/${maxOf(maxNumber, number)}화" else "${index + 1}/${maxOf(count, index + 1)}"
+
+    /** The footer's 남은 시간 item (T1-7): "이 화 3분" ([bookScope] false) or "책 7시간 20분". */
+    fun timeLeft(bookScope: Boolean, minutes: Int): String = (if (bookScope) "책 " else "이 화 ") + duration(minutes)
+
+    /** Minutes needed for [chars] characters at [charsPerMinute] (whole minutes, rounded down: "1분 미만" below one). */
+    fun minutesFor(chars: Long, charsPerMinute: Int): Int {
+        if (chars <= 0L) return 0
+        return (chars / charsPerMinute.coerceAtLeast(1)).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
+
+    /** The end panel's reading time (T1-2): "읽은 시간 4시간 12분". */
+    fun readTime(seconds: Long): String = "읽은 시간 " + durationOfSeconds(seconds)
+
+    /** A TXT at least this big says "목차를 만드는 중…" while its index is built (A5). */
+    const val BIG_TXT_BYTES = 4L * 1024 * 1024
+
+    /**
+     * The delayed loading text (shown after 300 ms): "목차를 만드는 중…" while a TXT of [sizeBytes] ≥ [BIG_TXT_BYTES]
+     * is parsed in full ([buildingIndex]: no usable index, e.g. the first open after an index version change), else
+     * "불러오는 중…".
+     */
+    fun loadingText(buildingIndex: Boolean, sizeBytes: Long): String =
+        if (buildingIndex && sizeBytes >= BIG_TXT_BYTES) "목차를 만드는 중…" else "불러오는 중…"
+
+    /**
+     * A reading duration, the app's one wording (R2, T1-7): "1분 미만" (under a minute), "n분" (under an hour),
+     * "h시간 m분" ("h시간" when m is 0 or h ≥ 10). Shared by the footer's 남은 시간, the end panel, the TOC header,
+     * 책 정보 and the statistics page.
+     */
+    fun duration(minutes: Int): String {
+        if (minutes < 1) return "1분 미만"
+        if (minutes < 60) return "${minutes}분"
+        val h = minutes / 60
+        val m = minutes % 60
+        return if (m == 0 || h >= 10) "${h}시간" else "${h}시간 ${m}분"
+    }
+
+    /** [duration] of [seconds] (whole minutes, rounded down). */
+    fun durationOfSeconds(seconds: Long): String =
+        duration((seconds.coerceAtLeast(0) / 60).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+
+    /**
      * "34%  ·  14:05" per enabled item (null when empty). The battery is not text: the renderer draws it after this
      * as a small battery icon with its digits ([com.ggumtak.readeraplus.render.PageDecor.battery]).
      */

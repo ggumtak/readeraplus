@@ -46,6 +46,17 @@ object TxtDocuments {
         return TxtBook(file, index, options)
     }
 
+    /**
+     * R2 (A5): true while [open] is parsing [path] in full because it has no usable index (a first open, or the first
+     * open after a `TxtIndexStore.VERSION` bump or an option change). The reader's delayed loading text (shown after
+     * 300 ms) then reads "목차를 만드는 중…" instead of "불러오는 중…" for files over 4 MB. Reading it costs nothing on
+     * the open path (a volatile field set by [open]). Any thread. Owner: FORMAT.
+     */
+    fun isBuildingIndex(path: String): Boolean {
+        // R2 stub (owner: FORMAT).
+        return false
+    }
+
     /** Title from the file name; encoding sniffed from the first 64 KB. Never throws for unreadable files. */
     fun readMeta(file: File): DocMeta {
         val title = file.nameWithoutExtension.ifEmpty { file.name }

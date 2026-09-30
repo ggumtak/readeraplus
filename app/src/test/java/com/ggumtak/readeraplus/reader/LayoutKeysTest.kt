@@ -2,6 +2,7 @@ package com.ggumtak.readeraplus.reader
 
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.engine.LineBreakMode
+import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -60,6 +61,8 @@ class LayoutKeysTest {
     fun layoutChangeDetection() {
         assertFalse(LayoutKeys.layoutChanged(s, s.copy(invert = true)))
         assertFalse(LayoutKeys.layoutChanged(s, s.copy(footerClock = false, footerBattery = false, footerChapterLeft = true)))
+        // R2 footer items are text in the footer band too: a repaint, never a re-layout.
+        assertFalse(LayoutKeys.layoutChanged(s, s.copy(footerEpisode = true, footerTimeLeft = ReaderSettings.TIME_LEFT_BOOK)))
         assertTrue(LayoutKeys.layoutChanged(s, s.copy(fontSizeSp = 21f)))
         assertTrue(LayoutKeys.layoutChanged(s, s.copy(paragraphSpacingPct = 60)))
         assertTrue(LayoutKeys.layoutChanged(s, s.copy(showFooter = false)))
@@ -77,7 +80,7 @@ class LayoutKeysTest {
     @Test
     fun keyIsStableAndSensitive() {
         val g = LayoutKeys.geometry(s, 720, 1440, density, statusPx)
-        fun key(t: ReaderSettings = s, enc: String = "", gg: PageGeometry = g, font: String = "BUNDLED:fonts/RIDIBatang.otf", ver: Int = 1) =
+        fun key(t: ReaderSettings = s, enc: String = "", gg: PageGeometry = g, font: String = "BUNDLED:fonts/RIDIBatang.otf", ver: Int = LayoutKeys.ALGO_VERSION) =
             LayoutKeys.key(t, t.parseOptions(enc), gg, density, font, ver)
         val base = key()
         assertEquals(24, base.length)
@@ -89,6 +92,31 @@ class LayoutKeysTest {
         assertNotEquals(base, key(s.copy(txtDetectChapters = false)))
         assertNotEquals(base, key(gg = LayoutKeys.geometry(s, 1440, 720, density, statusPx)))
         assertNotEquals(base, key(font = "USER:/x.ttf:100:5"))
-        assertNotEquals(base, key(ver = 2))
+        assertNotEquals(base, key(ver = LayoutKeys.ALGO_VERSION + 1))
+    }
+
+    @Test
+    fun keyCarriesTheLayoutAlgorithmVersionNotTheAppVersion() {
+        // A2: an app update that leaves the typesetter alone keeps every cached count; ALGO_VERSION is the default.
+        val g = LayoutKeys.geometry(s, 720, 1440, density, statusPx)
+        val font = "BUNDLED:fonts/NanumMyeongjo.ttf"
+        val k = LayoutKeys.keyFor(s, BookFormat.TXT, "", g, density, font)
+        assertEquals(LayoutKeys.keyFor(s, BookFormat.TXT, "", g, density, font, LayoutKeys.ALGO_VERSION), k)
+        assertNotEquals(LayoutKeys.keyFor(s, BookFormat.TXT, "", g, density, font, LayoutKeys.ALGO_VERSION + 1), k)
+        assertEquals(LayoutKeys.key(s, s.parseOptions(""), g, density, font), LayoutKeys.key(s, s.parseOptions(""), g, density, font, LayoutKeys.ALGO_VERSION))
+        assertTrue(LayoutKeys.ALGO_VERSION >= 1)
+        assertTrue(LayoutKeys.VERSION >= 3)
+        // LayoutGoldenTest compares its 64-bit digest with this.
+        assertTrue(LayoutKeys.GOLDEN_HASH.matches(Regex("[0-9a-f]{16}")))
+    }
+
+    @Test
+    fun effectiveTxtOptionsOfOneBookChangeOnlyThatBooksKey() {
+        // T1-9: the session keys its counts with the book's effective settings (global + its own TXT options).
+        val g = LayoutKeys.geometry(s, 720, 1440, density, statusPx)
+        val font = "BUNDLED:fonts/NanumMyeongjo.ttf"
+        val own = s.copy(txtBlankLines = 2, txtReplaceRules = "광고 => ")
+        assertNotEquals(LayoutKeys.keyFor(s, BookFormat.TXT, "", g, density, font), LayoutKeys.keyFor(own, BookFormat.TXT, "", g, density, font))
+        assertEquals(LayoutKeys.keyFor(s, BookFormat.EPUB, "", g, density, font), LayoutKeys.keyFor(own, BookFormat.EPUB, "", g, density, font))
     }
 }

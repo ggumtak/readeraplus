@@ -78,10 +78,10 @@ import java.io.File
 import android.provider.Settings as SystemSettings
 
 /**
- * Library (launcher) screen, ReadEra-style in black & white: toolbar (drawer / shelf title / search /
- * overflow), a drawer overlay with every shelf, book cards (list) or covers (grid), grouped shelves,
- * search-as-you-type, sort, book menu actions, collections, trash, storage permission flow, background
- * scanning with a status row, SAF open/import, open-last-on-start and the about/licenses dialog.
+ * Library (launcher) screen, ReadEra-style in black & white: toolbar (drawer / shelf title / view toggle / search /
+ * overflow), a drawer overlay with every shelf, book cards (목록), compact rows (간단히) or covers (표지), grouped
+ * shelves, search-as-you-type, sort, book menu actions, multi-select with batch actions (T1-13), collections, trash,
+ * storage permission flow, background scanning with a status row, SAF open/import and open-last-on-start.
  *
  * Every database call runs on [Dispatchers.IO]; the main thread only binds views. No animations anywhere.
  */
@@ -140,12 +140,18 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     /** Reload when the window regains focus (after dialogs owned by other modules that may edit books). */
     internal var refreshOnFocus = false
     private var localStatus: String? = null
-    /** Flag writes in flight; the list is reloaded from the database only once they are all stored. */
+    /** Writes in flight on [writeDispatcher]; the list is reloaded from the database only once they are all stored. */
     private var pendingWrites = 0
-    /** Serial IO lane for flag writes so quick taps reach the database in tap order. */
+    /** A reload is owed once [pendingWrites] drops to 0. */
+    private var reloadAfterWrites = false
+    /** Serial IO lane for flag and batch writes so quick taps reach the database in tap order. */
     private val writeDispatcher = Dispatchers.IO.limitedParallelism(1)
+    /** Multi-select (T1-13): drawn by the book items, edited by taps while [BookSelection.active]. */
+    private val selection = BookSelection()
+    /** Rows of the book list on screen (whichever view shows them); empty while a group list shows. */
+    private var shownRows: List<BookRow> = emptyList()
 
-    // ---- start-up ("앱 시작시 문서 읽기")
+    // ---- start-up (open the last book on start)
     /** The library views exist ([ensureUi]). Not before the open-last decision, nor while the reader opened by it is up. */
     private var uiBuilt = false
     /** Between [onResume] and [onPause]. */
@@ -164,9 +170,16 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     // ---- views
     private lateinit var root: FrameLayout
+    private lateinit var main: LinearLayout
+    private lateinit var toolbarBar: LinearLayout
     private lateinit var navBtn: ImageButton
     private lateinit var titleView: TextView
     private lateinit var extraBtn: ImageButton
+    private lateinit var viewBtn: ImageButton
+    /** Mode whose icon [viewBtn] shows. */
+    private var viewBtnMode: LibraryListMode? = null
+    /** Multi-select toolbar, built on the first long-press (never at start-up). */
+    private var selectionBar: SelectionBar? = null
     private lateinit var searchRow: LinearLayout
     private lateinit var searchEdit: EditText
     private lateinit var statusRow: LinearLayout
@@ -177,15 +190,25 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private lateinit var emptyScroll: ScrollView
     private lateinit var emptyText: TextView
     private lateinit var emptyButtons: LinearLayout
-    private lateinit var scrim: View
-    private lateinit var drawer: LinearLayout
+    /** The drawer and its scrim, built on the first open (sixteen rows the start-up doesn't need). */
+    private var scrim: View? = null
+    private var drawer: LinearLayout? = null
     private val drawerItems = HashMap<Shelf, DrawerItem>()
 
     private lateinit var bookAdapter: BookListAdapter
+    private lateinit var compactAdapter: CompactListAdapter
     private lateinit var gridAdapter: BookGridAdapter
     private lateinit var groupAdapter: GroupAdapter
 
     private class DrawerItem(val row: LinearLayout, val label: TextView, val count: TextView)
+
+    /** "N권 선택" toolbar: title, [더보기] (one book), [전체], [닫기], then the batch actions. */
+    private class SelectionBar(
+        val root: LinearLayout,
+        val title: TextView,
+        val more: ImageButton,
+        val actions: List<View>,
+    )
 
     private val searchRunnable = Runnable { applySearch(searchEdit.text.toString()) }
     private val loadingRunnable = Runnable { showMessage("불러오는 중…", emptyList()) }
@@ -207,6 +230,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // API 31+: drop the platform splash at once instead of its fade-out (a run of e-ink frames). The theme makes
+        // it a plain white window with no icon (values-v31).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) splashScreen.setOnExitAnimationListener { it.remove() }
         val app = Settings.app
         listMode = app.libraryListMode
         sort = app.librarySort
@@ -279,6 +305,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val app = Settings.app
         listMode = app.libraryListMode
         sort = app.librarySort
+        showModeButton() // a restored backup may have changed the view
         val access = hasStorageAccess()
         val newlyGranted = access && !hasAccess
         hasAccess = access
@@ -383,8 +410,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             @Suppress("DEPRECATION") super.onBackPressed()
             return
         }
-        when (LibraryText.backStep(drawerOpen, searchOpen, group != null)) {
+        when (LibraryText.backStep(drawerOpen, searchOpen, group != null, selection.active)) {
             LibraryText.BackStep.CLOSE_DRAWER -> closeDrawer()
+            LibraryText.BackStep.END_SELECTION -> endSelection()
             LibraryText.BackStep.CLOSE_SEARCH -> closeSearch()
             LibraryText.BackStep.LEAVE_GROUP -> leaveGroup()
             LibraryText.BackStep.FINISH -> @Suppress("DEPRECATION") super.onBackPressed()
@@ -394,9 +422,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     /** Hardware page keys / volume keys scroll the list by a screen (e-ink friendly paging). */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (uiBuilt && !drawerOpen) {
-            val a = Settings.app
             val code = event.keyCode
-            val dir = LibraryText.keyDirection(code, a.volumeKeysTurn, a.invertVolumeKeys, a.nextPageKeys, a.prevPageKeys)
+            val dir = LibraryText.pageDirection(code, Settings.app)
             val isVolume = code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN
             // While typing a search, only volume keys page (learned keys could be ordinary text keys).
             if (dir != 0 && (!searchEdit.isFocused || isVolume)) {
@@ -412,13 +439,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private fun buildUi() {
         root = FrameLayout(this).apply { setBackgroundColor(Ink.WHITE) }
-        val main = vertical { setBackgroundColor(Ink.WHITE) }
+        main = vertical { setBackgroundColor(Ink.WHITE) }
         main.addView(buildToolbar(), lp())
         main.addView(buildSearchRow(), lp())
         main.addView(buildPermissionPanel(), lp().apply { setMargins(dp(8), dp(8), dp(8), dp(4)) })
 
         val content = FrameLayout(this)
         bookAdapter = BookListAdapter(this, actions)
+        compactAdapter = CompactListAdapter(this, actions)
         groupAdapter = GroupAdapter(this, ::enterGroup, ::onGroupLongPress)
         gridAdapter = BookGridAdapter(this, actions)
 
@@ -482,20 +510,28 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
         main.addView(content, lp(MATCH_PARENT, 0, 1f))
         root.addView(main, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+    }
 
-        scrim = View(this).apply {
+    /** Builds the drawer overlay (scrim + panel) over the library once, when it is first opened. */
+    private fun ensureDrawer(): LinearLayout {
+        drawer?.let { return it }
+        val s = View(this).apply {
             isClickable = true
             visibility = View.GONE
             setOnClickListener { closeDrawer() }
         }
-        root.addView(scrim, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        val drawerWidth = minOf((widthPx * 0.8f).toInt(), dp(320))
-        drawer = buildDrawer()
-        root.addView(drawer, FrameLayout.LayoutParams(drawerWidth, MATCH_PARENT, Gravity.START))
+        root.addView(s, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        scrim = s
+        val drawerWidth = minOf((resources.displayMetrics.widthPixels * 0.8f).toInt(), dp(320))
+        val d = buildDrawer()
+        root.addView(d, FrameLayout.LayoutParams(drawerWidth, MATCH_PARENT, Gravity.START))
+        drawer = d
+        return d
     }
 
     private fun buildToolbar(): View {
         val bar = vertical { setBackgroundColor(Ink.WHITE) }
+        toolbarBar = bar
         val row = horizontal {
             minimumHeight = dp(56)
             setPadding(dp(4), 0, dp(4), 0)
@@ -506,6 +542,10 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         row.addView(titleView, lp(0, WRAP_CONTENT, 1f))
         extraBtn = iconButton(R.drawable.ic_add, "새 컬렉션") { onExtraAction() }.apply { visibility = View.GONE }
         row.addView(extraBtn)
+        // 목록 → 간단히 → 표지 in one tap each (no chooser dialog to open and close on e-ink).
+        viewBtn = iconButton(modeIcon(listMode), modeDescription(listMode)) { cycleListMode() }
+        viewBtnMode = listMode
+        row.addView(viewBtn)
         row.addView(iconButton(R.drawable.ic_search, "검색") { toggleSearch() })
         row.addView(iconButton(R.drawable.ic_more_vert, "메뉴") { showOverflow(it) })
         bar.addView(row, lp())
@@ -639,9 +679,22 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         col.addView(hairline())
         col.addView(View(this), lp(MATCH_PARENT, dp(4)))
         col.addView(drawerRow(R.drawable.ic_settings, "설정") { closeDrawer(); SettingsActivity.open(this) }.row, lp())
+        // ic_history, not the spec's ic_schedule: that clock is already 읽을 책's icon a few rows up.
+        col.addView(drawerRow(R.drawable.ic_history, "읽기 기록") {
+            closeDrawer()
+            SettingsActivity.open(this, SettingsActivity.PAGE_STATS)
+        }.row, lp())
         col.addView(drawerRow(R.drawable.ic_file_open, "파일 열기") { closeDrawer(); openFilePicker() }.row, lp())
+        // Books received there are in the database when this screen resumes: onResume reloads the list and counts.
+        col.addView(drawerRow(R.drawable.ic_download, "Wi-Fi로 책 받기") {
+            closeDrawer()
+            SettingsActivity.open(this, SettingsActivity.PAGE_WIFI)
+        }.row, lp())
         col.addView(drawerRow(R.drawable.ic_refresh, "도서 스캔") { closeDrawer(); manualScan() }.row, lp())
-        col.addView(drawerRow(R.drawable.ic_info, "정보") { closeDrawer(); showAbout() }.row, lp())
+        col.addView(drawerRow(R.drawable.ic_info, "정보") {
+            closeDrawer()
+            SettingsActivity.open(this, SettingsActivity.PAGE_ABOUT)
+        }.row, lp())
         col.addView(View(this), lp(MATCH_PARENT, dp(12)))
         val scroll = ScrollView(this).apply {
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -691,6 +744,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private fun openDrawer() {
         hideKeyboard()
+        val panel = ensureDrawer()
         drawerOpen = true
         drawerItems.forEach { (s, item) ->
             val selected = s == shelf
@@ -698,20 +752,21 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             item.label.bold(selected)
             item.count.setTextColor(if (selected) Ink.BLACK else Ink.GRAY) // no grey text on the grey row
         }
-        scrim.visibility = View.VISIBLE
-        drawer.visibility = View.VISIBLE
+        scrim?.visibility = View.VISIBLE
+        panel.visibility = View.VISIBLE
         ensureCounts()
     }
 
     private fun closeDrawer() {
         drawerOpen = false
-        drawer.visibility = View.GONE
-        scrim.visibility = View.GONE
+        drawer?.visibility = View.GONE
+        scrim?.visibility = View.GONE
     }
 
     private fun selectShelf(s: Shelf) {
         closeDrawer()
         if (s == shelf && group == null) return
+        endSelection()
         shelf = s
         group = null
         groupLabel = null
@@ -726,6 +781,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val first = listView.firstVisiblePosition
         val top = listView.getChildAt(0)?.top ?: 0
         groupScroll = intArrayOf(first, top)
+        endSelection()
         group = g.key
         groupLabel = LibraryText.groupTitle(shelf, g)
         if (searchOpen) closeSearch(reloadAfter = false)
@@ -734,6 +790,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     private fun leaveGroup() {
+        endSelection()
         group = null
         groupLabel = null
         if (searchOpen) closeSearch(reloadAfter = false)
@@ -759,6 +816,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             }
             else -> extraBtn.visibility = View.GONE
         }
+        // A group list has no books to show differently.
+        viewBtn.visibility = if (LibraryText.isGrouped(shelf) && !inGroup) View.GONE else View.VISIBLE
     }
 
     private fun onExtraAction() {
@@ -868,11 +927,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     /** Ids of books that belong to any collection (blocking). */
     private fun collectionMemberIds(): Set<Long> = Library.collectionMemberIds()
 
-    /** Marks derived data stale after a change (counts, collection icons) and reloads the list. */
-    internal fun changed(collections: Boolean = false) {
+    /**
+     * Marks derived data stale after a change (counts, collection icons) and reloads the list ([afterWrites]: once the
+     * writes queued on the write lane are stored).
+     */
+    internal fun changed(collections: Boolean = false, afterWrites: Boolean = false) {
         invalidateCounts()
         if (collections) collectionMembers = null
-        reload()
+        if (afterWrites) reloadAfterQueuedWrites() else reload()
     }
 
     /** Drawer counts are stale: drop them and any computation still running on the old data. */
@@ -890,9 +952,15 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         return true
     }
 
+    /** The adapter of the list view for the current mode (목록 cards or 간단히 rows). */
+    private fun listAdapterForMode(): BookAdapter =
+        if (listMode == LibraryListMode.COMPACT) compactAdapter else bookAdapter
+
     private fun showBooks(rows: List<BookRow>, scrollTop: Boolean) {
-        val grid = listMode == LibraryListMode.GRID
-        if (grid) {
+        shownRows = rows
+        // Books that left the list (moved to another shelf, trashed, filtered out) are no longer checked.
+        if (selection.active && selection.retain(rows.mapTo(HashSet(rows.size)) { it.book.id })) updateSelectionBar()
+        if (listMode == LibraryListMode.GRID) {
             listView.visibility = View.GONE
             gridView.visibility = View.VISIBLE
             if (!sameRows(gridAdapter.rows, rows)) gridAdapter.submit(rows)
@@ -900,11 +968,12 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         } else {
             gridView.visibility = View.GONE
             listView.visibility = View.VISIBLE
-            if (listView.adapter !== bookAdapter) {
-                listView.adapter = bookAdapter
-                bookAdapter.submit(rows)
-            } else if (!sameRows(bookAdapter.rows, rows)) {
-                bookAdapter.submit(rows)
+            val adapter = listAdapterForMode()
+            if (listView.adapter !== adapter) {
+                listView.adapter = adapter
+                adapter.submit(rows)
+            } else if (!sameRows(adapter.rows, rows)) {
+                adapter.submit(rows)
             }
             if (scrollTop) listView.setSelection(0)
         }
@@ -912,6 +981,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     private fun showGroups(groups: List<ShelfGroup>, scrollTop: Boolean) {
+        shownRows = emptyList()
+        endSelection()
         gridView.visibility = View.GONE
         listView.visibility = View.VISIBLE
         if (listView.adapter !== groupAdapter) listView.adapter = groupAdapter
@@ -938,7 +1009,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             buttons += "폴더 추가" to { pickTree() }
             buttons += "파일 열기" to { openFilePicker() }
         } else {
-            msg = LibraryText.emptyMessage(shelf, query, group != null)
+            msg = LibraryText.emptyMessage(shelf, query, group != null, flagButtons = listMode == LibraryListMode.LIST)
             if (noSearch && group == null) {
                 when (shelf) {
                     Shelf.ALL, Shelf.READING_NOW, Shelf.DOWNLOADS, Shelf.FOLDERS, Shelf.FORMATS -> {
@@ -1157,7 +1228,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 }
                 progress(i + 1, uris.size)
             }
-            "문서 ${added}개를 추가했습니다"
+            LibraryText.importedMessage(added)
         }
         if (!started) toast("이미 가져오는 중입니다")
     }
@@ -1209,7 +1280,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val app = applicationContext
         val started = LibraryJobs.startImport { progress ->
             val n = LibraryImport.importTree(app, uri, progress)
-            "문서 ${n}개를 가져왔습니다"
+            LibraryText.treeImportedMessage(n)
         }
         if (!started) toast("이미 가져오는 중입니다")
     }
@@ -1219,10 +1290,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private fun showOverflow(anchor: View) {
         val items = ArrayList<MenuItem>()
         items += MenuItem("정렬: ${sort.label}", R.drawable.ic_sort) { chooseSort() }
-        items += MenuItem(
-            "보기: ${listMode.label}",
-            if (listMode == LibraryListMode.GRID) R.drawable.ic_grid_view else R.drawable.ic_view_list,
-        ) { chooseMode() }
+        items += MenuItem("보기: ${listMode.label}", modeIcon(listMode)) { chooseMode() }
         if (shelf == Shelf.COLLECTIONS && group == null) items += MenuItem("새 컬렉션", R.drawable.ic_add) { newCollection(null) }
         if (shelf == Shelf.TRASH) items += MenuItem("휴지통 비우기", R.drawable.ic_delete_forever) { confirmEmptyTrash() }
         items += MenuItem("도서 스캔", R.drawable.ic_refresh) { manualScan() }
@@ -1245,14 +1313,35 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private fun chooseMode() {
         val options = LibraryListMode.entries
-        chooser("보기", options.map { it.label }, listMode.ordinal) { i ->
-            val m = options[i]
-            if (m == listMode) return@chooser
-            listMode = m
-            Settings.saveApp(Settings.app.copy(libraryListMode = m))
-            reload(scrollTop = true)
-        }
+        chooser("보기", options.map { it.label }, listMode.ordinal) { i -> setListMode(options[i]) }
     }
+
+    /** The toolbar toggle: 목록 → 간단히 → 표지 → 목록. */
+    private fun cycleListMode() = setListMode(LibraryText.nextListMode(listMode))
+
+    private fun setListMode(m: LibraryListMode) {
+        if (m == listMode) return
+        listMode = m
+        Settings.saveApp(Settings.app.copy(libraryListMode = m))
+        showModeButton()
+        reload(scrollTop = true)
+    }
+
+    private fun showModeButton() {
+        if (viewBtnMode == listMode) return
+        viewBtnMode = listMode
+        viewBtn.setImageResource(modeIcon(listMode))
+        viewBtn.contentDescription = modeDescription(listMode)
+    }
+
+    private fun modeIcon(m: LibraryListMode): Int = when (m) {
+        LibraryListMode.LIST -> R.drawable.ic_view_list
+        LibraryListMode.COMPACT -> R.drawable.ic_format_list_bulleted
+        LibraryListMode.GRID -> R.drawable.ic_grid_view
+    }
+
+    /** The toggle shows the current view; its long-press label says so and what a tap does. */
+    private fun modeDescription(m: LibraryListMode): String = "보기: ${m.label} (눌러서 바꾸기)"
 
     private fun scrollPage(dir: Int) {
         val v: AbsListView = if (gridView.visibility == View.VISIBLE) gridView else listView
@@ -1304,15 +1393,37 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     /** Card callbacks (kept off the public activity API). */
     private val actions = object : BookActions {
-        override fun openBook(book: Book) = this@LibraryActivity.openBook(book)
+        override val selection: BookSelection get() = this@LibraryActivity.selection
+        override fun tap(row: BookRow, anchor: View) = onBookTap(row, anchor)
+        override fun longPress(row: BookRow, anchor: View) = onBookLongPress(row, anchor)
         override fun showBookMenu(row: BookRow, anchor: View) = bookMenu(row, anchor)
         override fun toggleFlag(row: BookRow, flag: BookFlag) = this@LibraryActivity.toggleFlag(row, flag)
         override fun showCollections(book: Book) = collectionsDialog(book)
     }
 
+    private fun onBookTap(row: BookRow, anchor: View) {
+        when {
+            selection.active -> toggleSelected(row.book.id)
+            row.book.trashed -> bookMenu(row, anchor)
+            else -> openBook(row.book)
+        }
+    }
+
+    /**
+     * Long-press starts multi-select with the book checked (T1-13; it used to open the book menu, which is now ⋮ or
+     * [더보기]). The trash keeps the menu: its actions (복원, 영구 삭제) have no batch form.
+     */
+    private fun onBookLongPress(row: BookRow, anchor: View) {
+        when {
+            row.book.trashed || shelf == Shelf.TRASH -> bookMenu(row, anchor)
+            selection.active -> toggleSelected(row.book.id)
+            else -> startSelection(row.book.id)
+        }
+    }
+
     internal fun openBook(book: Book) {
         if (book.trashed) {
-            toast("휴지통에 있는 문서입니다. 먼저 복원하세요.")
+            toast("휴지통에 있는 책입니다. 먼저 복원하세요.")
             return
         }
         ReaderActivity.open(this, book.id)
@@ -1325,40 +1436,215 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             BookFlag.TO_READ -> if (!b.toRead) b.copy(toRead = true, haveRead = false) else b.copy(toRead = false)
             BookFlag.HAVE_READ -> if (!b.haveRead) b.copy(haveRead = true, toRead = false) else b.copy(haveRead = false)
         }
-        // A reload that started before this tap would repaint the old icon: drop it, reload after the write.
-        loadJob?.cancel()
         replaceRow(BookRow.of(nb, row.inCollection))
         invalidateCounts()
+        // Rows equal to the optimistic one are not redrawn by the reload; a book that left this shelf disappears.
+        queueWrite("저장하지 못했습니다") {
+            when (flag) {
+                BookFlag.FAVORITE -> Library.setFavorite(b.id, nb.favorite)
+                BookFlag.TO_READ -> Library.setToRead(b.id, nb.toRead)
+                BookFlag.HAVE_READ -> Library.setHaveRead(b.id, nb.haveRead)
+            }
+        }
+    }
+
+    /**
+     * Runs [write] on the serial write lane, then [done] on the main thread when it succeeded (a failure is a toast).
+     * With [reload] the list is reloaded from the database once every queued write is stored: a reload that started
+     * before would repaint the old state, so it is dropped now.
+     */
+    internal fun queueWrite(errorPrefix: String, reload: Boolean = true, done: (() -> Unit)? = null, write: () -> Unit) {
+        if (reload) {
+            loadJob?.cancel()
+            reloadAfterWrites = true
+        }
         pendingWrites++
         scope.launch {
             val r = try {
-                withContext(writeDispatcher) {
-                    runCatching {
-                        when (flag) {
-                            BookFlag.FAVORITE -> Library.setFavorite(b.id, nb.favorite)
-                            BookFlag.TO_READ -> Library.setToRead(b.id, nb.toRead)
-                            BookFlag.HAVE_READ -> Library.setHaveRead(b.id, nb.haveRead)
-                        }
-                    }
-                }
+                withContext(writeDispatcher) { runCatching(write) }
             } finally {
                 pendingWrites--
             }
-            r.onFailure { toast(ErrorLines.line("저장하지 못했습니다", it)) }
-            // Rows equal to the optimistic ones are not redrawn; a book that left this shelf disappears.
-            if (pendingWrites == 0) reload()
+            r.onSuccess { done?.invoke() }.onFailure { toast(ErrorLines.line(errorPrefix, it)) }
+            if (pendingWrites == 0 && reloadAfterWrites) {
+                reloadAfterWrites = false
+                reload()
+            }
+        }
+    }
+
+    /** Reloads now, or after the queued writes when some are still running ([queueWrite]). */
+    internal fun reloadAfterQueuedWrites() {
+        if (pendingWrites == 0) {
+            reload()
+        } else {
+            loadJob?.cancel()
+            reloadAfterWrites = true
         }
     }
 
     /** Swaps one row in place (instant icon feedback) without a database round trip. */
     private fun replaceRow(row: BookRow) {
-        fun swap(rows: List<BookRow>): List<BookRow>? {
-            val i = rows.indexOfFirst { it.book.id == row.book.id }
-            if (i < 0) return null
-            return rows.toMutableList().also { it[i] = row }
+        val i = shownRows.indexOfFirst { it.book.id == row.book.id }
+        if (i < 0) return
+        shownRows = shownRows.toMutableList().also { it[i] = row }
+        val adapter = if (listMode == LibraryListMode.GRID) gridAdapter else listAdapterForMode()
+        if (adapter.rows.getOrNull(i)?.book?.id == row.book.id) adapter.submit(shownRows)
+    }
+
+    // ============================================================================================ multi-select
+
+    private fun startSelection(id: Long) {
+        if (shownRows.isEmpty()) return
+        if (searchOpen) hideKeyboard()
+        selection.start(id)
+        val bar = selectionBar ?: buildSelectionBar().also { selectionBar = it }
+        toolbarBar.visibility = View.GONE
+        bar.root.visibility = View.VISIBLE
+        updateSelectionBar()
+        refreshSelectionViews()
+    }
+
+    /** Leaves selection mode (Back, [닫기], a batch action, another shelf or group). No-op when not selecting. */
+    internal fun endSelection() {
+        if (!selection.active) return
+        selection.end()
+        selectionBar?.root?.visibility = View.GONE
+        toolbarBar.visibility = View.VISIBLE
+        refreshSelectionViews()
+    }
+
+    private fun toggleSelected(id: Long) {
+        selection.toggle(id)
+        updateSelectionBar()
+        refreshSelectionViews()
+    }
+
+    /** Redraws the check boxes of the items on screen; the others bind with the current state when they scroll in. */
+    private fun refreshSelectionViews() {
+        val v: AbsListView = if (gridView.visibility == View.VISIBLE) gridView else listView
+        for (i in 0 until v.childCount) (v.getChildAt(i).tag as? SelectableHolder)?.showSelection()
+    }
+
+    private fun updateSelectionBar() {
+        val bar = selectionBar ?: return
+        val n = selection.size
+        val title = LibraryText.selectionTitle(n)
+        if (bar.title.text.toString() != title) bar.title.text = title
+        val single = if (n == 1) View.VISIBLE else View.GONE
+        if (bar.more.visibility != single) bar.more.visibility = single
+        val enabled = n > 0
+        bar.actions.forEach { cell ->
+            if (cell.isEnabled != enabled) {
+                cell.isEnabled = enabled
+                cell.alpha = if (enabled) 1f else 0.4f
+            }
         }
-        swap(bookAdapter.rows)?.let { bookAdapter.submit(it) }
-        swap(gridAdapter.rows)?.let { gridAdapter.submit(it) }
+    }
+
+    /**
+     * The selection toolbar, in place of the normal one: "N권 선택" [⋮ 더보기] [전체] [닫기] over the batch actions
+     * [컬렉션에 추가] [다 읽음으로] [읽을 책으로] [휴지통]. Built once, on the first long-press.
+     */
+    private fun buildSelectionBar(): SelectionBar {
+        val bar = vertical { setBackgroundColor(Ink.WHITE); visibility = View.GONE }
+        val top = horizontal {
+            minimumHeight = dp(56)
+            setPadding(dp(4), 0, dp(4), 0)
+        }
+        val title = label("", 20f, bold = true, maxLines = 1).apply { setPadding(dp(12), 0, dp(8), 0) }
+        top.addView(title, lp(0, WRAP_CONTENT, 1f))
+        lateinit var more: ImageButton
+        more = iconButton(R.drawable.ic_more_vert, "더보기") { showSelectedBookMenu(more) }.apply { visibility = View.GONE }
+        top.addView(more)
+        top.addView(flatButton("전체") { selectAllShown() })
+        top.addView(flatButton("닫기") { endSelection() })
+        bar.addView(top, lp())
+
+        val actionsRow = horizontal { setPadding(dp(4), 0, dp(4), dp(4)) }
+        val cells = listOf(
+            actionCell(R.drawable.ic_library_books, "컬렉션에 추가") { batchAddToCollection() },
+            actionCell(R.drawable.ic_done_all, "다 읽음으로") { batchShelf(Shelf.HAVE_READ) },
+            actionCell(R.drawable.ic_schedule, "읽을 책으로") { batchShelf(Shelf.TO_READ) },
+            actionCell(R.drawable.ic_delete, "휴지통") { batchTrash() },
+        )
+        cells.forEach { actionsRow.addView(it, lp(0, dp(64), 1f)) }
+        bar.addView(actionsRow, lp())
+        bar.addView(hairline())
+        // Right under the (hidden) normal toolbar: the list moves down by the actions row, once, on entering.
+        main.addView(bar, main.indexOfChild(toolbarBar) + 1, lp())
+        return SelectionBar(bar, title, more, cells)
+    }
+
+    /** Borderless bold text button of the selection toolbar (48dp high). */
+    private fun flatButton(text: String, onClick: () -> Unit): TextView = label(text, 16f, bold = true).apply {
+        gravity = Gravity.CENTER
+        minHeight = dp(48)
+        minWidth = dp(56)
+        setPadding(dp(12), 0, dp(12), 0)
+        background = pressableBackground()
+        setOnClickListener { onClick() }
+    }
+
+    /** A batch action: icon over a one-line label, the whole cell pressable. */
+    private fun actionCell(iconRes: Int, text: String, onClick: () -> Unit): View = vertical {
+        gravity = Gravity.CENTER
+        background = pressableBackground()
+        contentDescription = text
+        addView(icon(iconRes, 24))
+        addView(label(text, 13f, maxLines = 1).apply { setPadding(0, dp(4), 0, 0) }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        setOnClickListener { if (selection.size > 0) onClick() }
+    }
+
+    /** [전체]: checks every listed book (all of them, not only the ones on screen), or unchecks them all. */
+    private fun selectAllShown() {
+        if (selection.toggleAll(shownRows.map { it.book.id })) {
+            updateSelectionBar()
+            refreshSelectionViews()
+        }
+    }
+
+    /** [더보기] with one book checked: the single-book menu (grid cells have no ⋮); picking an item ends selection. */
+    private fun showSelectedBookMenu(anchor: View) {
+        val id = selection.single() ?: return
+        val row = shownRows.firstOrNull { it.book.id == id } ?: return
+        bookMenu(row, anchor) { endSelection() }
+    }
+
+    /** [다 읽음으로] / [읽을 책으로]: one transaction for all checked books (the same rules as the card flags). */
+    private fun batchShelf(target: Shelf) {
+        val ids = selection.snapshot()
+        endSelection()
+        invalidateCounts()
+        queueWrite("저장하지 못했습니다", done = { toast(LibraryText.addedToShelf(target, ids.size)) }) {
+            if (target == Shelf.HAVE_READ) Library.setHaveRead(ids, true) else Library.setToRead(ids, true)
+        }
+    }
+
+    /** [휴지통]: one book goes at once (like the book menu); several ask first, since the trash restores one by one. */
+    private fun batchTrash() {
+        val ids = selection.snapshot()
+        val run = {
+            endSelection()
+            invalidateCounts()
+            queueWrite("휴지통으로 이동하지 못했습니다", done = { toast(LibraryText.trashedMessage(ids.size)) }) {
+                Library.trash(ids)
+            }
+        }
+        if (ids.size == 1) run() else confirmDialog("휴지통으로 이동", LibraryText.trashQuestion(ids.size), "이동") { run() }
+    }
+
+    /** [컬렉션에 추가]: pick a collection (or make one); the checked books are added in one transaction. */
+    private fun batchAddToCollection() {
+        val ids = selection.snapshot()
+        pickCollection { c ->
+            endSelection()
+            collectionMembers = null
+            invalidateCounts()
+            queueWrite("저장하지 못했습니다", done = { toast(LibraryText.addedToCollection(c.name, ids.size)) }) {
+                Library.addToCollection(ids, c.id)
+            }
+        }
     }
 
     internal fun onGroupLongPress(g: ShelfGroup): Boolean {

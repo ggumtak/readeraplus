@@ -9,7 +9,14 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- Screen-off TTS: a partial wake lock only while speaking (TtsService). -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- "Wi-Fi로 책 받기" only: a LAN upload server bound to the Wi-Fi address while that settings page is open.
+         The app never connects to outside servers. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- TTS keeps reading with the screen off: a media-playback foreground service while TTS is active. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <queries>
         <intent>
@@ -80,6 +87,12 @@
         <activity
             android:name=".ui.settings.SettingsActivity"
             android:exported="false" />
+
+        <!-- Keep-alive and controls (notification, media session) for TTS; the engine stays in TtsController. -->
+        <service
+            android:name=".reader.extras.TtsService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <provider
             android:name=".data.BookFileProvider"

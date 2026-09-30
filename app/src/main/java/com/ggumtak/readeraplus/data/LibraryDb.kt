@@ -32,9 +32,15 @@ internal class LibraryDb(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // v1 is the first schema; future migrations go here. CREATE ... IF NOT EXISTS keeps this idempotent.
+        // Runs inside SQLiteOpenHelper's transaction: all or nothing. New tables / indexes first (idempotent), then
+        // the columns newer versions added to existing tables (skipped when a column is already there).
         for (sql in LibrarySchema.CREATE_ALL) db.execSQL(sql)
+        for (sql in LibrarySchema.upgradeStatements(oldVersion) { table -> columnsOf(db, table) }) db.execSQL(sql)
     }
+
+    /** Column names of [table] (`PRAGMA table_info`); empty when the table doesn't exist. */
+    private fun columnsOf(db: SQLiteDatabase, table: String): Set<String> =
+        db.queryList("PRAGMA table_info($table)", null) { c -> c.getString(c.getColumnIndexOrThrow("name")) ?: "" }.toHashSet()
 
     override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // An older build on a newer file: keep the data (newer schemas only add columns / tables).

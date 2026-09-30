@@ -3,6 +3,7 @@ package com.ggumtak.readeraplus.ui.kit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
@@ -54,6 +55,36 @@ class KitResourcesTest {
         val dialog = block(read("res/values/themes.xml"), "<style name=\"InkScreenDialog\"", "</style>")
         assertEquals("false", item(dialog, "windowFullscreen"))
         assertEquals("false", item(dialog, "backgroundDimEnabled"))
+    }
+
+    @Test
+    fun splashScreenIsPlainWhiteOnEveryActivityTheme() {
+        // R2 (A4.5): API 31+ adds the splash attributes to AppTheme; every activity theme inherits AppTheme.
+        val base = read("res/values/themes.xml")
+        assertNotNull(Regex("""<style name="AppTheme" parent="Base.AppTheme"\s*/>""").find(base))
+        assertNotNull(Regex("""<style name="ReaderTheme" parent="AppTheme">""").find(base))
+        val v31 = block(read("res/values-v31/themes.xml"), "<style name=\"AppTheme\" parent=\"Base.AppTheme\">", "</style>")
+        assertEquals("@android:color/transparent", item(v31, "windowSplashScreenAnimatedIcon"))
+        assertEquals("@android:color/white", item(v31, "windowSplashScreenBackground"))
+        assertEquals("@android:color/white", item(v31, "windowSplashScreenIconBackgroundColor"))
+        // Every activity in the manifest uses AppTheme (the default) or ReaderTheme.
+        val manifest = read("AndroidManifest.xml")
+        for (m in Regex("""android:theme="@style/([A-Za-z.]+)"""").findAll(manifest)) {
+            assertTrue(m.groupValues[1], m.groupValues[1] == "AppTheme" || m.groupValues[1] == "ReaderTheme")
+        }
+    }
+
+    @Test
+    fun r2PermissionsAndTtsService() {
+        val manifest = read("AndroidManifest.xml")
+        for (p in listOf("INTERNET", "WAKE_LOCK", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MEDIA_PLAYBACK")) {
+            assertTrue(p, manifest.contains("<uses-permission android:name=\"android.permission.$p\" />"))
+        }
+        val service = block(manifest, "android:name=\".reader.extras.TtsService\"", "/>")
+        assertTrue(service.contains("android:exported=\"false\""))
+        assertTrue(service.contains("android:foregroundServiceType=\"mediaPlayback\""))
+        // No notification permission prompt: a media-session notification is exempt.
+        assertFalse(manifest.contains("POST_NOTIFICATIONS"))
     }
 
     @Test

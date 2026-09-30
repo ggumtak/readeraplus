@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Black on white everywhere; no transitions (e-ink). -->
-    <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
+    <!-- Black on white everywhere; no transitions (e-ink). The items live in Base.AppTheme so that values-v31 can add
+         the splash-screen attributes to AppTheme without repeating them (every activity theme inherits AppTheme). -->
+    <style name="Base.AppTheme" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@android:color/white</item>
         <item name="android:colorPrimary">@android:color/white</item>
         <item name="android:colorPrimaryDark">@android:color/white</item>
@@ -24,6 +25,8 @@
              fast scroller either: it slides in/out on every scroll; lists that want one enable it always-visible. -->
         <item name="android:fadeScrollbars">false</item>
     </style>
+
+    <style name="AppTheme" parent="Base.AppTheme" />
 
     <style name="ReaderTheme" parent="AppTheme">
         <item name="android:windowNoTitle">true</item>

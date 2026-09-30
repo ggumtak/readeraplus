@@ -255,18 +255,74 @@ object Library {
         db().exec(LibrarySql.SET_FAVORITE, value, bookId)
     }
 
-    /** Setting "to read" clears "have read". */
+    /** Setting "to read" clears "have read" (and with it the finish time, see [setHaveRead]). */
     fun setToRead(bookId: Long, value: Boolean) {
-        db().exec(if (value) LibrarySql.SET_TO_READ_ON else LibrarySql.SET_TO_READ_OFF, bookId)
+        if (!value) {
+            db().exec(LibrarySql.SET_TO_READ_OFF, bookId)
+            return
+        }
+        db().inTransaction { toReadOn(this, bookId) }
     }
 
-    /** Setting "have read" clears "to read"; progress is left untouched. */
+    /**
+     * Setting "have read" clears "to read"; progress is left untouched. Clearing it also clears the book's finish
+     * time (BookPrefs.finishedAt), so a book finished again later counts from the new date.
+     */
     fun setHaveRead(bookId: Long, value: Boolean) {
-        db().exec(if (value) LibrarySql.SET_HAVE_READ_ON else LibrarySql.SET_HAVE_READ_OFF, bookId)
+        if (value) {
+            db().exec(LibrarySql.SET_HAVE_READ_ON, bookId)
+            return
+        }
+        db().inTransaction { haveReadOff(this, bookId) }
+    }
+
+    private fun toReadOn(db: SQLiteDatabase, bookId: Long) {
+        db.exec(LibrarySql.SET_TO_READ_ON, bookId)
+        clearFinished(db, bookId)
+    }
+
+    private fun haveReadOff(db: SQLiteDatabase, bookId: Long) {
+        db.exec(LibrarySql.SET_HAVE_READ_OFF, bookId)
+        clearFinished(db, bookId)
+    }
+
+    /** Clears [bookId]'s finish time, dropping its prefs row when nothing else is left in it. */
+    internal fun clearFinished(db: SQLiteDatabase, bookId: Long) {
+        if (db.exec(LibrarySql.CLEAR_FINISHED_AT, bookId) > 0) db.exec(LibrarySql.PRUNE_BOOK_PREFS, bookId)
     }
 
     fun setTrashed(bookId: Long, value: Boolean) {
         db().exec(LibrarySql.SET_TRASHED, value, bookId)
+    }
+
+    // ---- batch changes (library multi-select, T1-13): one transaction each, so N books cost one commit ----
+
+    /** [setHaveRead] for every id of [ids] (unknown ids are ignored). */
+    fun setHaveRead(ids: Collection<Long>, value: Boolean) {
+        if (ids.isEmpty()) return
+        db().inTransaction {
+            for (id in ids) if (value) exec(LibrarySql.SET_HAVE_READ_ON, id) else haveReadOff(this, id)
+        }
+    }
+
+    /** [setToRead] for every id of [ids]. */
+    fun setToRead(ids: Collection<Long>, value: Boolean) {
+        if (ids.isEmpty()) return
+        db().inTransaction {
+            for (id in ids) if (value) toReadOn(this, id) else exec(LibrarySql.SET_TO_READ_OFF, id)
+        }
+    }
+
+    /** Adds every book of [ids] to collection [collectionId] (books already in it stay). */
+    fun addToCollection(ids: Collection<Long>, collectionId: Long) {
+        if (ids.isEmpty()) return
+        db().inTransaction { for (id in ids) insertRow(LibrarySql.INSERT_MEMBERSHIP, id, collectionId) }
+    }
+
+    /** Moves every book of [ids] to the trash ([setTrashed] true). */
+    fun trash(ids: Collection<Long>) {
+        if (ids.isEmpty()) return
+        db().inTransaction { for (id in ids) exec(LibrarySql.SET_TRASHED, true, id) }
     }
 
     fun setReview(bookId: Long, text: String) {
@@ -296,9 +352,15 @@ object Library {
         db.exec(LibrarySql.UPDATE_BOOK_META_USER, t, a, s, i, bookId)
     }
 
-    /** Clears position/progress/flags ("읽은 기록 초기화"). */
+    /**
+     * Clears position/progress/flags and the finish time ("읽은 기록 초기화"). The reading log keeps its rows: the
+     * statistics show when the user read, and that reading did happen.
+     */
     fun resetProgress(bookId: Long) {
-        db().exec(LibrarySql.RESET_PROGRESS, bookId)
+        db().inTransaction {
+            exec(LibrarySql.RESET_PROGRESS, bookId)
+            clearFinished(this, bookId)
+        }
     }
 
     /** Removes the entry (and its bookmarks/quotes/caches); deletes the file too when [deleteFile]. */
@@ -351,6 +413,8 @@ object Library {
         db.exec(LibrarySql.DELETE_QUOTES_OF_BOOK, bookId)
         db.exec(LibrarySql.DELETE_MEMBERSHIPS_OF_BOOK, bookId)
         db.exec(LibrarySql.DELETE_PAGE_COUNTS_OF_BOOK, bookId)
+        db.exec(LibrarySql.DELETE_LOG_OF_BOOK, bookId)
+        db.exec(LibrarySql.DELETE_BOOK_PREFS_OF_BOOK, bookId)
         db.exec(LibrarySql.DELETE_BOOK, bookId)
     }
 
@@ -475,7 +539,11 @@ object Library {
 
     // ---- caches ----
 
-    /** Per-section page counts for a layout key (see reader), or null. */
+    /**
+     * Per-section page counts for a layout key (see reader), or null. R2 (A2): the array may be PARTIAL — -1
+     * ([PageCountCodec.UNKNOWN]) marks a section not counted yet (PageCounts.setKnown takes only the entries ≥ 0).
+     * A malformed blob (any value below -1) reads as null: recounted, never wrong counts.
+     */
     fun pageCounts(bookId: Long, layoutKey: String): IntArray? {
         val db = db()
         val row = db.queryFirst(LibrarySql.SELECT_PAGE_COUNTS, arrayOf(bookId.toString(), layoutKey)) {
@@ -493,7 +561,11 @@ object Library {
         return counts
     }
 
-    /** Stores counts for [layoutKey]; only the 3 most recently used keys per book are kept. */
+    /**
+     * Stores counts for [layoutKey]; only the 3 most recently used keys per book are kept. R2 (A2): [counts] may be
+     * partial (-1 = unknown section); the reader saves every 25 counted sections and on close, copying the array on
+     * the main thread first. One small BLOB write (≈ 6 KB for 1,565 sections).
+     */
     fun savePageCounts(bookId: Long, layoutKey: String, counts: IntArray) {
         val blob = PageCountCodec.encode(counts)
         val now = System.currentTimeMillis()

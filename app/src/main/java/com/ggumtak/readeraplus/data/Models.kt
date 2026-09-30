@@ -62,13 +62,16 @@ data class Quote(
 
 data class BookCollection(val id: Long, val name: String, val createdAt: Long, val bookCount: Int = 0)
 
-/** The drawer destinations (ReadEra-style). */
+/**
+ * The drawer destinations (ReadEra-style). [label] is the one wording of each shelf: the drawer, the toolbar title,
+ * the book menus' flag items and the empty-shelf texts all use `Shelf.X.label` (glossary: 책, never 문서).
+ */
 enum class Shelf(val label: String) {
-    READING_NOW("읽고있는 문서"),
-    ALL("책 & 문서"),
+    READING_NOW("읽고 있는 책"),
+    ALL("모든 책"),
     FAVORITES("즐겨찾기"),
-    TO_READ("읽을 문서"),
-    HAVE_READ("읽던 문서"),
+    TO_READ("읽을 책"),
+    HAVE_READ("다 읽은 책"),
     AUTHORS("작가"),
     SERIES("시리즈"),
     COLLECTIONS("컬렉션"),

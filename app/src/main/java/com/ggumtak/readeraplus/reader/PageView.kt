@@ -63,6 +63,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     var verticalSwipe = false
     var brightnessSwipe = false
     var longPressEnabled = true
+    /** How long a still finger makes a long-press (AppSettings.longPressMs, set by the reader). */
+    var longPressMs = LONG_PRESS_MS
 
     /** Event time (uptime ms) of the last tap, swipe or wheel notch delivered to [cb]: where a turn's time starts. */
     var lastInputAt = 0L
@@ -196,7 +198,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                 maxDist = 0f
                 brightnessMode = brightnessSwipe && Gestures.inBrightnessStrip(ev.x, width)
                 removeCallbacks(longPress)
-                if (longPressEnabled) postDelayed(longPress, LONG_PRESS_MS)
+                if (longPressEnabled) postDelayed(longPress, longPressMs)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -305,7 +307,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
         if (multi) {
             // Another finger touched meanwhile: only a short, still touch counts (a tap), never a swipe.
-            if (maxDist <= tapSlop && ev.eventTime - primaryDownAt < LONG_PRESS_MS) deliverTap(downX, downY, ev.eventTime)
+            if (maxDist <= tapSlop && ev.eventTime - primaryDownAt < longPressMs) deliverTap(downX, downY, ev.eventTime)
             return
         }
         when (Gestures.end(dx, dy, maxDist, tapSlop, swipeMin, swipeToTurn, verticalSwipe)) {
@@ -322,7 +324,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         if (k < 0) return
         val t = extraTaps.removeAt(k)
         val d = maxOf(t.maxDist, Math.abs(ev.getX(i) - t.x), Math.abs(ev.getY(i) - t.y))
-        if (d <= tapSlop && ev.eventTime - t.downAt < LONG_PRESS_MS) deliverTap(t.x, t.y, ev.eventTime)
+        if (d <= tapSlop && ev.eventTime - t.downAt < longPressMs) deliverTap(t.x, t.y, ev.eventTime)
     }
 
     private fun trackExtraTaps(ev: MotionEvent) {
@@ -379,6 +381,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
 
     companion object {
         private const val TAG = "PageView"
+        /** The default long-press time ([longPressMs] follows AppSettings.longPressMs). */
         const val LONG_PRESS_MS = 500L
         /** Wheel notches closer than this are one burst of a free-spinning wheel (a remote's clicks are slower). */
         const val WHEEL_INTERVAL_MS = 60L

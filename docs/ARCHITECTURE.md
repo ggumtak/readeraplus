@@ -6,6 +6,10 @@ ReadEra (library shelves, reading settings popup, TOC/bookmarks/quotes, search, 
 names, icons or assets — and fixes what ReadEra does badly for Korean web novels (TXT chapter detection, blank
 lines, paragraph spacing/indent, CP949, e-ink behaviour, fast opening of 15 MB TXT).
 
+> **Release 2 (contract revision R2).** Where this document and the section
+> [Contract revision R2](#contract-revision-r2-release-2) at the end differ, R2 wins. The shared APIs, owners and
+> stubs of R2 are listed in `docs/R2_INTERFACES.md`.
+
 Hard requirements from the user:
 - EPUB + TXT. Opening must feel instant; page turns must be instant.
 - Font face (RIDIBatang and Nanum Myeongjo default choices + bundled fonts + user-imported fonts), size,
@@ -297,7 +301,7 @@ as you like, same package & signatures).
     assets, path)`; files: `Typeface.Builder(File)`; variable fonts (detected via `fvar` table) use
     `setFontVariationSettings("'wght' N")`. Static fonts: use the bold file when `weight ≥ 600` and one
     exists, else the regular file. Italic: `Typeface.create(base, weight, true)` (API 28+) or no-op (the
-    measurer applies skew). Unknown id → default (`ridibatang`).
+    measurer applies skew). Unknown id → default (`FontCatalog.DEFAULT_ID`, `nanummyeongjo` since R2).
   - `syntheticStroke(id, weight, sizePx)`: static fonts only. `w = weight` minus 300 if the bold file is used
     (i.e. bold file ≈ 700), result `max(0, (w - 400) / 100f) * 0.012f * sizePx` (so 900 ≈ 6% of size).
   - `importFont(context, uri)`: copy via ContentResolver into `filesDir/fonts/` (validate the sfnt header
@@ -358,7 +362,7 @@ Android-native: keep it simple and correct.)
 
 Owns `data/` except `Models.kt`. Implements `Library`, `FileScanner`, `Backup`, `BookFileProvider`.
 
-- `LibraryDb : SQLiteOpenHelper("library.db", v1)`, WAL on, `PRAGMA synchronous=NORMAL`. Tables:
+- `LibraryDb : SQLiteOpenHelper("library.db", v2 since R2 — see "Contract revision R2")`, WAL on, `PRAGMA synchronous=NORMAL`. Tables:
   `books(id INTEGER PK AUTOINCREMENT, path TEXT UNIQUE NOT NULL, file_name, title, author, series,
   series_index REAL, format TEXT, size INTEGER, mtime INTEGER, added_at, last_read_at DEFAULT 0,
   pos_section DEFAULT 0, pos_offset DEFAULT 0, progress REAL DEFAULT 0, favorite, to_read, have_read, trashed
@@ -407,7 +411,8 @@ Owns `ui/library/`. `LibraryActivity` (launcher, standard launch mode so relaunc
   transparent full-screen click-catcher closes it). Back closes drawer → search → group → finishes.
 - Toolbar: hamburger (`ic_menu`), title = shelf label (or group name with a back arrow), `ic_search`,
   `ic_more_vert` (menu: 정렬 → chooser of `LibrarySort`, 보기 → 목록/표지, 도서 스캔, 파일 열기, 설정).
-- Drawer items in order with icons: 읽고있는 문서 `ic_autorenew`, 책 & 문서 `ic_menu_book`, 즐겨찾기
+- Drawer items in order with icons (labels: `Shelf.X.label`, renamed in R2 to 읽고 있는 책 / 모든 책 / 읽을 책 /
+  다 읽은 책): 읽고있는 문서 `ic_autorenew`, 책 & 문서 `ic_menu_book`, 즐겨찾기
   `ic_star`, 읽을 문서 `ic_schedule`, 읽던 문서 `ic_done_all`, 작가 `ic_person`, 시리즈 `ic_sell`, 컬렉션
   `ic_library_books`, 형식 `ic_layers`, 폴더 `ic_folder`, 다운로드 `ic_download`, 휴지통 `ic_delete`; divider;
   설정 `ic_settings`, 파일 열기 `ic_file_open`, 도서 스캔 `ic_refresh`, 정보 `ic_info`. Header: app name.
@@ -540,7 +545,7 @@ Owns `reader/extras/`. Implements `ReaderPanels`, `SelectionController`, `TtsCon
 
 - `showReadingSettings(host, anchor)`: a `PopupWindow` (no animation, white, 1px border) anchored under the
   top bar (the bars hide while it is open), width min(86%, 330dp), height ≤ 55%, compact 36dp rows, the
-  less-used rows behind "더보기"; style presets (마루뷰어풍 / 리디풍 / 종이책풍) on top. Header
+  less-used rows behind "더보기"; style presets (웹소설 / 전자책 / 종이책 since R2) on top. Header
   "읽기 설정 · EPUB, TXT". Rows (each change → `host.applySettings(copy)` immediately; steppers debounce
   250 ms):
   폰트 페이스 (value + dropdown → font chooser dialog: each row rendered in its own typeface, sample "가나다
@@ -626,3 +631,118 @@ sub-page directly). All changes saved immediately via `Settings.saveApp` / `save
 - 사전 · 번역 · 웹 검색: web search engine chooser (Google / Naver `https://search.naver.com/search.naver?query=%s`
   / Daum / 사용자 지정 URL), list of installed `PROCESS_TEXT` apps (info only).
 - 정보: version, font & icon licenses (`assets/fonts/licenses/*`).
+
+---
+
+## Contract revision R2 (release 2)
+
+R2 is one contract commit that lands before the release-2 feature work (spec section D). The frozen files it changed,
+every shared API with its owner, and the owner map are in **`docs/R2_INTERFACES.md`**. This section records the rules
+that outlive the release.
+
+### Ranking rules every owner applies (spec section 0)
+
+1. **The Comet comes first.** Anything that adds e-ink updates, startup work, per-page cost, background polling or
+   animation is rejected or redesigned.
+2. **Fast opening is sacred.** Nothing new runs between `ReaderActivity.startOpen` and `showPage`, with two
+   exceptions: one DB or prefs read folded into the IO block that already exists (R2: `BookPrefs.txtOverride`), and a
+   cache read that replaces more expensive work on that path, only when that work would actually run (R2: the EPUB
+   section-plan cache). Counting, annotations, statistics, reading speed and episode parsing run after the first page
+   (`afterOpen`). The first `Settings.app` read of a cold start is on the main thread: it reads plain prefs only (the
+   saved styles' JSON is parsed on first use, never in `loadApp`).
+3. **Value per effort.** The Korean web-novel TXT workflow before EPUB polish before general features.
+4. **Platform APIs only.** No AndroidX, no libraries. The only permissions added in R2: `INTERNET` (the Wi-Fi transfer
+   page, while it is open), `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_MEDIA_PLAYBACK` (TTS with the screen off).
+5. **Every flash the app starts on its own is opt-in.** A new refresh trigger ships switched off unless the user asked
+   for that refresh (the 새로고침 key or action, the refresh test). R2 defaults: `einkRefreshEvery = 0`,
+   `einkRefreshEveryNight = -1` (same as day), `einkFlashImages = false`; closing a panel only counts one turn toward
+   a cadence that is already on. The default e-ink mode stays "system" (the device keeps its own waveform).
+6. **At most one `TxtIndexStore.VERSION` bump per release.** Each bump makes every large TXT parse in full once
+   (≈ 1–1.5 s for 14 MB on the A53). Release 2 spends it on A5 (3 → 4). While a TXT over 4 MB is parsed in full
+   (`TxtDocuments.isBuildingIndex`) the delayed loading text reads "목차를 만드는 중…".
+
+Per turn: O(1) work and no allocation beyond what exists (the R2 footer items add one string per turn); no idle
+redraws, timers or polling; no animations anywhere. Page-turn taps are never debounced and fresh key presses never
+throttled (only auto-repeat is paced).
+
+### Page counts: algorithm version and golden hash (A2)
+
+- The page-count key (`LayoutKeys.key`) carries `LayoutKeys.ALGO_VERSION` instead of the app's `VERSION_CODE`, so an
+  app update no longer throws every cached count away.
+- **Rule:** bump `ALGO_VERSION` exactly when the output of `TypesetPass` (or of the measurer) can change for the same
+  input. `LayoutGoldenTest` (`test/.../engine/`) enforces it for the typesetter: it lays out a fixed original corpus
+  with the fake measurer (Korean and Latin text, headings, an image, justification, CHAR and WORD breaking), hashes
+  every `LineInfo` field and compares with `LayoutKeys.GOLDEN_HASH`; on a mismatch it fails with "layout output
+  changed: bump ALGO_VERSION and update GOLDEN_HASH". Measurer changes (`FontManager`, `AndroidTextMeasurer`,
+  synthetic stroke) are NOT covered by the test: whoever changes glyph advances or line metrics bumps `ALGO_VERSION`
+  by hand.
+- Counts are saved partially: the `page_counts` BLOB (little-endian int32 per section) may hold -1 for a section not
+  counted yet. The reader saves every 25 counted sections and on close (off the main thread, array copied first);
+  `PageCounts.setKnown` takes only entries ≥ 0 and rejects a length mismatch. Counting order: the section on screen,
+  then samples at 25 / 50 / 75 % (EPUB: single-part spine items only), then the rest.
+
+### EPUB section-plan cache (A12-1)
+
+- `format/epub/EpubPlanCache.kt` keeps, per EPUB, the per-spine-item `parts`, `itemChars` and `fragParts` that
+  `EpubBook.planSections` computes by scanning items larger than `EpubSplit.SCAN_MIN_BYTES` (192 KB). Key
+  `"v${EpubPlanCache.VERSION}|path|size|mtime"`, file `cacheDir/epubplan/<fnv64>.bin` (`DataOutputStream`), newest 200
+  kept.
+- Looked up only when at least one spine item is larger than `SCAN_MIN_BYTES` (a small EPUB never pays for a
+  cache-miss file open). Written after the first page: the reader calls `Documents.writeDeferredCaches()` from
+  `afterOpen` through `ReaderIo.launch`, never on the opening thread.
+- **Rule:** bump `EpubPlanCache.VERSION` whenever `EpubSplit.partsFor`, `scan` or `assign` change. A golden test (fixed
+  synthetic XHTML → expected parts and anchors) guards it, like `LayoutGoldenTest` guards `ALGO_VERSION`.
+
+### Library database v2
+
+One schema bump for the release (`LibrarySchema.DB_VERSION = 2`):
+
+- `reading_log(day, book_id, seconds, pages, chars, PRIMARY KEY(day, book_id)) WITHOUT ROWID` + index on `book_id`.
+  `day` = local date as yyyymmdd. Written only by `ReadingLog.add` (UPDATE `… = … + ?`, INSERT when no row changed,
+  one transaction: SQLite 3.18 has no UPSERT), from the reader's pause (the `ReadingTracker` delta: a page counts
+  when shown ≥ 2 s, at most 300 s) and from TTS while the reader is in the background. Read by the statistics page
+  and `ReadingLog.cpm` (reading speed for "남은 시간").
+- `book_prefs(book_id INTEGER PRIMARY KEY, txt_override TEXT, finished_at INTEGER NOT NULL DEFAULT 0,
+  episode_label TEXT)`: a book's own TXT options (JSON of `TxtOverride`, merged with the global settings only by
+  `reader/TxtOverrides.kt` `ReaderSettings.withTxt`), when it was finished, its file-name episode badge (T2-13). The
+  open path reads `txt_override` by primary key inside its existing IO block — a table, not a prefs file, so a cold
+  open from a file manager never parses every book's rules.
+- `quotes.style INTEGER NOT NULL DEFAULT 0` (highlight look, used from T2-3).
+- Migration (`LibraryDb.onUpgrade`): `CREATE_ALL` (all `IF NOT EXISTS`: new tables and indexes), then
+  `LibrarySchema.upgradeStatements(oldVersion, columnsOf)`: the `ALTER TABLE … ADD COLUMN` statements of versions
+  after `oldVersion`, each skipped when `PRAGMA table_info` already lists the column (a file that went v2 → an older
+  build → v2). `onDowngrade` keeps everything. Nothing is ever dropped.
+- Removing a book (`Library.deleteBookRows`) deletes its `reading_log` and `book_prefs` rows; the backup exports both
+  keyed by path.
+
+### UI kit (R2)
+
+- `Ui.kt` (frozen): `stepperRow` does nothing at its limits (no redraw, no save, no re-layout); `sliderRow` uses a plain
+  black-dot thumb (no animated platform thumb, no split track); `prompt()` hides the caret until the field is touched
+  (`inkCursor`).
+- `ui/kit/InkNumPad.kt` (EXTRAS_NAV, not frozen): numeric entry (page, %, 화) in a dialog with a big number label, a
+  3×4 grid of 56dp buttons (1–9, ⌫, 0, 이동) and an optional hint ("1–540"); pure state in `NumPadState` (digits,
+  max length, clamp). The system keyboard slides in and resizes the dialog window (several full e-ink updates); the pad
+  costs one small update per digit. Text input (Hangul) keeps the system IME.
+- `ui/kit/InkPager.kt` (EXTRAS_NAV, not frozen): `ListView.inkPaging(bar)` pages a list a screen at a time (a page =
+  visible rows − 1, `setSelection(first ± page)`); a vertical drag or fling beyond touch slop is consumed and becomes
+  exactly one page jump on `ACTION_UP` (no scroll frames); taps reach the rows; the "3 / 27" indicator is updated right
+  after each `setSelection` (which never raises `onScrollStateChanged(IDLE)`). Volume / learned page keys page too.
+- `res/values-v31/themes.xml`: the API 31+ splash screen is plain white without an icon (`AppTheme` extends
+  `Base.AppTheme`; `ReaderTheme` inherits it). LibraryActivity and ReaderActivity remove the splash view without an
+  exit animation.
+
+### Debug timing logs (RAPerf)
+
+`reader/PageView.kt` `ReaderPerf` logs under the tag `RAPerf`: "open <id>: first page N ms" (from `startOpen` to the end
+of the first page's draw, always, INFO) and "turn N ms" (from the input event to the end of the turned page's
+`onDraw`) only when enabled before the app starts:
+
+```
+adb shell setprop log.tag.RAPerf DEBUG
+adb shell am force-stop com.ggumtak.readeraplus
+adb logcat -s RAPerf
+```
+
+The release gates compare these numbers with the Wave 0 baseline recorded on the Comet: the cached reopen of the
+14.8 MB TXT within +10 ms, page-turn time unchanged, library cold start (`am start -W`) within +5 %.

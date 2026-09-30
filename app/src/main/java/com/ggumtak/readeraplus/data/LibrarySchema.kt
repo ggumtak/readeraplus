@@ -5,10 +5,18 @@ package com.ggumtak.readeraplus.data
  *
  * Only SQL understood by SQLite 3.18 (Android 8, minSdk 26) is used: no UPSERT, no window functions,
  * no RETURNING, no NULLS FIRST/LAST. Column names avoid SQL keywords (`offset`, `end`, `text`).
+ *
+ * Versions (one bump per release at most):
+ * - v1: books, bookmarks, quotes, collections, book_collections, page_counts, ignored.
+ * - v2 (R2): `reading_log` (T1-6), `book_prefs` (T1-9 / T1-2) and the `quotes.style` column (T2-3).
+ *
+ * A fresh database runs [CREATE_ALL] (which already has every column). An upgrade runs [CREATE_ALL] too
+ * (`IF NOT EXISTS`: only the missing tables / indexes are made; `CREATE_ALL` never adds a column to an existing
+ * table), then [upgradeStatements] for the columns newer versions added. Nothing is ever dropped or rewritten.
  */
 internal object LibrarySchema {
     const val DB_NAME = "library.db"
-    const val DB_VERSION = 1
+    const val DB_VERSION = 2
 
     const val CREATE_BOOKS = "CREATE TABLE IF NOT EXISTS books(" +
         "id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -55,7 +63,9 @@ internal object LibrarySchema {
         "end_offset INTEGER NOT NULL DEFAULT 0," +
         "quote_text TEXT NOT NULL DEFAULT ''," +
         "note TEXT NOT NULL DEFAULT ''," +
-        "created_at INTEGER NOT NULL DEFAULT 0)"
+        "created_at INTEGER NOT NULL DEFAULT 0," +
+        // v2: highlight look (0 = the default grey fill; T2-3 adds the others). Added to v1 files by ADD_QUOTE_STYLE.
+        "style INTEGER NOT NULL DEFAULT 0)"
 
     const val CREATE_COLLECTIONS = "CREATE TABLE IF NOT EXISTS collections(" +
         "id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -79,6 +89,62 @@ internal object LibrarySchema {
         "path TEXT PRIMARY KEY NOT NULL," +
         "removed_at INTEGER NOT NULL DEFAULT 0)"
 
+    /**
+     * v2: reading time per local day and book (T1-6). [day] is the local date as yyyymmdd (20260930); one row per
+     * (day, book), grown with an UPDATE-then-INSERT upsert (SQLite 3.18 has no UPSERT). Rows of a removed book are
+     * deleted with it.
+     */
+    const val CREATE_READING_LOG = "CREATE TABLE IF NOT EXISTS reading_log(" +
+        "day INTEGER NOT NULL," +
+        "book_id INTEGER NOT NULL," +
+        "seconds INTEGER NOT NULL DEFAULT 0," +
+        "pages INTEGER NOT NULL DEFAULT 0," +
+        "chars INTEGER NOT NULL DEFAULT 0," +
+        "PRIMARY KEY(day, book_id)) WITHOUT ROWID"
+
+    /**
+     * v2: per-book preferences, at most one row per book (T1-9 / T1-2 / T2-13): the TXT options of this book only
+     * (`txt_override`, JSON; NULL = the global defaults), when it was finished (`finished_at`, epoch millis; 0 =
+     * not finished) and the file-name episode badge (`episode_label`, e.g. "123/540화"; NULL = none). Read on the
+     * open path by primary key (one indexed read); deleted with the book.
+     */
+    const val CREATE_BOOK_PREFS = "CREATE TABLE IF NOT EXISTS book_prefs(" +
+        "book_id INTEGER PRIMARY KEY," +
+        "txt_override TEXT," +
+        "finished_at INTEGER NOT NULL DEFAULT 0," +
+        "episode_label TEXT)"
+
+    /** v2 column for databases created by v1 (a fresh v2 file has it from [CREATE_QUOTES]). */
+    const val ADD_QUOTE_STYLE = "ALTER TABLE quotes ADD COLUMN style INTEGER NOT NULL DEFAULT 0"
+
+    /** Columns added after v1: (table, column, version that added it, ALTER statement). */
+    private class AddedColumn(val table: String, val column: String, val version: Int, val sql: String)
+
+    private val ADDED_COLUMNS = listOf(
+        AddedColumn("quotes", "style", 2, ADD_QUOTE_STYLE),
+    )
+
+    /** Tables whose columns [upgradeStatements] needs ([columnsOf] is asked only for these). */
+    val UPGRADE_TABLES: List<String> get() = ADDED_COLUMNS.map { it.table }.distinct()
+
+    /**
+     * The ALTER statements an upgrade from [oldVersion] needs, to run AFTER [CREATE_ALL]. Guarded twice: only columns
+     * added after [oldVersion], and only when [columnsOf] (the table's current column names, e.g. from
+     * `PRAGMA table_info`) doesn't already list the column. The second guard matters for a file that went v2 → an
+     * older build (onDowngrade keeps the data, SQLite then records version 1) → v2 again: adding an existing column
+     * would fail the whole upgrade.
+     */
+    fun upgradeStatements(oldVersion: Int, columnsOf: (String) -> Set<String>): List<String> {
+        val out = ArrayList<String>(ADDED_COLUMNS.size)
+        for (c in ADDED_COLUMNS) {
+            if (oldVersion >= c.version) continue
+            val have = columnsOf(c.table)
+            if (have.any { it.equals(c.column, ignoreCase = true) }) continue
+            out += c.sql
+        }
+        return out
+    }
+
     val CREATE_INDEXES = listOf(
         "CREATE INDEX IF NOT EXISTS books_last_read ON books(last_read_at)",
         "CREATE INDEX IF NOT EXISTS books_title ON books(title COLLATE NOCASE)",
@@ -88,11 +154,13 @@ internal object LibrarySchema {
         "CREATE INDEX IF NOT EXISTS bookmarks_book ON bookmarks(book_id)",
         "CREATE INDEX IF NOT EXISTS quotes_book ON quotes(book_id)",
         "CREATE INDEX IF NOT EXISTS book_collections_coll ON book_collections(collection_id)",
+        // v2: a book's log rows (removal, per-book speed); the primary key already serves day ranges.
+        "CREATE INDEX IF NOT EXISTS reading_log_book ON reading_log(book_id)",
     )
 
-    /** Every statement needed to create a fresh v1 database, in order. */
+    /** Every statement needed to create a fresh database of [DB_VERSION], in order (all `IF NOT EXISTS`). */
     val CREATE_ALL: List<String> = listOf(
         CREATE_BOOKS, CREATE_BOOKMARKS, CREATE_QUOTES, CREATE_COLLECTIONS, CREATE_BOOK_COLLECTIONS,
-        CREATE_PAGE_COUNTS, CREATE_IGNORED,
+        CREATE_PAGE_COUNTS, CREATE_IGNORED, CREATE_READING_LOG, CREATE_BOOK_PREFS,
     ) + CREATE_INDEXES
 }

@@ -29,9 +29,13 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Book
+import com.ggumtak.readeraplus.data.BookPrefs
 import com.ggumtak.readeraplus.data.Bookmark
 import com.ggumtak.readeraplus.data.Library
+import com.ggumtak.readeraplus.data.NextPart
 import com.ggumtak.readeraplus.data.ReaderPresence
+import com.ggumtak.readeraplus.data.ReadingLog
+import com.ggumtak.readeraplus.data.TxtOverride
 import com.ggumtak.readeraplus.engine.LineGeometry
 import com.ggumtak.readeraplus.engine.PageInfo
 import com.ggumtak.readeraplus.engine.SectionLayout
@@ -41,20 +45,29 @@ import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.format.DocumentException
 import com.ggumtak.readeraplus.format.Documents
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
+import com.ggumtak.readeraplus.reader.extras.BookInsightsHost
+import com.ggumtak.readeraplus.reader.extras.Episodes
 import com.ggumtak.readeraplus.reader.extras.PageJumpHost
+import com.ggumtak.readeraplus.reader.extras.QuoteCache
+import com.ggumtak.readeraplus.reader.extras.ReaderEndHost
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
 import com.ggumtak.readeraplus.reader.extras.SelectionController
 import com.ggumtak.readeraplus.reader.extras.TtsController
+import com.ggumtak.readeraplus.reader.extras.TxtOverrideHost
 import com.ggumtak.readeraplus.render.Covers
 import com.ggumtak.readeraplus.render.Eink
+import com.ggumtak.readeraplus.render.FontFiles
 import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
+import com.ggumtak.readeraplus.render.ImageCoverage
 import com.ggumtak.readeraplus.render.PageDecor
 import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.KeyHold
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.TapAction
+import com.ggumtak.readeraplus.ui.library.LibraryActivity
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.chooser
@@ -82,9 +95,10 @@ import java.util.Calendar
 /**
  * The reading screen: opens a book (library id or ACTION_VIEW uri), shows one page at a time on a [PageView],
  * handles taps/swipes/keys, the chrome, the return chip, e-ink refresh cadence, auto page turn, keep-screen-on,
- * brightness, orientation lock and position saving, and hosts the reader extras through [ReaderHost].
+ * brightness, orientation lock, position saving, reading time ([ReadingTracker]) and the end panel ([EndPanel]), and
+ * hosts the reader extras through [ReaderHost] and its optional capabilities.
  */
-class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
+class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, TxtOverrideHost, ReaderEndHost {
     companion object {
         const val EXTRA_BOOK_ID = "book_id"
 
@@ -115,6 +129,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         private const val PAGE_AT_OR_AFTER = -3
         /** Per book: text signature + char fraction of the saved position (see [TextPositions]). */
         private const val PREFS_TEXT_POS = "reader_text_positions"
+        /** The footer's episode numbers are parsed this long after the first page (off the open path). */
+        private const val EPISODES_DELAY_MS = 800L
+        /** A refresh due when a panel closed waits until the panel has left the screen. */
+        private const val PANEL_GONE_MS = 120L
+        /** Pages of the "10쪽씩" key hold (T1-4). */
+        private const val HOLD_PAGES = 10
+        private const val MIN_LONG_PRESS_MS = 200
+        private const val MAX_LONG_PRESS_MS = 2000
     }
 
     private enum class Nav { OPEN, TURN, JUMP, RELAYOUT }
@@ -147,8 +169,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private var failedBook: Book? = null
 
     private lateinit var keeper: ScreenOnKeeper
-    private val repeatFilter = RepeatFilter(RepeatFilter.NORMAL_MS)
+    /** Assigned vendor / remote keys bounce: one touch must turn one page (fresh presses included). */
     private val learnedRepeatFilter = RepeatFilter(RepeatFilter.LEARNED_MS, throttleFreshPresses = true)
+    /** The page key held down, and where the reader was when it went down (the hold action's anchor, T1-4). */
+    private val heldKey = HeldKey()
+    private var holdSection = 0
+    private var holdPageIdx = 0
+    private var holdStart = 0
+    private var holdEnd = 0
+    /** The key-down's own turn happened (a "10쪽씩" hold adds the other nine). */
+    private var holdTurned = false
     private val cadence = EinkCadence()
     /** Turns that arrived while a layout was pending; applied together when it shows ([flushTurns]). */
     private val backlog = TurnBacklog()
@@ -165,6 +195,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private var bookRef: Book? = null
     internal var session: BookSession? = null
         private set
+    /** This book's own TXT options (T1-9; read in the open path's IO block), or null. */
+    private var bookOverride: TxtOverride? = null
+    /**
+     * The effective settings the session has, or is being re-opened with: `Settings.reader.withTxt(bookOverride)` as
+     * last applied. onResume and the settings listener compare against it, so a change is applied once (no relayout
+     * loop, no second re-parse while one is running).
+     */
+    private var readerTarget: ReaderSettings? = null
+    /** A re-parse ([reopenDocument]) is running; [reopenDone] run once it shows its page. */
+    private var reopening = false
+    private val reopenDone = ArrayList<() -> Unit>()
+    /** The book being opened / re-parsed, for the delayed loading text (set on the IO thread). */
+    @Volatile private var openingPath: String? = null
+    @Volatile private var openingBytes = 0L
     private var openJob: Job? = null
     private var navJob: Job? = null
     private val viewReady = CompletableDeferred<Unit>()
@@ -202,7 +246,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private val textPosPrefs by lazy { getSharedPreferences(PREFS_TEXT_POS, MODE_PRIVATE) }
     /** Last value written to [textPosPrefs] ("b<id>" to value), to skip identical writes. */
     private var lastTextPos: Pair<String, String>? = null
-    private var resumedAt = 0L
     private var batteryLevel = -1
     private var batteryAt = 0L
     private var annotationsLoadedAt = 0L
@@ -230,11 +273,40 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private var keyInputAt = 0L
     /** Input event time of a user turn whose page is not shown yet (0 = none; only with [ReaderPerf.turns]). */
     private var perfTurnFrom = 0L
+    /** Real reading time, pages and characters (T1-6), flushed to ReadingLog on pause, close and day change. */
+    private val tracker = ReadingTracker()
+    private val dayClock = DayClock()
+    /** Reading speed for 남은 시간 (T1-7): ReadingLog.cpm of this book, loaded after the first page and after each flush. */
+    @Volatile private var cpm = ReadingLog.DEFAULT_CPM
+    /**
+     * The footer's 회차 (T1-5), from BookSession.episodes: per TOC entry the episode number to show (its own, else the
+     * last one before it; -1 before the first), null until parsed. [epNumbered]: the titles carry numbers.
+     */
+    private var epShown: IntArray? = null
+    private var epNumbered = false
+    private var epMax = 0
+    private var episodesAsked = false
+    private val askEpisodes = Runnable { if (!isDestroyed) loadEpisodes() }
+    private lateinit var endPanel: EndPanel
+    /** The end panel's data is being loaded (it shows when it arrives). */
+    private var endLoading = false
+    /** The window lost the focus to a panel (TOC, search, the settings popup, a menu) while a book was shown. */
+    private var panelOpen = false
+    /** Between onResume and onPause. */
+    private var inFront = false
+    /** Background colour last set by [applyReaderColors] (null = none yet). */
+    private var readerBg: Int? = null
+    /** The page on screen when the reader paused (-1 = none): TTS may turn pages with the screen off (T1-11). */
+    private var pausedSection = -1
+    private var pausedPageIdx = -1
 
     // ================================================================== lifecycle
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A book opened from a file manager starts the process: its splash (plain white, see values-v31) goes at once,
+        // without the platform's exit animation.
+        if (Build.VERSION.SDK_INT >= 31) splashScreen.setOnExitAnimationListener { it.remove() }
         Settings.init(this)
         if (Build.VERSION.SDK_INT >= 34) {
             overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
@@ -256,9 +328,19 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         overridePendingTransition(0, 0)
     }
 
-    /** Settings saved by any module (popup, TTS settings, backup restore; any thread). */
+    /**
+     * Settings saved by any module (popup, TTS settings, backup restore; any thread). The reading settings are
+     * compared a message later: a save made by [applySettings] has been applied by then and compares equal.
+     */
     private val settingsListener: () -> Unit = {
         if (Looper.myLooper() == Looper.getMainLooper()) onAppSettingsSaved() else handler.post { onAppSettingsSaved() }
+        handler.removeCallbacks(syncReaderSettings)
+        handler.post(syncReaderSettings)
+    }
+
+    /** Applies the saved reading settings when they differ from what the open book has or is getting. */
+    private val syncReaderSettings = Runnable {
+        if (!isDestroyed && session != null && Settings.reader.withTxt(bookOverride) != readerTarget) applyToSession(Settings.reader)
     }
 
     /** Re-applies the app settings the window and views cache when one of them changed (input reads [app] live). */
@@ -275,6 +357,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private fun viewPart(a: AppSettings): List<Any> = listOf(
         a.fullscreen, a.brightness, a.orientationLock, a.keepScreenOn, a.einkRefreshEvery, a.einkRefreshOnChapter,
         a.swipeToTurn, a.verticalSwipe, a.brightnessSwipe, a.longPressSelect, a.pinChrome, a.einkMode,
+        a.longPressMs, a.einkRefreshEveryNight, a.einkRefreshMethod, a.einkFlashMs,
     )
 
     /**
@@ -299,24 +382,40 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         super.onResume()
         // The library's periodic auto-scan yields while a book is in front.
         ReaderPresence.inFront = true
+        inFront = true
         applyAppSettings()
-        resumedAt = SystemClock.elapsedRealtime()
+        tracker.resume(SystemClock.elapsedRealtime())
+        safely { tts?.onReaderResumed() }
         // Per-view refresh modes may be reset by the firmware while another app was in front.
         prepareEink()
-        val s = session
-        if (s != null) {
+        if (session != null) {
+            // The book's effective settings, as the open path built them (no relayout when only this merge differs).
             val r = Settings.reader
-            if (r != s.settings) applySettings(r) else refreshDecor(onlyIfChanged = true)
+            if (r.withTxt(bookOverride) != readerTarget) applyToSession(r) else refreshDecor(onlyIfChanged = true)
         }
+        // T1-11: TTS turned pages while the reader was in the background: one full refresh for the page now shown
+        // (never on a wake that finds the same page).
+        if (pausedSection >= 0 && curLayout != null && (curSection != pausedSection || curPageIdx != pausedPageIdx)) {
+            refreshAfterDraw(0L)
+        }
+        pausedSection = -1
         keeper.poke()
     }
 
     override fun onPause() {
         super.onPause()
         ReaderPresence.inFront = false
+        inFront = false
+        panelOpen = false
         stopAutoTurn(showToast = false)
         savePositionNow(persistText = true)
-        flushReadingTime()
+        if (curLayout != null) {
+            pausedSection = curSection
+            pausedPageIdx = curPageIdx
+        }
+        bookRef?.let { b -> tracker.pause(SystemClock.elapsedRealtime())?.let { writeReading(b.id, it) } }
+        // From here TTS (if speaking) counts its own time: the tracker counts nothing until onResume.
+        safely { tts?.onReaderPaused() }
         keeper.release()
     }
 
@@ -340,10 +439,18 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus) return
+        if (!hasFocus) {
+            // A panel window (TOC, search, the reading-settings popup, a menu) took the focus over the page.
+            if (curLayout != null && inFront) panelOpen = true
+            return
+        }
         ReaderWindow.applyFullscreen(this, app.fullscreen)
         // Dialogs of the extras (contents, search) may have changed bookmarks/quotes.
         if (session != null && SystemClock.uptimeMillis() - annotationsLoadedAt > 1000) reloadAnnotations()
+        if (panelOpen) {
+            panelOpen = false
+            onPanelClosed()
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -417,7 +524,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             visibility = View.GONE
             isClickable = true
         }
-        errorPanel.addView(label("문서를 열 수 없습니다", 20f, bold = true).apply { gravity = Gravity.CENTER }, lp())
+        errorPanel.addView(label("책을 열 수 없습니다", 20f, bold = true).apply { gravity = Gravity.CENTER }, lp())
         errorPanel.addView(errorText, lp())
         errorPanel.addView(errorDetailText, lp())
         // Stacked, not side by side: three labels in one row do not fit 360 dp at large font scales.
@@ -426,6 +533,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         errorPanel.addView(errorEncoding, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(8) })
         errorPanel.addView(errorButton("닫기") { finish() }, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(8) })
         root.addView(errorPanel, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
+        endPanel = EndPanel(this, endActions)
+        endPanel.attach(root)
 
         root.setOnApplyWindowInsetsListener { _, wi ->
             applyInsets(ReaderWindow.insetsOf(wi, app.fullscreen))
@@ -464,7 +573,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     }
 
     private fun isOwnView(v: View): Boolean =
-        v === page || v === statusText || v === brightnessOverlay || v === chip || v === errorPanel || chrome.owns(v)
+        v === page || v === statusText || v === brightnessOverlay || v === chip || v === errorPanel || chrome.owns(v) ||
+            (::endPanel.isInitialized && endPanel.owns(v))
 
     private fun onBarsResized() {
         applyPinnedArea()
@@ -491,25 +601,43 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         ReaderWindow.applyBrightness(this, app.brightness)
         if (requestedOrientation != app.orientationLock) requestedOrientation = app.orientationLock
         keeper.enabled = app.keepScreenOn
-        cadence.every = app.einkRefreshEvery
+        applyCadence(Settings.reader.invert)
         cadence.onChapter = app.einkRefreshOnChapter
+        // Read by Eink.fullRefresh (view) wherever it is called from; the reader's own refreshes pass them directly.
+        Eink.configure(app.einkRefreshMethod, app.einkFlashMs)
         page.swipeToTurn = app.swipeToTurn
         page.verticalSwipe = app.verticalSwipe
         page.brightnessSwipe = app.brightnessSwipe
         page.longPressEnabled = app.longPressSelect
+        page.longPressMs = app.longPressMs.coerceIn(MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS).toLong()
         appliedApp = app
         chrome.setPinned(app.pinChrome)
         applyPinnedArea()
         root.requestApplyInsets()
     }
 
+    /** The refresh cadence for the page's colours: 밤 모드 (inverted) has its own (T1-3b). */
+    private fun applyCadence(inverted: Boolean) {
+        cadence.every = EinkCadence.everyFor(app.einkRefreshEvery, app.einkRefreshEveryNight, inverted)
+    }
+
     private fun applyReaderColors(s: ReaderSettings) {
         val bg = if (s.invert) Ink.BLACK else Ink.WHITE
+        // Unchanged colours: no background reset (it would redraw the window, an e-ink update).
+        if (bg == readerBg) return
+        readerBg = bg
         root.setBackgroundColor(bg)
         page.blankColor = bg
     }
 
-    private val loadingRunnable = Runnable { statusText.visibility = View.VISIBLE }
+    /** "목차를 만드는 중…" while a big TXT is parsed in full (A5), else "불러오는 중…". */
+    private val loadingRunnable = Runnable {
+        val path = openingPath
+        val building = path != null && TxtDocuments.isBuildingIndex(path)
+        val text = ReaderFormat.loadingText(building, if (building) openingBytes else 0L)
+        if (statusText.text.toString() != text) statusText.text = text
+        statusText.visibility = View.VISIBLE
+    }
 
     private fun scheduleLoadingText() {
         handler.removeCallbacks(loadingRunnable)
@@ -598,24 +726,38 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             var parsing: Book? = null
             var adopted = false
             try {
-                val (b, d, storedPos) = withContext(Dispatchers.IO) {
+                val opened = withContext(Dispatchers.IO) {
                     val b = IntentFiles.resolveBook(this@ReaderActivity, intent)
                     val f = File(b.path)
                     if (!f.isFile) throw DocumentException("파일을 찾을 수 없습니다.\n${b.path}")
                     parsing = b
-                    val d = Documents.open(f, settings.parseOptions(b.encoding))
+                    // T1-9: the book's own TXT options, one primary-key read on the connection resolveBook just used.
+                    val over = if (b.format == BookFormat.TXT) txtOverrideOf(b.id) else null
+                    val eff = settings.withTxt(over)
+                    openingBytes = b.sizeBytes
+                    openingPath = b.path
+                    val d = Documents.open(f, eff.parseOptions(b.encoding))
                     doc = d
-                    if (d.sections.isEmpty()) throw DocumentException("내용이 없는 문서입니다.")
+                    if (d.sections.isEmpty()) throw DocumentException("내용이 없는 파일입니다.")
                     parsing = null
-                    Triple(b, d, readTextPosition(b.id))
+                    // A12-2: a user font's catalogue (a folder scan) is read here rather than by the renderer on the
+                    // main thread; after the parse, when the font warm-up has usually scanned already.
+                    loadUserFont(eff.fontId)
+                    Opened(b, d, readTextPosition(b.id), over, eff)
                 }
+                val b = opened.book
+                val d = opened.document
+                val storedPos = opened.textPosition
+                val eff = opened.settings
                 if (intent.getLongExtra(EXTRA_BOOK_ID, -1L) != b.id && getIntent() === intent) {
                     // A recreated activity reopens by id: a content:// grant may be gone by then.
                     setIntent(Intent(intent).putExtra(EXTRA_BOOK_ID, b.id))
                 }
                 bookRef = b
+                bookOverride = opened.override
+                readerTarget = eff
                 chrome.setTitle(b.title)
-                val s = BookSession(this@ReaderActivity, b, d, settings)
+                val s = BookSession(this@ReaderActivity, b, d, eff)
                 s.listener = sessionListener
                 session = s
                 adopted = true
@@ -633,7 +775,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
                 // A TXT position saved under other parse options (chapter detection, replace rules, encoding, ...)
                 // is found again by its char fraction instead of reading stale (section, offset) coordinates.
                 val remap = TextPositions.remapFraction(
-                    storedPos, LayoutKeys.textSignature(settings, d.format, b.encoding),
+                    storedPos, LayoutKeys.textSignature(eff, d.format, b.encoding),
                     b.posSection, b.posOffset, b.progress,
                 )
                 val start = if (remap != null) s.counts.locateFraction(remap) else DocPosition(b.posSection, b.posOffset)
@@ -665,8 +807,35 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         }
     }
 
+    /** What the open path's IO block hands back: the book, its document and the settings it was parsed with. */
+    private class Opened(
+        val book: Book,
+        val document: BookDocument,
+        val textPosition: String?,
+        val override: TxtOverride?,
+        val settings: ReaderSettings,
+    )
+
+    /** [bookId]'s own TXT options (IO thread), or null (none, or the read failed: the defaults apply). */
+    private fun txtOverrideOf(bookId: Long): TxtOverride? = try {
+        BookPrefs.txtOverride(bookId)?.takeUnless { it.isEmpty }
+    } catch (t: Throwable) {
+        Log.w(TAG, "txt override read failed", t)
+        null
+    }
+
+    /** Looks a user font up once (IO thread): its first lookup scans the font folders. */
+    private fun loadUserFont(fontId: String) {
+        if (!fontId.startsWith(FontFiles.USER_PREFIX)) return
+        try {
+            FontManager.font(fontId)
+        } catch (t: Throwable) {
+            Log.w(TAG, "user font lookup failed", t)
+        }
+    }
+
+    /** Everything the first page did not wait for (spec rule 2: after the first page, never before it). */
     private fun afterOpen() {
-        resumedAt = SystemClock.elapsedRealtime()
         if (selection == null) selection = safely { SelectionController(this) }
         // Every long press selects the word of the glyph under the finger, also while a selection shows (a press on
         // blank paper or a space keeps that selection).
@@ -675,6 +844,51 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         // this host's controller, and BACK / volume keys see the same TTS session whoever started it.
         if (tts == null) tts = safely { TtsController(this) }
         reloadAnnotations()
+        // A12-1: cache files the open computed but left for later (the EPUB section plan).
+        ReaderIo.launch { Documents.writeDeferredCaches() }
+        loadSpeed()
+        if (session?.settings?.footerEpisode == true) scheduleEpisodes()
+    }
+
+    /** ReadingLog's reading speed for this book (T1-7), on IO; [ReadingLog.DEFAULT_CPM] until known. */
+    private fun loadSpeed() {
+        val id = bookRef?.id ?: return
+        ReaderIo.launch {
+            val v = ReadingLog.cpm(id)
+            if (v != null && v > 0) handler.post { if (bookRef?.id == id) cpm = v }
+        }
+    }
+
+    /** Asks for the footer's episode numbers a moment after the first page (the parse runs on Dispatchers.Default). */
+    private fun scheduleEpisodes() {
+        if (episodesAsked || epShown != null) return
+        handler.removeCallbacks(askEpisodes)
+        handler.postDelayed(askEpisodes, EPISODES_DELAY_MS)
+    }
+
+    private fun loadEpisodes() {
+        val s = session ?: return
+        if (episodesAsked) return
+        episodesAsked = true
+        episodes { e ->
+            if (session !== s || e == null) return@episodes
+            setEpisodes(e)
+            refreshDecor(onlyIfChanged = true)
+        }
+    }
+
+    /** Keeps what the footer needs from [e]: per TOC entry the number to show (its own, else the last one before it). */
+    private fun setEpisodes(e: Episodes) {
+        val nums = e.numbers
+        val shown = IntArray(nums.size)
+        var last = -1
+        for (i in nums.indices) {
+            if (nums[i] > 0) last = nums[i]
+            shown[i] = last
+        }
+        epNumbered = safely { e.usableForJump } == true
+        epMax = safely { e.maxNumber } ?: -1
+        epShown = shown
     }
 
     private fun closeCurrentBook() {
@@ -682,7 +896,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         // book, and no TOC / search / bar is left acting on the next one.
         safely { ReaderPanels.dismissAll(this) }
         savePositionNow(persistText = true)
-        flushReadingTime()
+        bookRef?.let { b -> tracker.flush(SystemClock.elapsedRealtime())?.let { writeReading(b.id, it) } }
+        tracker.forgetPage()
         stopAutoTurn(showToast = false)
         safely { tts?.release() }
         tts = null
@@ -693,6 +908,17 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         session?.close()
         session = null
         bookRef = null
+        bookOverride = null
+        readerTarget = null
+        reopening = false
+        reopenDone.clear()
+        cpm = ReadingLog.DEFAULT_CPM
+        handler.removeCallbacks(askEpisodes)
+        episodesAsked = false
+        epShown = null
+        endLoading = false
+        endPanel.hide()
+        pausedSection = -1
         curLayout = null
         curSection = 0
         curPageIdx = 0
@@ -721,7 +947,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         scope.launch {
             val loaded = withContext(Dispatchers.IO) {
                 try {
-                    Library.bookmarks(b.id) to Library.quotes(b.id)
+                    // A12-4: the selection's quote lookups use these rows instead of querying them again.
+                    Library.bookmarks(b.id) to Library.quotes(b.id).also { QuoteCache.put(b.id, it) }
                 } catch (t: Throwable) {
                     Log.w(TAG, "annotations load failed", t)
                     null
@@ -776,6 +1003,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private fun onViewSizeChanged(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
         viewReady.complete(Unit)
+        if (endPanel.isShowing) endPanel.fit(root.width)
         val s = session ?: return
         if (!s.setViewport(w, h)) return
         relayout()
@@ -824,10 +1052,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             setChromeVisible(true)
         }
 
+        // A relayout shows the same place again: the page on screen keeps counting.
+        if (kind != Nav.RELAYOUT) trackPage(p)
         val chapterIdx = s.chapters.indexAt(section, p?.start ?: 0)
         val chapterChanged = if (s.chapters.size > 0) chapterIdx != lastChapterIdx else sectionChanged
         lastChapterIdx = chapterIdx
-        if (kind == Nav.TURN || kind == Nav.JUMP) onTurnShown(kind, chapterChanged)
+        if (kind == Nav.TURN || kind == Nav.JUMP) onTurnShown(kind, chapterChanged, layout, idx)
         if (kind != Nav.RELAYOUT) schedulePositionSave()
         s.prefetch(section + 1)
         s.prefetch(section - 1)
@@ -1098,12 +1328,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         }
         // Kept before navigating: a synchronous display of the next section flushes the rest right away.
         backlog.restore(walk.remaining)
-        if (walk.hitEdge) edgeToast(n > 0)
         if (walk.section == curSection) {
             if (walk.pageIndex != curPageIdx) showPage(curSection, l, walk.pageIndex, Nav.TURN)
         } else {
             navigateTo(walk.section, 0, walk.pageIndex, Nav.TURN)
         }
+        // After the move: turns past the last page open the end panel from the last page.
+        if (walk.hitEdge) edgeReached(n > 0)
     }
 
     override fun goTo(pos: DocPosition, remember: Boolean) {
@@ -1158,9 +1389,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         jumpTo(section, 0, pageIndex.coerceAtLeast(0))
     }
 
-    /** Page turn requested by the user (tap, swipe, key, wheel). */
-    private fun userTurn(next: Boolean) {
-        if (session == null || curLayout == null) return
+    /** Page turn requested by the user (tap, swipe, key, wheel). False when nothing turned (the book's first / last page). */
+    private fun userTurn(next: Boolean): Boolean {
+        if (session == null || curLayout == null) return false
         ownerHighlights.remove(OWNER_SEARCH)
         // "turn N ms" starts at the input event that asked for this turn (the latest one: all run on this thread).
         if (ReaderPerf.turns) perfTurnFrom = maxOf(page.lastInputAt, keyInputAt)
@@ -1168,14 +1399,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         if (!ok) perfTurnFrom = 0L
         if (ok) onManualTurn()
         if (ttsSpeaking()) safely { tts?.onUserNavigated() }
-        if (!ok && navJob?.isActive != true && !layoutStale()) edgeToast(next)
+        if (!ok && navJob?.isActive != true && !layoutStale()) edgeReached(next)
+        return ok
     }
 
-    private fun edgeToast(next: Boolean) {
+    /** "Next" on the book's last page opens the end panel (T1-2); "previous" on the first page says so. */
+    private fun edgeReached(next: Boolean) {
+        if (next) showBookEnd() else firstPageToast()
+    }
+
+    private fun firstPageToast() {
         val now = SystemClock.uptimeMillis()
         if (now - edgeToastAt > 2000) {
             edgeToastAt = now
-            toast(if (next) "마지막 페이지입니다" else "첫 페이지입니다")
+            toast("첫 페이지입니다")
         }
     }
 
@@ -1183,8 +1420,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
      * Full e-ink refresh cadence for a shown turn / jump. A refresh that falls due while pages are being flipped fast
      * waits (and keeps waiting while the flipping goes on): a flash between two quick turns stalls the panel.
      */
-    private fun onTurnShown(kind: Nav, chapterChanged: Boolean) {
-        val due = cadence.onTurn(chapterChanged)
+    private fun onTurnShown(kind: Nav, chapterChanged: Boolean, layout: SectionLayout, pageIndex: Int) {
+        // T1-3c, opt-in: the picture share is only looked at when "그림 있는 쪽에서 새로고침" is on.
+        val imageDue = app.einkFlashImages && cadence.imageDue(imageCoverage(layout, pageIndex))
+        val due = cadence.onTurn(chapterChanged, imageDue)
         val now = SystemClock.uptimeMillis()
         if (due || cadenceRefreshPending) {
             val delay = if (kind == Nav.TURN) EinkCadence.refreshDelay(now, lastTurnAt) else 0L
@@ -1207,24 +1446,42 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         if (turnsSinceJump >= CHIP_HIDE_TURNS) dismissReturnChip()
     }
 
+    private fun imageCoverage(layout: SectionLayout, pageIndex: Int): Float = try {
+        ImageCoverage.of(layout, pageIndex)
+    } catch (t: Throwable) {
+        0f
+    }
+
+    /**
+     * The previous / next chapter from the current page (다음 화 / 이전 화: keys, tap zones, the chrome's buttons).
+     * Sequential navigation: no return chip (remember = false).
+     */
     private fun jumpChapter(next: Boolean) {
-        val s = session ?: return
         val p = currentPage ?: return
+        chapterTarget(curSection, curPageIdx, p.start, p.end, next)?.let { goTo(it, remember = false) }
+    }
+
+    /**
+     * Where 다음 화 / 이전 화 goes from the page [pageIndex] ([start]..[end]) of [section]: the next chapter's start, or
+     * the start of the chapter the page is in (the previous one's when the page is that start); without a TOC the
+     * next / this / previous section. Null when there is nowhere to go.
+     */
+    private fun chapterTarget(section: Int, pageIndex: Int, start: Int, end: Int, next: Boolean): DocPosition? {
+        val s = session ?: return null
         val ch = s.chapters
         if (ch.size == 0) {
             val target = when {
-                next -> curSection + 1
-                curPageIdx > 0 -> curSection
-                else -> curSection - 1
+                next -> section + 1
+                pageIndex > 0 -> section
+                else -> section - 1
             }
-            if (target in 0 until s.sectionCount) goTo(DocPosition(target, 0), remember = false)
-            return
+            return if (target in 0 until s.sectionCount) DocPosition(target, 0) else null
         }
-        val idx = if (next) ch.nextAfter(curSection, maxOf(p.end - 1, p.start)) else ch.lastBefore(curSection, p.start)
-        if (idx >= 0) {
-            goTo(ch.position(idx), remember = false)
-        } else if (!next && (curSection > 0 || curPageIdx > 0)) {
-            goTo(DocPosition.START, remember = false)
+        val idx = if (next) ch.nextAfter(section, maxOf(end - 1, start)) else ch.lastBefore(section, start)
+        return when {
+            idx >= 0 -> ch.position(idx)
+            !next && (section > 0 || pageIndex > 0) -> DocPosition.START
+            else -> null
         }
     }
 
@@ -1238,14 +1495,18 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         val hl = ArrayList<Highlight>()
         quotesBySection[curSection]?.let { addOverlapping(hl, it, p) }
         for ((sec, list) in ownerHighlights.values) if (sec == curSection) addOverlapping(hl, list, p)
-        val header = if (st.showHeader) chapterTitle(curSection, p.start) else null
+        // One TOC lookup for the header and the 회차 item.
+        val chapterIdx = if (st.showHeader || (st.showFooter && st.footerEpisode)) s.chapters.indexAt(curSection, p.start) else -1
+        val header = if (st.showHeader) chapterTitle(s, chapterIdx, curSection) else null
         var left: String? = null
         var right: String? = null
         var battery = -1
         if (st.showFooter) {
             left = ReaderFormat.footerLeft(
                 if (st.footerPage) pageLabelOf(curSection, curPageIdx) else null,
+                if (st.footerEpisode) episodeLabel(s, chapterIdx) else null,
                 if (st.footerChapterLeft) chapterPagesLeft(s, l, p) else null,
+                timeLeftLabel(st.footerTimeLeft),
             )
             right = ReaderFormat.footerRight(
                 if (st.footerPercent) ReaderFormat.percent(progress()) else null,
@@ -1284,9 +1545,39 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
     private fun chapterTitle(section: Int, offset: Int): String? {
         val s = session ?: return null
-        val i = s.chapters.indexAt(section, offset)
+        return chapterTitle(s, s.chapters.indexAt(section, offset), section)
+    }
+
+    /** Title of chapter [i] (ChapterIndex), else of [section], else of the book. */
+    private fun chapterTitle(s: BookSession, i: Int, section: Int): String? {
         if (i >= 0) return s.chapters.title(i)
         return s.document.sections.getOrNull(section)?.title ?: bookRef?.title
+    }
+
+    /** The footer's 회차 (T1-5) for chapter [chapterIdx]: null until the episodes are parsed, or before the first one. */
+    private fun episodeLabel(s: BookSession, chapterIdx: Int): String? {
+        val shown = epShown
+        if (shown == null) {
+            // Turned on while reading (the popup): ask now; the item appears once they are parsed.
+            scheduleEpisodes()
+            return null
+        }
+        if (chapterIdx < 0) return null
+        val toc = s.chapters.tocIndex(chapterIdx)
+        if (toc !in shown.indices) return null
+        if (epNumbered) {
+            val n = shown[toc]
+            return if (n > 0) ReaderFormat.episodeLabel(true, n, epMax, toc, shown.size) else null
+        }
+        return ReaderFormat.episodeLabel(false, -1, -1, toc, shown.size)
+    }
+
+    /** The footer's 남은 시간 (T1-7) per [mode] (ReaderSettings.TIME_LEFT_*), or null. */
+    private fun timeLeftLabel(mode: Int): String? {
+        if (mode != ReaderSettings.TIME_LEFT_EPISODE && mode != ReaderSettings.TIME_LEFT_BOOK) return null
+        val book = mode == ReaderSettings.TIME_LEFT_BOOK
+        val m = minutesLeft(book) ?: return null
+        return ReaderFormat.timeLeft(book, m)
     }
 
     private fun isBookmarked(l: SectionLayout, p: PageInfo): Boolean {
@@ -1394,24 +1685,47 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         refreshDecor(onlyIfChanged = true)
     }
 
+    /**
+     * [settings] are the GLOBAL reading settings (R2): saved as they are, and applied to this book merged with its own
+     * TXT options ([applyToSession]). Never the session's effective settings, which would save this book's override
+     * for every book.
+     */
     override fun applySettings(settings: ReaderSettings) {
-        val s = session
-        val old = s?.settings ?: Settings.reader
         Settings.saveReader(settings)
-        applyReaderColors(settings)
+        applyToSession(settings)
+    }
+
+    /**
+     * Applies [global] merged with this book's TXT options ([withTxt]) to the open book: a re-parse when this
+     * book's parse options changed, else a relayout, a repaint or nothing. [onApplied] runs once the book shows the
+     * result (right away when nothing had to be re-parsed).
+     */
+    private fun applyToSession(global: ReaderSettings, onApplied: (() -> Unit)? = null) {
+        applyReaderColors(global)
+        applyCadence(global.invert)
+        val s = session
         val b = bookRef
         if (s == null || b == null) return
+        val eff = global.withTxt(bookOverride)
+        val before = readerTarget ?: s.settings
+        readerTarget = eff
         // Only the options this book's parser reads: a TXT option changed while reading an EPUB (or the EPUB
         // publisher styles in a TXT) is saved for the other books but never re-opens this one.
-        if (LayoutKeys.parseChanged(old, settings, s.document.format, b.encoding)) {
-            reopenDocument(settings)
+        if (LayoutKeys.parseChanged(before, eff, s.document.format, b.encoding)) {
+            reopenDocument(eff, onApplied)
             return
         }
-        when (s.updateSettings(settings)) {
+        if (reopening) {
+            // Same parse options as the re-parse that is running: it takes [eff] when it shows its page.
+            if (onApplied != null) reopenDone += onApplied
+            return
+        }
+        when (s.updateSettings(eff)) {
             BookSession.Change.NONE -> {}
             BookSession.Change.REPAINT -> repaint()
             BookSession.Change.RELAYOUT -> relayout()
         }
+        onApplied?.invoke()
     }
 
     /** Same layout, new colours/footer items: redraw with a renderer for the new settings. */
@@ -1423,17 +1737,25 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         page.invalidate()
     }
 
-    /** Parse options changed: open the document again and return to the same place (by ratio if sections moved). */
-    private fun reopenDocument(newSettings: ReaderSettings) {
+    /**
+     * Parse options changed: open the document again and return to the same place (by ratio if sections moved).
+     * [onApplied] (and those of re-parses this one replaces) run once its page shows.
+     */
+    private fun reopenDocument(newSettings: ReaderSettings, onApplied: (() -> Unit)? = null) {
         val old = session ?: return
         val b = bookRef ?: return
         val pos = anchor
         val oldCount = old.sectionCount
         val ratio = old.counts.charProgress(pos.section, pos.offset)
+        if (onApplied != null) reopenDone += onApplied
+        reopening = true
         navJob?.cancel()
         openJob?.cancel()
+        openingBytes = b.sizeBytes
+        openingPath = b.path
         scheduleLoadingText()
         openJob = scope.launch {
+            val job = coroutineContext[Job]
             var doc: BookDocument? = null
             var fresh: BookSession? = null
             var adopted = false
@@ -1441,8 +1763,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
                 val d = withContext(Dispatchers.IO) {
                     Documents.open(File(b.path), newSettings.parseOptions(b.encoding)).also { doc = it }
                 }
-                if (d.sections.isEmpty()) throw DocumentException("내용이 없는 문서입니다.")
-                val s = BookSession(this@ReaderActivity, b, d, newSettings)
+                if (d.sections.isEmpty()) throw DocumentException("내용이 없는 파일입니다.")
+                // Layout-only changes made while parsing (same parse options) are taken along.
+                val use = readerTarget?.takeIf { !LayoutKeys.parseChanged(newSettings, it, d.format, b.encoding) } ?: newSettings
+                val s = BookSession(this@ReaderActivity, b, d, use)
                 fresh = s
                 s.listener = sessionListener
                 val (vw, vh) = pageTargetSize()
@@ -1454,12 +1778,19 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
                 if (session !== old) return@launch
                 if (l == null) {
                     // Keep reading the old parse rather than showing nothing.
-                    toast("새 설정으로 문서를 배치하지 못했습니다")
+                    readerTarget = old.settings
+                    reopenDone.clear()
+                    toast("새 설정으로 책을 표시하지 못했습니다")
                     return@launch
                 }
                 session = s
                 adopted = true
+                reopening = false
                 old.close()
+                // The new parse has its own TOC: the footer's episode numbers are parsed again.
+                handler.removeCallbacks(askEpisodes)
+                episodesAsked = false
+                epShown = null
                 safely { tts?.stop() }
                 safely { selection?.clear() }
                 // The search-results bar holds hits in the old parse's coordinates (the settings popup that started
@@ -1473,23 +1804,32 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
                 // Positions saved from now on are in the new parse's coordinates.
                 writeTextPosition(b, s, DocPosition(sec, off))
                 val (nw, nh) = pageTargetSize()
-                if (s.setViewport(nw, nh)) {
-                    // The view was resized while this session was being built (size changes went to the old
-                    // one): lay the target out again for the current size instead of showing a stale layout.
+                // A layout change made after this session was built (settings) or a resize that went to the old one:
+                // lay the target out again instead of showing a stale layout.
+                val want = readerTarget
+                val changed = want != null && want != s.settings && s.updateSettings(want) != BookSession.Change.NONE
+                if (s.setViewport(nw, nh) || changed) {
                     anchor = DocPosition(sec, off)
                     relayout()
-                    return@launch
+                } else {
+                    showPage(sec, l, l.pageForOffset(off), Nav.JUMP, anchorOffset = off)
+                    s.startCounting(COUNT_DELAY_MS)
                 }
-                showPage(sec, l, l.pageForOffset(off), Nav.JUMP, anchorOffset = off)
-                s.startCounting(COUNT_DELAY_MS)
+                if (s.settings.footerEpisode) scheduleEpisodes()
+                val done = ArrayList(reopenDone)
+                reopenDone.clear()
+                for (f in done) safely { f() }
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
                 Log.w(TAG, "reopen failed", t)
                 cancelLoadingText()
+                if (session === old) readerTarget = old.settings
+                reopenDone.clear()
                 val why = ReaderFormat.openError(t)
-                toast(if (why == ReaderFormat.OPEN_FAILED) "문서를 다시 불러오지 못했습니다" else "문서를 다시 불러오지 못했습니다: $why")
+                toast(if (why == ReaderFormat.OPEN_FAILED) "책을 다시 불러오지 못했습니다" else "책을 다시 불러오지 못했습니다: $why")
             } finally {
+                if (openJob === job) reopening = false
                 if (!adopted) {
                     if (fresh != null) fresh.close() else try {
                         doc?.close()
@@ -1707,7 +2047,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
     private fun handleTap(x: Float, y: Float) {
         if (chromeVisible && !app.pinChrome) {
-            setChromeVisible(false)
+            closeChrome()
             return
         }
         val l = curLayout ?: return
@@ -1755,7 +2095,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             TapAction.NONE -> {}
             TapAction.NEXT -> userTurn(true)
             TapAction.PREV -> userTurn(false)
-            TapAction.MENU -> setChromeVisible(!chromeVisible)
+            TapAction.MENU -> if (chromeVisible) closeChrome() else setChromeVisible(true)
             TapAction.BOOKMARK -> toggleBookmark()
             TapAction.TOC -> openContents()
             TapAction.SEARCH -> openSearch()
@@ -1765,6 +2105,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             TapAction.PREV_CHAPTER -> jumpChapter(false)
             TapAction.REFRESH -> refreshAfterDraw(0L)
             TapAction.INVERT -> toggleInvert()
+            TapAction.GOTO -> ReaderPanels.showGoTo(this)
+            TapAction.AUTO_TURN -> toggleAutoTurn()
         }
     }
 
@@ -1795,42 +2137,121 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
     // ================================================================== keys
 
+    /**
+     * Keys (T1-4): [KeyMap.action] resolves the key (bindings, learned keys, built-in keys). DOWN and UP of the
+     * reader's keys are consumed, so the volume panel never shows; a key that is not the reader's (or bound to 없음)
+     * goes to the system. Page keys turn at once on key-down; holding one does what [AppSettings.keyHold] says
+     * ([pageKey]). Other actions run once per press.
+     */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val code = event.keyCode
         if (code == KeyEvent.KEYCODE_BACK || session == null || errorPanel.visibility == View.VISIBLE) {
             return super.dispatchKeyEvent(event)
         }
-        val action = KeyMap.resolve(code, event.isShiftPressed, app)
-        if (action == KeyAction.NONE) return super.dispatchKeyEvent(event)
-        val learned = code in app.nextPageKeys || code in app.prevPageKeys
-        if (chromeVisible && !learned && KeyMap.isFocusKey(code)) return super.dispatchKeyEvent(event)
-        // While listening to TTS the volume keys control the speech volume.
-        if (!learned && KeyMap.isVolumeKey(code) && ttsSpeaking()) return super.dispatchKeyEvent(event)
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            // Learned keys (vendor function / fingerprint keys) bounce: one touch must turn one page.
-            val filter = if (learned) learnedRepeatFilter else repeatFilter
-            if (!filter.accept(event.repeatCount, event.eventTime)) return true
-            keyInputAt = event.eventTime
-            keeper.poke()
-            when (action) {
-                KeyAction.NEXT -> userTurn(true)
-                KeyAction.PREV -> userTurn(false)
-                KeyAction.MENU -> if (event.repeatCount == 0) setChromeVisible(!chromeVisible)
-                KeyAction.NONE -> {}
+        val a = app
+        val action = KeyMap.action(code, event.isShiftPressed, a)
+        if (action == TapAction.NONE) return super.dispatchKeyEvent(event)
+        val assigned = KeyMap.isAssigned(code, a)
+        if (chromeVisible && !assigned && KeyMap.isFocusKey(code)) return super.dispatchKeyEvent(event)
+        // While listening to TTS the (unassigned) volume keys control the speech volume.
+        if (!assigned && KeyMap.isVolumeKey(code) && ttsSpeaking()) return super.dispatchKeyEvent(event)
+        if (endPanel.isShowing || endLoading) return endPanelKey(event, action, assigned)
+        if (event.action == KeyEvent.ACTION_UP) {
+            heldKey.up(code)
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN) return true
+        // Vendor function / fingerprint keys and remotes bounce: one touch must turn one page.
+        if ((assigned && !KeyMap.isBuiltIn(code)) || code in a.nextPageKeys || code in a.prevPageKeys) {
+            if (!learnedRepeatFilter.accept(event.repeatCount, event.eventTime)) {
+                if (event.repeatCount == 0) heldKey.cancel()
+                return true
             }
         }
-        // Consume DOWN and UP so the volume panel never shows.
+        keeper.poke()
+        when (action) {
+            TapAction.NEXT -> pageKey(event, true, a)
+            TapAction.PREV -> pageKey(event, false, a)
+            else -> if (event.repeatCount == 0) runTapAction(action)
+        }
+        return true
+    }
+
+    /**
+     * A page key's key-down: the page turns at once; a held key then turns on at a readable pace, or does its hold
+     * action once, from the page where the key went down (T1-4: without that anchor, holding "next" on a chapter's
+     * last page would skip a whole episode).
+     */
+    private fun pageKey(event: KeyEvent, next: Boolean, a: AppSettings) {
+        val hold = a.keyHold
+        when (heldKey.down(event.keyCode, event.repeatCount, event.eventTime, hold, KeyMap.repeatMs(a.einkMode))) {
+            HeldKey.Step.TURN -> {
+                val fresh = event.repeatCount == 0
+                if (fresh) rememberHoldAnchor()
+                keyInputAt = event.eventTime
+                val turned = userTurn(next)
+                if (fresh) holdTurned = turned
+            }
+            HeldKey.Step.HOLD -> holdAction(hold, next)
+            HeldKey.Step.NONE -> {}
+        }
+    }
+
+    private fun rememberHoldAnchor() {
+        val p = currentPage
+        holdSection = curSection
+        holdPageIdx = curPageIdx
+        holdStart = p?.start ?: anchor.offset
+        holdEnd = p?.end ?: anchor.offset
+    }
+
+    /** The hold action ([KeyHold.CHAPTER] / [KeyHold.TEN]) relative to where the key went down. */
+    private fun holdAction(hold: KeyHold, next: Boolean) {
+        if (session == null || curLayout == null || endPanel.isShowing || endLoading) return
+        when (hold) {
+            KeyHold.CHAPTER -> {
+                val target = chapterTarget(holdSection, holdPageIdx, holdStart, holdEnd, next) ?: return
+                // The key-down's turn may already have reached that chapter's first page: stay there.
+                if (isOnCurrentPage(target) && navJob?.isActive != true) return
+                goTo(target, remember = false)
+            }
+            KeyHold.TEN -> {
+                // The other pages of the ten, applied at once like a burst of taps (queued behind a pending layout).
+                val n = HOLD_PAGES - if (holdTurned) 1 else 0
+                backlog.restore(if (next) n else -n)
+                if (navJob?.isActive != true) flushTurns()
+                if (ttsSpeaking()) safely { tts?.onUserNavigated() }
+            }
+            KeyHold.REPEAT, KeyHold.SINGLE -> {}
+        }
+    }
+
+    /**
+     * Keys while the end panel shows (or loads): a held key does nothing (it must neither close the panel nor press a
+     * button); "previous" closes it; arrow / enter keys move between its buttons; anything else is swallowed.
+     */
+    private fun endPanelKey(event: KeyEvent, action: TapAction, assigned: Boolean): Boolean {
+        val down = event.action == KeyEvent.ACTION_DOWN
+        if (down && event.repeatCount > 0) return true
+        if (!assigned && KeyMap.isFocusKey(event.keyCode)) return super.dispatchKeyEvent(event)
+        if (!down) {
+            heldKey.up(event.keyCode)
+            return true
+        }
+        heldKey.cancel()
+        if (action == TapAction.PREV && endPanel.isShowing) endPanel.hide()
         return true
     }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
+            endPanel.isShowing -> endPanel.hide()
             safely { selection?.isActive } == true -> safely { selection?.clear() }
             ttsSpeaking() -> safely { tts?.stop() }
             // The search-results bar goes first; the next BACK leaves the book.
             safely { ReaderPanels.closeSearchBar(this) } == true -> {}
-            chromeVisible -> setChromeVisible(false)
+            chromeVisible -> closeChrome()
             else -> {
                 @Suppress("DEPRECATION")
                 super.onBackPressed()
@@ -1890,6 +2311,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         override fun onPageLabel() {
             if (session != null) safely { ReaderPanels.showGoTo(this@ReaderActivity) }
         }
+
+        override fun onChapter(next: Boolean) = jumpChapter(next)
 
         override fun onRotation() {
             val lock = if (app.orientationLock != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
@@ -2034,15 +2457,18 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     /** TTS session active (the controller's own × may have stopped it, so ask it rather than remember). */
     private fun ttsSpeaking(): Boolean = tts != null && safely { tts?.isSpeaking } == true
 
+    /** 흑백 반전: a global setting (R2: never the session's effective settings, which carry this book's TXT options). */
     internal fun toggleInvert() {
-        val s = session ?: return
-        applySettings(s.settings.copy(invert = !s.settings.invert))
+        if (session == null) return
+        val g = Settings.reader
+        applySettings(g.copy(invert = !g.invert))
     }
 
     /** Full refresh of the whole reader window (page, chrome, overlays), not just the page view. */
     internal fun refreshScreen() {
         cadence.reset()
-        safely { Eink.fullRefresh(root) }
+        val a = app
+        safely { Eink.fullRefresh(root, a.einkRefreshMethod, a.einkFlashMs) }
     }
 
     /**
@@ -2063,6 +2489,204 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         val l = curLayout ?: return false
         val p = currentPage ?: return false
         return isBookmarked(l, p)
+    }
+
+    /** The reader closes its chrome (tap, BACK, menu key): like any closed panel, one turn toward the cadence. */
+    private fun closeChrome() {
+        if (!chromeVisible) return
+        setChromeVisible(false)
+        onPanelClosed()
+    }
+
+    /**
+     * A panel over the page closed (T1-3d): it counts as one turn of the e-ink cadence (nothing when none is set),
+     * and a refresh that falls due runs once the panel has left the screen.
+     */
+    private fun onPanelClosed() {
+        if (curLayout == null || session == null) return
+        if (cadence.onPanelClosed()) refreshAfterDraw(PANEL_GONE_MS)
+    }
+
+    // ================================================================== BookInsightsHost (T1-1, T1-5, T1-7)
+
+    override fun episodes(onReady: (Episodes?) -> Unit) {
+        val s = session
+        if (s == null) {
+            onReady(null)
+            return
+        }
+        s.episodes(onReady)
+    }
+
+    override fun minutesLeft(bookScope: Boolean): Int? {
+        val chars = charsLeft(bookScope) ?: return null
+        return ReaderFormat.minutesFor(chars, cpm)
+    }
+
+    override fun charsPerMinute(): Int = cpm
+
+    /**
+     * Characters from the current page's start to the end of the episode (the next TOC entry after the page; the
+     * book's end in the last one) or of the book; null without a page, or without a TOC for the episode. O(1) for
+     * the book (PageCounts' suffix sums); the episode adds the sections before the next entry the same way.
+     */
+    private fun charsLeft(bookScope: Boolean): Long? {
+        val s = session ?: return null
+        val l = curLayout ?: return null
+        if (layoutStale()) return null
+        val p = l.pages.getOrNull(curPageIdx) ?: return null
+        val c = s.counts
+        val sec = curSection
+        val here = (l.content.length - p.start).coerceAtLeast(0).toLong()
+        if (bookScope) return here + c.charsAfter(sec)
+        val ch = s.chapters
+        if (ch.size == 0) return null
+        val next = ch.nextAfter(sec, p.start)
+        if (next < 0) return here + c.charsAfter(sec)
+        val ns = ch.section(next)
+        val no = ch.offset(next).toLong()
+        if (ns <= sec) return (no - p.start).coerceAtLeast(0L)
+        // Sections strictly between this one and the next entry's: charsAfter(sec) - charsAfter(ns - 1).
+        return here + (c.charsAfter(sec) - c.charsAfter(ns - 1)).coerceAtLeast(0L) + no
+    }
+
+    // ================================================================== TxtOverrideHost (T1-9)
+
+    override val txtOverride: TxtOverride? get() = bookOverride
+
+    override fun applyTxtOverride(o: TxtOverride?, onApplied: (() -> Unit)?) {
+        val b = bookRef ?: return
+        val v = o?.takeUnless { it.isEmpty }
+        bookOverride = v
+        ReaderIo.launch { BookPrefs.setTxtOverride(b.id, v) }
+        applyToSession(Settings.reader, onApplied)
+    }
+
+    override fun saveTxtAsDefaults() {
+        val b = bookRef ?: return
+        // The effective options become the defaults: this book reads the same, so nothing is re-parsed.
+        val global = Settings.reader.withTxt(bookOverride)
+        bookOverride = null
+        ReaderIo.launch { BookPrefs.setTxtOverride(b.id, null) }
+        if (global != Settings.reader) Settings.saveReader(global)
+    }
+
+    // ================================================================== end panel (T1-2)
+
+    /**
+     * "Next" on the last page (tap, key, swipe, auto turn, TTS): the end panel. When [AppSettings.autoMarkFinished]
+     * the book is marked 다 읽음 with progress 1.0 and its finish time; the next part is looked for. That work runs on
+     * IO first, and the panel is shown filled in (one e-ink update).
+     */
+    override fun showBookEnd() {
+        val s = session ?: return
+        val b = bookRef ?: return
+        if (curLayout == null || endPanel.isShowing || endLoading) return
+        endLoading = true
+        stopAutoTurn(showToast = false)
+        // Pinned bars stay (the panel covers them); open ones close.
+        if (!app.pinChrome) setChromeVisible(false)
+        // Progress 1.0 (the last page) and the reading so far, before the book's total time is read back.
+        savePositionNow()
+        val delta = tracker.flush(SystemClock.elapsedRealtime())
+        val mark = app.autoMarkFinished
+        scope.launch {
+            val info = withContext(Dispatchers.IO) { loadEnd(b, delta, mark) }
+            endLoading = false
+            if (session !== s || bookRef?.id != b.id || isFinishing) return@launch
+            endPanel.show(info, root.width)
+        }
+    }
+
+    /** Blocking (IO): stores [delta], marks [b] finished when [mark], finds its next part; never throws. */
+    private fun loadEnd(b: Book, delta: ReadingDelta?, mark: Boolean): EndInfo {
+        if (delta != null) storeReading(b.id, delta)
+        val fresh = try {
+            Library.book(b.id)
+        } catch (t: Throwable) {
+            Log.w(TAG, "book reload failed", t)
+            null
+        } ?: b
+        var finished = fresh.haveRead
+        if (mark) {
+            try {
+                if (!fresh.haveRead) Library.setHaveRead(b.id, true)
+                finished = true
+                if (BookPrefs.finishedAt(b.id) == 0L) BookPrefs.setFinishedAt(b.id, System.currentTimeMillis())
+            } catch (t: Throwable) {
+                Log.w(TAG, "mark finished failed", t)
+            }
+        }
+        val next = try {
+            NextPart.find(fresh)?.takeIf { it.isFile && it.absolutePath != File(b.path).absolutePath }
+        } catch (t: Throwable) {
+            Log.w(TAG, "next part lookup failed", t)
+            null
+        }
+        return EndInfo(fresh.title, fresh.readingSeconds, next, finished)
+    }
+
+    private val endActions = object : EndPanel.Actions {
+        override fun onEndNextPart(file: File) {
+            scope.launch {
+                val next = withContext(Dispatchers.IO) {
+                    try {
+                        Library.addOrUpdateFile(file)
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "next part add failed", t)
+                        null
+                    }
+                }
+                if (isDestroyed) return@launch
+                if (next == null) {
+                    toast("다음 권을 열지 못했습니다")
+                    return@launch
+                }
+                endPanel.hide()
+                openBook(next.id)
+            }
+        }
+
+        override fun onEndFinished(finished: Boolean) {
+            val id = bookRef?.id ?: return
+            ReaderIo.launch {
+                Library.setHaveRead(id, finished)
+                BookPrefs.setFinishedAt(id, if (finished) System.currentTimeMillis() else 0L)
+            }
+        }
+
+        override fun onEndLibrary() {
+            endPanel.hide()
+            // The library below this reader when it was opened from there, else a new one (never the open-last start:
+            // the intent has no MAIN action).
+            startActivity(
+                Intent(this@ReaderActivity, LibraryActivity::class.java).addFlags(
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION,
+                ),
+            )
+            finish()
+        }
+
+        override fun onEndRestart() {
+            endPanel.hide()
+            goTo(DocPosition.START, remember = false)
+        }
+
+        override fun onEndReview() {
+            safely { ReaderPanels.showReview(this@ReaderActivity) }
+        }
+
+        override fun onEndClose() {
+            endPanel.hide()
+        }
+    }
+
+    /** Opens library book [id] in this reader instead of the current one (the next part). */
+    private fun openBook(id: Long) {
+        val i = Intent(this, ReaderActivity::class.java).putExtra(EXTRA_BOOK_ID, id)
+        setIntent(i)
+        closeCurrentBook()
+        startOpen(i)
     }
 
     // ================================================================== return chip
@@ -2139,7 +2763,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             val turned = nextPage()
             if (!turned && navJob?.isActive != true && !layoutStale()) {
                 stopAutoTurn(showToast = false)
-                toast("마지막 페이지입니다")
+                showBookEnd()
                 return
             }
             handler.postDelayed(this, autoTurnPeriod())
@@ -2213,12 +2837,38 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         }
     }
 
-    private fun flushReadingTime() {
-        val b = bookRef ?: return
-        if (resumedAt <= 0L || curLayout == null) return
-        val secs = (SystemClock.elapsedRealtime() - resumedAt) / 1000
-        resumedAt = SystemClock.elapsedRealtime()
-        if (secs > 0) ReaderIo.launch { Library.addReadingTime(b.id, secs) }
+    // ================================================================== reading log (T1-6)
+
+    /** A page is on screen: the tracker closes the one before it (and flushes the day that ended, if any). */
+    private fun trackPage(p: PageInfo?) {
+        val chars = if (p != null) p.end - p.start else 0
+        val d = tracker.onPageShown(SystemClock.elapsedRealtime(), dayClock.day(System.currentTimeMillis()), chars) ?: return
+        bookRef?.let { writeReading(it.id, d) }
+    }
+
+    /** Stores [d] for book [id] on IO (ReadingLog + the book's total time), then refreshes the reading speed. */
+    private fun writeReading(id: Long, d: ReadingDelta) {
+        ReaderIo.launch { storeReading(id, d) }
+    }
+
+    /** Blocking (IO): [writeReading]'s work; the end panel runs it before reading the book's total time. */
+    private fun storeReading(id: Long, d: ReadingDelta) {
+        try {
+            ReadingLog.add(id, d.day, d.seconds, d.pages, d.chars)
+        } catch (t: Throwable) {
+            Log.w(TAG, "reading log write failed", t)
+        }
+        try {
+            Library.addReadingTime(id, d.seconds)
+        } catch (t: Throwable) {
+            Log.w(TAG, "reading time write failed", t)
+        }
+        val v = try {
+            ReadingLog.cpm(id)
+        } catch (t: Throwable) {
+            null
+        }
+        if (v != null && v > 0) handler.post { if (bookRef?.id == id) cpm = v }
     }
 
     /** Runs a call into another module; a failure there must not take the reader down. */

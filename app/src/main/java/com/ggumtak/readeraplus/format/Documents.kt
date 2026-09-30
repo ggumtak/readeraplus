@@ -17,6 +17,15 @@ object Documents {
             null -> throw DocumentException("지원하지 않는 형식: ${file.name}")
         }
 
+    /**
+     * R2 (A12-1): writes the cache files that opens computed but deliberately did not write on the opening thread
+     * (the EPUB section-plan cache, `EpubPlanCache`). The reader calls it once per open, after the first page is shown
+     * (`afterOpen` → `ReaderIo.launch`). Blocking IO; no-op when nothing is pending; never throws. Owner: FORMAT.
+     */
+    fun writeDeferredCaches() {
+        // R2 stub (owner: FORMAT).
+    }
+
     /** Fast metadata for library scanning (EPUB: OPF only; TXT: title from file name + encoding sniff). */
     fun readMeta(file: File): DocMeta =
         when (BookFormat.forFile(file.name)) {

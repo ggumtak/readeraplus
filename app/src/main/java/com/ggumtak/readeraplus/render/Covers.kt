@@ -50,6 +50,8 @@ object Covers {
     private const val MINI_MARGIN = 0.08f
     private const val PREVIEW_CHARS = 1200
     private const val BORDER_GREY = 0xFF888888.toInt()
+    /** Weight the placeholder's title looks like (synthetic stroke on the regular face). */
+    private const val TITLE_WEIGHT = 700
 
     /** Returns a cached/generated thumbnail (blocking; call off main thread). */
     fun thumbnail(context: Context, book: Book, widthPx: Int, heightPx: Int): Bitmap? {
@@ -240,12 +242,15 @@ object Covers {
             color = Color.BLACK
             textLocale = Locale.KOREAN
             textSize = maxOf(8f, w * 0.11f)
-            typeface = try {
-                FontManager.typeface(FontCatalog.DEFAULT_ID, 700)
+            // The default font's regular face, emboldened by stroke: the face the mini pages and the first book use,
+            // so the library inflates one CJK typeface, not a second bold file (나눔명조 ships one; A8).
+            val regular = try {
+                FontManager.typeface(FontCatalog.DEFAULT_ID, FontMath.REGULAR)
             } catch (t: Throwable) {
-                Typeface.create(Typeface.SERIF, Typeface.BOLD)
+                null
             }
-            val stroke = try { FontManager.syntheticStroke(FontCatalog.DEFAULT_ID, 700, textSize) } catch (t: Throwable) { 0f }
+            typeface = regular ?: Typeface.create(Typeface.SERIF, Typeface.BOLD)
+            val stroke = if (regular != null) FontMath.syntheticStroke(TITLE_WEIGHT, false, textSize) else 0f
             if (stroke > 0f) {
                 style = Paint.Style.FILL_AND_STROKE
                 strokeWidth = stroke
@@ -318,6 +323,11 @@ object Covers {
  * Disk-cache names of cover thumbnails (pure, unit-tested). A thumbnail belongs to a *version* of its book: the
  * file's mtime, plus the forced encoding for TXT (the mini page is decoded with it, so a changed encoding —
  * from the library, the reader or a restored backup — must never show the old decoding).
+ *
+ * The cover face is deliberately not part of the version: when `FontCatalog.DEFAULT_ID` became 나눔명조 (R2, A8),
+ * covers already on disk kept 리디바탕 until their book changes or 캐시 비우기. At thumbnail size (a mini page's em is
+ * ≈ 9 px) the two serif faces are hard to tell apart, while a new tag would re-read every book and repaint every
+ * visible cover one by one — each an e-ink update — on the first library screen after the update.
  */
 internal object CoverKeys {
     private const val SIZE_SEP = '@'

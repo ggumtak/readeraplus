@@ -83,7 +83,10 @@ class FormatTest {
         assertEquals("없음", Fmt.rulesLabel(""))
         assertEquals("없음", Fmt.rulesLabel("# 주석만\n\n"))
         val rules = "# 광고 줄 지우기\n^\\s*광고.*$ => \n(\\S)\\.{3} => $1…\n잘못된[ => x\n화살표 없음\n => 빈 패턴"
-        assertEquals("5개 규칙", Fmt.rulesLabel(rules))
+        // The rules the parser applies (as RuleList.enabledCount): comments, "=> 빈 패턴" and the line without an arrow
+        // are not rules; the invalid regex is counted (it is reported as invalid separately).
+        assertEquals("3개 켜짐", Fmt.rulesLabel(rules))
+        assertEquals("1개 켜짐", Fmt.rulesLabel("## 이름\na => b\n#- c => d"))
         assertEquals(3, Fmt.invalidRuleCount(rules))
         assertEquals(0, Fmt.invalidRuleCount("a+ => b\n# c[ => d"))
     }

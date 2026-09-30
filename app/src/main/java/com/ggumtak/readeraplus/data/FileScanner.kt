@@ -414,7 +414,8 @@ object FileScanner {
 
     private fun moveKey(fileName: String, size: Long): String = "$fileName\u0000$size"
 
-    private fun hasAllFilesAccess(context: Context): Boolean = try {
+    /** All-files access (API 30+), else the legacy storage permission: absent files then really are gone. */
+    internal fun hasAllFilesAccess(context: Context): Boolean = try {
         if (Build.VERSION.SDK_INT >= 30) {
             Environment.isExternalStorageManager()
         } else {

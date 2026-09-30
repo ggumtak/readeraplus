@@ -3,11 +3,16 @@ package com.ggumtak.readeraplus.ui.library
 import android.view.KeyEvent
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
+import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.LibraryListMode
+import com.ggumtak.readeraplus.settings.TapAction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDateTime
+import java.time.ZoneId
 
 class LibraryTextTest {
 
@@ -102,7 +107,7 @@ class LibraryTextTest {
         assertEquals("a_b_c.txt", LibraryText.importFileName("a/b:c.txt", null))
         assertEquals("download.epub", LibraryText.importFileName("download", "application/epub+zip"))
         assertEquals("notes.txt", LibraryText.importFileName("notes", "text/plain"))
-        assertEquals("문서.txt", LibraryText.importFileName(null, "text/plain"))
+        assertEquals("가져온 책.txt", LibraryText.importFileName(null, "text/plain"))
         assertEquals("hidden.txt", LibraryText.importFileName(".hidden.txt", null))
         assertNull(LibraryText.importFileName("photo.jpg", "image/jpeg"))
         assertNull(LibraryText.importFileName("archive", "application/zip"))
@@ -153,6 +158,14 @@ class LibraryTextTest {
     }
 
     @Test
+    fun backStep_leavesSelectionBeforeSearchAndGroup() {
+        assertEquals(LibraryText.BackStep.END_SELECTION, LibraryText.backStep(false, true, true, selecting = true))
+        assertEquals(LibraryText.BackStep.END_SELECTION, LibraryText.backStep(false, false, false, selecting = true))
+        // The drawer can't be open while selecting, but if it were it closes first.
+        assertEquals(LibraryText.BackStep.CLOSE_DRAWER, LibraryText.backStep(true, false, false, selecting = true))
+    }
+
+    @Test
     fun rescanDue_thirtyMinutes() {
         val now = 10_000_000_000L
         assertTrue(LibraryText.rescanDue(0L, now))
@@ -177,6 +190,132 @@ class LibraryTextTest {
         assertTrue(LibraryText.emptyMessage(Shelf.TRASH, "", false).contains("휴지통"))
         assertTrue(LibraryText.emptyMessage(Shelf.AUTHORS, "", true).contains("항목"))
         for (s in Shelf.entries) assertTrue(LibraryText.emptyMessage(s, "", false).isNotBlank())
+    }
+
+    @Test
+    fun emptyMessage_glossaryAndShelfLabels() {
+        // A8: 책, never 문서, in every variant.
+        for (s in Shelf.entries) for (flags in listOf(true, false)) for (inGroup in listOf(true, false)) {
+            val m = LibraryText.emptyMessage(s, "", inGroup, flags)
+            assertFalse("$s: $m", m.contains("문서"))
+        }
+        // The shelf names come from Shelf.X.label.
+        assertTrue(LibraryText.emptyMessage(Shelf.READING_NOW, "", false).startsWith("읽고 있는 책이 없습니다."))
+        assertTrue(LibraryText.emptyMessage(Shelf.TO_READ, "", false).startsWith("읽을 책이 없습니다."))
+        assertTrue(LibraryText.emptyMessage(Shelf.HAVE_READ, "", false).startsWith("다 읽은 책이 없습니다."))
+        assertEquals("이 항목에 책이 없습니다.", LibraryText.emptyMessage(Shelf.AUTHORS, "", true))
+    }
+
+    @Test
+    fun emptyMessage_hintFollowsTheView() {
+        // Cards have flag buttons; the other views point at multi-select or the book menu.
+        assertTrue(LibraryText.emptyMessage(Shelf.TO_READ, "", false, flagButtons = true).contains("시계 버튼"))
+        val compact = LibraryText.emptyMessage(Shelf.TO_READ, "", false, flagButtons = false)
+        assertFalse(compact.contains("버튼"))
+        assertTrue(compact.contains("‘읽을 책으로’"))
+        assertTrue(LibraryText.emptyMessage(Shelf.HAVE_READ, "", false, flagButtons = false).contains("‘다 읽음으로’"))
+        assertTrue(LibraryText.emptyMessage(Shelf.FAVORITES, "", false, flagButtons = false).contains("책 메뉴"))
+    }
+
+    @Test
+    fun statusTag_finishedBeforeNew() {
+        assertEquals("새 책", LibraryText.statusTag(opened = false, haveRead = false))
+        assertEquals("완독", LibraryText.statusTag(opened = true, haveRead = true))
+        // Marked read without opening it here (read elsewhere): 완독, not 새 책.
+        assertEquals("완독", LibraryText.statusTag(opened = false, haveRead = true))
+        assertNull(LibraryText.statusTag(opened = true, haveRead = false))
+    }
+
+    @Test
+    fun compactLine_authorProgressAndAgo() {
+        assertEquals("김작가 · 34% · 3일 전", LibraryText.compactLine("김작가", true, false, "34%") { "3일 전" })
+        assertEquals("34% · 어제", LibraryText.compactLine("  ", true, false, "34%") { "어제" })
+        assertEquals("김작가 · 새 책", LibraryText.compactLine("김작가", false, false, "") { error("not read") })
+        assertEquals("김작가 · 완독", LibraryText.compactLine(" 김작가 ", true, true, "100%") { error("not read") })
+        assertEquals("새 책", LibraryText.compactLine("", false, false, "") { error("not read") })
+    }
+
+    @Test
+    fun ago_countsCalendarDays() {
+        val zone = ZoneId.of("Asia/Seoul")
+        fun t(y: Int, mo: Int, d: Int, h: Int, mi: Int = 0) =
+            LocalDateTime.of(y, mo, d, h, mi).atZone(zone).toInstant().toEpochMilli()
+        val now = t(2026, 9, 30, 9)
+        assertEquals("오늘", LibraryText.ago(t(2026, 9, 30, 0, 5), now, zone))
+        // Last night 23:50 is 어제 although it's under 24 hours ago.
+        assertEquals("어제", LibraryText.ago(t(2026, 9, 29, 23, 50), now, zone))
+        assertEquals("3일 전", LibraryText.ago(t(2026, 9, 27, 12), now, zone))
+        assertEquals("29일 전", LibraryText.ago(t(2026, 9, 1, 12), now, zone))
+        assertEquals("1개월 전", LibraryText.ago(t(2026, 8, 31, 12), now, zone))
+        assertEquals("12개월 전", LibraryText.ago(t(2025, 10, 1, 12), now, zone))
+        assertEquals("1년 전", LibraryText.ago(t(2025, 9, 30, 12), now, zone))
+        assertEquals("3년 전", LibraryText.ago(t(2023, 6, 1, 12), now, zone))
+        // A clock that went backwards: never "-1일 전".
+        assertEquals("오늘", LibraryText.ago(t(2026, 10, 2, 12), now, zone))
+    }
+
+    @Test
+    fun nextListMode_cyclesListCompactGrid() {
+        assertEquals(LibraryListMode.COMPACT, LibraryText.nextListMode(LibraryListMode.LIST))
+        assertEquals(LibraryListMode.GRID, LibraryText.nextListMode(LibraryListMode.COMPACT))
+        assertEquals(LibraryListMode.LIST, LibraryText.nextListMode(LibraryListMode.GRID))
+    }
+
+    @Test
+    fun flagMenuLabels_useShelfNames() {
+        assertEquals("읽을 책에 추가", LibraryText.flagMenuLabel(Shelf.TO_READ, on = false))
+        assertEquals("읽을 책에서 빼기", LibraryText.flagMenuLabel(Shelf.TO_READ, on = true))
+        assertEquals("다 읽은 책에 추가", LibraryText.flagMenuLabel(Shelf.HAVE_READ, on = false))
+        assertEquals("즐겨찾기에서 빼기", LibraryText.flagMenuLabel(Shelf.FAVORITES, on = true))
+    }
+
+    @Test
+    fun selectionAndBatchMessages() {
+        assertEquals("3권 선택", LibraryText.selectionTitle(3))
+        assertEquals("책을 고르세요", LibraryText.selectionTitle(0))
+        assertEquals("다 읽은 책에 3권을 추가했습니다", LibraryText.addedToShelf(Shelf.HAVE_READ, 3))
+        assertEquals("읽을 책에 1권을 추가했습니다", LibraryText.addedToShelf(Shelf.TO_READ, 1))
+        assertEquals("‘무협’에 12권을 추가했습니다", LibraryText.addedToCollection("무협", 12))
+        assertEquals("휴지통으로 이동했습니다", LibraryText.trashedMessage(1))
+        assertEquals("5권을 휴지통으로 이동했습니다", LibraryText.trashedMessage(5))
+        assertTrue(LibraryText.trashQuestion(5).contains("5권"))
+    }
+
+    @Test
+    fun importAndScanMessages_countBooks() {
+        assertEquals("책 3권을 추가했습니다", LibraryText.importedMessage(3))
+        assertEquals("추가한 책이 없습니다", LibraryText.importedMessage(0))
+        assertEquals("책 12권을 가져왔습니다", LibraryText.treeImportedMessage(12))
+        assertEquals("가져온 책이 없습니다", LibraryText.treeImportedMessage(0))
+        assertEquals("스캔 완료: 책 120권", LibraryText.scanDoneMessage(120))
+    }
+
+    @Test
+    fun pageDirection_bindingsFirst() {
+        val vol = AppSettings(volumeKeysTurn = true)
+        // No binding: the legacy rules (volume keys page when volumeKeysTurn).
+        assertEquals(1, LibraryText.pageDirection(KeyEvent.KEYCODE_VOLUME_DOWN, vol))
+        assertEquals(-1, LibraryText.pageDirection(KeyEvent.KEYCODE_PAGE_UP, vol))
+        // A binding overrides volumeKeysTurn, in both directions.
+        val bound = vol.copy(
+            keyBindings = mapOf(
+                KeyEvent.KEYCODE_VOLUME_DOWN to TapAction.PREV,
+                KeyEvent.KEYCODE_VOLUME_UP to TapAction.NONE,
+                KeyEvent.KEYCODE_F5 to TapAction.NEXT_CHAPTER,
+                KeyEvent.KEYCODE_PAGE_DOWN to TapAction.TOC,
+                KeyEvent.KEYCODE_BACK to TapAction.NEXT,
+            ),
+        )
+        assertEquals(-1, LibraryText.pageDirection(KeyEvent.KEYCODE_VOLUME_DOWN, bound))
+        // "없음(시스템에 맡김)": the volume key changes the volume.
+        assertEquals(0, LibraryText.pageDirection(KeyEvent.KEYCODE_VOLUME_UP, bound))
+        assertEquals(1, LibraryText.pageDirection(KeyEvent.KEYCODE_F5, bound))
+        // A reader-only action is not a library key.
+        assertEquals(0, LibraryText.pageDirection(KeyEvent.KEYCODE_PAGE_DOWN, bound))
+        // Navigation keys are never taken.
+        assertEquals(0, LibraryText.pageDirection(KeyEvent.KEYCODE_BACK, bound))
+        assertEquals(0, LibraryText.boundDirection(TapAction.MENU))
+        assertEquals(-1, LibraryText.boundDirection(TapAction.PREV_CHAPTER))
     }
 
     @Test

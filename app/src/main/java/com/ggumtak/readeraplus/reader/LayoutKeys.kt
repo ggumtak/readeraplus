@@ -20,10 +20,24 @@ data class PageGeometry(
 /** Pure derivation of page geometry, LayoutConfig and the page-count cache key from settings (unit-tested). */
 object LayoutKeys {
     /**
-     * Bump when the layout algorithm, geometry rules or key composition change so cached page counts are recomputed.
+     * Bump when the geometry rules ([geometry], [config]) or the key composition change so cached page counts are
+     * recomputed (the typesetter's own output is [ALGO_VERSION]).
      * 2: keys are per format (the other format's parse options no longer count) and use the layout weight class.
+     * 3: [ALGO_VERSION] replaces the app's version code (A2).
      */
-    const val VERSION = 2
+    const val VERSION = 3
+
+    /**
+     * Version of the line-breaking output: bump exactly when `TypesetPass` (or the measurer) can produce different
+     * lines for the same input, and only then, so an app update keeps every cached page count (A2). The typesetter
+     * half is enforced by `LayoutGoldenTest` (test/.../engine), which hashes the layout of a fixed corpus and compares
+     * it with [GOLDEN_HASH]: update both together. Measurer changes (FontManager, AndroidTextMeasurer, the synthetic
+     * stroke's advances or line metrics) are not covered by that test: whoever makes one bumps this by hand.
+     */
+    const val ALGO_VERSION = 1
+
+    /** Hash of `LayoutGoldenTest`'s layouts at [ALGO_VERSION]; see there. */
+    const val GOLDEN_HASH = "071717a86d158ac8"
     /** Header/footer band height as a multiple of the status font size. */
     const val STATUS_BAND = 2.2f
     /** Margin used when the "페이지 여백" switch is off. */
@@ -88,6 +102,8 @@ object LayoutKeys {
         footerPercent = true,
         footerClock = true,
         footerBattery = true,
+        footerEpisode = false,
+        footerTimeLeft = ReaderSettings.TIME_LEFT_OFF,
     )
 
     /**
@@ -183,12 +199,13 @@ object LayoutKeys {
         g: PageGeometry,
         density: Float,
         fontIdentity: String,
-        appVersion: Int,
-    ): String = key(layoutPart(s, format), parseOptionsFor(s, format, encoding), g, density, fontIdentity, appVersion)
+        algoVersion: Int = ALGO_VERSION,
+    ): String = key(layoutPart(s, format), parseOptionsFor(s, format, encoding), g, density, fontIdentity, algoVersion)
 
     /**
      * Stable key for cached page counts: every layout-affecting setting, the parse options, the content box,
-     * density, the font file identity and the app/layout versions, hashed to 24 hex chars.
+     * density, the font file identity and the key / layout algorithm versions ([VERSION], [ALGO_VERSION]; not the
+     * app's version, so an update that leaves the layout alone keeps the counts), hashed to 24 hex chars.
      */
     fun key(
         s: ReaderSettings,
@@ -196,10 +213,10 @@ object LayoutKeys {
         g: PageGeometry,
         density: Float,
         fontIdentity: String,
-        appVersion: Int,
+        algoVersion: Int = ALGO_VERSION,
     ): String {
         val sb = StringBuilder(512)
-        sb.append("v").append(VERSION).append('|').append(appVersion)
+        sb.append("v").append(VERSION).append("|a").append(algoVersion)
         sb.append("|font=").append(s.fontId).append('|').append(fontIdentity)
         sb.append("|size=").append(s.fontSizeSp)
         sb.append("|w=").append(s.fontWeight)

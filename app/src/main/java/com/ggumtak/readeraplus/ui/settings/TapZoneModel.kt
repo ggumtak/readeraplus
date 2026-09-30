@@ -56,6 +56,8 @@ object TapZoneModel {
         TapAction.PREV_CHAPTER -> "이전\n챕터"
         TapAction.REFRESH -> "새로\n고침"
         TapAction.INVERT -> "반전"
+        TapAction.GOTO -> "페이지\n이동"
+        TapAction.AUTO_TURN -> "자동\n넘김"
     }
 
     private val CELL_NAMES = arrayOf("왼쪽 위", "가운데 위", "오른쪽 위", "왼쪽 가운데", "가운데", "오른쪽 가운데", "왼쪽 아래", "가운데 아래", "오른쪽 아래")

@@ -5,11 +5,18 @@ import android.view.KeyEvent
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
 import com.ggumtak.readeraplus.reader.ReaderFormat
+import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.LibraryListMode
+import com.ggumtak.readeraplus.settings.TapAction
+import java.time.Instant
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 /**
  * Pure (JVM-testable) helpers of the library screen: display strings, path conversion for SAF picks,
- * file naming for imports, key mapping and back-navigation order.
+ * file naming for imports, key mapping and back-navigation order. Wording follows the glossary (책, never 문서;
+ * shelf names only through `Shelf.X.label`).
  */
 internal object LibraryText {
 
@@ -53,6 +60,82 @@ internal object LibraryText {
         val p = Math.floor(progress.toDouble() * 100.0 + 1e-3).toInt().coerceIn(0, 100)
         return "$p%"
     }
+
+    /**
+     * The word that stands in for a progress bar or percent: "완독" for a book marked read, "새 책" for one never
+     * opened, else null (show the progress). Cards and cells use it only for unopened books (their flag icons show
+     * 완독); compact rows, which have no flag icons, use it as it is.
+     */
+    fun statusTag(opened: Boolean, haveRead: Boolean): String? = when {
+        haveRead -> "완독"
+        !opened -> "새 책"
+        else -> null
+    }
+
+    /**
+     * Second line of a compact ("간단히") row: "작가 · 34% · 3일 전", or "작가 · 새 책" / "작가 · 완독" ([statusTag]).
+     * No author → the line starts with the progress. [ago] is only read for an opened, unfinished book.
+     */
+    fun compactLine(author: String, opened: Boolean, haveRead: Boolean, percent: String, ago: () -> String): String {
+        val status = statusTag(opened, haveRead) ?: "$percent · ${ago()}"
+        val a = author.trim()
+        return if (a.isEmpty()) status else "$a · $status"
+    }
+
+    /**
+     * When a book was last read, counted in calendar days of [zone] (not 24-hour spans, so last night reads 어제):
+     * "오늘", "어제", "3일 전" (up to 29), "5개월 전" (30-day months), "2년 전". A time in the future reads 오늘.
+     */
+    fun ago(at: Long, now: Long, zone: ZoneId = ZoneId.systemDefault()): String {
+        val days = ChronoUnit.DAYS.between(
+            Instant.ofEpochMilli(at).atZone(zone).toLocalDate(),
+            Instant.ofEpochMilli(now).atZone(zone).toLocalDate(),
+        )
+        return when {
+            days <= 0L -> "오늘"
+            days == 1L -> "어제"
+            days < 30L -> "${days}일 전"
+            days < 365L -> "${days / 30}개월 전"
+            else -> "${days / 365}년 전"
+        }
+    }
+
+    /** The toolbar view toggle's cycle: 목록 → 간단히 → 표지 → 목록 (the enum's order). */
+    fun nextListMode(mode: LibraryListMode): LibraryListMode {
+        val all = LibraryListMode.entries
+        return all[(mode.ordinal + 1) % all.size]
+    }
+
+    /** Book-menu item for a shelf flag: "읽을 책에 추가" / "읽을 책에서 빼기" (the reader's toasts use the same verbs). */
+    fun flagMenuLabel(shelf: Shelf, on: Boolean): String = if (on) "${shelf.label}에서 빼기" else "${shelf.label}에 추가"
+
+    // ---- multi-select (T1-13)
+
+    /** Title of the selection toolbar: "3권 선택", or a prompt while nothing is checked. */
+    fun selectionTitle(count: Int): String = if (count <= 0) "책을 고르세요" else "${count}권 선택"
+
+    /** Result of [다 읽음으로] / [읽을 책으로]: "다 읽은 책에 3권을 추가했습니다". */
+    fun addedToShelf(shelf: Shelf, count: Int): String = "${shelf.label}에 ${count}권을 추가했습니다"
+
+    /** Result of [컬렉션에 추가]: "‘무협’에 3권을 추가했습니다". */
+    fun addedToCollection(name: String, count: Int): String = "‘$name’에 ${count}권을 추가했습니다"
+
+    /** Result of moving books to the trash (one book: the book menu's wording). */
+    fun trashedMessage(count: Int): String = if (count == 1) "휴지통으로 이동했습니다" else "${count}권을 휴지통으로 이동했습니다"
+
+    /** Question before a batch move to the trash (the trash has no batch restore, so several books ask first). */
+    fun trashQuestion(count: Int): String = "고른 책 ${count}권을 휴지통으로 이동합니다. 휴지통에서는 한 권씩 복원할 수 있습니다."
+
+    // ---- import / scan results
+
+    /** "책 3권을 추가했습니다" after a multi-file pick. */
+    fun importedMessage(count: Int): String = if (count <= 0) "추가한 책이 없습니다" else "책 ${count}권을 추가했습니다"
+
+    /** "책 12권을 가져왔습니다" after a folder import. */
+    fun treeImportedMessage(count: Int): String = if (count <= 0) "가져온 책이 없습니다" else "책 ${count}권을 가져왔습니다"
+
+    /** "스캔 완료: 책 120권". */
+    fun scanDoneMessage(total: Int): String = "스캔 완료: 책 ${total}권"
 
     /** Last path segment of a folder path ("/storage/emulated/0/Books" → "Books"). */
     fun folderName(path: String): String {
@@ -134,7 +217,7 @@ internal object LibraryText {
             "text/plain" -> ".txt"
             else -> return null
         }
-        val base = clean.ifEmpty { "문서" }
+        val base = clean.ifEmpty { "가져온 책" }
         return base + ext
     }
 
@@ -180,6 +263,24 @@ internal object LibraryText {
         else -> 0
     }
 
+    /**
+     * [keyDirection] with the reader's key bindings first (T1-4, same resolution order as the reader's KeyMap): a key
+     * bound to a next/previous action pages, one bound to anything else (including "없음(시스템에 맡김)") is left to the
+     * system, an unbound key falls back to [keyDirection].
+     */
+    fun pageDirection(keyCode: Int, app: AppSettings): Int {
+        if (keyCode in RESERVED_KEYS) return 0
+        if (app.keyBindings.isNotEmpty()) app.keyBindings[keyCode]?.let { return boundDirection(it) }
+        return keyDirection(keyCode, app.volumeKeysTurn, app.invertVolumeKeys, app.nextPageKeys, app.prevPageKeys)
+    }
+
+    /** Library paging meaning of a bound reader action: +1 next, -1 previous, 0 not a paging action. */
+    fun boundDirection(action: TapAction): Int = when (action) {
+        TapAction.NEXT, TapAction.NEXT_CHAPTER -> 1
+        TapAction.PREV, TapAction.PREV_CHAPTER -> -1
+        else -> 0
+    }
+
     private val RESERVED_KEYS = setOf(
         KeyEvent.KEYCODE_BACK,
         KeyEvent.KEYCODE_ESCAPE,
@@ -188,19 +289,21 @@ internal object LibraryText {
         KeyEvent.KEYCODE_APP_SWITCH,
     )
 
-    enum class BackStep { CLOSE_DRAWER, CLOSE_SEARCH, LEAVE_GROUP, FINISH }
+    enum class BackStep { CLOSE_DRAWER, END_SELECTION, CLOSE_SEARCH, LEAVE_GROUP, FINISH }
 
-    /** Back closes the drawer, then the search row, then the open group, then leaves the app. */
-    fun backStep(drawerOpen: Boolean, searchOpen: Boolean, inGroup: Boolean): BackStep = when {
+    /** Back closes the drawer, then leaves multi-select, then closes the search row, then the open group, then the app. */
+    fun backStep(drawerOpen: Boolean, searchOpen: Boolean, inGroup: Boolean, selecting: Boolean = false): BackStep = when {
         drawerOpen -> BackStep.CLOSE_DRAWER
+        selecting -> BackStep.END_SELECTION
         searchOpen -> BackStep.CLOSE_SEARCH
         inGroup -> BackStep.LEAVE_GROUP
         else -> BackStep.FINISH
     }
 
     /**
-     * "앱 시작시 문서 읽기": go straight to the last-read book only on a fresh launcher start — not when the activity
-     * is recreated ([restored]) or brought back from recents (the reader is still on top of it there).
+     * Open the last book on start ([AppSettings.openLastOnStart]): go straight to the last-read book only on a fresh
+     * launcher start — not when the activity is recreated ([restored]) or brought back from recents (the reader is
+     * still on top of it there).
      */
     fun shouldOpenLast(enabled: Boolean, restored: Boolean, action: String?, flags: Int): Boolean =
         enabled && !restored && action == Intent.ACTION_MAIN &&
@@ -218,22 +321,28 @@ internal object LibraryText {
         return if (parts.isEmpty()) null else parts.joinToString("  ·  ")
     }
 
-    /** Empty-state message for a shelf (no search). */
-    fun emptyMessage(shelf: Shelf, query: String, inGroup: Boolean): String {
+    /**
+     * Empty-state message for a shelf. [flagButtons]: the list shows cards with flag buttons (목록); in the other
+     * views the hint points to multi-select or the book menu instead.
+     */
+    fun emptyMessage(shelf: Shelf, query: String, inGroup: Boolean, flagButtons: Boolean = true): String {
         if (query.isNotBlank()) return "‘${query.trim()}’에 해당하는 항목이 없습니다."
-        if (inGroup) return "이 항목에 문서가 없습니다."
+        if (inGroup) return "이 항목에 책이 없습니다."
         return when (shelf) {
-            Shelf.READING_NOW -> "읽고 있는 문서가 없습니다.\n책을 열면 여기에 표시됩니다."
+            Shelf.READING_NOW -> "${Shelf.READING_NOW.label}이 없습니다.\n책을 열면 여기에 표시됩니다."
             Shelf.ALL -> "책이 없습니다.\n‘도서 스캔’으로 기기의 EPUB · TXT 파일을 찾거나 ‘파일 열기’로 추가하세요."
-            Shelf.FAVORITES -> "즐겨찾기한 문서가 없습니다.\n카드의 별 버튼으로 추가하세요."
-            Shelf.TO_READ -> "읽을 문서가 없습니다.\n카드의 시계 버튼으로 추가하세요."
-            Shelf.HAVE_READ -> "읽던 문서가 없습니다.\n카드의 체크 버튼으로 표시하세요."
-            Shelf.AUTHORS -> "작가 정보가 있는 문서가 없습니다."
-            Shelf.SERIES -> "시리즈 정보가 있는 문서가 없습니다."
+            Shelf.FAVORITES -> "즐겨찾기한 책이 없습니다.\n" +
+                if (flagButtons) "카드의 별 버튼으로 추가하세요." else "책 메뉴에서 ‘즐겨찾기에 추가’를 고르세요."
+            Shelf.TO_READ -> "${Shelf.TO_READ.label}이 없습니다.\n" +
+                if (flagButtons) "카드의 시계 버튼으로 추가하세요." else "책을 길게 눌러 고른 뒤 ‘읽을 책으로’를 누르세요."
+            Shelf.HAVE_READ -> "${Shelf.HAVE_READ.label}이 없습니다.\n" +
+                if (flagButtons) "카드의 체크 버튼으로 표시하세요." else "책을 길게 눌러 고른 뒤 ‘다 읽음으로’를 누르세요."
+            Shelf.AUTHORS -> "작가 정보가 있는 책이 없습니다."
+            Shelf.SERIES -> "시리즈 정보가 있는 책이 없습니다."
             Shelf.COLLECTIONS -> "컬렉션이 없습니다.\n오른쪽 위 + 버튼으로 새 컬렉션을 만드세요."
-            Shelf.FORMATS -> "문서가 없습니다."
-            Shelf.FOLDERS -> "문서가 있는 폴더가 없습니다."
-            Shelf.DOWNLOADS -> "다운로드 폴더에 EPUB · TXT 문서가 없습니다."
+            Shelf.FORMATS -> "책이 없습니다."
+            Shelf.FOLDERS -> "책이 있는 폴더가 없습니다."
+            Shelf.DOWNLOADS -> "다운로드 폴더에 EPUB · TXT 파일이 없습니다."
             Shelf.TRASH -> "휴지통이 비어 있습니다."
         }
     }

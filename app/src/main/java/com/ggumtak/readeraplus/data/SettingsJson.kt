@@ -2,8 +2,13 @@ package com.ggumtak.readeraplus.data
 
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_MODE_SYSTEM
+import com.ggumtak.readeraplus.settings.EINK_REFRESH_AUTO
+import com.ggumtak.readeraplus.settings.EINK_REFRESH_FLASH
 import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.TapAction
+import com.ggumtak.readeraplus.settings.UserStyle
+import com.ggumtak.readeraplus.settings.UserStyles
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -15,6 +20,10 @@ internal data class RawPref(val key: String, val type: String, val value: Any)
  * "a.tapZoneMode", …) so a backup doubles as a readable prefs dump. Restoring goes through typed
  * ReaderSettings / AppSettings objects (never raw puts) so a malformed backup can't plant a wrongly typed
  * pref that would crash Settings on load; values are clamped to sane ranges.
+ *
+ * The saved styles ("내 스타일") are a typed list next to `reader` / `app` in the envelope ([USER_STYLES]); their raw
+ * prefs value ([Settings.KEY_USER_STYLES]) is never copied as an unmapped pref. Backups without the list (older
+ * builds) restore everything else and leave the device's styles alone.
  */
 internal object SettingsJson {
     const val TYPE_STRING = "string"
@@ -26,6 +35,12 @@ internal object SettingsJson {
 
     const val READER_PREFIX = "r."
     const val APP_PREFIX = "a."
+
+    /** Envelope key of the saved styles (a JSON array of [UserStyles.toJson] objects). */
+    const val USER_STYLES = "userStyles"
+
+    /** Prefix-matching prefs that a typed mapping outside reader/app restores (never copied or restored raw). */
+    private val TYPED_ELSEWHERE = setOf(Settings.KEY_USER_STYLES)
 
     /**
      * Raw pref keys that are device/session state and must not travel with a backup (matched as lower-case
@@ -60,6 +75,8 @@ internal object SettingsJson {
         .put("r.showFooter", s.showFooter)
         .put("r.footerPage", s.footerPage)
         .put("r.footerChapterLeft", s.footerChapterLeft)
+        .put("r.footerEpisode", s.footerEpisode)
+        .put("r.footerTimeLeft", s.footerTimeLeft)
         .put("r.footerPercent", s.footerPercent)
         .put("r.footerClock", s.footerClock)
         .put("r.footerBattery", s.footerBattery)
@@ -96,6 +113,9 @@ internal object SettingsJson {
         showFooter = BackupJson.bool(o, "r.showFooter", base.showFooter),
         footerPage = BackupJson.bool(o, "r.footerPage", base.footerPage),
         footerChapterLeft = BackupJson.bool(o, "r.footerChapterLeft", base.footerChapterLeft),
+        footerEpisode = BackupJson.bool(o, "r.footerEpisode", base.footerEpisode),
+        footerTimeLeft = BackupJson.int(o, "r.footerTimeLeft", base.footerTimeLeft)
+            .coerceIn(ReaderSettings.TIME_LEFT_OFF, ReaderSettings.TIME_LEFT_BOOK),
         footerPercent = BackupJson.bool(o, "r.footerPercent", base.footerPercent),
         footerClock = BackupJson.bool(o, "r.footerClock", base.footerClock),
         footerBattery = BackupJson.bool(o, "r.footerBattery", base.footerBattery),
@@ -124,20 +144,31 @@ internal object SettingsJson {
         .put("a.invertVolumeKeys", s.invertVolumeKeys)
         .put("a.nextPageKeys", JSONArray().also { a -> s.nextPageKeys.sorted().forEach { a.put(it) } })
         .put("a.prevPageKeys", JSONArray().also { a -> s.prevPageKeys.sorted().forEach { a.put(it) } })
+        .put("a.keyBindings", Settings.encodeKeyBindings(s.keyBindings))
+        .put("a.keyHold", s.keyHold.name)
         .put("a.longPressSelect", s.longPressSelect)
+        .put("a.longPressMs", s.longPressMs)
         .put("a.bookmarkByTouch", s.bookmarkByTouch)
         .put("a.invertByTouch", s.invertByTouch)
         .put("a.fullscreen", s.fullscreen)
         .put("a.keepScreenOn", s.keepScreenOn)
         .put("a.brightnessSwipe", s.brightnessSwipe)
         .put("a.openLastOnStart", s.openLastOnStart)
+        .put("a.autoMarkFinished", s.autoMarkFinished)
         .put("a.einkRefreshEvery", s.einkRefreshEvery)
         .put("a.einkRefreshOnChapter", s.einkRefreshOnChapter)
         .put("a.einkMode", s.einkMode)
+        .put("a.einkRefreshMethod", s.einkRefreshMethod)
+        .put("a.einkFlashMs", s.einkFlashMs)
+        .put("a.einkRefreshEveryNight", s.einkRefreshEveryNight)
+        .put("a.einkFlashImages", s.einkFlashImages)
         .put("a.autoTurnSeconds", s.autoTurnSeconds)
         .put("a.ttsRate", s.ttsRate.toDouble())
         .put("a.ttsPitch", s.ttsPitch.toDouble())
         .put("a.ttsSleepMinutes", s.ttsSleepMinutes)
+        .put("a.ttsSleepChapters", s.ttsSleepChapters)
+        .put("a.ttsHighlight", s.ttsHighlight)
+        .put("a.ttsVoice", s.ttsVoice)
         .put("a.webSearchUrl", s.webSearchUrl)
         .put("a.librarySort", s.librarySort.name)
         .put("a.libraryListMode", s.libraryListMode.name)
@@ -164,22 +195,35 @@ internal object SettingsJson {
             invertVolumeKeys = BackupJson.bool(o, "a.invertVolumeKeys", base.invertVolumeKeys),
             nextPageKeys = intSet(o.opt("a.nextPageKeys")) ?: base.nextPageKeys,
             prevPageKeys = intSet(o.opt("a.prevPageKeys")) ?: base.prevPageKeys,
+            keyBindings = keyBindings(o.opt("a.keyBindings")) ?: base.keyBindings,
+            keyHold = enumOf(BackupJson.strOrNull(o, "a.keyHold"), base.keyHold),
             longPressSelect = BackupJson.bool(o, "a.longPressSelect", base.longPressSelect),
+            longPressMs = BackupJson.int(o, "a.longPressMs", base.longPressMs).coerceIn(200, 3000),
             bookmarkByTouch = BackupJson.bool(o, "a.bookmarkByTouch", base.bookmarkByTouch),
             invertByTouch = BackupJson.bool(o, "a.invertByTouch", base.invertByTouch),
             fullscreen = BackupJson.bool(o, "a.fullscreen", base.fullscreen),
             keepScreenOn = BackupJson.bool(o, "a.keepScreenOn", base.keepScreenOn),
             brightnessSwipe = BackupJson.bool(o, "a.brightnessSwipe", base.brightnessSwipe),
             openLastOnStart = BackupJson.bool(o, "a.openLastOnStart", base.openLastOnStart),
+            autoMarkFinished = BackupJson.bool(o, "a.autoMarkFinished", base.autoMarkFinished),
             einkRefreshEvery = BackupJson.int(o, "a.einkRefreshEvery", base.einkRefreshEvery).coerceIn(0, 100),
             einkRefreshOnChapter = BackupJson.bool(o, "a.einkRefreshOnChapter", base.einkRefreshOnChapter),
             einkMode = BackupJson.int(o, "a.einkMode", base.einkMode).let { m ->
                 if (m == EINK_MODE_SYSTEM || m in 176..183) m else EINK_MODE_SYSTEM
             },
+            einkRefreshMethod = BackupJson.int(o, "a.einkRefreshMethod", base.einkRefreshMethod).let { m ->
+                if (m in EINK_REFRESH_AUTO..EINK_REFRESH_FLASH) m else EINK_REFRESH_AUTO
+            },
+            einkFlashMs = BackupJson.int(o, "a.einkFlashMs", base.einkFlashMs).coerceIn(50, 1000),
+            einkRefreshEveryNight = BackupJson.int(o, "a.einkRefreshEveryNight", base.einkRefreshEveryNight).coerceIn(-1, 100),
+            einkFlashImages = BackupJson.bool(o, "a.einkFlashImages", base.einkFlashImages),
             autoTurnSeconds = BackupJson.int(o, "a.autoTurnSeconds", base.autoTurnSeconds).coerceIn(1, 3600),
             ttsRate = BackupJson.float(o, "a.ttsRate", base.ttsRate).coerceIn(0.1f, 4f),
             ttsPitch = BackupJson.float(o, "a.ttsPitch", base.ttsPitch).coerceIn(0.1f, 4f),
             ttsSleepMinutes = BackupJson.int(o, "a.ttsSleepMinutes", base.ttsSleepMinutes).coerceIn(0, 24 * 60),
+            ttsSleepChapters = BackupJson.int(o, "a.ttsSleepChapters", base.ttsSleepChapters).coerceIn(0, 9),
+            ttsHighlight = BackupJson.bool(o, "a.ttsHighlight", base.ttsHighlight),
+            ttsVoice = BackupJson.str(o, "a.ttsVoice", base.ttsVoice).trim(),
             webSearchUrl = BackupJson.str(o, "a.webSearchUrl", base.webSearchUrl).trim().ifEmpty { base.webSearchUrl },
             librarySort = enumOf(BackupJson.strOrNull(o, "a.librarySort"), base.librarySort),
             libraryListMode = enumOf(BackupJson.strOrNull(o, "a.libraryListMode"), base.libraryListMode),
@@ -260,14 +304,33 @@ internal object SettingsJson {
         else -> null
     }
 
-    /** `{reader, app, other, otherTypes}` for the backup file. */
-    fun settingsToJson(reader: ReaderSettings, app: AppSettings, raw: Map<String, *>): JSONObject {
+    /**
+     * `{reader, app, other, otherTypes, userStyles}` for the backup file. [userStyles] null (a caller that doesn't
+     * pass them) leaves the key out, like a backup of an older build.
+     */
+    fun settingsToJson(
+        reader: ReaderSettings,
+        app: AppSettings,
+        raw: Map<String, *>,
+        userStyles: List<UserStyle>? = null,
+    ): JSONObject {
         val (values, types) = otherToJson(raw)
-        return JSONObject()
+        val out = JSONObject()
             .put("reader", addUnmapped(readerToJson(reader), READER_PREFIX, raw))
             .put("app", addUnmapped(appToJson(app), APP_PREFIX, raw))
             .put("other", values)
             .put("otherTypes", types)
+        if (userStyles != null) out.put(USER_STYLES, UserStyles.toJson(userStyles))
+        return out
+    }
+
+    /**
+     * The saved styles of a settings envelope ([settingsToJson]), or null when the backup has none (older builds):
+     * then the device's own styles stay. An empty array restores "no styles". Malformed entries are skipped.
+     */
+    fun userStylesFromJson(settings: JSONObject?): List<UserStyle>? {
+        val a = settings?.opt(USER_STYLES) as? JSONArray ?: return null
+        return UserStyles.fromJson(a)
     }
 
     /**
@@ -276,7 +339,7 @@ internal object SettingsJson {
      */
     fun addUnmapped(target: JSONObject, prefix: String, raw: Map<String, *>): JSONObject {
         for ((k, v) in raw.entries.sortedBy { it.key }) {
-            if (!k.startsWith(prefix) || k.length == prefix.length || target.has(k) || v == null) continue
+            if (!k.startsWith(prefix) || k.length == prefix.length || target.has(k) || v == null || k in TYPED_ELSEWHERE) continue
             when (v) {
                 is String, is Boolean, is Int, is Long -> target.put(k, v)
                 is Float -> if (v.isFinite()) target.put(k, v.toDouble())
@@ -309,7 +372,7 @@ internal object SettingsJson {
         val keys = o.keys()
         while (keys.hasNext()) {
             val k = keys.next()
-            if (!k.startsWith(prefix) || k in MAPPED_KEYS || o.isNull(k)) continue
+            if (!k.startsWith(prefix) || k in MAPPED_KEYS || k in TYPED_ELSEWHERE || o.isNull(k)) continue
             val like = current[k] ?: continue
             val v = o.opt(k)
             val p: RawPref? = when (like) {
@@ -349,6 +412,26 @@ internal object SettingsJson {
         }
         val actions = names.mapNotNull { n -> TapAction.entries.firstOrNull { it.name == n } }
         return actions.takeIf { it.size == 9 && names.size == 9 }
+    }
+
+    /**
+     * Key bindings: the prefs string "24:NEXT,25:PREV" or a JSON object {"24": "NEXT"}; entries with a bad key code
+     * or an unknown action are skipped. Null (keep the base) for any other type.
+     */
+    private fun keyBindings(v: Any?): Map<Int, TapAction>? = when (v) {
+        is String -> Settings.decodeKeyBindings(v)
+        is JSONObject -> {
+            val out = LinkedHashMap<Int, TapAction>()
+            val it = v.keys()
+            while (it.hasNext()) {
+                val k = it.next()
+                val code = k.trim().toIntOrNull()?.takeIf { c -> c > 0 } ?: continue
+                val name = (v.opt(k) as? String)?.trim() ?: continue
+                out[code] = TapAction.entries.firstOrNull { a -> a.name == name } ?: continue
+            }
+            out
+        }
+        else -> null
     }
 
     private fun intSet(v: Any?): Set<Int>? {
