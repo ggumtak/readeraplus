@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.data
 
 import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.EINK_MODE_SYSTEM
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.TapAction
 import org.json.JSONArray
@@ -132,6 +133,7 @@ internal object SettingsJson {
         .put("a.openLastOnStart", s.openLastOnStart)
         .put("a.einkRefreshEvery", s.einkRefreshEvery)
         .put("a.einkRefreshOnChapter", s.einkRefreshOnChapter)
+        .put("a.einkMode", s.einkMode)
         .put("a.autoTurnSeconds", s.autoTurnSeconds)
         .put("a.ttsRate", s.ttsRate.toDouble())
         .put("a.ttsPitch", s.ttsPitch.toDouble())
@@ -171,6 +173,9 @@ internal object SettingsJson {
             openLastOnStart = BackupJson.bool(o, "a.openLastOnStart", base.openLastOnStart),
             einkRefreshEvery = BackupJson.int(o, "a.einkRefreshEvery", base.einkRefreshEvery).coerceIn(0, 100),
             einkRefreshOnChapter = BackupJson.bool(o, "a.einkRefreshOnChapter", base.einkRefreshOnChapter),
+            einkMode = BackupJson.int(o, "a.einkMode", base.einkMode).let { m ->
+                if (m == EINK_MODE_SYSTEM || m in 176..183) m else EINK_MODE_SYSTEM
+            },
             autoTurnSeconds = BackupJson.int(o, "a.autoTurnSeconds", base.autoTurnSeconds).coerceIn(1, 3600),
             ttsRate = BackupJson.float(o, "a.ttsRate", base.ttsRate).coerceIn(0.1f, 4f),
             ttsPitch = BackupJson.float(o, "a.ttsPitch", base.ttsPitch).coerceIn(0.1f, 4f),

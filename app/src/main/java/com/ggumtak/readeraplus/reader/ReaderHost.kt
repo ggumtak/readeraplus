@@ -37,7 +37,10 @@ interface ReaderHost {
     fun nextPage(): Boolean
     fun prevPage(): Boolean
 
-    /** Global 1-based page number of [pos] and total pages; estimated (prefixed "~") until counting finishes. */
+    /**
+     * "page / total": global 1-based page number of [pos] and total pages, plain numbers (no "~"). They are estimates
+     * until counting finishes ([totalPagesKnown]).
+     */
     fun pageLabel(pos: DocPosition): String
     fun totalPagesKnown(): Boolean
 

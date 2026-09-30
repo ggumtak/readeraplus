@@ -1,5 +1,10 @@
 package com.ggumtak.readeraplus.ui.settings
 
+import com.ggumtak.readeraplus.settings.EINK_MODE_FAST
+import com.ggumtak.readeraplus.settings.EINK_MODE_HD
+import com.ggumtak.readeraplus.settings.EINK_MODE_NORMAL
+import com.ggumtak.readeraplus.settings.EINK_MODE_REGAL
+import com.ggumtak.readeraplus.settings.EINK_MODE_SYSTEM
 import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -203,6 +208,18 @@ object SettingsFormat {
         val r = s % 60
         return if (r == 0) "${m}분" else "${m}분 ${r}초"
     }
+
+    /** Reader page e-ink modes (AppSettings.einkMode): label to value; the first one is the default. */
+    val EINK_MODES: List<Pair<String, Int>> = listOf(
+        "기기 설정 따름 (권장·기본)" to EINK_MODE_SYSTEM,
+        "선명하게 (HD)" to EINK_MODE_HD,
+        "잔상 적게 (REGAL)" to EINK_MODE_REGAL,
+        "빠르게 (FAST)" to EINK_MODE_FAST,
+        "보통 (NORMAL)" to EINK_MODE_NORMAL,
+    )
+
+    /** Label of an e-ink mode value (an unknown value reads as the default). */
+    fun einkMode(value: Int): String = EINK_MODES.firstOrNull { it.second == value }?.first ?: EINK_MODES[0].first
 
     /** E-ink full refresh cadence: 0 → "끔", n → "n쪽마다". */
     fun refreshEvery(n: Int): String = if (n <= 0) "끔" else "${n}쪽마다"

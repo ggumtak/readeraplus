@@ -27,10 +27,16 @@ class PageFrame(
 
 /**
  * The page surface. Draws [frame] with its PageRenderer and turns raw touches into taps, swipes, long-presses
- * and left-edge brightness drags. Taps fire on ACTION_UP (no double-tap wait) with a 200 ms debounce.
+ * and left-edge brightness drags. Taps fire on ACTION_UP (no double-tap wait) and are never throttled: fast tapping,
+ * also with two fingers in turn, delivers every tap ([TapDedup] only drops a duplicate report of one touch).
  */
 @SuppressLint("ViewConstructor")
 class PageView(context: Context, private val cb: Callbacks) : View(context) {
+
+    /** A finger that went down while another one was already on the page. */
+    private class ExtraTap(val id: Int, val x: Float, val y: Float, val downAt: Long) {
+        var maxDist = 0f
+    }
 
     interface Callbacks {
         /** Any touch started (stops auto page turn, keeps the screen on). */
@@ -74,14 +80,22 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     private var brightnessMode = false
     private var brightnessDragging = false
     private var brightnessFrom = 0f
-    private var lastTapAt = 0L
+    /** Pointer id of the gesture's first finger (the one that can swipe, long-press or drag brightness). */
+    private var primaryId = 0
+    private var primaryDownAt = 0L
+    /** Another finger touched during this gesture: the first finger can only end as a tap now. */
+    private var multi = false
+    /** A second finger landed during a drag: the rest of the gesture is ignored. */
+    private var multiIgnored = false
+    private val extraTaps = ArrayList<ExtraTap>(MAX_EXTRA_FINGERS)
+    private val tapDedup = TapDedup()
     private var drawFailed = false
     private val errorPaint by lazy {
         Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 14f * resources.displayMetrics.scaledDensityCompat() }
     }
 
     private val longPress = Runnable {
-        if (tracking && !moved && !brightnessDragging && longPressEnabled) {
+        if (tracking && !moved && !multi && !brightnessDragging && longPressEnabled) {
             longPressFired = true
             if (cb.onLongPress(downX, downY)) {
                 // The same finger may now drag to extend the selection: hand it the rest of the gesture.
@@ -126,6 +140,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 cb.onTouchStarted()
+                extraTaps.clear()
+                multiIgnored = false
                 toSelection = cb.isSelectionActive()
                 if (toSelection) {
                     cb.onSelectionTouch(ev)
@@ -133,8 +149,11 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                 }
                 tracking = true
                 moved = false
+                multi = false
                 longPressFired = false
                 brightnessDragging = false
+                primaryId = ev.getPointerId(0)
+                primaryDownAt = ev.eventTime
                 downX = ev.x
                 downY = ev.y
                 maxDist = 0f
@@ -148,16 +167,19 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                     cb.onSelectionTouch(ev)
                     return true
                 }
+                trackExtraTaps(ev)
                 if (!tracking || longPressFired) return true
-                val dx = ev.x - downX
-                val dy = ev.y - downY
+                val i = ev.findPointerIndex(primaryId)
+                if (i < 0) return true
+                val dx = ev.getX(i) - downX
+                val dy = ev.getY(i) - downY
                 maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
                 if (!moved && (Math.abs(dx) > touchSlop || Math.abs(dy) > touchSlop)) {
                     moved = true
                     removeCallbacks(longPress)
                     // The first real movement decides: a mostly vertical drag on the left strip adjusts
                     // brightness, anything else stays a page gesture (a swipe never turns into a drag later).
-                    if (brightnessMode && Math.abs(dy) > Math.abs(dx)) {
+                    if (brightnessMode && !multi && Math.abs(dy) > Math.abs(dx)) {
                         brightnessDragging = true
                         brightnessFrom = cb.brightnessStart()
                     }
@@ -166,11 +188,33 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                 return true
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
-                // Multi-touch is never a page gesture.
-                if (!toSelection) {
-                    removeCallbacks(longPress)
-                    finishBrightness(ev.y)
+                if (toSelection || multiIgnored) return true
+                removeCallbacks(longPress)
+                if (tracking && (moved || brightnessDragging || longPressFired)) {
+                    // A second finger during a drag: multi-touch is never a page gesture.
+                    finishBrightness(ev)
                     tracking = false
+                    multiIgnored = true
+                    extraTaps.clear()
+                    return true
+                }
+                // Fast drumming with two fingers: the first finger may still end as a tap (never a swipe or a
+                // long-press), and the new one is a tap candidate of its own.
+                multi = true
+                val i = ev.actionIndex
+                if (extraTaps.size < MAX_EXTRA_FINGERS) {
+                    extraTaps += ExtraTap(ev.getPointerId(i), ev.getX(i), ev.getY(i), ev.eventTime)
+                }
+                return true
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                if (toSelection || multiIgnored) return true
+                val i = ev.actionIndex
+                val id = ev.getPointerId(i)
+                if (tracking && id == primaryId) {
+                    finishPrimary(ev, i)
+                } else {
+                    finishExtraTap(ev, i, id)
                 }
                 return true
             }
@@ -181,28 +225,15 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                     return true
                 }
                 removeCallbacks(longPress)
-                if (!tracking) return true
-                tracking = false
-                if (longPressFired) return true
-                if (brightnessDragging) {
-                    finishBrightness(ev.y)
+                if (multiIgnored) {
+                    multiIgnored = false
                     return true
                 }
-                val dx = ev.x - downX
-                val dy = ev.y - downY
-                maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
-                when (Gestures.end(dx, dy, maxDist, tapSlop, swipeMin, swipeToTurn, verticalSwipe)) {
-                    GestureEnd.NEXT -> cb.onSwipe(SwipeDir.NEXT)
-                    GestureEnd.PREV -> cb.onSwipe(SwipeDir.PREV)
-                    GestureEnd.TAP -> {
-                        val now = ev.eventTime
-                        if (now - lastTapAt >= TAP_DEBOUNCE_MS) {
-                            lastTapAt = now
-                            cb.onTap(downX, downY)
-                        }
-                    }
-                    GestureEnd.NONE -> {}
-                }
+                val i = ev.actionIndex
+                val id = ev.getPointerId(i)
+                if (tracking && id == primaryId) finishPrimary(ev, i) else finishExtraTap(ev, i, id)
+                tracking = false
+                extraTaps.clear()
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
@@ -212,19 +243,70 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                     return true
                 }
                 removeCallbacks(longPress)
-                finishBrightness(ev.y)
+                finishBrightness(ev)
                 tracking = false
+                multiIgnored = false
+                extraTaps.clear()
                 return true
             }
         }
         return true
     }
 
+    /** The first finger of the gesture lifted (pointer index [i] of [ev]): tap, swipe or the end of a drag. */
+    private fun finishPrimary(ev: MotionEvent, i: Int) {
+        removeCallbacks(longPress)
+        if (!tracking) return
+        tracking = false
+        if (longPressFired) return
+        if (brightnessDragging) {
+            finishBrightness(ev)
+            return
+        }
+        val dx = ev.getX(i) - downX
+        val dy = ev.getY(i) - downY
+        maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
+        if (multi) {
+            // Another finger touched meanwhile: only a short, still touch counts (a tap), never a swipe.
+            if (maxDist <= tapSlop && ev.eventTime - primaryDownAt < LONG_PRESS_MS) deliverTap(downX, downY, ev.eventTime)
+            return
+        }
+        when (Gestures.end(dx, dy, maxDist, tapSlop, swipeMin, swipeToTurn, verticalSwipe)) {
+            GestureEnd.NEXT -> cb.onSwipe(SwipeDir.NEXT)
+            GestureEnd.PREV -> cb.onSwipe(SwipeDir.PREV)
+            GestureEnd.TAP -> deliverTap(downX, downY, ev.eventTime)
+            GestureEnd.NONE -> {}
+        }
+    }
+
+    /** A finger that went down while another was on the page lifted: a tap when it was short and still. */
+    private fun finishExtraTap(ev: MotionEvent, i: Int, id: Int) {
+        val k = extraTaps.indexOfFirst { it.id == id }
+        if (k < 0) return
+        val t = extraTaps.removeAt(k)
+        val d = maxOf(t.maxDist, Math.abs(ev.getX(i) - t.x), Math.abs(ev.getY(i) - t.y))
+        if (d <= tapSlop && ev.eventTime - t.downAt < LONG_PRESS_MS) deliverTap(t.x, t.y, ev.eventTime)
+    }
+
+    private fun trackExtraTaps(ev: MotionEvent) {
+        for (t in extraTaps) {
+            val i = ev.findPointerIndex(t.id)
+            if (i < 0) continue
+            t.maxDist = maxOf(t.maxDist, Math.abs(ev.getX(i) - t.x), Math.abs(ev.getY(i) - t.y))
+        }
+    }
+
+    /** Every tap reaches the reader, however fast; only a duplicate report of the same touch is dropped. */
+    private fun deliverTap(x: Float, y: Float, upTime: Long) {
+        if (tapDedup.accept(x, y, upTime, tapSlop)) cb.onTap(x, y)
+    }
+
     override fun onGenericMotionEvent(ev: MotionEvent): Boolean {
         if (ev.actionMasked == MotionEvent.ACTION_SCROLL && ev.isFromSource(InputDevice.SOURCE_CLASS_POINTER)) {
             val v = ev.getAxisValue(MotionEvent.AXIS_VSCROLL)
             if (v != 0f) {
-                // One notch = one page; a fast spin fires many events, pace them like key repeat.
+                // One notch = one page; only a free-spinning wheel's burst (events < 60 ms apart) is thinned out, so
+                // a wheel-emulating page-turner remote keeps up with fast clicks.
                 if (ev.eventTime - lastWheelAt >= WHEEL_INTERVAL_MS) {
                     lastWheelAt = ev.eventTime
                     cb.onWheel(v < 0f)
@@ -237,9 +319,11 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
 
     private var lastWheelAt = Long.MIN_VALUE / 2
 
-    private fun finishBrightness(y: Float) {
+    private fun finishBrightness(ev: MotionEvent) {
         if (!brightnessDragging) return
         brightnessDragging = false
+        val i = ev.findPointerIndex(primaryId)
+        val y = if (i >= 0) ev.getY(i) else ev.y
         cb.onBrightness(Gestures.brightness(brightnessFrom, y - downY, height), true)
     }
 
@@ -251,8 +335,9 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     companion object {
         private const val TAG = "PageView"
         const val LONG_PRESS_MS = 500L
-        const val TAP_DEBOUNCE_MS = 200L
-        const val WHEEL_INTERVAL_MS = 150L
+        /** Wheel notches closer than this are one burst of a free-spinning wheel (a remote's clicks are slower). */
+        const val WHEEL_INTERVAL_MS = 60L
+        private const val MAX_EXTRA_FINGERS = 4
 
         @Suppress("DEPRECATION")
         private fun android.util.DisplayMetrics.scaledDensityCompat(): Float = scaledDensity

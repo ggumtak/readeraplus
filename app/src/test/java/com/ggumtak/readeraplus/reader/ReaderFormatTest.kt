@@ -10,11 +10,11 @@ class ReaderFormatTest {
 
     @Test
     fun pageLabels() {
-        assertEquals("12 / 3259", ReaderFormat.pageLabel(12, 3259, true, true))
-        assertEquals("12 / ~3260", ReaderFormat.pageLabel(12, 3260, true, false))
-        assertEquals("~40 / ~120", ReaderFormat.pageLabel(40, 120, false, false))
+        // plain numbers, estimated or not (no "~")
+        assertEquals("12 / 3259", ReaderFormat.pageLabel(12, 3259))
+        assertEquals("40 / 120", ReaderFormat.pageLabel(40, 120))
         // a total below the page (estimates) never shows "50 / 30"
-        assertEquals("~50 / ~50", ReaderFormat.pageLabel(50, 30, false, false))
+        assertEquals("50 / 50", ReaderFormat.pageLabel(50, 30))
     }
 
     @Test
@@ -61,10 +61,16 @@ class ReaderFormatTest {
 
     @Test
     fun chipsAndPreview() {
-        assertEquals("← 돌아가기 (p. 12)", ReaderFormat.returnChip(12, true))
-        assertEquals("← 돌아가기 (p. ~12)", ReaderFormat.returnChip(12, false))
-        assertEquals("p. 7 · 3화 등불", ReaderFormat.previewLabel(7, true, " 3화 등불 "))
-        assertEquals("p. ~7", ReaderFormat.previewLabel(7, false, null))
+        assertEquals("← 돌아가기 (p. 12)", ReaderFormat.returnChip(12))
+        assertEquals("p. 7 · 3화 등불", ReaderFormat.previewLabel(7, " 3화 등불 "))
+        assertEquals("p. 7", ReaderFormat.previewLabel(7, null))
+        // nothing the reader formats shows a tilde any more
+        for (s in listOf(
+            ReaderFormat.pageLabel(3, 9), ReaderFormat.returnChip(3), ReaderFormat.previewLabel(3, "제목"),
+            ReaderFormat.footerLeft(ReaderFormat.pageLabel(3, 9), 4)!!, ReaderFormat.chapterLeft(2),
+        )) {
+            assertTrue(s, '~' !in s)
+        }
         assertEquals("밝기 40%", ReaderFormat.brightness(0.4f))
         assertEquals("밝기 자동", ReaderFormat.brightness(-1f))
         assertEquals("자동 넘김 켜짐 (30초)", ReaderFormat.autoTurnOn(30))

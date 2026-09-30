@@ -39,14 +39,26 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * "폰트 페이스" chooser: every font rendered in its own typeface with a sample line, plus "폰트 추가…"
- * (SAF import through [FontImportFragment]) and a shortcut to the font management page.
+ * "글꼴" chooser: every font rendered in its own typeface, plus "폰트 추가…" (SAF import through
+ * [FontImportFragment]) and a shortcut to the font management page. From the reading-settings popup it is a compact
+ * drop-down list under the row ([CompactList]); without an anchor, a dialog with a sample line per font.
  */
 internal object FontChooser {
     private const val SAMPLE = "가나다 한글 Aa 123"
     @Volatile private var loading = false
 
-    fun show(activity: Activity, currentId: String, onPick: (String) -> Unit) {
+    /**
+     * Loads the fonts off the main thread, then shows the list: a compact drop-down [widthPx] wide under [anchor]
+     * (right edge [rightInsetPx] inside it) while the anchor is on screen, else the dialog.
+     */
+    fun show(
+        activity: Activity,
+        currentId: String,
+        anchor: View? = null,
+        widthPx: Int = 0,
+        rightInsetPx: Int = 0,
+        onPick: (String) -> Unit,
+    ) {
         if (loading) return
         loading = true
         val scope = MainScope()
@@ -63,8 +75,36 @@ internal object FontChooser {
             }
             scope.cancel()
             if (activity.isFinishing || activity.isDestroyed) return@launch
-            showDialog(activity, entries, currentId, onPick)
+            if (anchor != null && widthPx > 0) {
+                // The settings popup was closed while loading: nothing to drop down from.
+                if (anchor.isAttachedToWindow) showList(activity, anchor, widthPx, rightInsetPx, entries, currentId, onPick)
+            } else {
+                showDialog(activity, entries, currentId, onPick)
+            }
         })
+    }
+
+    private fun showList(
+        activity: Activity,
+        anchor: View,
+        widthPx: Int,
+        rightInsetPx: Int,
+        entries: List<Pair<FontInfo, Typeface?>>,
+        currentId: String,
+        onPick: (String) -> Unit,
+    ) {
+        val rows = ArrayList<ListEntry>(entries.size + 2)
+        for ((font, tf) in entries) {
+            val note = when (font.source) {
+                FontSource.BUNDLED -> null
+                FontSource.USER -> "사용자"
+                FontSource.SYSTEM -> "시스템"
+            }
+            rows += ListEntry(font.name, checked = font.id == currentId, typeface = tf, note = note) { onPick(font.id) }
+        }
+        rows += ListEntry("폰트 추가…", action = true) { FontImportFragment.start(activity, onPick) }
+        rows += ListEntry("글꼴 관리", action = true) { SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS) }
+        CompactList.show(activity, anchor, rows, widthPx, rightInsetPx)
     }
 
     private fun showDialog(activity: Activity, entries: List<Pair<FontInfo, Typeface?>>, currentId: String, onPick: (String) -> Unit) {
@@ -118,14 +158,14 @@ internal object FontChooser {
 
     private fun buildRow(activity: Activity): LinearLayout = activity.horizontal {
         background = pressableBackground()
-        minimumHeight = activity.dp(64)
-        setPadding(activity.dp(20), activity.dp(10), activity.dp(16), activity.dp(10))
+        minimumHeight = activity.dp(52)
+        setPadding(activity.dp(20), activity.dp(6), activity.dp(16), activity.dp(6))
         val texts = activity.vertical()
         val top = activity.horizontal()
-        top.addView(activity.label("", 20f, maxLines = 1).apply { tag = "name" }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(activity.label("", 17f, maxLines = 1).apply { tag = "name" }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         top.addView(activity.label("", 12f, color = Ink.GRAY).apply { tag = "src"; setPadding(activity.dp(8), 0, 0, 0) })
         texts.addView(top, lp())
-        texts.addView(activity.label("", 15f, color = Ink.GRAY, maxLines = 1).apply { tag = "sample"; setPadding(0, activity.dp(4), 0, 0) })
+        texts.addView(activity.label("", 14f, color = Ink.GRAY, maxLines = 1).apply { tag = "sample"; setPadding(0, activity.dp(3), 0, 0) })
         addView(texts, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addView(activity.icon(R.drawable.ic_radio_button_unchecked, 22).apply {
             tag = "check"

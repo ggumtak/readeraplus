@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Looper
 import android.util.Log
 import android.view.View
+import com.ggumtak.readeraplus.settings.EINK_MODE_SYSTEM
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
@@ -88,20 +89,47 @@ object Eink {
     private fun hasVendorHook(): Boolean =
         xrzGlobal != null || rkFullFrame != null || onyxRefresh != null || ntxInvalidate != null
 
-    /** Asks the vendor e-ink framework for a high-quality refresh mode on the page view (no-op if unsupported). */
+    /** Old behaviour: always the HD waveform on the page view. Prefer the overload with the user's mode. */
     fun prepareReaderView(view: View) {
+        prepareReaderView(view, XRZ_HD)
+    }
+
+    /**
+     * Applies the vendor refresh [mode] (AppSettings.einkMode) to the page view. [EINK_MODE_SYSTEM] does nothing:
+     * the device's own per-app e-ink setting stays in charge, as for any other reader app. Any other value is a
+     * Bigme xrz mode (177 HD, 180 REGAL, 179 FAST, 178 NORMAL) set with `setRefreshModeByView` when the firmware has
+     * it (no-op elsewhere). A mode set on a view stays on it: going back to 0 takes effect with the next page view
+     * (the book opened again). Never throws.
+     */
+    fun prepareReaderView(view: View, mode: Int) {
+        if (mode == EINK_MODE_SYSTEM) return
         try {
             if (Looper.myLooper() != Looper.getMainLooper()) {
-                view.post { prepareReaderView(view) }
+                view.post { prepareReaderView(view, mode) }
                 return
             }
             probe(view.context)
             val m = xrzByView ?: return
             val target = if (Modifier.isStatic(m.modifiers)) null else (xrzInstance(view.context) ?: return)
-            m.invoke(target, view, XRZ_HD)
+            m.invoke(target, view, mode)
         } catch (t: Throwable) {
             Log.w(TAG, "prepareReaderView failed", t)
         }
+    }
+
+    /**
+     * True when the firmware lets the app pick the page view's refresh mode (Bigme xrz `setRefreshModeByView`), i.e.
+     * a non-system AppSettings.einkMode does something on this device. Probes once (reflection): call off the main
+     * thread the first time.
+     */
+    fun supportsViewMode(): Boolean {
+        try {
+            probe(RenderContext.app)
+        } catch (t: Throwable) {
+            Log.w(TAG, "probe failed", t)
+        }
+        val m = xrzByView ?: return false
+        return Modifier.isStatic(m.modifiers) || xrzCtor != null
     }
 
     /** The XrzEinkManager instance, constructing it on first use. Main thread only; null if unavailable. */

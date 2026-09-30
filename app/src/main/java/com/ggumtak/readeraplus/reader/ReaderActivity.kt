@@ -101,6 +101,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         private const val OWNER_SEARCH = "search"
         private const val REFRESH_SETTLE_MS = 16L
         private const val CHROME_COUNTS_MS = 2000L
+        /** Manual page turns after a jump that hide the "돌아가기" chip (the reader has moved on). */
+        private const val CHIP_HIDE_TURNS = 2
+        /** navigateTo page index: the first page starting at or after the offset (go-to by percent). */
+        private const val PAGE_AT_OR_AFTER = -3
         /** Per book: text signature + char fraction of the saved position (see [TextPositions]). */
         private const val PREFS_TEXT_POS = "reader_text_positions"
     }
@@ -134,6 +138,17 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private val repeatFilter = RepeatFilter(RepeatFilter.NORMAL_MS)
     private val learnedRepeatFilter = RepeatFilter(RepeatFilter.LEARNED_MS, throttleFreshPresses = true)
     private val cadence = EinkCadence()
+    /** Turns that arrived while a layout was pending; applied together when it shows ([flushTurns]). */
+    private val backlog = TurnBacklog()
+    /** When the last page turn was shown (uptime ms), to hold a due full refresh during fast flipping. */
+    private var lastTurnAt = Long.MIN_VALUE / 2
+    private var cadenceRefreshPending = false
+    private val cadenceRefresh = Runnable {
+        cadenceRefreshPending = false
+        if (!isDestroyed) refreshAfterDraw(0L)
+    }
+    /** Manual page turns since the last remembered jump (the return chip hides after [CHIP_HIDE_TURNS]). */
+    private var turnsSinceJump = 0
 
     private var bookRef: Book? = null
     internal var session: BookSession? = null
@@ -150,7 +165,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     /** A jump whose layout is still pending; a relayout meanwhile must go there, not back to [anchor]. */
     private var pendingJump: PendingNav? = null
 
-    private class PendingNav(val section: Int, val offset: Int, val pageIndex: Int)
+    /** [fraction]: a go-to-percent jump (re-resolved once the target section's real length is known), else NaN. */
+    private class PendingNav(val section: Int, val offset: Int, val pageIndex: Int, val fraction: Float)
     private var displayedGenId = -1
     private var lastChapterIdx = Int.MIN_VALUE
     private var insets = IntArray(4)
@@ -181,6 +197,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private var chromeCountsAt = 0L
     private var edgeToastAt = 0L
     private var seekExact = false
+    /** Total pages when an exact (page) seek started: the seek bar's scale. */
+    private var seekTotal = 0
     private var seekStartProgress = -1
 
     // ================================================================== lifecycle
@@ -220,16 +238,21 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         val last = appliedApp
         if (last != null && viewPart(last) == viewPart(a)) return
         applyAppSettings()
+        // The e-ink mode chosen in the settings applies to the open page at once (not only on the next resume).
+        if (last == null || last.einkMode != a.einkMode) prepareEink()
     }
 
     private fun viewPart(a: AppSettings): List<Any> = listOf(
         a.fullscreen, a.brightness, a.orientationLock, a.keepScreenOn, a.einkRefreshEvery, a.einkRefreshOnChapter,
-        a.swipeToTurn, a.verticalSwipe, a.brightnessSwipe, a.longPressSelect, a.pinChrome,
+        a.swipeToTurn, a.verticalSwipe, a.brightnessSwipe, a.longPressSelect, a.pinChrome, a.einkMode,
     )
 
-    /** Vendor e-ink mode for the page view (Bigme HD); posted so it runs once the view is attached. */
+    /**
+     * The user's vendor e-ink mode for the page view ([AppSettings.einkMode]; the default leaves the device's own
+     * per-app setting alone, like any other reader); posted so it runs once the view is attached.
+     */
     private fun prepareEink() {
-        page.post { if (!isDestroyed) safely { Eink.prepareReaderView(page) } }
+        page.post { if (!isDestroyed) safely { Eink.prepareReaderView(page, app.einkMode) } }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -586,8 +609,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         bookmarks = emptyList()
         quotesBySection = emptyMap()
         ownerHighlights.clear()
-        returnStack.clear()
-        chip.visibility = View.GONE
+        dismissReturnChip()
+        backlog.clear()
+        pendingJump = null
+        handler.removeCallbacks(cadenceRefresh)
+        cadenceRefreshPending = false
         imagePrefetch?.cancel()
         imagePrefetch = null
         pinShown = false
@@ -703,9 +729,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         val chapterIdx = s.chapters.indexAt(section, p?.start ?: 0)
         val chapterChanged = if (s.chapters.size > 0) chapterIdx != lastChapterIdx else sectionChanged
         lastChapterIdx = chapterIdx
-        if ((kind == Nav.TURN || kind == Nav.JUMP) && cadence.onTurn(chapterChanged)) {
-            refreshAfterDraw(0L)
-        }
+        if (kind == Nav.TURN || kind == Nav.JUMP) onTurnShown(kind, chapterChanged)
         if (kind != Nav.RELAYOUT) schedulePositionSave()
         s.prefetch(section + 1)
         s.prefetch(section - 1)
@@ -721,16 +745,17 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
      * Uses the cached layout when present; otherwise lays the section out (the old page stays visible, and
      * "불러오는 중…" only appears after 300 ms).
      */
-    private fun navigateTo(section: Int, offset: Int, pageIndex: Int, kind: Nav) {
+    private fun navigateTo(section: Int, offset: Int, pageIndex: Int, kind: Nav, fraction: Float = Float.NaN) {
         val s = session ?: return
         val sec = section.coerceIn(0, s.sectionCount - 1)
         navJob?.cancel()
-        pendingJump = if (kind == Nav.JUMP) PendingNav(sec, offset, pageIndex) else null
+        navJob = null
+        pendingJump = if (kind == Nav.JUMP) PendingNav(sec, offset, pageIndex, fraction) else null
         val cached = if (layoutStale()) null else s.peek(sec)
         if (cached != null) {
             val tp = targetPage(cached, offset, pageIndex)
             if (!needsImageDecode(s, cached, tp)) {
-                display(sec, cached, offset, pageIndex, kind)
+                display(sec, cached, offset, pageIndex, kind, fraction)
                 return
             }
             // Cached layout, but its images are not decoded yet: decode them on the IO pool first, so onDraw never
@@ -739,12 +764,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             navJob = scope.launch {
                 preloadImages(s, cached, tp)
                 if (session !== s) return@launch
+                endNavJob(coroutineContext[Job])
                 if (layoutStale() || s.peek(sec) !== cached) {
-                    navJob = null
-                    navigateTo(sec, offset, pageIndex, kind)
+                    navigateTo(sec, offset, pageIndex, kind, fraction)
                     return@launch
                 }
-                display(sec, cached, offset, pageIndex, kind)
+                display(sec, cached, offset, pageIndex, kind, fraction)
             }
             return
         }
@@ -753,19 +778,38 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             val l = s.layout(sec)
             if (session !== s) return@launch
             if (l == null) {
+                endNavJob(coroutineContext[Job])
                 layoutFailed(s)
                 return@launch
             }
             preloadImages(s, l, targetPage(l, offset, pageIndex))
             if (session !== s) return@launch
-            display(sec, l, offset, pageIndex, kind)
+            endNavJob(coroutineContext[Job])
+            display(sec, l, offset, pageIndex, kind, fraction)
         }
+    }
+
+    /**
+     * The navigation coroutine [job] is about to show its page: it no longer counts as pending, so turns made from
+     * the page it shows (the backlog, TTS) run synchronously instead of being queued behind it.
+     */
+    private fun endNavJob(job: Job?) {
+        if (job != null && navJob === job) navJob = null
     }
 
     private fun targetPage(l: SectionLayout, offset: Int, pageIndex: Int): Int = when {
         pageIndex == -2 -> l.pageCount - 1
         pageIndex >= 0 -> pageIndex
+        pageIndex == PAGE_AT_OR_AFTER -> pageAtOrAfter(l, offset)
         else -> l.pageForOffset(offset.coerceIn(0, l.content.length))
+    }
+
+    /** First page of [l] starting at or after [offset] (its last page when none does). */
+    private fun pageAtOrAfter(l: SectionLayout, offset: Int): Int {
+        val off = offset.coerceIn(0, l.content.length)
+        val idx = l.pageForOffset(off)
+        val p = l.pages.getOrNull(idx) ?: return idx
+        return if (p.start < off && idx + 1 < l.pageCount) idx + 1 else idx
     }
 
     /** Decodes the images of the page about to be shown on the IO pool so onDraw never decodes them. */
@@ -809,6 +853,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
     /** A foreground layout returned nothing although the session is still current. */
     private fun layoutFailed(s: BookSession) {
+        backlog.clear()
+        pendingJump = null
         cancelLoadingText()
         if (s.isClosed) return
         if (curLayout == null || layoutStale()) {
@@ -819,16 +865,44 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         }
     }
 
-    private fun display(sec: Int, l: SectionLayout, offset: Int, pageIndex: Int, kind: Nav) {
+    private fun display(sec: Int, l: SectionLayout, offset: Int, pageIndex: Int, kind: Nav, fraction: Float = Float.NaN) {
         pendingJump = null
         when {
             pageIndex == -2 -> showPage(sec, l, l.pageCount - 1, kind)
             pageIndex >= 0 -> showPage(sec, l, pageIndex, kind)
+            pageIndex == PAGE_AT_OR_AFTER -> {
+                if (displayProgressTarget(sec, l, offset, kind, fraction)) return
+            }
             else -> {
                 val off = offset.coerceIn(0, l.content.length)
                 showPage(sec, l, l.pageForOffset(off), kind, anchorOffset = if (kind == Nav.TURN) -1 else off)
             }
         }
+        flushTurns()
+    }
+
+    /**
+     * Shows the go-to-percent target: the first page starting at or after the char position of [fraction], so the
+     * footer (by chars until the pages are counted) reads the typed percent. Laying the section out replaced its
+     * estimated length with the real one, so the position is found again first. Returns true when it moved on to the
+     * next section instead (the target is past this section's last page start); that navigation shows the page.
+     */
+    private fun displayProgressTarget(sec: Int, l: SectionLayout, offset: Int, kind: Nav, fraction: Float): Boolean {
+        val s = session ?: return true
+        var off = offset
+        if (!fraction.isNaN()) {
+            val again = s.counts.locateProgress(fraction)
+            if (again.section == sec) off = again.offset
+        }
+        off = off.coerceIn(0, l.content.length)
+        val idx = pageAtOrAfter(l, off)
+        val p = l.pages.getOrNull(idx)
+        if (p != null && p.start < off && idx == l.pageCount - 1 && sec + 1 < s.sectionCount) {
+            navigateTo(sec + 1, 0, 0, kind)
+            return true
+        }
+        showPage(sec, l, idx, kind)
+        return false
     }
 
     private fun relayout() {
@@ -845,7 +919,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         if (jump != null && navJob?.isActive == true) {
             // A resize / settings change arrived while a jump was still laying out: finish the jump in the new
             // generation instead of snapping back to the page that was showing before it.
-            navigateTo(jump.section, jump.offset, jump.pageIndex, Nav.JUMP)
+            navigateTo(jump.section, jump.offset, jump.pageIndex, Nav.JUMP, jump.fraction)
             return
         }
         navJob?.cancel()
@@ -861,40 +935,115 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             // New image sizes after a font / size change: decode them here, not in onDraw.
             preloadImages(s, l, l.pageForOffset(off))
             if (session !== s) return@launch
+            endNavJob(coroutineContext[Job])
             showPage(sec, l, l.pageForOffset(off), Nav.RELAYOUT, anchorOffset = off)
+            flushTurns()
         }
     }
 
-    override fun nextPage(): Boolean {
+    override fun nextPage(): Boolean = turn(true)
+
+    override fun prevPage(): Boolean = turn(false)
+
+    /**
+     * One page forward / back. Inside the section (and into a laid-out neighbour) the page shows synchronously, so
+     * turns keep up with the fastest taps. While a layout is pending (a section being laid out, a jump, a relayout)
+     * the turn is counted instead and applied together with the others when that layout shows ([flushTurns]): no
+     * turn is dropped and none is replayed one draw at a time. False at the first / last page of the book.
+     */
+    private fun turn(next: Boolean): Boolean {
         val s = session ?: return false
         val l = curLayout ?: return false
-        if (navJob?.isActive == true || layoutStale()) return false
-        if (curPageIdx < l.pageCount - 1) {
-            showPage(curSection, l, curPageIdx + 1, Nav.TURN)
+        if (navJob?.isActive == true) {
+            backlog.add(next)
             return true
         }
-        if (curSection + 1 >= s.sectionCount) return false
-        navigateTo(curSection + 1, 0, 0, Nav.TURN)
+        if (layoutStale()) return false
+        if (next) {
+            if (curPageIdx < l.pageCount - 1) {
+                showPage(curSection, l, curPageIdx + 1, Nav.TURN)
+                return true
+            }
+            if (curSection + 1 >= s.sectionCount) return false
+            navigateTo(curSection + 1, 0, 0, Nav.TURN)
+        } else {
+            if (curPageIdx > 0) {
+                showPage(curSection, l, curPageIdx - 1, Nav.TURN)
+                return true
+            }
+            if (curSection <= 0) return false
+            navigateTo(curSection - 1, 0, -2, Nav.TURN)
+        }
         return true
     }
 
-    override fun prevPage(): Boolean {
-        val l = curLayout ?: return false
-        if (session == null || navJob?.isActive == true || layoutStale()) return false
-        if (curPageIdx > 0) {
-            showPage(curSection, l, curPageIdx - 1, Nav.TURN)
-            return true
+    /**
+     * Applies the turns counted while a layout was pending, from the page now shown, in one step: straight to the
+     * page they add up to when the sections in between are laid out or counted, else to the next unknown section's
+     * boundary with the rest kept for when it shows.
+     */
+    private fun flushTurns() {
+        if (backlog.isEmpty) return
+        val s = session
+        val l = curLayout
+        if (s == null || l == null) {
+            backlog.clear()
+            return
         }
-        if (curSection <= 0) return false
-        navigateTo(curSection - 1, 0, -2, Nav.TURN)
-        return true
+        if (navJob?.isActive == true || layoutStale()) return
+        val n = backlog.take()
+        val walk = TurnMath.walk(curSection, curPageIdx, n, s.sectionCount) { sec ->
+            when {
+                sec == curSection -> l.pageCount
+                else -> s.peek(sec)?.pageCount ?: if (s.counts.isKnown(sec)) s.counts.pages(sec) else -1
+            }
+        }
+        // Kept before navigating: a synchronous display of the next section flushes the rest right away.
+        backlog.restore(walk.remaining)
+        if (walk.hitEdge) edgeToast(n > 0)
+        if (walk.section == curSection) {
+            if (walk.pageIndex != curPageIdx) showPage(curSection, l, walk.pageIndex, Nav.TURN)
+        } else {
+            navigateTo(walk.section, 0, walk.pageIndex, Nav.TURN)
+        }
     }
 
     override fun goTo(pos: DocPosition, remember: Boolean) {
         if (session == null) return
         // A "jump" to the page already shown (e.g. the current chapter in the TOC) is not worth a return chip.
         if (remember && curLayout != null && !isOnCurrentPage(pos)) pushReturn(currentPosition())
-        navigateTo(pos.section, pos.offset, -1, Nav.JUMP)
+        jumpTo(pos.section, pos.offset, -1)
+    }
+
+    /** An explicit jump (TOC, link, 페이지 이동, seek bar, return chip): turns still pending belong to the page left. */
+    private fun jumpTo(section: Int, offset: Int, pageIndex: Int, fraction: Float = Float.NaN) {
+        backlog.clear()
+        navigateTo(section, offset, pageIndex, Nav.JUMP, fraction)
+    }
+
+    // ------------------------------------------------------------------ PageJumpHost (페이지 이동)
+
+    override fun progressFraction(): Float = progress()
+
+    /**
+     * Go to [fraction] of the book so that the footer then reads floor(fraction × 100)%: by pages once they are
+     * counted (the first page showing that percent), else by characters (the first page starting at or after that
+     * char), the same measure [progress] uses.
+     */
+    override fun goToProgress(fraction: Float) {
+        val s = session ?: return
+        val f = if (fraction.isNaN()) 0f else fraction.coerceIn(0f, 1f)
+        val c = s.counts
+        if (c.isComplete) {
+            val (sec, idx) = c.locate(PageProgress.pageFor(f, c.total()))
+            goToPage(sec, idx, remember = true)
+            return
+        }
+        val pos = c.locateProgress(f)
+        val p = currentPage
+        val here = p != null && isOnCurrentPage(pos) && p.start >= pos.offset
+        if (curLayout != null && !here) pushReturn(currentPosition())
+        jumpTo(pos.section, pos.offset, PAGE_AT_OR_AFTER, f)
     }
 
     private fun isOnCurrentPage(pos: DocPosition): Boolean {
@@ -908,22 +1057,53 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         if (session == null) return
         val here = section == curSection && pageIndex == curPageIdx && !layoutStale()
         if (remember && curLayout != null && !here) pushReturn(currentPosition())
-        navigateTo(section, 0, pageIndex.coerceAtLeast(0), Nav.JUMP)
+        jumpTo(section, 0, pageIndex.coerceAtLeast(0))
     }
 
-    /** Page turn requested by the user (tap, swipe, key). */
+    /** Page turn requested by the user (tap, swipe, key, wheel). */
     private fun userTurn(next: Boolean) {
         if (session == null || curLayout == null) return
         ownerHighlights.remove(OWNER_SEARCH)
-        val ok = if (next) nextPage() else prevPage()
+        val ok = turn(next)
+        if (ok) onManualTurn()
         if (ttsSpeaking()) safely { tts?.onUserNavigated() }
-        if (!ok && navJob?.isActive != true && !layoutStale()) {
-            val now = SystemClock.uptimeMillis()
-            if (now - edgeToastAt > 2000) {
-                edgeToastAt = now
-                toast(if (next) "마지막 페이지입니다" else "첫 페이지입니다")
+        if (!ok && navJob?.isActive != true && !layoutStale()) edgeToast(next)
+    }
+
+    private fun edgeToast(next: Boolean) {
+        val now = SystemClock.uptimeMillis()
+        if (now - edgeToastAt > 2000) {
+            edgeToastAt = now
+            toast(if (next) "마지막 페이지입니다" else "첫 페이지입니다")
+        }
+    }
+
+    /**
+     * Full e-ink refresh cadence for a shown turn / jump. A refresh that falls due while pages are being flipped fast
+     * waits (and keeps waiting while the flipping goes on): a flash between two quick turns stalls the panel.
+     */
+    private fun onTurnShown(kind: Nav, chapterChanged: Boolean) {
+        val due = cadence.onTurn(chapterChanged)
+        val now = SystemClock.uptimeMillis()
+        if (due || cadenceRefreshPending) {
+            val delay = if (kind == Nav.TURN) EinkCadence.refreshDelay(now, lastTurnAt) else 0L
+            handler.removeCallbacks(cadenceRefresh)
+            if (delay > 0L) {
+                cadenceRefreshPending = true
+                handler.postDelayed(cadenceRefresh, delay)
+            } else {
+                cadenceRefreshPending = false
+                refreshAfterDraw(0L)
             }
         }
+        if (kind == Nav.TURN) lastTurnAt = now
+    }
+
+    /** A page turn the reader made (not auto turn / TTS): enough of them after a jump retire the return chip. */
+    private fun onManualTurn() {
+        if (chip.visibility != View.VISIBLE) return
+        turnsSinceJump++
+        if (turnsSinceJump >= CHIP_HIDE_TURNS) dismissReturnChip()
     }
 
     private fun jumpChapter(next: Boolean) {
@@ -962,7 +1142,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         var right: String? = null
         if (st.showFooter) {
             left = ReaderFormat.footerLeft(
-                if (st.footerPage) pageLabelOf(curSection, curPageIdx, exactIndex = true) else null,
+                if (st.footerPage) pageLabelOf(curSection, curPageIdx) else null,
                 if (st.footerChapterLeft) chapterPagesLeft(s, l, p) else null,
             )
             right = ReaderFormat.footerRight(
@@ -1061,26 +1241,23 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         val c = s.counts
         val l = curLayout ?: return c.charProgress(anchor.section, anchor.offset)
         if (curSection == s.sectionCount - 1 && curPageIdx == l.pageCount - 1) return 1f
-        if (c.isComplete) return (c.globalPage(curSection, curPageIdx).toFloat() / c.total()).coerceIn(0f, 1f)
+        if (c.isComplete) return PageProgress.of(c.globalPage(curSection, curPageIdx), c.total())
         val p = l.pages.getOrNull(curPageIdx)
         return c.charProgress(curSection, p?.start ?: anchor.offset)
     }
 
-    /** Global page of (section, pageIndex); [exactIndex] = the index comes from a real layout. */
-    private fun pageLabelOf(section: Int, pageIndex: Int, exactIndex: Boolean): String {
+    /** "page / total" of (section, pageIndex): plain numbers, estimated until the counts are complete. */
+    private fun pageLabelOf(section: Int, pageIndex: Int): String {
         val c = session?.counts ?: return ""
-        val g = c.globalPage(section, pageIndex)
-        return ReaderFormat.pageLabel(g, c.total(), exactIndex && c.exactBefore(section), c.isComplete)
+        return ReaderFormat.pageLabel(c.globalPage(section, pageIndex), c.total())
     }
 
-    /** (global page, exact) of a position. */
-    private fun globalPageOf(pos: DocPosition): Pair<Int, Boolean> {
-        val s = session ?: return 1 to false
+    /** Global page of a position (estimated for a section that is not laid out). */
+    private fun globalPageOf(pos: DocPosition): Int {
+        val s = session ?: return 1
         val sec = pos.section.coerceIn(0, s.sectionCount - 1)
-        val l = s.peek(sec)
-        val idx = l?.pageForOffset(pos.offset) ?: s.counts.estimatePageIndex(sec, pos.offset)
-        val exact = s.counts.exactBefore(sec) && (l != null || pos.offset == 0)
-        return s.counts.globalPage(sec, idx) to exact
+        val idx = s.peek(sec)?.pageForOffset(pos.offset) ?: s.counts.estimatePageIndex(sec, pos.offset)
+        return s.counts.globalPage(sec, idx)
     }
 
     // ================================================================== ReaderHost
@@ -1097,8 +1274,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
     override fun pageLabel(pos: DocPosition): String {
         val s = session ?: return ""
-        val (g, exact) = globalPageOf(pos)
-        return ReaderFormat.pageLabel(g, s.counts.total(), exact, s.counts.isComplete)
+        return ReaderFormat.pageLabel(globalPageOf(pos), s.counts.total())
     }
 
     override fun totalPagesKnown(): Boolean = session?.counts?.isComplete == true
@@ -1188,8 +1364,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
                 // this re-open stays open: only the bar goes).
                 safely { ReaderPanels.closeSearchBar(this@ReaderActivity) }
                 ownerHighlights.clear()
-                returnStack.clear()
-                chip.visibility = View.GONE
+                dismissReturnChip()
+                backlog.clear()
                 lastChapterIdx = Int.MIN_VALUE
                 val off = target.offset.coerceIn(0, l.content.length)
                 // Positions saved from now on are in the new parse's coordinates.
@@ -1543,7 +1719,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         val l = curLayout ?: return
         chrome.setTitle(bookRef?.title ?: "")
         val c = s.counts
-        val label = pageLabelOf(curSection, curPageIdx, exactIndex = true)
+        val label = pageLabelOf(curSection, curPageIdx)
         if (c.isComplete) {
             chrome.setPage(label, c.total() - 1, c.globalPage(curSection, curPageIdx) - 1)
         } else {
@@ -1609,6 +1785,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         override fun onSeekStart() {
             val c = session?.counts
             seekExact = c?.isComplete == true
+            seekTotal = if (seekExact) c?.total() ?: 0 else 0
             seekStartProgress = -1
         }
 
@@ -1620,11 +1797,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
                 val (sec, idx) = c.locate(progress + 1)
                 val off = s.peek(sec)?.pages?.getOrNull(idx)?.start
                     ?: (c.charLength(sec).toLong() * idx / c.pages(sec).coerceAtLeast(1)).toInt()
-                ReaderFormat.previewLabel(progress + 1, true, chapterTitle(sec, off))
+                ReaderFormat.previewLabel(progress + 1, chapterTitle(sec, off))
             } else {
-                val pos = c.locateFraction(progress / 1000f)
-                val (g, exact) = globalPageOf(pos)
-                ReaderFormat.previewLabel(g, exact, chapterTitle(pos.section, pos.offset))
+                val pos = c.locateProgress(progress / 1000f)
+                ReaderFormat.previewLabel(globalPageOf(pos), chapterTitle(pos.section, pos.offset))
             }
         }
 
@@ -1632,11 +1808,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             val s = session ?: return
             if (progress == seekStartProgress) return
             val c = s.counts
-            if (seekExact && c.isComplete) {
-                val (sec, idx) = c.locate(progress + 1)
-                goToPage(sec, idx, remember = true)
-            } else {
-                goTo(c.locateFraction(progress / 1000f), remember = true)
+            when {
+                seekExact && c.isComplete && c.total() == seekTotal -> {
+                    val (sec, idx) = c.locate(progress + 1)
+                    goToPage(sec, idx, remember = true)
+                }
+                // The pages were re-counted while dragging (relayout): keep the dragged fraction.
+                seekExact -> goToProgress(PageProgress.of(progress + 1, seekTotal))
+                // By ‰ while counting: the same measure as the footer, like 페이지 이동 in percent.
+                else -> goToProgress(progress / 1000f)
             }
         }
     }
@@ -1681,6 +1861,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
     private fun openReadingSettings() {
         if (session == null || curLayout == null) return
+        if (!app.pinChrome) {
+            // The popup hides unpinned bars and takes the top bar's place: showing them first would only cost two
+            // extra e-ink updates.
+            safely { ReaderPanels.showReadingSettings(this, chrome.gear) }
+            return
+        }
         if (!chromeVisible) setChromeVisible(true)
         chrome.gear.post { safely { ReaderPanels.showReadingSettings(this, chrome.gear) } }
     }
@@ -1729,9 +1915,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
     // ================================================================== return chip
 
+    /** A remembered jump: the chip offers the way back until used, closed, or [CHIP_HIDE_TURNS] manual turns. */
     private fun pushReturn(pos: DocPosition) {
         if (returnStack.lastOrNull() != pos) returnStack.add(pos)
         while (returnStack.size > MAX_RETURN_STACK) returnStack.removeAt(0)
+        turnsSinceJump = 0
         showReturnChip()
     }
 
@@ -1741,8 +1929,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             chip.visibility = View.GONE
             return
         }
-        val (g, exact) = globalPageOf(top)
-        chipLabel.text = ReaderFormat.returnChip(g, exact)
+        chipLabel.text = ReaderFormat.returnChip(globalPageOf(top))
         chip.visibility = View.VISIBLE
         updateChipPosition()
     }
@@ -1750,12 +1937,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private fun useReturnChip() {
         val pos = returnStack.removeLastOrNull() ?: return
         chip.visibility = View.GONE
-        navigateTo(pos.section, pos.offset, -1, Nav.JUMP)
+        jumpTo(pos.section, pos.offset, -1)
     }
 
     private fun dismissReturnChip() {
         returnStack.clear()
-        chip.visibility = View.GONE
+        turnsSinceJump = 0
+        if (::chip.isInitialized) chip.visibility = View.GONE
     }
 
     private fun updateChipPosition() {

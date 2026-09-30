@@ -100,6 +100,18 @@ interface PageJumpHost {
      * is pushed for the "돌아가기" chip. Main thread only.
      */
     fun goToPage(section: Int, pageIndex: Int, remember: Boolean)
+
+    /**
+     * Reading progress 0..1 exactly as the footer shows it (by pages once counted, else by characters), so the
+     * go-to dialog's "현재 N%" and the footer agree.
+     */
+    fun progressFraction(): Float
+
+    /**
+     * Jumps to [fraction] (0..1) of the book using the same measure as [progressFraction]: typing N% lands on the
+     * page whose footer reads N%. Remembers the old position for the "돌아가기" chip. Main thread only.
+     */
+    fun goToProgress(fraction: Float)
 }
 
 /**

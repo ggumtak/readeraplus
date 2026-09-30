@@ -2,17 +2,15 @@ package com.ggumtak.readeraplus.reader
 
 import com.ggumtak.readeraplus.engine.OBJECT_CHAR
 
-/** Pure string formatting for the reader's footer, chrome and chips (unit-tested). */
+/**
+ * Pure string formatting for the reader's footer, chrome and chips (unit-tested). Page numbers are shown as plain
+ * numbers even while the counts are still estimates (no "~"): the estimate only settles into the exact number.
+ */
 object ReaderFormat {
     const val SEP = "  ·  "
 
-    /** "12 / 3259"; estimated parts get a "~" prefix ("~12 / ~3260"). */
-    fun pageLabel(page: Int, total: Int, pageExact: Boolean, totalExact: Boolean): String {
-        val t = total.coerceAtLeast(page)
-        val p = if (pageExact) "$page" else "~$page"
-        val tt = if (totalExact) "$t" else "~$t"
-        return "$p / $tt"
-    }
+    /** "12 / 3259" (a total below the page, possible while estimating, shows the page as the total). */
+    fun pageLabel(page: Int, total: Int): String = "$page / ${total.coerceAtLeast(page)}"
 
     /** Percent 0..100 (floor; the last page shows 100). */
     fun percent(progress: Float): Int = (progress * 100f + 1e-4f).toInt().coerceIn(0, 100)
@@ -51,7 +49,7 @@ object ReaderFormat {
         var i = s
         while (i < e && sb.length < max + 1) {
             val c = text[i]
-            val space = c == '\n' || c == OBJECT_CHAR || Character.isWhitespace(c) || c == ' '
+            val space = c == '\n' || c == OBJECT_CHAR || Character.isWhitespace(c) || c == ' '
             if (space) {
                 if (!lastSpace) sb.append(' ')
                 lastSpace = true
@@ -67,13 +65,13 @@ object ReaderFormat {
     }
 
     /** Seekbar drag preview: "p. 12 · 3화 제목". */
-    fun previewLabel(page: Int, exact: Boolean, chapter: String?): String {
-        val p = if (exact) "p. $page" else "p. ~$page"
+    fun previewLabel(page: Int, chapter: String?): String {
+        val p = "p. $page"
         return if (chapter.isNullOrBlank()) p else "$p · ${chapter.trim()}"
     }
 
     /** Return chip text: "← 돌아가기 (p. 12)". */
-    fun returnChip(page: Int, exact: Boolean): String = "← 돌아가기 (p. ${if (exact) "" else "~"}$page)"
+    fun returnChip(page: Int): String = "← 돌아가기 (p. $page)"
 
     fun brightness(value: Float): String =
         if (value < 0f) "밝기 자동" else "밝기 ${Math.round(value.coerceIn(0f, 1f) * 100f)}%"

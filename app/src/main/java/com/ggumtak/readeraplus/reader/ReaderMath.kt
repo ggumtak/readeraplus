@@ -26,6 +26,181 @@ class EinkCadence(var every: Int = 0, var onChapter: Boolean = false) {
     fun reset() {
         turns = 0
     }
+
+    companion object {
+        /** Turns closer together than this are fast flipping: a due full refresh waits until they stop. */
+        const val RAPID_TURN_MS = 450L
+
+        /**
+         * Delay before a due full refresh: none while reading normally, but while pages are being flipped fast (the
+         * previous turn was less than [RAPID_TURN_MS] before [now]) the flash would stall the panel between turns,
+         * so it waits until the flipping settles (the caller re-posts it on every further turn).
+         */
+        fun refreshDelay(now: Long, previousTurnAt: Long): Long =
+            if (now - previousTurnAt in 0 until RAPID_TURN_MS) RAPID_TURN_MS else 0L
+    }
+}
+
+/**
+ * Page turns that arrive while the page to turn from is still being laid out (a section change, a jump, a
+ * relayout): each is counted (net direction, capped) and all are applied at once when the layout is shown, so fast
+ * taps are never dropped and never replayed one draw at a time (pure; main thread only).
+ */
+class TurnBacklog(private val cap: Int = MAX) {
+    /** Net pending turns: > 0 forward, < 0 backward. */
+    var net: Int = 0
+        private set
+
+    val isEmpty: Boolean get() = net == 0
+
+    fun add(next: Boolean) {
+        net = (net + if (next) 1 else -1).coerceIn(-cap, cap)
+    }
+
+    /** Puts turns that could not be applied yet back (e.g. still pending after a partial walk). */
+    fun restore(turns: Int) {
+        net = (net + turns).coerceIn(-cap, cap)
+    }
+
+    /** Returns and forgets the pending turns. */
+    fun take(): Int {
+        val n = net
+        net = 0
+        return n
+    }
+
+    fun clear() {
+        net = 0
+    }
+
+    companion object {
+        /** At most this many turns are kept (a runaway key or a long burst never flies through the whole book). */
+        const val MAX = 30
+    }
+}
+
+/** Where a burst of page turns lands (see [TurnMath.walk]). */
+data class TurnWalk(
+    val section: Int,
+    /** Page index in [section]; [TurnMath.LAST_PAGE] = the last page of a section whose page count is not known. */
+    val pageIndex: Int,
+    /** Turns still to apply once [section] is laid out (same sign convention as the request). */
+    val remaining: Int,
+    /** The book's first / last page stopped the walk before all turns were used. */
+    val hitEdge: Boolean,
+)
+
+/** Pure page-walk math for applying several turns at once (unit-tested). */
+object TurnMath {
+    const val LAST_PAGE = -2
+
+    /**
+     * Applies [delta] page turns (> 0 forward) from page [pageIndex] of [section]. [pagesOf] gives a section's exact
+     * page count, or -1 when it is not known (not laid out, not counted): the walk then stops on that section's first
+     * page (forward) or last page (backward, [LAST_PAGE]) and returns the turns left for when it is laid out.
+     * [pagesOf] must know [section] itself.
+     */
+    fun walk(section: Int, pageIndex: Int, delta: Int, sectionCount: Int, pagesOf: (Int) -> Int): TurnWalk {
+        var sec = section
+        var idx = pageIndex
+        var left = delta
+        if (sectionCount <= 0) return TurnWalk(0, 0, 0, delta != 0)
+        var pages = pagesOf(sec).coerceAtLeast(1)
+        idx = idx.coerceIn(0, pages - 1)
+        while (left > 0) {
+            val room = pages - 1 - idx
+            if (left <= room) return TurnWalk(sec, idx + left, 0, false)
+            left -= room
+            idx = pages - 1
+            if (sec + 1 >= sectionCount) return TurnWalk(sec, idx, 0, true)
+            sec++
+            left--
+            val n = pagesOf(sec)
+            if (n < 0) return TurnWalk(sec, 0, left, false)
+            pages = n.coerceAtLeast(1)
+            idx = 0
+        }
+        while (left < 0) {
+            if (-left <= idx) return TurnWalk(sec, idx + left, 0, false)
+            left += idx
+            idx = 0
+            if (sec <= 0) return TurnWalk(sec, 0, 0, true)
+            sec--
+            left++
+            val n = pagesOf(sec)
+            if (n < 0) return TurnWalk(sec, LAST_PAGE, left, false)
+            pages = n.coerceAtLeast(1)
+            idx = pages - 1
+        }
+        return TurnWalk(sec, idx, 0, false)
+    }
+}
+
+/**
+ * Drops only duplicate deliveries of one tap (a bouncing touch panel reporting the same touch twice): a tap within
+ * [windowMs] of the previous accepted one at (nearly) the same spot. Any real second tap — even the fastest
+ * drumming — is at least a finger's contact time later or somewhere else, so it always passes (pure).
+ */
+class TapDedup(private val windowMs: Long = DUP_MS) {
+    private var lastAt = Long.MIN_VALUE / 2
+    private var lastX = Float.NaN
+    private var lastY = Float.NaN
+
+    /** [slopPx]: how far apart two reports of the same touch can be. */
+    fun accept(x: Float, y: Float, upTimeMs: Long, slopPx: Float): Boolean {
+        val dt = upTimeMs - lastAt
+        val samePlace = Math.abs(x - lastX) <= slopPx && Math.abs(y - lastY) <= slopPx
+        if (dt in 0..windowMs && samePlace) return false
+        lastAt = upTimeMs
+        lastX = x
+        lastY = y
+        return true
+    }
+
+    companion object {
+        const val DUP_MS = 40L
+    }
+}
+
+/**
+ * Reading progress by pages as the footer shows it, and the inverse used by 페이지 이동 in percent (pure,
+ * unit-tested): typing N% lands on the first page whose footer reads N%.
+ */
+object PageProgress {
+    /** 0..1 progress of 1-based [page] of [total] pages (the last page = 1). */
+    fun of(page: Int, total: Int): Float {
+        if (total <= 0) return 0f
+        if (page >= total) return 1f
+        return (page.toFloat() / total).coerceIn(0f, 1f)
+    }
+
+    /** The percent the footer shows on [page] of [total]. */
+    fun percentOf(page: Int, total: Int): Int = ReaderFormat.percent(of(page, total))
+
+    /**
+     * Global page (1..[total]) to show for [fraction] (0..1): the first page whose footer percent equals
+     * floor(fraction × 100) — 0 → page 1, 1 → the last page. A book of fewer than 100 pages skips some percents:
+     * then the page whose percent is nearest (ties: the first page at or past [fraction]).
+     */
+    fun pageFor(fraction: Float, total: Int): Int {
+        if (total <= 1) return 1
+        val f = if (fraction.isNaN()) 0.0 else fraction.toDouble().coerceIn(0.0, 1.0)
+        val want = ReaderFormat.percent(f.toFloat())
+        // First page whose progress reaches f; the tolerance absorbs the float error of a typed "52" → 0.52f.
+        val g0 = Math.ceil(f * total - 1e-6 * total).toInt().coerceIn(1, total)
+        var best = g0
+        var bestDist = Math.abs(percentOf(g0, total) - want)
+        // Rounding may put g0 one page off: the neighbours only win when strictly nearer.
+        for (g in intArrayOf(g0 - 1, g0 + 1)) {
+            if (g < 1 || g > total) continue
+            val d = Math.abs(percentOf(g, total) - want)
+            if (d < bestDist) {
+                best = g
+                bestDist = d
+            }
+        }
+        return best
+    }
 }
 
 enum class SwipeDir { NONE, NEXT, PREV }

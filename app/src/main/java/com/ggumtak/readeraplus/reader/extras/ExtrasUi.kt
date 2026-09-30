@@ -289,6 +289,17 @@ internal object Overlay {
         }
     }
 
+    /** Top system-bar / cutout inset currently over [view] (0 in immersive mode), in its window's coordinates. */
+    fun topInset(view: View): Int {
+        val insets = view.rootWindowInsets ?: return 0
+        return if (Build.VERSION.SDK_INT >= 30) {
+            insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()).top
+        } else {
+            @Suppress("DEPRECATION")
+            insets.systemWindowInsetTop
+        }
+    }
+
     /** A white bar with a 1px black top line. */
     fun bar(ctx: Context): LinearLayout = ctx.horizontal {
         background = android.graphics.drawable.LayerDrawable(arrayOf(ColorDrawable(Ink.WHITE), ColorDrawable(Ink.LINE))).apply {

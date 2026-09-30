@@ -689,7 +689,7 @@ class TtsController(private val host: ReaderHost) {
             playButton?.setImageResource(icon)
             lastPlayIcon = icon
         }
-        val page = runCatching { host.pageLabel(host.currentPosition()) }.getOrNull().orEmpty()
+        val page = PageLabel.clean(runCatching { host.pageLabel(host.currentPosition()) }.getOrNull())
         val sleep = if (sleepDeadline > 0L) {
             val left = ((sleepDeadline - SystemClock.uptimeMillis()) / 60_000L + 1).coerceAtLeast(1)
             "  ·  ${left}분 후 멈춤"

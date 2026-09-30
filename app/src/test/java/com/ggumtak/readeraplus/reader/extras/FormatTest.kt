@@ -112,7 +112,8 @@ class FormatTest {
         assertEquals(-1, PageLabel.parse("").page)
         assertEquals(-1, PageLabel.parse(null).page)
         assertEquals("12", PageLabel.pageOnly("12 / 3259"))
-        assertEquals("~12", PageLabel.pageOnly("~12 / ~3260"))
+        // No "~" is ever shown: estimated page numbers are plain.
+        assertEquals("12", PageLabel.pageOnly("~12 / ~3260"))
         assertEquals("12", PageLabel.pageOnly("12 / ~3260"))
         assertEquals("", PageLabel.pageOnly(null))
     }

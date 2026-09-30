@@ -72,11 +72,12 @@ class SettingsJsonTest {
                 .put("r.marginLeftDp", -4),
             ReaderSettings(),
         )
+        val defaults = ReaderSettings()
         assertEquals(ReaderSettings.MAX_FONT_SP, r.fontSizeSp, 0f)
-        assertEquals(400, r.fontWeight)
-        assertEquals(Align.JUSTIFY, r.align)
+        assertEquals(defaults.fontWeight, r.fontWeight)
+        assertEquals(defaults.align, r.align)
         assertEquals(LineBreakMode.CHAR, r.lineBreak)
-        assertEquals("ridibatang", r.fontId)
+        assertEquals(defaults.fontId, r.fontId)
         assertEquals(3, r.txtBlankLines)
         assertTrue(r.invert)
         assertEquals(0, r.marginLeftDp)

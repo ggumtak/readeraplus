@@ -1,6 +1,9 @@
 package com.ggumtak.readeraplus.reader.extras
 
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.reader.ReaderFormat
+import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.StylePreset
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -145,27 +148,52 @@ internal object Fmt {
             .trim()
 }
 
-/** Parsing of ReaderHost.pageLabel strings ("12 / 3259", "~12 / ~3260") and position ↔ page/percent maths. */
+/**
+ * Parsing of ReaderHost.pageLabel strings ("12 / 3259"; older builds marked estimates "~12 / ~3260") and
+ * position ↔ page/percent maths. Nothing shown to the user carries a "~": estimated numbers are shown plain.
+ */
 internal object PageLabel {
+    /** [estimated] = the label carried a "~" / "～" mark (labels without marks parse the same). */
     class Parsed(val page: Int, val total: Int, val estimated: Boolean)
 
     private val NUM = Regex("\\d[\\d,]*")
+
+    private fun isTilde(c: Char): Boolean = c == '~' || c == '～' || c == '∼'
 
     fun parse(label: String?): Parsed {
         if (label.isNullOrBlank()) return Parsed(-1, -1, false)
         val nums = NUM.findAll(label).mapNotNull { it.value.replace(",", "").toIntOrNull() }.toList()
         val page = nums.firstOrNull() ?: -1
         val total = if (nums.size >= 2) nums.last() else -1
-        return Parsed(page, total, label.contains('~'))
+        return Parsed(page, total, label.any(::isTilde))
     }
 
-    /** Just the page number part: "12 / 3259" → "12", "~12 / ~3260" → "~12". */
+    /**
+     * [label] for display without estimate marks: "~12 / ~3260" → "12 / 3260". A mark between two digits (a range
+     * such as "3~5") becomes "–". Labels without a mark are returned unchanged.
+     */
+    fun clean(label: String?): String {
+        if (label.isNullOrEmpty()) return ""
+        if (label.none(::isTilde)) return label
+        val sb = StringBuilder(label.length)
+        for (i in label.indices) {
+            val c = label[i]
+            if (!isTilde(c)) {
+                sb.append(c)
+                continue
+            }
+            val prev = label.getOrNull(i - 1)
+            val next = label.getOrNull(i + 1)
+            if (prev != null && next != null && prev.isDigit() && next.isDigit()) sb.append('–')
+        }
+        return sb.toString().trim()
+    }
+
+    /** Just the page number part, never with a "~": "12 / 3259" → "12", "~12 / ~3260" → "12". */
     fun pageOnly(label: String?): String {
         if (label == null) return ""
         val p = parse(label)
-        if (p.page < 0) return label.trim()
-        val est = label.substringBefore('/').contains('~')
-        return if (est) "~${p.page}" else p.page.toString()
+        return if (p.page < 0) clean(label).trim() else p.page.toString()
     }
 
     /** Position at [fraction] (0..1) of the book, by section char counts. */
@@ -252,6 +280,82 @@ internal object PageLabel {
         val k = pageInSection.coerceIn(0, pages - 1)
         return ((k.toLong() * chars) / pages).toInt().coerceIn(0, chars - 1)
     }
+}
+
+/** Texts of the 페이지 이동 dialog (no "~" marks: estimated numbers are shown plain). */
+internal object GoToText {
+    /** Percent exactly as the reader footer prints it for [fraction] (0..1). */
+    fun percent(fraction: Float): String = "${ReaderFormat.percent(if (fraction.isNaN()) 0f else fraction)}%"
+
+    /** "현재 12 / 3259쪽  ·  34%" (+ a note while the page count is still running). */
+    fun info(page: Int, total: Int, fraction: Float, pagesKnown: Boolean): String {
+        val where = if (page > 0) "현재 $page${if (total > 0) " / $total" else ""}쪽  ·  " else "현재 "
+        val note = if (!pagesKnown) "\n(쪽수 계산 중 — 퍼센트로 이동할 수 있습니다)" else ""
+        return where + percent(fraction) + note
+    }
+}
+
+/**
+ * Size / placement maths of the compact reading-settings popup and the drop-down lists it opens (px in the reader
+ * window). Sized for the ~6" 360×720 dp e-ink screen: at most 86% of the width (≤ 330 dp) and 55% of the height.
+ */
+internal object PopupGeometry {
+    /** Rows of the popup's main section: 스타일, 글꼴, 글자 크기, 굵기, 줄 간격, 문단 간격, 들여쓰기, 정렬, 줄바꿈, 더보기. */
+    const val MAIN_ROWS = 10
+    const val WIDTH_FRACTION = 0.86f
+    const val MAX_WIDTH_DP = 330
+    const val HEIGHT_FRACTION = 0.55f
+    /** Smallest useful height (dp) when the space under the anchor is short (landscape / split screen). */
+    const val MIN_HEIGHT_DP = 160
+    /** Gap kept to the window edges (dp). */
+    const val EDGE_DP = 8
+
+    /** Top and maximum (or actual, for a list) height. */
+    class Placement(val top: Int, val height: Int)
+
+    /** Popup width: min(86% of [screenW], 330 dp), never wider than the screen. */
+    fun width(screenW: Int, density: Float): Int =
+        minOf((screenW * WIDTH_FRACTION).toInt(), (MAX_WIDTH_DP * density).roundToInt(), screenW).coerceAtLeast(1)
+
+    /**
+     * The settings popup under the top bar whose bottom edge is at [anchorBottom]: its top and max height
+     * (55% of [screenH], and never past the bottom edge; moved up when less than [MIN_HEIGHT_DP] is left).
+     */
+    fun settings(screenH: Int, anchorBottom: Int, density: Float): Placement {
+        val edge = (EDGE_DP * density).roundToInt()
+        val cap = (screenH * HEIGHT_FRACTION).toInt().coerceAtLeast(1)
+        val top = anchorBottom.coerceIn(0, screenH)
+        val room = screenH - top - edge
+        val min = minOf(cap, (MIN_HEIGHT_DP * density).roundToInt())
+        if (room >= min) return Placement(top, minOf(cap, room))
+        val h = min.coerceAtMost((screenH - edge).coerceAtLeast(1))
+        return Placement((screenH - edge - h).coerceAtLeast(0), h)
+    }
+
+    /**
+     * A drop-down list [contentHeight] px tall for a row spanning [anchorTop]..[anchorBottom]: height capped at
+     * 55% of [screenH]; placed under the row when it fits, else above it, else as low as fits on screen.
+     */
+    fun dropdown(screenH: Int, anchorTop: Int, anchorBottom: Int, contentHeight: Int, density: Float): Placement {
+        val edge = (EDGE_DP * density).roundToInt()
+        val h = minOf(contentHeight, (screenH * HEIGHT_FRACTION).toInt(), screenH - 2 * edge).coerceAtLeast(1)
+        val top = when {
+            anchorBottom + h <= screenH - edge -> anchorBottom
+            anchorTop - h >= edge -> anchorTop - h
+            else -> (screenH - edge - h).coerceAtLeast(0)
+        }
+        return Placement(top, h)
+    }
+
+    /** Left edge of a [width]-px list whose right edge lines up with [anchorRight], kept inside [screenW]. */
+    fun dropdownLeft(screenW: Int, anchorRight: Int, width: Int): Int =
+        (anchorRight - width).coerceIn(0, (screenW - width).coerceAtLeast(0))
+}
+
+/** Which one-tap style preset the settings currently match (shown inverted in the popup's "스타일" row). */
+internal object StyleChoice {
+    /** The first preset whose typography equals [s] exactly, or null ("사용자 설정"). */
+    fun selected(s: ReaderSettings): StylePreset? = StylePreset.entries.firstOrNull { it.matches(s) }
 }
 
 /**

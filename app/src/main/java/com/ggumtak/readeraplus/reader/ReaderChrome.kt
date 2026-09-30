@@ -68,7 +68,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     private val bookmark: ImageButton
     private val pin: ImageButton
     private val seek: SeekBar
-    /** Seek preview ("p. ~1234 · 제3장 …"), shown over the page just above the bottom panel while dragging. */
+    /** Seek preview ("p. 1234 · 제3장 …"), shown over the page just above the bottom panel while dragging. */
     private val seekInfo: TextView
 
     var isSeeking = false
@@ -143,7 +143,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
         }
         // The label takes all the room left of the buttons (≈ 208dp on the 360dp-wide Comet), so
-        // "~1234 / ~3259" fits; it is centred in that room rather than across the whole width.
+        // "12345 / 23259" fits; it is centred in that room rather than across the whole width.
         pageLabel = ctx.label("", 18f, bold = true, maxLines = 1).apply {
             gravity = Gravity.CENTER
             setPadding(ctx.dp(8), 0, ctx.dp(8), 0)

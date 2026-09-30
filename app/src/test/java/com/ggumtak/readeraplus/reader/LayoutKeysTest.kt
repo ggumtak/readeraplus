@@ -63,7 +63,8 @@ class LayoutKeysTest {
         assertTrue(LayoutKeys.layoutChanged(s, s.copy(fontSizeSp = 21f)))
         assertTrue(LayoutKeys.layoutChanged(s, s.copy(paragraphSpacingPct = 60)))
         assertTrue(LayoutKeys.layoutChanged(s, s.copy(showFooter = false)))
-        assertTrue(LayoutKeys.layoutChanged(s, s.copy(fontId = "nanummyeongjo")))
+        // (the default font is 나눔명조 since the Maru-style defaults: switch to another one)
+        assertTrue(LayoutKeys.layoutChanged(s, s.copy(fontId = if (s.fontId == "ridibatang") "nanummyeongjo" else "ridibatang")))
     }
 
     @Test

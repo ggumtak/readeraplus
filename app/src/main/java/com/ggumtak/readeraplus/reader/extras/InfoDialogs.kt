@@ -187,17 +187,19 @@ internal object InfoDialogs {
         }
         val chars = IntArray(doc.sections.size) { doc.sections[it].approxChars }
         val here = host.currentPosition()
+        val jump = host as? PageJumpHost
         val parsed = PageLabel.parse(runCatching { host.pageLabel(here) }.getOrNull())
         val pagesKnown = runCatching { host.totalPagesKnown() }.getOrDefault(false) && parsed.total > 0
         val total = parsed.total
-        // Page-based once counts are complete (EPUB approxChars are only a size estimate), char-based before that.
-        val fraction = if (pagesKnown && parsed.page > 0) parsed.page.toFloat() / total else PageLabel.fractionOf(chars, here)
+        // The footer's own measure when the host has it (so "현재 N%" reads exactly like the footer); otherwise
+        // page-based once counts are complete (EPUB approxChars are only a size estimate), char-based before that.
+        val fraction = jump?.let { j -> runCatching { j.progressFraction() }.getOrNull()?.takeIf { !it.isNaN() } }
+            ?: if (pagesKnown && parsed.page > 0) parsed.page.toFloat() / total else PageLabel.fractionOf(chars, here)
         var percentMode = !pagesKnown
 
         val box = ctx.vertical { setPadding(ctx.dp(24), ctx.dp(8), ctx.dp(24), 0) }
         val info = ctx.label(
-            (if (parsed.page > 0) "현재 ${parsed.page}${if (total > 0) " / $total" else ""}쪽  ·  " else "현재 ") + Fmt.percent(fraction) +
-                if (!pagesKnown) "\n(쪽수 계산 중 — 퍼센트로 이동할 수 있습니다)" else "",
+            GoToText.info(parsed.page, total, fraction, pagesKnown),
             14f,
             color = Ink.GRAY,
         ).apply { setLineSpacing(0f, 1.2f) }
@@ -249,6 +251,11 @@ internal object InfoDialogs {
                 when {
                     v == null -> ctx.toast("숫자를 입력하세요")
                     percentMode && (v < 0f || v > 100f) -> ctx.toast("0 – 100 사이의 값을 입력하세요")
+                    percentMode && jump != null -> {
+                        // Same measure as the footer: typing 52 lands on the page whose footer reads 52%.
+                        dialog.dismiss()
+                        jump.goToProgress(v / 100f)
+                    }
                     percentMode && pagesKnown -> {
                         dialog.dismiss()
                         goToPage(host, chars, PageLabel.pageForPercent(v, total), total)

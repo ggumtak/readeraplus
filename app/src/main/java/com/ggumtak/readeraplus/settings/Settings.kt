@@ -87,6 +87,7 @@ object Settings {
             putBoolean("a.brightnessSwipe", s.brightnessSwipe)
             putBoolean("a.openLastOnStart", s.openLastOnStart)
             putInt("a.einkRefreshEvery", s.einkRefreshEvery)
+            putInt("a.einkMode", s.einkMode)
             putBoolean("a.einkRefreshOnChapter", s.einkRefreshOnChapter)
             putInt("a.autoTurnSeconds", s.autoTurnSeconds)
             putFloat("a.ttsRate", s.ttsRate)
@@ -181,6 +182,7 @@ object Settings {
             brightnessSwipe = p.getBoolean("a.brightnessSwipe", d.brightnessSwipe),
             openLastOnStart = p.getBoolean("a.openLastOnStart", d.openLastOnStart),
             einkRefreshEvery = p.getInt("a.einkRefreshEvery", d.einkRefreshEvery),
+            einkMode = p.getInt("a.einkMode", d.einkMode),
             einkRefreshOnChapter = p.getBoolean("a.einkRefreshOnChapter", d.einkRefreshOnChapter),
             autoTurnSeconds = p.getInt("a.autoTurnSeconds", d.autoTurnSeconds),
             ttsRate = p.getFloat("a.ttsRate", d.ttsRate),

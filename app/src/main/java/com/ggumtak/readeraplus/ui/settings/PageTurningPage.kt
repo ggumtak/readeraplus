@@ -32,7 +32,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * "페이지 넘김 및 페이지 표시": tap-zone mode with a visual preview (3×3 editor in CUSTOM mode), swipes, volume
- * keys, learned page keys + key test, e-ink full refresh, auto page turn, and the page status line.
+ * keys, learned page keys + key test, e-ink page mode and full refresh, auto page turn, and the page status line.
  */
 internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_PAGE_TURNING, "페이지 넘김 및 페이지 표시") {
     private val modeRows = LinkedHashMap<TapZoneMode, View>()
@@ -110,6 +110,18 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
 
         // ---- e-ink
         body.section("e-ink 화면")
+        var modeRow: View? = null
+        modeRow = ctx.valueRow("e-ink 화면 모드", SettingsFormat.einkMode(app.einkMode)) {
+            val opts = SettingsFormat.EINK_MODES
+            val sel = opts.indexOfFirst { it.second == Settings.app.einkMode }.coerceAtLeast(0)
+            ctx.chooser("e-ink 화면 모드", opts.map { it.first }, sel) { i ->
+                editApp { it.copy(einkMode = opts[i].second) }
+                modeRow?.setSummary(opts[i].first)
+            }
+        }.also(body::addView)
+        val modeNote = ctx.note("읽기 화면의 e-ink 갱신 방식입니다. 기기의 e-ink 제어를 찾은 경우에만 적용됩니다 (확인 중…).")
+        body.addView(modeNote)
+        body.addView(ctx.note("ReadEra처럼 잔상이 적게 하려면 기기 e-ink 설정에서 이 앱을 ReadEra와 같은 모드로 지정하세요."))
         body.addView(ctx.stepperRow("전체 새로고침", app.einkRefreshEvery.toFloat(), 0f, 20f, 1f, { SettingsFormat.refreshEvery(it.toInt()) }) { v ->
             editApp { it.copy(einkRefreshEvery = v.toInt()) }
         })
@@ -121,7 +133,14 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         activity.scope.launch {
             // Vendor detection uses reflection once; keep it off the main thread.
             val vendor = withContext(Dispatchers.IO) { runCatching { Eink.vendorName() }.getOrNull() }
+            val viewMode = withContext(Dispatchers.IO) { runCatching { Eink.supportsViewMode() }.getOrDefault(false) }
             refreshRow.setSummary(if (vendor != null) "e-ink 제어: $vendor" else "기기 전용 제어 없음 — 검은 화면을 잠깐 띄워 잔상을 지웁니다")
+            modeNote.text = if (viewMode) {
+                "기기의 e-ink 제어(${vendor ?: "xrz"})를 찾았습니다. 고른 모드는 읽기 화면에 바로 적용됩니다 " +
+                    "('기기 설정 따름'으로 되돌리면 책을 다시 열 때부터 적용)."
+            } else {
+                "이 기기는 앱에서 e-ink 모드를 바꿀 수 없음 — 기기의 e-ink 설정에서 앱별 모드/잔상 제거 주기를 조정하세요"
+            }
         }
 
         // ---- auto turn

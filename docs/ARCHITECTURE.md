@@ -338,7 +338,8 @@ as you like, same package & signatures).
     instance via its `(Context)` constructor (application context). Methods (by name, reflectively):
     `setRefreshModeByView(View, int)`, `setRefreshModeByWindow(Window, int)`, static `forceGlobalRefresh(int)`.
     Mode constants: GC16=4, CLEAN=176, HD=177, DEFAULT=178, FAST=179, REGAL=180. Add public
-    `Eink.prepareReaderView(view: View)` (sets HD 177 on the page view when available; no-op elsewhere) and
+    `Eink.prepareReaderView(view, mode)` (applies `AppSettings.einkMode` on the page view when the vendor control exists;
+    the default `EINK_MODE_SYSTEM` leaves the device's per-app setting alone, like ReadEra) and
     `Eink.vendorName(): String?` ("Bigme xrz" / "Rockchip" / "Onyx" / null) for a debug/info row.
     Never call the persistent `DisplayPolicyManager.setRefreshModeForPackage`.
   - `Eink.fullRefresh(view)`: Bigme → `forceGlobalRefresh(4)` (fallback 176); Rockchip
@@ -474,7 +475,8 @@ Owns `reader/` except `reader/ReaderHost.kt` and `reader/extras/`. `ReaderActivi
   - **Page counting**: load `Library.pageCounts(bookId, key)`; if missing, count in the background with a
     separate measurer (`Typesetter.countPages` per section, low priority thread), publish progress, then
     `Library.savePageCounts`. Restart on settings/size change. Until complete, totals are estimated from
-    counted sections' pages/char ratio × `SectionInfo.approxChars`, shown with a "~" prefix.
+    counted sections' pages/char ratio (blended with a geometry prior) × `SectionInfo.approxChars`; labels never
+    show a "~" (user request) — estimates are plain numbers.
   - Global page (1-based) = Σ counts[0 until section] + pageInSection + 1.
 - Navigation: next/prev within the section; crossing sections uses the prefetched layout (else lay out,
   showing nothing new until ready — no spinner flash for < 300 ms). `goTo(pos, remember)`: remember pushes the
@@ -484,11 +486,12 @@ Owns `reader/` except `reader/ReaderHost.kt` and `reader/extras/`. `ReaderActivi
 - **PageView**: draws via `PageRenderer.draw` with `PageDecor` (all highlight owners for this section +
   quotes of the book (loaded at open & refreshed when changed), bookmark flag if any bookmark offset is in the
   page range, header = current chapter title (last TOC entry at/before the position; else SectionInfo.title;
-  else book title), footer left = "12 / 3259" (or "~3260"), right = `34%  ·  14:05  ·  80%` per footer
+  else book title), footer left = "12 / 3259", right = `34%  ·  14:05  ·  80%` per footer
   flags (+ "챕터 N쪽 남음" when `footerChapterLeft`). Battery from the sticky `ACTION_BATTERY_CHANGED`
   read on page turns only.
-  - Touch: implement taps in `onTouchEvent` directly (no `onSingleTapConfirmed` latency). Tap debounce
-    200 ms. Order: selection active → `SelectionController.onTouchEvent`; link under finger → navigate
+  - Touch: implement taps in `onTouchEvent` directly (no `onSingleTapConfirmed` latency). Taps are never
+    throttled (only a duplicate report of the same touch within 40 ms is dropped; turns requested while a
+    section is still laying out are queued and applied together). Order: selection active → `SelectionController.onTouchEvent`; link under finger → navigate
     (remember=true); corners: top-right 15%×10% → bookmark when `bookmarkByTouch`, top-left → invert when
     `invertByTouch`; else zone action per `TapZoneMode`: LEFT_RIGHT = left 1/3 PREV, centre cell MENU, rest
     NEXT; ALL_NEXT = centre cell MENU, left 12% strip PREV, everything else NEXT; TOP_BOTTOM = top 40% PREV,
@@ -536,7 +539,8 @@ Owns `reader/extras/`. Implements `ReaderPanels`, `SelectionController`, `TtsCon
 `ReaderHost` only.
 
 - `showReadingSettings(host, anchor)`: a `PopupWindow` (no animation, white, 1px border) anchored under the
-  top bar at the right, width ≈ 88% of the screen (max 420dp), height ≤ 75%, scrollable. Header
+  top bar (the bars hide while it is open), width min(86%, 330dp), height ≤ 55%, compact 36dp rows, the
+  less-used rows behind "더보기"; style presets (마루뷰어풍 / 리디풍 / 종이책풍) on top. Header
   "읽기 설정 · EPUB, TXT". Rows (each change → `host.applySettings(copy)` immediately; steppers debounce
   250 ms):
   폰트 페이스 (value + dropdown → font chooser dialog: each row rendered in its own typeface, sample "가나다

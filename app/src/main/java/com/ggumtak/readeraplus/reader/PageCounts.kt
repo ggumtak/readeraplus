@@ -181,6 +181,31 @@ class PageCounts(approxChars: IntArray) {
     }
 
     /**
+     * The first position whose [charProgress] reaches [fraction] (go-to by percent before pages are counted): like
+     * [locateFraction] but rounding up, so the page starting there or after it reads at least floor(fraction × 100)%.
+     * A fraction exactly at a section's end gives the next section's start.
+     */
+    fun locateProgress(fraction: Float): DocPosition {
+        if (size == 0) return DocPosition.START
+        val f = if (fraction.isNaN()) 0.0 else fraction.toDouble().coerceIn(0.0, 1.0)
+        var sum = 0L
+        for (i in 0 until size) sum += chars[i]
+        if (sum <= 0L) return DocPosition(Math.ceil(f * size - 1e-6 * size).toInt().coerceIn(0, size - 1), 0)
+        // The tolerance absorbs the float error of a typed "52" → 0.52f (< 6e-8 relative); it stays well inside the
+        // 1e-6 slack of ReaderFormat.percent, so the char found still reads the typed percent.
+        val target = Math.ceil(f * sum - 1e-7 * sum).toLong().coerceIn(0L, sum)
+        var acc = 0L
+        for (i in 0 until size) {
+            val c = chars[i]
+            if (target < acc + c || i == size - 1) {
+                return DocPosition(i, (target - acc).coerceIn(0, c.toLong()).toInt())
+            }
+            acc += c
+        }
+        return DocPosition(size - 1, 0)
+    }
+
+    /**
      * Pages after the current page that still belong to the current chapter, given where the next chapter
      * starts: [targetSection]/[targetPageIndex], and whether it starts exactly at that page's first char.
      */
