@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 13+ themed icon: one-colour silhouette (the launcher tints it). Ribbon cut out of the right page. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:translateY="-2">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M53,38.5 C46,33.5 37,32.5 29,34.5 L29,71.5 C37,69.5 46,70.5 53,75.5 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M55,38.5 C62,33.5 71,32.5 79,34.5 L79,71.5 C71,69.5 62,70.5 55,75.5 Z M69.5,33 L75,33 L75,50 L72.25,47.2 L69.5,50 Z" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="2"
+            android:strokeLineCap="round"
+            android:pathData="M29,75.5 C37,73.5 46,74.5 54,79.5 C62,74.5 71,73.5 79,75.5" />
+    </group>
+</vector>

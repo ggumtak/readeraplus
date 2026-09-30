@@ -2,9 +2,31 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="48dp"
     android:height="48dp"
-    android:viewportWidth="48"
-    android:viewportHeight="48">
-    <path android:fillColor="#FFFFFFFF" android:pathData="M0,0h48v48h-48z" />
-    <path android:fillColor="#FF000000" android:pathData="M8,10h14c2.2,0 4,1.8 4,4v26c0,-1.7 -1.3,-3 -3,-3H8z" />
-    <path android:fillColor="#FF000000" android:pathData="M40,10H28c-1.1,0 -2,0.9 -2,2v28c0,-1.7 1.3,-3 3,-3h11z" />
+    android:viewportWidth="66"
+    android:viewportHeight="66">
+    <group android:translateX="-21" android:translateY="-21">
+        <path android:fillColor="#FF151515" android:pathData="M37,21 H71 A16,16 0 0 1 87,37 V71 A16,16 0 0 1 71,87 H37 A16,16 0 0 1 21,71 V37 A16,16 0 0 1 37,21 Z" />
+        <group android:translateY="-2">
+        <!-- Open book (original artwork): two pages, page-stack edge, text lines, bookmark ribbon. -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M53,38.5 C46,33.5 37,32.5 29,34.5 L29,71.5 C37,69.5 46,70.5 53,75.5 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M55,38.5 C62,33.5 71,32.5 79,34.5 L79,71.5 C71,69.5 62,70.5 55,75.5 Z" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="2"
+            android:strokeLineCap="round"
+            android:pathData="M29,75.5 C37,73.5 46,74.5 54,79.5 C62,74.5 71,73.5 79,75.5" />
+            <path
+                android:strokeColor="#FF151515"
+                android:strokeWidth="1.8"
+                android:strokeLineCap="round"
+                android:pathData="M34,45 L48,45 M34,50.5 L48,50.5 M34,56 L48,56 M34,61.5 L44,61.5 M60,45 L66,45 M60,50.5 L66,50.5 M60,56 L74,56 M60,61.5 L71,61.5" />
+            <path
+                android:fillColor="#FF151515"
+                android:pathData="M69.5,33 L75,33 L75,50 L72.25,47.2 L69.5,50 Z" />
+        </group>
+    </group>
 </vector>
