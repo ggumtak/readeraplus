@@ -269,4 +269,19 @@ class LibraryTextTest {
         // Roots unknown and nothing configured: the scanner covers the whole storage already
         assertNull(LibraryText.addScanFolder(emptySet(), "/mnt/media_rw/USB/Books", emptyList()))
     }
+
+    @Test
+    fun shouldOpenLast_onlyOnFreshLauncherStart() {
+        val main = android.content.Intent.ACTION_MAIN
+        val fromHistory = android.content.Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY
+        val newTask = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+        assertTrue(LibraryText.shouldOpenLast(enabled = true, restored = false, action = main, flags = newTask))
+        assertFalse(LibraryText.shouldOpenLast(enabled = false, restored = false, action = main, flags = newTask))
+        // Recreation (rotation, process death) keeps the library.
+        assertFalse(LibraryText.shouldOpenLast(enabled = true, restored = true, action = main, flags = 0))
+        // Relaunch from recents: the reader is still on top of the task.
+        assertFalse(LibraryText.shouldOpenLast(enabled = true, restored = false, action = main, flags = newTask or fromHistory))
+        assertFalse(LibraryText.shouldOpenLast(enabled = true, restored = false, action = null, flags = 0))
+        assertFalse(LibraryText.shouldOpenLast(enabled = true, restored = false, action = "android.intent.action.VIEW", flags = 0))
+    }
 }

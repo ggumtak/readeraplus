@@ -50,17 +50,21 @@ internal object FontChooser {
         if (loading) return
         loading = true
         val scope = MainScope()
-        scope.launch {
+        PanelRegistry.job(activity, scope.launch {
             // Name tables and typefaces are loaded off the main thread; the dialog opens once, fully drawn.
-            val entries = withContext(Dispatchers.IO) {
-                val fonts = runCatching { FontManager.fonts() }.getOrDefault(emptyList())
-                fonts.map { f -> f to runCatching { FontManager.typeface(f.id) }.getOrNull() }
+            val entries = try {
+                withContext(Dispatchers.IO) {
+                    val fonts = runCatching { FontManager.fonts() }.getOrDefault(emptyList())
+                    fonts.map { f -> f to runCatching { FontManager.typeface(f.id) }.getOrNull() }
+                }
+            } finally {
+                // Also when cancelled (ReaderPanels.dismissAll): the chooser must open again next time.
+                loading = false
             }
-            loading = false
             scope.cancel()
             if (activity.isFinishing || activity.isDestroyed) return@launch
             showDialog(activity, entries, currentId, onPick)
-        }
+        })
     }
 
     private fun showDialog(activity: Activity, entries: List<Pair<FontInfo, Typeface?>>, currentId: String, onPick: (String) -> Unit) {
@@ -100,6 +104,7 @@ internal object FontChooser {
             .setPositiveButton("글꼴 관리") { _, _ -> SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS) }
             .setNegativeButton("닫기", null)
             .showNoAnim()
+        PanelRegistry.dialog(activity, dialog)
         dialog.listView?.apply {
             selector = ColorDrawable(Color.TRANSPARENT)
             divider = ColorDrawable(Ink.DISABLED)

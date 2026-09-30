@@ -21,6 +21,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.inputmethod.EditorInfo
@@ -62,6 +63,7 @@ import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 import com.ggumtak.readeraplus.ui.settings.SettingsActivity
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
@@ -99,6 +101,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         private const val LOADING_TEXT_DELAY_MS = 300L
         private const val AUTO_SCAN_DELAY_MS = 1500L
         private const val STATUS_HEIGHT_DP = 36
+        /** Longest the launch splash is held while looking up the book to reopen (a stuck database shows the library). */
+        private const val OPEN_LAST_MAX_WAIT_MS = 2000L
     }
 
     internal val scope = MainScope()
@@ -135,6 +139,23 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private var pendingWrites = 0
     /** Serial IO lane for flag writes so quick taps reach the database in tap order. */
     private val writeDispatcher = Dispatchers.IO.limitedParallelism(1)
+
+    // ---- start-up ("앱 시작시 문서 읽기")
+    /** The library views exist ([ensureUi]). Not before the open-last decision, nor while the reader opened by it is up. */
+    private var uiBuilt = false
+    /** Between [onResume] and [onPause]. */
+    private var resumed = false
+    /** The last-read book is being looked up at start; the library is neither built nor refreshed meanwhile. */
+    private var decidingOpenLast = false
+    /** While true the window draws nothing, so the launch splash stays up until the reader covers it. */
+    private var holdDraw = false
+    private val drawHold = ViewTreeObserver.OnPreDrawListener { !holdDraw }
+    private val openLastTimeout = Runnable {
+        if (decidingOpenLast) {
+            decidingOpenLast = false
+            if (resumed) showLibrary() // else the next onResume builds it
+        }
+    }
 
     // ---- views
     private lateinit var root: FrameLayout
@@ -185,17 +206,36 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             group = savedInstanceState.getString(STATE_GROUP)
             groupLabel = savedInstanceState.getString(STATE_GROUP_LABEL)
         }
+        hasAccess = hasStorageAccess()
+        val i = intent
+        if (LibraryText.shouldOpenLast(app.openLastOnStart, savedInstanceState != null, i?.action, i?.flags ?: 0)) {
+            startOpenLast()
+        } else {
+            ensureUi()
+        }
+    }
+
+    /** Builds the library views once: at creation, or when the library is first shown after the open-last start. */
+    private fun ensureUi() {
+        if (uiBuilt) return
+        uiBuilt = true
         buildUi()
         setContentView(root)
         updateToolbar()
-        hasAccess = hasStorageAccess()
-        if (savedInstanceState == null) maybeOpenLast()
+        releaseDrawHold()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R && !hasAccess &&
             !Settings.raw().getBoolean(PREF_LEGACY_ASKED, false)
         ) {
             Settings.raw().edit().putBoolean(PREF_LEGACY_ASKED, true).apply()
             requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_LEGACY_PERM)
         }
+    }
+
+    private fun releaseDrawHold() {
+        if (!holdDraw) return
+        holdDraw = false
+        val observer = window.decorView.viewTreeObserver
+        if (observer.isAlive) observer.removeOnPreDrawListener(drawHold)
     }
 
     override fun onStart() {
@@ -212,6 +252,20 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     override fun onResume() {
         super.onResume()
+        resumed = true
+        if (decidingOpenLast) return // onLastBookLoaded opens the reader or shows the library
+        ensureUi() // back from the reader opened at start
+        refreshVisible()
+    }
+
+    /** Builds the library (if needed) and runs the per-visit refresh that onResume skipped while deciding. */
+    private fun showLibrary() {
+        ensureUi()
+        refreshVisible()
+    }
+
+    /** Per-visit work: permission state, scan scheduling, status strip, counts and the list. */
+    private fun refreshVisible() {
         val app = Settings.app
         listMode = app.libraryListMode
         sort = app.librarySort
@@ -258,13 +312,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && refreshOnFocus) {
+        if (hasFocus && refreshOnFocus && uiBuilt) {
             invalidateCounts()
             reload()
         }
     }
 
     override fun onPause() {
+        resumed = false
         refreshOnFocus = false
         handler.removeCallbacks(autoScanRunnable)
         super.onPause()
@@ -283,6 +338,10 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     @Deprecated("Platform back handling (no AndroidX); targetSdk 34 still routes back here.")
     override fun onBackPressed() {
+        if (!uiBuilt) {
+            @Suppress("DEPRECATION") super.onBackPressed()
+            return
+        }
         when (LibraryText.backStep(drawerOpen, searchOpen, group != null)) {
             LibraryText.BackStep.CLOSE_DRAWER -> closeDrawer()
             LibraryText.BackStep.CLOSE_SEARCH -> closeSearch()
@@ -293,7 +352,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     /** Hardware page keys / volume keys scroll the list by a screen (e-ink friendly paging). */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (!drawerOpen) {
+        if (uiBuilt && !drawerOpen) {
             val a = Settings.app
             val code = event.keyCode
             val dir = LibraryText.keyDirection(code, a.volumeKeysTurn, a.invertVolumeKeys, a.nextPageKeys, a.prevPageKeys)
@@ -899,9 +958,12 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         }
     }
 
-    override fun onJobProgress() = updateStatus()
+    override fun onJobProgress() {
+        if (uiBuilt) updateStatus()
+    }
 
     override fun onJobDone(message: String?) {
+        if (!uiBuilt) return // the list is loaded fresh when the library is first shown
         updateStatus()
         changed(collections = false)
         if (message != null) toast(message)
@@ -971,7 +1033,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_LEGACY_PERM && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             hasAccess = true
-            updatePermissionPanel()
+            if (uiBuilt) updatePermissionPanel()
             LibraryJobs.startScan(this, announce = true)
         }
     }
@@ -999,7 +1061,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK || data == null) return
+        if (resultCode != RESULT_OK || data == null || !uiBuilt) return
         when (requestCode) {
             REQ_OPEN_FILE -> {
                 val uris = ArrayList<Uri>()
@@ -1151,17 +1213,41 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     // ============================================================================================ open last
 
-    private fun maybeOpenLast() {
-        if (!Settings.app.openLastOnStart) return
-        val i = intent ?: return
-        if (i.action != Intent.ACTION_MAIN) return
-        if (i.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
-        scope.launch {
+    /**
+     * Open-last start: decided before any library work. The window is kept from drawing (the launch splash stays up)
+     * while the last-read book is looked up on IO; the reader then opens over a window that never drew, so the screen
+     * goes splash → page with no library frame (one e-ink update less), and the library's build, list query and cover
+     * jobs only run if the user comes back to it.
+     */
+    private fun startOpenLast() {
+        decidingOpenLast = true
+        holdDraw = true
+        window.decorView.viewTreeObserver.addOnPreDrawListener(drawHold)
+        handler.postDelayed(openLastTimeout, OPEN_LAST_MAX_WAIT_MS)
+        // Undispatched: the query starts now instead of after the whole launch transaction.
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             val book = withContext(Dispatchers.IO) {
                 runCatching { Library.lastOpened()?.takeIf { !it.trashed && File(it.path).isFile } }.getOrNull()
             }
-            if (book != null && !isFinishing) ReaderActivity.open(this@LibraryActivity, book.id)
+            onLastBookLoaded(book)
         }
+    }
+
+    private fun onLastBookLoaded(book: Book?) {
+        handler.removeCallbacks(openLastTimeout)
+        val waiting = decidingOpenLast
+        decidingOpenLast = false
+        if (isFinishing || isDestroyed) return
+        // Only from the foreground (a start from the background would be blocked or yank the user back).
+        if (book != null && resumed) {
+            try {
+                ReaderActivity.open(this, book.id)
+                return // the draw hold stays until the library is shown (onResume → ensureUi)
+            } catch (t: Throwable) {
+                // fall through: show the library
+            }
+        }
+        if (waiting && resumed) showLibrary() // not resumed: the next onResume builds it
     }
 
     // ============================================================================================ BookActions

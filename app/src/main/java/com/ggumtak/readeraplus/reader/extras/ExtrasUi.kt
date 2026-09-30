@@ -1,6 +1,8 @@
 package com.ggumtak.readeraplus.reader.extras
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.app.Dialog
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -20,10 +22,12 @@ import android.net.Uri
 import android.os.Build
 import android.text.InputType
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowInsets
+import android.widget.AbsListView
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -48,6 +52,7 @@ import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
+import com.ggumtak.readeraplus.ui.library.LibraryText
 import java.net.URLEncoder
 
 /*
@@ -153,11 +158,45 @@ internal object QuoteCache {
     }
 }
 
+/**
+ * Black-on-white SeekBar for e-ink. The platform thumb is an animated selector (grows on press, shrinks on release:
+ * several e-ink updates) and the split track redraws a gap around it: use a plain static dot instead.
+ */
 internal fun SeekBar.einkStyle(): SeekBar = apply {
     progressTintList = ColorStateList.valueOf(Ink.BLACK)
     progressBackgroundTintList = ColorStateList.valueOf(Ink.DISABLED)
-    thumbTintList = ColorStateList.valueOf(Ink.BLACK)
+    thumb = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(Ink.BLACK)
+        val d = context.dp(20)
+        setSize(d, d)
+    }
+    thumbOffset = context.dp(10)
+    splitTrack = false
     background = null
+}
+
+/**
+ * Hardware page keys scroll [list] by a screen while this dialog has focus, like the library (the dialog window
+ * gets the keys, not the reader): volume keys when "볼륨 키로 페이지 넘김" is on (swapped by the invert option),
+ * PAGE_UP/DOWN and the learned page keys. Both DOWN and UP are consumed so the system volume panel never shows;
+ * BACK and other keys are left alone. [skip] lets a caller keep a key (e.g. while typing in a search field).
+ */
+internal fun Dialog.pageKeysScroll(list: () -> AbsListView?, skip: (KeyEvent) -> Boolean = { false }) {
+    setOnKeyListener { _, keyCode, ev ->
+        val a = Settings.app
+        val dir = LibraryText.keyDirection(keyCode, a.volumeKeysTurn, a.invertVolumeKeys, a.nextPageKeys, a.prevPageKeys)
+        if (dir == 0 || skip(ev)) return@setOnKeyListener false
+        if (ev.action == KeyEvent.ACTION_DOWN && ev.repeatCount == 0) list()?.let { scrollListPage(it, dir) }
+        true
+    }
+}
+
+/** Scrolls [v] by one screen minus a small overlap ([dir] = +1 down, -1 up). */
+internal fun scrollListPage(v: AbsListView, dir: Int) {
+    if (v.visibility != View.VISIBLE || v.childCount == 0) return
+    val h = v.height - v.paddingTop - v.paddingBottom
+    v.scrollListBy(dir * (h - v.context.dp(24)).coerceAtLeast(v.context.dp(48)))
 }
 
 /** Flat square icon button (no ripple) used inside cards and bars. */
@@ -205,7 +244,7 @@ internal fun Context.outlineButton(text: String, onClick: (View) -> Unit): TextV
     setOnClickListener(onClick)
 }
 
-/** Multi-line text input dialog (replace rules, notes, review). */
+/** Multi-line text input dialog (replace rules, notes, review); tracked for [ReaderPanels.dismissAll]. */
 internal fun Context.multilinePrompt(
     title: String,
     initial: String,
@@ -214,7 +253,7 @@ internal fun Context.multilinePrompt(
     message: String? = null,
     neutral: Pair<String, () -> Unit>? = null,
     onOk: (String) -> Unit,
-) {
+): AlertDialog {
     val edit = EditText(this).apply {
         setText(initial)
         this.hint = hint
@@ -232,7 +271,7 @@ internal fun Context.multilinePrompt(
         .setPositiveButton("저장") { _, _ -> onOk(edit.text.toString()) }
         .setNegativeButton("취소", null)
     if (neutral != null) b.setNeutralButton(neutral.first) { _, _ -> neutral.second() }
-    b.showNoAnim()
+    return PanelRegistry.dialog(this, b.showNoAnim())
 }
 
 /** Overlay helpers for views laid over the reader page (handles, TTS bar, search bar). */
@@ -321,6 +360,7 @@ internal object TextActions {
             .setNegativeButton("취소", null)
             .showNoAnim()
             .also { d -> d.listView?.selector = ColorDrawable(Color.TRANSPARENT) }
+            .also { d -> PanelRegistry.dialog(activity, d) }
     }
 
     private fun launchProcessText(ctx: Context, ri: ResolveInfo, text: String) {

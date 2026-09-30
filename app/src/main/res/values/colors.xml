@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Secondary text (same as Ink.GRAY). -->
+    <color name="ink_gray">#FF555555</color>
+
+    <!-- Navigation bar. API 26 has no dark navigation-bar buttons (windowLightNavigationBar is API 27), so a white
+         bar would hide its white buttons: black here, white + dark buttons from values-v27. -->
+    <color name="nav_bar">#FF000000</color>
+    <bool name="light_nav_bar">false</bool>
+
+    <!-- Reader: before API 30 ReaderWindow sets the bar flags through systemUiVisibility without the light
+         navigation-bar flag, so the bar stays black until values-v30. -->
+    <color name="reader_nav_bar">#FF000000</color>
+    <bool name="reader_light_nav_bar">false</bool>
+</resources>

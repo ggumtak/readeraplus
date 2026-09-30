@@ -1,7 +1,9 @@
 package com.ggumtak.readeraplus.reader
 
 import com.ggumtak.readeraplus.engine.LayoutConfig
+import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.ParseOptions
+import com.ggumtak.readeraplus.render.FontMath
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import java.security.MessageDigest
 
@@ -17,8 +19,11 @@ data class PageGeometry(
 
 /** Pure derivation of page geometry, LayoutConfig and the page-count cache key from settings (unit-tested). */
 object LayoutKeys {
-    /** Bump when the layout algorithm or geometry rules change so cached page counts are recomputed. */
-    const val VERSION = 1
+    /**
+     * Bump when the layout algorithm, geometry rules or key composition change so cached page counts are recomputed.
+     * 2: keys are per format (the other format's parse options no longer count) and use the layout weight class.
+     */
+    const val VERSION = 2
     /** Header/footer band height as a multiple of the status font size. */
     const val STATUS_BAND = 2.2f
     /** Margin used when the "페이지 여백" switch is off. */
@@ -85,12 +90,101 @@ object LayoutKeys {
         footerBattery = true,
     )
 
+    /**
+     * [layoutPart] for a book of [format]: the other format's options are normalised away too. EPUB ignores every
+     * txt* option; a TXT layout always honours block hints (see [config]), so epubPublisherStyles is moot there.
+     */
+    private fun layoutPart(s: ReaderSettings, format: BookFormat): ReaderSettings {
+        val base = layoutPart(s)
+        if (format != BookFormat.EPUB) return base.copy(epubPublisherStyles = true)
+        val d = ReaderSettings()
+        return base.copy(
+            txtBlankLines = d.txtBlankLines,
+            txtStripIndent = d.txtStripIndent,
+            txtJoinWrappedLines = d.txtJoinWrappedLines,
+            txtDetectChapters = d.txtDetectChapters,
+            txtChapterRegex = d.txtChapterRegex,
+            txtEmphasizeHeadings = d.txtEmphasizeHeadings,
+            txtReplaceRules = d.txtReplaceRules,
+        )
+    }
+
     /** True when going from [a] to [b] requires a new layout (anything but colours / footer items). */
     fun layoutChanged(a: ReaderSettings, b: ReaderSettings): Boolean = layoutPart(a) != layoutPart(b)
+
+    /** [layoutChanged] for a book of [format]: options of the other format never force a re-layout. */
+    fun layoutChanged(a: ReaderSettings, b: ReaderSettings, format: BookFormat): Boolean =
+        layoutPart(a, format) != layoutPart(b, format)
 
     /** True when the document must be re-parsed. */
     fun parseChanged(a: ReaderSettings, b: ReaderSettings, encoding: String): Boolean =
         a.parseOptions(encoding) != b.parseOptions(encoding)
+
+    /** [parseChanged] for a book of [format]: only the options that format's parser reads count. */
+    fun parseChanged(a: ReaderSettings, b: ReaderSettings, format: BookFormat, encoding: String): Boolean =
+        parseOptionsFor(a, format, encoding) != parseOptionsFor(b, format, encoding)
+
+    /**
+     * The parse options a book of [format] actually depends on, with every other field at its default: EPUB reads
+     * only epubPublisherStyles; TXT reads the txt* options and the encoding (and always keeps block hints).
+     */
+    fun parseOptionsFor(s: ReaderSettings, format: BookFormat, encoding: String): ParseOptions =
+        if (format == BookFormat.EPUB) {
+            ParseOptions(epubPublisherStyles = s.epubPublisherStyles)
+        } else {
+            s.parseOptions(encoding).copy(epubPublisherStyles = true)
+        }
+
+    /**
+     * Identity of the text coordinates (section split and char offsets) a parse of a book of [format] produces, or
+     * null when saved (section, offset) positions do not depend on changeable options (EPUB: spine items are fixed).
+     * TXT: every option that can move text between sections or shift offsets, plus the encoding; heading emphasis
+     * only styles text and is left out so toggling it never remaps a position.
+     */
+    fun textSignature(s: ReaderSettings, format: BookFormat, encoding: String): String? {
+        if (format == BookFormat.EPUB) return null
+        val p = s.parseOptions(encoding)
+        val sb = StringBuilder(128)
+        sb.append("t1|").append(p.txtBlankLines).append(',').append(p.txtStripIndent)
+            .append(',').append(p.txtJoinWrappedLines).append(',').append(p.txtDetectChapters)
+            .append(",enc=").append(p.txtEncoding)
+            .append(",re=").append(p.txtChapterRegex.length).append(':').append(p.txtChapterRegex)
+            .append(",rr=").append(p.txtReplaceRules.length).append(':').append(p.txtReplaceRules)
+        return sha1Hex(sb.toString()).substring(0, 16)
+    }
+
+    /**
+     * A weight value that changes only when the text layout (advances / metrics) can change. A static font keeps
+     * the same typeface file for many weights and only thickens its strokes (the stroke is not part of text
+     * measuring), so only its regular/bold file choice for body and bold runs matters; variable fonts ('wght'
+     * axis) and system faces measure differently at every weight.
+     */
+    fun layoutWeight(weight: Int, variable: Boolean, system: Boolean, hasBoldFile: Boolean): Int {
+        val w = FontMath.normalizeWeight(weight)
+        if (variable || system) return w
+        val base = FontMath.effectiveBase(w, FontMath.minWeight(variable = false, system = false))
+        val bodyBold = FontMath.usesBoldFile(base, hasBoldFile)
+        val runsBold = FontMath.usesBoldFile(FontMath.runWeight(base, true), hasBoldFile)
+        return when {
+            bodyBold -> -3
+            runsBold -> -2
+            else -> -1
+        }
+    }
+
+    /**
+     * [key] for a book of [format]: only the options that format depends on are part of it, so changing a TXT
+     * option keeps every EPUB's cached counts valid and vice versa.
+     */
+    fun keyFor(
+        s: ReaderSettings,
+        format: BookFormat,
+        encoding: String,
+        g: PageGeometry,
+        density: Float,
+        fontIdentity: String,
+        appVersion: Int,
+    ): String = key(layoutPart(s, format), parseOptionsFor(s, format, encoding), g, density, fontIdentity, appVersion)
 
     /**
      * Stable key for cached page counts: every layout-affecting setting, the parse options, the content box,

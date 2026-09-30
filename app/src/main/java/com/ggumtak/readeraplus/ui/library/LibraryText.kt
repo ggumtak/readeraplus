@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.ui.library
 
+import android.content.Intent
 import android.view.KeyEvent
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
@@ -195,6 +196,14 @@ internal object LibraryText {
         inGroup -> BackStep.LEAVE_GROUP
         else -> BackStep.FINISH
     }
+
+    /**
+     * "앱 시작시 문서 읽기": go straight to the last-read book only on a fresh launcher start — not when the activity
+     * is recreated ([restored]) or brought back from recents (the reader is still on top of it there).
+     */
+    fun shouldOpenLast(enabled: Boolean, restored: Boolean, action: String?, flags: Int): Boolean =
+        enabled && !restored && action == Intent.ACTION_MAIN &&
+            flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0
 
     /** True when a background rescan is due ([lastScanAt] 0 = never scanned). */
     fun rescanDue(lastScanAt: Long, now: Long, maxAgeMs: Long = 30L * 60 * 1000): Boolean =

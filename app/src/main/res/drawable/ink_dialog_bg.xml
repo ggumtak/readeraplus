@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Alert dialog window background: white box with a 1px black border (no dim, no shadow on e-ink).
+     The 16dp inset matches the platform dialog background, so dialog sizes and paddings are unchanged. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="16dp"
+    android:insetTop="16dp"
+    android:insetRight="16dp"
+    android:insetBottom="16dp">
+    <shape android:shape="rectangle">
+        <solid android:color="@android:color/white" />
+        <stroke
+            android:width="1dp"
+            android:color="@android:color/black" />
+    </shape>
+</inset>

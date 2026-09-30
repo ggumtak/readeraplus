@@ -6,6 +6,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Build
 import android.text.InputType
 import android.util.TypedValue
@@ -35,6 +37,8 @@ import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
+import com.ggumtak.readeraplus.ui.kit.horizontal
+import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.popupMenu
@@ -197,11 +201,51 @@ private fun LibraryActivity.confirmReset(b: Book) {
     }
 }
 
+/** Box icon for a checkbox state (static vectors: the platform check marks animate, a run of e-ink frames). */
+private fun checkIcon(checked: Boolean): Int = if (checked) R.drawable.ic_check_box else R.drawable.ic_check_box_outline_blank
+
+/** Checked/unchecked box without the platform's animated check mark; switches instantly (no fade). */
+private fun Context.staticCheckDrawable(): Drawable = StateListDrawable().apply {
+    getDrawable(checkIcon(true))?.let { addState(intArrayOf(android.R.attr.state_checked), it) }
+    getDrawable(checkIcon(false))?.let { addState(intArrayOf(), it) }
+}
+
 private fun Context.deleteFileCheckBox(): CheckBox = CheckBox(this).apply {
     text = "파일도 삭제 (되돌릴 수 없음)"
     setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
     setTextColor(Ink.BLACK)
+    buttonDrawable = staticCheckDrawable()
     buttonTintList = ColorStateList.valueOf(Ink.BLACK)
+    background = null // no (borderless ripple) touch feedback: the box itself changes
+    minimumHeight = dp(48)
+    setPaddingRelative(dp(12), dp(8), 0, dp(8)) // gap between the box and the text
+}
+
+/**
+ * Checkbox rows for a dialog ([checked] is edited in place): static box icons and no press highlight, so a tap
+ * repaints one icon instead of animating a check mark and a row ripple the way setMultiChoiceItems does.
+ */
+private fun Context.checkList(labels: List<String>, checked: BooleanArray): View {
+    val col = vertical { setPadding(0, dp(4), 0, dp(4)) }
+    labels.forEachIndexed { i, text ->
+        val box = icon(checkIcon(checked[i]), 24)
+        val row = horizontal {
+            minimumHeight = dp(48)
+            setPadding(dp(20), 0, dp(20), 0)
+            addView(box)
+            addView(label(text, 17f, maxLines = 2).apply { setPadding(dp(16), dp(8), 0, dp(8)) }, lp(0, WRAP_CONTENT, 1f))
+            setOnClickListener {
+                checked[i] = !checked[i]
+                box.setImageResource(checkIcon(checked[i]))
+            }
+        }
+        col.addView(row, lp())
+    }
+    return ScrollView(this).apply {
+        overScrollMode = View.OVER_SCROLL_NEVER
+        isScrollbarFadingEnabled = false
+        addView(col, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+    }
 }
 
 private fun LibraryActivity.confirmDelete(b: Book) {
@@ -252,7 +296,7 @@ internal fun LibraryActivity.collectionsDialog(b: Book) {
         if (colls.isEmpty()) {
             builder.setMessage("컬렉션이 없습니다. ‘새 컬렉션’으로 만드세요.")
         } else {
-            builder.setMultiChoiceItems(colls.map { it.name }.toTypedArray(), checked) { _, which, isChecked -> checked[which] = isChecked }
+            builder.setView(checkList(colls.map { it.name }, checked))
         }
         builder.setPositiveButton("확인") { _, _ ->
             val changes = colls.indices.filter { (colls[it].id in member) != checked[it] }

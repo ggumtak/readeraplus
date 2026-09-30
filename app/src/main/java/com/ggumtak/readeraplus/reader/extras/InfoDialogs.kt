@@ -43,11 +43,12 @@ internal object InfoDialogs {
 
     fun review(host: ReaderHost) {
         val ctx = host.activity
-        val bookId = host.book.id
+        val book = host.book
+        val bookId = book.id
         val scope = MainScope()
-        scope.launch {
+        PanelRegistry.job(ctx, scope.launch {
             // host.book is a snapshot; the saved review may be newer.
-            val saved = withContext(Dispatchers.IO) { runCatching { Library.book(bookId)?.review }.getOrNull() } ?: host.book.review
+            val saved = withContext(Dispatchers.IO) { runCatching { Library.book(bookId)?.review }.getOrNull() } ?: book.review
             scope.cancel()
             if (ctx.isFinishing || ctx.isDestroyed) return@launch
             ctx.multilinePrompt(
@@ -57,7 +58,7 @@ internal object InfoDialogs {
                 minLines = 6,
                 neutral = if (saved.isNotBlank()) "지우기" to { saveReview(ctx, bookId, "") } else null,
             ) { text -> saveReview(ctx, bookId, text.trim()) }
-        }
+        })
     }
 
     private fun saveReview(ctx: Activity, bookId: Long, text: String) {
@@ -73,7 +74,7 @@ internal object InfoDialogs {
 
     fun documentInfo(activity: Activity, book: Book, document: BookDocument?) {
         val scope = MainScope()
-        scope.launch {
+        PanelRegistry.job(activity, scope.launch {
             // The caller's Book is a snapshot (the reader's is from when the book was opened: stale progress,
             // reading time, review). Re-read it, and — from the library — the cheap metadata (OPF / encoding sniff).
             val (fresh, meta) = withContext(Dispatchers.IO) {
@@ -84,7 +85,7 @@ internal object InfoDialogs {
             scope.cancel()
             if (activity.isFinishing || activity.isDestroyed) return@launch
             showInfo(activity, fresh, document, meta)
-        }
+        })
     }
 
     private fun showInfo(activity: Activity, book: Book, document: BookDocument?, meta: DocMeta?) {
@@ -127,11 +128,11 @@ internal object InfoDialogs {
         if (book.review.isNotBlank()) field("내 리뷰", book.review)
         meta?.description?.let { d -> field("설명", Fmt.plainText(d)) }
 
-        activity.alert().setTitle("문서 속성")
+        PanelRegistry.dialog(activity, activity.alert().setTitle("문서 속성")
             .setView(activity.einkScroll(box))
             .setPositiveButton("닫기", null)
             .setNeutralButton("편집") { _, _ -> editMeta(activity, book) }
-            .showNoAnim()
+            .showNoAnim())
     }
 
     private fun editMeta(activity: Activity, book: Book) {
@@ -151,7 +152,7 @@ internal object InfoDialogs {
         val author = input("작가", book.author)
         val series = input("시리즈", book.series.orEmpty())
         val index = input("시리즈 번호", book.seriesIndex?.let { Fmt.number(it) }.orEmpty(), InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL)
-        activity.alert().setTitle("문서 정보 편집")
+        val dialog = activity.alert().setTitle("문서 정보 편집")
             .setView(activity.einkScroll(box))
             .setPositiveButton("저장") { _, _ ->
                 val t = title.text.toString().trim().ifEmpty { book.title }
@@ -172,6 +173,7 @@ internal object InfoDialogs {
             }
             .setNegativeButton("취소", null)
             .showNoAnim()
+        PanelRegistry.dialog(activity, dialog)
     }
 
     // ------------------------------------------------------------------ 페이지 이동
@@ -268,6 +270,7 @@ internal object InfoDialogs {
             true
         }
         dialog.show()
+        PanelRegistry.dialog(ctx, dialog)
     }
 
     private fun segment(ctx: Activity, text: String): TextView = ctx.label(text, 16f, bold = true).apply {
@@ -292,18 +295,23 @@ internal object InfoDialogs {
 
     /**
      * Jumps to global page [page] (1-based). The host exposes only pageLabel(pos), so the target section is found
-     * by binary search over section start pages; the page inside the section is exact when that section is laid
-     * out, otherwise estimated and corrected once the layout arrives.
+     * by binary search over section start pages, and the page index inside it follows from the (complete) counts.
+     * A [PageJumpHost] shows that page directly, drawn once. Otherwise the page is exact when the section is the
+     * one on screen, else estimated and corrected once the layout arrives (two draws).
      */
     private fun goToPage(host: ReaderHost, chars: IntArray, page: Int, total: Int) {
         val n = chars.size
         if (n == 0) return
         fun startPage(s: Int): Int = PageLabel.parse(runCatching { host.pageLabel(DocPosition(s, 0)) }.getOrNull()).page
-        val sec = PageLabel.sectionForPage(n, page) { startPage(it) }
-        val first = startPage(sec).coerceAtLeast(1)
-        val next = if (sec + 1 < n) startPage(sec + 1) else total + 1
-        val pagesInSec = (next - first).coerceAtLeast(1)
-        val k = (page - first).coerceIn(0, pagesInSec - 1)
+        val target = PageLabel.pageTarget(n, page, total) { startPage(it) }
+        val sec = target.section
+        val k = target.index
+        val pagesInSec = target.pagesInSection
+
+        if (host is PageJumpHost) {
+            host.goToPage(sec, k, remember = true)
+            return
+        }
 
         val layout = host.currentLayout
         if (layout != null && host.currentPosition().section == sec && layout.pageCount > 0) {

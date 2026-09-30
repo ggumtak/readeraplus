@@ -63,9 +63,16 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     }
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
     private val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    /** Background-coloured edge that keeps the ribbon apart from glyphs it touches (tiny margins, no header). */
+    private val ribbonHalo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * onePx
+        strokeJoin = Paint.Join.ROUND
+    }
     private val rect = RectF()
     private val ribbon = Path()
     private var ribbonForWidth = -1
+    private var ribbonForHeight = -1f
 
     private var xs = FloatArray(256)
     private var lineChars = CharArray(0)
@@ -85,6 +92,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         outline.color = fg
         line.color = fg
         ribbonPaint.color = fg
+        ribbonHalo.color = bg
     }
 
     /** Draws page [pageIndex] of [layout] (background, status lines, highlights, text, images, ribbon). */
@@ -101,14 +109,15 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         canvas.drawColor(bg)
         val cw = layout.config.width.toFloat()
         val ch = layout.config.height.toFloat()
-        drawStatus(canvas, decor, contentLeft, contentTop, cw, ch, viewHeight)
+        val ribbonH = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + cw, viewWidth) else 0f
+        drawStatus(canvas, decor, contentLeft, contentTop, cw, ch, viewWidth, viewHeight, ribbonH)
         if (pageIndex in 0 until layout.pages.size) {
             val page = layout.pages[pageIndex]
             val lines = page.lines
             if (decor.highlights.isNotEmpty()) drawHighlights(canvas, layout, lines, decor.highlights, contentLeft, contentTop)
             for (i in 0 until lines.size) drawLine(canvas, layout, lines[i], contentLeft, contentTop, cw)
         }
-        if (decor.bookmarked) drawRibbon(canvas, viewWidth)
+        if (decor.bookmarked) drawRibbon(canvas, viewWidth, ribbonH)
         if (images != null) prefetchNeighbours(layout, pageIndex)
     }
 
@@ -155,12 +164,25 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     // ---------------------------------------------------------------------------------------------
     // Status lines
 
-    private fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Float, cw: Float, ch: Float, viewHeight: Int) {
+    /** [ribbonH]: height of the bookmark ribbon drawn on this page (0 = none); the header keeps clear of it. */
+    private fun drawStatus(
+        canvas: Canvas,
+        decor: PageDecor,
+        left: Float,
+        top: Float,
+        cw: Float,
+        ch: Float,
+        viewWidth: Int,
+        viewHeight: Int,
+        ribbonH: Float,
+    ) {
         val header = decor.header
         if (!header.isNullOrEmpty()) {
-            val text = ellipsizedHeader(header, cw)
-            val w = statusPaint.measureText(text, 0, text.length)
             val baseline = centredBaseline(0f, top)
+            // Narrowed on both sides so the title stays centred on the text column.
+            val inset = RibbonMath.headerInset(density, left + cw, viewWidth, ribbonH, baseline - statusAscent)
+            val text = ellipsizedHeader(header, (cw - 2f * inset).coerceAtLeast(0f))
+            val w = statusPaint.measureText(text, 0, text.length)
             canvas.drawText(text, 0, text.length, left + (cw - w) / 2f, baseline, statusPaint)
         }
         val fl = decor.footerLeft
@@ -392,13 +414,11 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     // ---------------------------------------------------------------------------------------------
     // Bookmark ribbon
 
-    private fun drawRibbon(canvas: Canvas, viewWidth: Int) {
-        if (ribbonForWidth != viewWidth) {
-            val w = 14f * density
-            val h = 24f * density
-            val notch = 6f * density
-            val r = viewWidth - 14f * density
-            val l = r - w
+    private fun drawRibbon(canvas: Canvas, viewWidth: Int, h: Float) {
+        if (ribbonForWidth != viewWidth || ribbonForHeight != h) {
+            val l = RibbonMath.left(viewWidth, density)
+            val r = l + RibbonMath.WIDTH_DP * density
+            val notch = h * RibbonMath.NOTCH_FRACTION
             ribbon.reset()
             ribbon.moveTo(l, 0f)
             ribbon.lineTo(r, 0f)
@@ -407,8 +427,44 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             ribbon.lineTo(l, h)
             ribbon.close()
             ribbonForWidth = viewWidth
+            ribbonForHeight = h
         }
+        canvas.drawPath(ribbon, ribbonHalo)
         canvas.drawPath(ribbon, ribbonPaint)
+    }
+}
+
+/**
+ * Bookmark ribbon geometry (px; pure, unit-tested). The ribbon hangs from the top edge, [RIGHT_DP] from the
+ * view's right edge. It keeps its full height only where that stays above the text column; otherwise it shrinks
+ * to the band above the text (never below [MIN_HEIGHT_DP]). A centred header that would run under it is
+ * narrowed by [headerInset] on both sides.
+ */
+internal object RibbonMath {
+    const val WIDTH_DP = 14f
+    const val HEIGHT_DP = 24f
+    const val MIN_HEIGHT_DP = 12f
+    const val RIGHT_DP = 14f
+    /** Clearance kept between the ribbon and text. */
+    const val GAP_DP = 3f
+    const val NOTCH_FRACTION = 0.25f
+
+    fun left(viewWidth: Int, density: Float): Float = viewWidth - (RIGHT_DP + WIDTH_DP) * density
+
+    /** Ribbon height for a text column whose top is [contentTop] and right edge [contentRight]. */
+    fun height(density: Float, contentTop: Float, contentRight: Float, viewWidth: Int): Float {
+        val full = HEIGHT_DP * density
+        if (contentRight <= left(viewWidth, density) - GAP_DP * density) return full
+        return (contentTop - GAP_DP * density).coerceIn(MIN_HEIGHT_DP * density, full)
+    }
+
+    /**
+     * Width to take off each side of the header (centred on a column ending at [contentRight]) so its glyphs,
+     * whose top is at [glyphTop], stay clear of a ribbon of height [ribbonH]; 0 when they cannot meet.
+     */
+    fun headerInset(density: Float, contentRight: Float, viewWidth: Int, ribbonH: Float, glyphTop: Float): Float {
+        if (!(ribbonH > 0f) || glyphTop >= ribbonH + GAP_DP * density) return 0f
+        return (contentRight - (left(viewWidth, density) - GAP_DP * density)).coerceAtLeast(0f)
     }
 }
 

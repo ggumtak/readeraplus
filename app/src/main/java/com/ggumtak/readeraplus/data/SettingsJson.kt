@@ -115,6 +115,8 @@ internal object SettingsJson {
     fun appToJson(s: AppSettings): JSONObject = JSONObject()
         .put("a.tapZoneMode", s.tapZoneMode.name)
         .put("a.customTapZones", s.customTapZones.joinToString(",") { it.name })
+        .put("a.invertTaps", s.invertTaps)
+        .put("a.pinChrome", s.pinChrome)
         .put("a.swipeToTurn", s.swipeToTurn)
         .put("a.verticalSwipe", s.verticalSwipe)
         .put("a.volumeKeysTurn", s.volumeKeysTurn)
@@ -152,6 +154,8 @@ internal object SettingsJson {
         return base.copy(
             tapZoneMode = enumOf(BackupJson.strOrNull(o, "a.tapZoneMode"), base.tapZoneMode),
             customTapZones = tapZones(o.opt("a.customTapZones")) ?: base.customTapZones,
+            invertTaps = BackupJson.bool(o, "a.invertTaps", base.invertTaps),
+            pinChrome = BackupJson.bool(o, "a.pinChrome", base.pinChrome),
             swipeToTurn = BackupJson.bool(o, "a.swipeToTurn", base.swipeToTurn),
             verticalSwipe = BackupJson.bool(o, "a.verticalSwipe", base.verticalSwipe),
             volumeKeysTurn = BackupJson.bool(o, "a.volumeKeysTurn", base.volumeKeysTurn),

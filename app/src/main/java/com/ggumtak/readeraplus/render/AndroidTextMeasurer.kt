@@ -35,7 +35,15 @@ class AndroidTextMeasurer(
     override val emPx: Float = emPxFor(context, settings.fontSizeSp)
 
     private val fontId = settings.fontId
-    private val baseWeight = settings.fontWeight.coerceIn(100, 900)
+    /** Body weight drawn: weights a static font cannot show lighter are drawn as 400 (bold runs stay bold). */
+    private val baseWeight: Int by lazy {
+        val min = try {
+            FontManager.minWeight(fontId)
+        } catch (t: Throwable) {
+            100
+        }
+        FontMath.effectiveBase(settings.fontWeight, min)
+    }
     private val letterSpacingEm = (settings.letterSpacingPm / 1000f).let { if (it.isFinite()) it.coerceIn(-0.5f, 1f) else 0f }
 
     private val paints = HashMap<RunStyle, TextPaint>()

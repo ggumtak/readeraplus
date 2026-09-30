@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- API 27+: dark navigation-bar buttons exist, so the bar can be white. -->
+    <color name="nav_bar">#FFFFFFFF</color>
+    <bool name="light_nav_bar">true</bool>
+</resources>

@@ -399,7 +399,7 @@ run locally — be extra careful with SQL strings.
 
 ## ui/library — library screens (owner: LIBRARY)
 
-Owns `ui/library/`. `LibraryActivity` (launcher, `singleTask`).
+Owns `ui/library/`. `LibraryActivity` (launcher, standard launch mode so relaunching from the home screen keeps an open reader).
 
 - Root `FrameLayout`: main column (toolbar + optional search row + status row + list) and a **drawer panel**
   overlay (shown/hidden instantly, no animation; width min(80%, 320dp), white with a 1px right border; a

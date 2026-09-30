@@ -9,6 +9,7 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.BatteryManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -20,6 +21,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
@@ -36,6 +38,7 @@ import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.format.DocumentException
 import com.ggumtak.readeraplus.format.Documents
+import com.ggumtak.readeraplus.reader.extras.PageJumpHost
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
 import com.ggumtak.readeraplus.reader.extras.SelectionController
 import com.ggumtak.readeraplus.reader.extras.TtsController
@@ -75,7 +78,7 @@ import java.util.Calendar
  * handles taps/swipes/keys, the chrome, the return chip, e-ink refresh cadence, auto page turn, keep-screen-on,
  * brightness, orientation lock and position saving, and hosts the reader extras through [ReaderHost].
  */
-class ReaderActivity : Activity(), ReaderHost {
+class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     companion object {
         const val EXTRA_BOOK_ID = "book_id"
 
@@ -98,14 +101,23 @@ class ReaderActivity : Activity(), ReaderHost {
         private const val OWNER_SEARCH = "search"
         private const val REFRESH_SETTLE_MS = 16L
         private const val CHROME_COUNTS_MS = 2000L
+        /** Per book: text signature + char fraction of the saved position (see [TextPositions]). */
+        private const val PREFS_TEXT_POS = "reader_text_positions"
     }
 
     private enum class Nav { OPEN, TURN, JUMP, RELAYOUT }
 
     internal val scope = MainScope()
     internal val handler = Handler(Looper.getMainLooper())
-    internal var app: AppSettings = AppSettings()
-        private set
+    /**
+     * Always the live app settings: the reading-settings popup and the TTS settings save tap zones, volume keys and
+     * TTS values straight to [Settings] while this activity stays resumed, and every save here copies from the
+     * latest value, so no module's change is ever reverted by a stale snapshot.
+     */
+    internal val app: AppSettings get() = Settings.app
+    /** The app settings last pushed into the window and views ([applyAppSettings]). */
+    private var appliedApp: AppSettings? = null
+    private var unlistenSettings: (() -> Unit)? = null
 
     private lateinit var root: FrameLayout
     private lateinit var page: PageView
@@ -119,7 +131,8 @@ class ReaderActivity : Activity(), ReaderHost {
     private lateinit var errorText: TextView
 
     private lateinit var keeper: ScreenOnKeeper
-    private val repeatFilter = RepeatFilter(150)
+    private val repeatFilter = RepeatFilter(RepeatFilter.NORMAL_MS)
+    private val learnedRepeatFilter = RepeatFilter(RepeatFilter.LEARNED_MS, throttleFreshPresses = true)
     private val cadence = EinkCadence()
 
     private var bookRef: Book? = null
@@ -134,6 +147,10 @@ class ReaderActivity : Activity(), ReaderHost {
     private var curLayout: SectionLayout? = null
     /** Where the reader is (survives relayouts without drifting): a page start or an exact jump target. */
     private var anchor = DocPosition.START
+    /** A jump whose layout is still pending; a relayout meanwhile must go there, not back to [anchor]. */
+    private var pendingJump: PendingNav? = null
+
+    private class PendingNav(val section: Int, val offset: Int, val pageIndex: Int)
     private var displayedGenId = -1
     private var lastChapterIdx = Int.MIN_VALUE
     private var insets = IntArray(4)
@@ -150,6 +167,13 @@ class ReaderActivity : Activity(), ReaderHost {
     private var chromeVisible = false
     /** Chrome was shown automatically for "메뉴 고정" once after opening. */
     private var pinShown = false
+    /** "메뉴 고정": the page already has its between-the-bars size for the book being opened (bars not shown yet). */
+    private var pinPending = false
+    /** Background decode of a neighbour section's boundary page images (see [prefetchImages]). */
+    private var imagePrefetch: Job? = null
+    private val textPosPrefs by lazy { getSharedPreferences(PREFS_TEXT_POS, MODE_PRIVATE) }
+    /** Last value written to [textPosPrefs] ("b<id>" to value), to skip identical writes. */
+    private var lastTextPos: Pair<String, String>? = null
     private var resumedAt = 0L
     private var batteryLevel = -1
     private var batteryAt = 0L
@@ -164,14 +188,44 @@ class ReaderActivity : Activity(), ReaderHost {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Settings.init(this)
-        app = Settings.app
+        if (Build.VERSION.SDK_INT >= 34) {
+            overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
+            overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
+        }
         ReaderWindow.setup(this)
         keeper = ScreenOnKeeper(this)
         buildViews()
         applyReaderColors(Settings.reader)
         applyAppSettings()
+        unlistenSettings = Settings.addListener(settingsListener)
         startOpen(intent)
     }
+
+    /** No close animation back to the library (the platform default would slide over several e-ink frames). */
+    override fun finish() {
+        super.finish()
+        @Suppress("DEPRECATION")
+        overridePendingTransition(0, 0)
+    }
+
+    /** Settings saved by any module (popup, TTS settings, backup restore; any thread). */
+    private val settingsListener: () -> Unit = {
+        if (Looper.myLooper() == Looper.getMainLooper()) onAppSettingsSaved() else handler.post { onAppSettingsSaved() }
+    }
+
+    /** Re-applies the app settings the window and views cache when one of them changed (input reads [app] live). */
+    private fun onAppSettingsSaved() {
+        if (isDestroyed) return
+        val a = app
+        val last = appliedApp
+        if (last != null && viewPart(last) == viewPart(a)) return
+        applyAppSettings()
+    }
+
+    private fun viewPart(a: AppSettings): List<Any> = listOf(
+        a.fullscreen, a.brightness, a.orientationLock, a.keepScreenOn, a.einkRefreshEvery, a.einkRefreshOnChapter,
+        a.swipeToTurn, a.verticalSwipe, a.brightnessSwipe, a.longPressSelect, a.pinChrome,
+    )
 
     /** Vendor e-ink mode for the page view (Bigme HD); posted so it runs once the view is attached. */
     private fun prepareEink() {
@@ -190,7 +244,6 @@ class ReaderActivity : Activity(), ReaderHost {
 
     override fun onResume() {
         super.onResume()
-        app = Settings.app
         applyAppSettings()
         resumedAt = SystemClock.elapsedRealtime()
         // Per-view refresh modes may be reset by the firmware while another app was in front.
@@ -206,12 +259,17 @@ class ReaderActivity : Activity(), ReaderHost {
     override fun onPause() {
         super.onPause()
         stopAutoTurn(showToast = false)
-        savePositionNow()
+        savePositionNow(persistText = true)
         flushReadingTime()
         keeper.release()
     }
 
     override fun onDestroy() {
+        // Panels first: their dismiss flushes a pending settings change into the still-open session, and cancels the
+        // TOC / search work that would otherwise keep converting the closed book's sections.
+        safely { ReaderPanels.dismissAll(this) }
+        unlistenSettings?.invoke()
+        unlistenSettings = null
         handler.removeCallbacksAndMessages(null)
         keeper.dispose()
         safely { tts?.release() }
@@ -314,17 +372,50 @@ class ReaderActivity : Activity(), ReaderHost {
             applyInsets(ReaderWindow.insetsOf(wi, app.fullscreen))
             wi
         }
+        // Bar heights change with the title, the brightness row, insets and rotation: keep the pinned page area and
+        // the return chip clear of them.
+        val barsResized = View.OnLayoutChangeListener { _, _, t, _, b, _, ot, _, ob ->
+            if (b - t != ob - ot) handler.post { if (!isDestroyed) onBarsResized() }
+        }
+        chrome.top.addOnLayoutChangeListener(barsResized)
+        chrome.bottom.addOnLayoutChangeListener(barsResized)
+        // Bars the extras add over the page (search results, TTS): the return chip moves above them.
+        root.setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
+            override fun onChildViewAdded(parent: View, child: View) {
+                if (isOwnView(child)) return
+                child.addOnLayoutChangeListener(barsResized)
+                handler.post { if (!isDestroyed) updateChipPosition() }
+            }
+
+            override fun onChildViewRemoved(parent: View, child: View) {
+                child.removeOnLayoutChangeListener(barsResized)
+                handler.post { if (!isDestroyed) updateChipPosition() }
+            }
+        })
         setContentView(root)
     }
 
+    private fun isOwnView(v: View): Boolean =
+        v === page || v === statusText || v === brightnessOverlay || v === chip || v === errorPanel || chrome.owns(v)
+
+    private fun onBarsResized() {
+        applyPinnedArea()
+        updateChipPosition()
+    }
+
+    /** Left/right margins follow the insets here; top/bottom belong to [applyPinnedArea] (insets or pinned bars). */
     private fun applyInsets(i: IntArray) {
         if (i.contentEquals(insets)) return
         insets = i
         val lp = page.layoutParams as FrameLayout.LayoutParams
-        lp.setMargins(i[0], i[1], i[2], i[3])
-        page.layoutParams = lp
+        if (lp.leftMargin != i[0] || lp.rightMargin != i[2]) {
+            lp.leftMargin = i[0]
+            lp.rightMargin = i[2]
+            page.layoutParams = lp
+        }
         chrome.setInsets(i[0], i[1], i[2], i[3])
         updateChipPosition()
+        applyPinnedArea()
     }
 
     private fun applyAppSettings() {
@@ -338,6 +429,9 @@ class ReaderActivity : Activity(), ReaderHost {
         page.verticalSwipe = app.verticalSwipe
         page.brightnessSwipe = app.brightnessSwipe
         page.longPressEnabled = app.longPressSelect
+        appliedApp = app
+        chrome.setPinned(app.pinChrome)
+        applyPinnedArea()
         root.requestApplyInsets()
     }
 
@@ -386,13 +480,13 @@ class ReaderActivity : Activity(), ReaderHost {
             var doc: BookDocument? = null
             var adopted = false
             try {
-                val (b, d) = withContext(Dispatchers.IO) {
+                val (b, d, storedPos) = withContext(Dispatchers.IO) {
                     val b = IntentFiles.resolveBook(this@ReaderActivity, intent)
                     val f = File(b.path)
                     if (!f.isFile) throw DocumentException("파일을 찾을 수 없습니다.\n${b.path}")
                     val d = Documents.open(f, settings.parseOptions(b.encoding))
                     doc = d
-                    b to d
+                    Triple(b, d, readTextPosition(b.id))
                 }
                 if (d.sections.isEmpty()) throw DocumentException("내용이 없는 문서입니다.")
                 if (intent.getLongExtra(EXTRA_BOOK_ID, -1L) != b.id && getIntent() === intent) {
@@ -406,17 +500,34 @@ class ReaderActivity : Activity(), ReaderHost {
                 session = s
                 adopted = true
                 viewReady.await()
-                s.setViewport(page.width, page.height)
+                if (app.pinChrome && !pinShown) {
+                    // "메뉴 고정": give the page its between-the-bars size before the first layout, so the book is laid
+                    // out and drawn once (showing the bars then changes nothing).
+                    pinPending = true
+                    applyPinnedArea()
+                }
+                val (vw, vh) = pageTargetSize()
+                s.setViewport(vw, vh)
                 // Cached page counts load in parallel with the first layout.
                 s.startCounting(COUNT_DELAY_MS)
-                val sec = b.posSection.coerceIn(0, s.sectionCount - 1)
+                // A TXT position saved under other parse options (chapter detection, replace rules, encoding, ...)
+                // is found again by its char fraction instead of reading stale (section, offset) coordinates.
+                val remap = TextPositions.remapFraction(
+                    storedPos, LayoutKeys.textSignature(settings, d.format, b.encoding),
+                    b.posSection, b.posOffset, b.progress,
+                )
+                val start = if (remap != null) s.counts.locateFraction(remap) else DocPosition(b.posSection, b.posOffset)
+                val sec = start.section.coerceIn(0, s.sectionCount - 1)
                 val l = s.layout(sec)
                 if (l == null) {
                     if (session === s && !s.isClosed) showError("페이지를 배치하지 못했습니다.")
                     return@launch
                 }
-                preloadImages(s, l, l.pageForOffset(b.posOffset))
-                showPage(sec, l, l.pageForOffset(b.posOffset), Nav.OPEN, anchorOffset = b.posOffset.coerceIn(0, l.content.length))
+                val off = start.offset.coerceIn(0, l.content.length)
+                preloadImages(s, l, l.pageForOffset(off))
+                if (session !== s) return@launch
+                showPage(sec, l, l.pageForOffset(off), Nav.OPEN, anchorOffset = off)
+                writeTextPosition(b, s, anchor)
                 afterOpen()
             } catch (e: CancellationException) {
                 throw e
@@ -451,7 +562,10 @@ class ReaderActivity : Activity(), ReaderHost {
     }
 
     private fun closeCurrentBook() {
-        savePositionNow()
+        // Panels first, while the session and book still exist: the settings popup's pending change applies to this
+        // book, and no TOC / search / bar is left acting on the next one.
+        safely { ReaderPanels.dismissAll(this) }
+        savePositionNow(persistText = true)
         flushReadingTime()
         stopAutoTurn(showToast = false)
         safely { tts?.release() }
@@ -474,6 +588,9 @@ class ReaderActivity : Activity(), ReaderHost {
         ownerHighlights.clear()
         returnStack.clear()
         chip.visibility = View.GONE
+        imagePrefetch?.cancel()
+        imagePrefetch = null
+        pinShown = false
         setChromeVisible(false)
         page.frame = null
         page.invalidate()
@@ -521,6 +638,18 @@ class ReaderActivity : Activity(), ReaderHost {
             if (chromeVisible && !chrome.isSeeking && now - chromeCountsAt > CHROME_COUNTS_MS) {
                 chromeCountsAt = now
                 bindChrome()
+            }
+        }
+
+        override fun onSectionStored(section: Int, layout: SectionLayout) {
+            // A neighbour prefetched while the reader sits on a section boundary: decode the page it would turn to.
+            val s = session ?: return
+            val l = curLayout ?: return
+            if (s.peek(section) !== layout || layoutStale()) return
+            if (section == curSection + 1 && curPageIdx == l.pageCount - 1) {
+                prefetchImages(s, layout, 0)
+            } else if (section == curSection - 1 && curPageIdx == 0) {
+                prefetchImages(s, layout, layout.pageCount - 1)
             }
         }
     }
@@ -580,6 +709,10 @@ class ReaderActivity : Activity(), ReaderHost {
         if (kind != Nav.RELAYOUT) schedulePositionSave()
         s.prefetch(section + 1)
         s.prefetch(section - 1)
+        // The renderer pre-decodes the neighbouring pages of this section only: at a section boundary, decode the
+        // page of the cached neighbour section a turn would show (a pending neighbour does it on arrival).
+        if (idx == layout.pageCount - 1) s.peek(section + 1)?.let { prefetchImages(s, it, 0) }
+        if (idx == 0) s.peek(section - 1)?.let { prefetchImages(s, it, it.pageCount - 1) }
         keeper.poke()
     }
 
@@ -592,9 +725,27 @@ class ReaderActivity : Activity(), ReaderHost {
         val s = session ?: return
         val sec = section.coerceIn(0, s.sectionCount - 1)
         navJob?.cancel()
+        pendingJump = if (kind == Nav.JUMP) PendingNav(sec, offset, pageIndex) else null
         val cached = if (layoutStale()) null else s.peek(sec)
         if (cached != null) {
-            display(sec, cached, offset, pageIndex, kind)
+            val tp = targetPage(cached, offset, pageIndex)
+            if (!needsImageDecode(s, cached, tp)) {
+                display(sec, cached, offset, pageIndex, kind)
+                return
+            }
+            // Cached layout, but its images are not decoded yet: decode them on the IO pool first, so onDraw never
+            // decodes on the UI thread (the old page stays up meanwhile).
+            scheduleLoadingText()
+            navJob = scope.launch {
+                preloadImages(s, cached, tp)
+                if (session !== s) return@launch
+                if (layoutStale() || s.peek(sec) !== cached) {
+                    navJob = null
+                    navigateTo(sec, offset, pageIndex, kind)
+                    return@launch
+                }
+                display(sec, cached, offset, pageIndex, kind)
+            }
             return
         }
         scheduleLoadingText()
@@ -619,10 +770,41 @@ class ReaderActivity : Activity(), ReaderHost {
 
     /** Decodes the images of the page about to be shown on the IO pool so onDraw never decodes them. */
     private suspend fun preloadImages(s: BookSession, l: SectionLayout, pageIndex: Int) {
-        val p = l.pages.getOrNull(pageIndex) ?: return
-        if (p.lines.none { it.imageBlock != null }) return
+        if (!needsImageDecode(s, l, pageIndex)) return
+        // A boundary prefetch may be decoding this very page: wait for it rather than decode the image twice.
+        imagePrefetch?.let { if (it.isActive) it.join() }
+        if (!needsImageDecode(s, l, pageIndex)) return
         val r = safely { s.renderer() } ?: return
         withContext(Dispatchers.IO) { runCatching { r.preload(l, pageIndex) } }
+    }
+
+    /**
+     * True when page [pageIndex] of [l] shows an image not yet decoded at its drawn size (the renderer's own
+     * target size: the image line's box rounded to px) and not known to be undecodable.
+     */
+    private fun needsImageDecode(s: BookSession, l: SectionLayout, pageIndex: Int): Boolean {
+        val p = l.pages.getOrNull(pageIndex) ?: return false
+        val lines = p.lines
+        for (i in lines.indices) {
+            val ln = lines[i]
+            val img = ln.imageBlock ?: continue
+            val w = Math.round(ln.imageWidth).coerceAtLeast(1)
+            val h = Math.round(ln.imageHeight).coerceAtLeast(1)
+            val known = try {
+                s.images.isKnownFailure(img.src, w, h) || s.images.peek(img.src, w, h) != null
+            } catch (t: Throwable) {
+                true
+            }
+            if (!known) return true
+        }
+        return false
+    }
+
+    /** Decodes the images of [pageIndex] of [l] in the background (a neighbour section's boundary page). */
+    private fun prefetchImages(s: BookSession, l: SectionLayout, pageIndex: Int) {
+        if (!needsImageDecode(s, l, pageIndex)) return
+        val r = safely { s.renderer() } ?: return
+        imagePrefetch = scope.launch(Dispatchers.IO) { runCatching { r.preload(l, pageIndex) } }
     }
 
     /** A foreground layout returned nothing although the session is still current. */
@@ -638,6 +820,7 @@ class ReaderActivity : Activity(), ReaderHost {
     }
 
     private fun display(sec: Int, l: SectionLayout, offset: Int, pageIndex: Int, kind: Nav) {
+        pendingJump = null
         when {
             pageIndex == -2 -> showPage(sec, l, l.pageCount - 1, kind)
             pageIndex >= 0 -> showPage(sec, l, pageIndex, kind)
@@ -658,6 +841,13 @@ class ReaderActivity : Activity(), ReaderHost {
         val target = anchor
         // Restart counting here, not after the page shows: a jump may cancel this job before it finishes.
         s.startCounting(COUNT_DELAY_MS)
+        val jump = pendingJump
+        if (jump != null && navJob?.isActive == true) {
+            // A resize / settings change arrived while a jump was still laying out: finish the jump in the new
+            // generation instead of snapping back to the page that was showing before it.
+            navigateTo(jump.section, jump.offset, jump.pageIndex, Nav.JUMP)
+            return
+        }
         navJob?.cancel()
         navJob = scope.launch {
             val sec = target.section.coerceIn(0, s.sectionCount - 1)
@@ -668,6 +858,9 @@ class ReaderActivity : Activity(), ReaderHost {
                 return@launch
             }
             val off = target.offset.coerceIn(0, l.content.length)
+            // New image sizes after a font / size change: decode them here, not in onDraw.
+            preloadImages(s, l, l.pageForOffset(off))
+            if (session !== s) return@launch
             showPage(sec, l, l.pageForOffset(off), Nav.RELAYOUT, anchorOffset = off)
         }
     }
@@ -710,10 +903,11 @@ class ReaderActivity : Activity(), ReaderHost {
         return pos.section == curSection && !layoutStale() && onPage(pos.offset, p, curPageIdx == l.pageCount - 1)
     }
 
-    /** Jump to a page of a section (seek bar). */
-    private fun goToPage(section: Int, pageIndex: Int, remember: Boolean) {
+    /** Jump to a page of a section (seek bar, 페이지 이동): one exact draw, laid out first when needed. */
+    override fun goToPage(section: Int, pageIndex: Int, remember: Boolean) {
         if (session == null) return
-        if (remember && curLayout != null) pushReturn(currentPosition())
+        val here = section == curSection && pageIndex == curPageIdx && !layoutStale()
+        if (remember && curLayout != null && !here) pushReturn(currentPosition())
         navigateTo(section, 0, pageIndex.coerceAtLeast(0), Nav.JUMP)
     }
 
@@ -929,7 +1123,9 @@ class ReaderActivity : Activity(), ReaderHost {
         applyReaderColors(settings)
         val b = bookRef
         if (s == null || b == null) return
-        if (LayoutKeys.parseChanged(old, settings, b.encoding)) {
+        // Only the options this book's parser reads: a TXT option changed while reading an EPUB (or the EPUB
+        // publisher styles in a TXT) is saved for the other books but never re-opens this one.
+        if (LayoutKeys.parseChanged(old, settings, s.document.format, b.encoding)) {
             reopenDocument(settings)
             return
         }
@@ -971,10 +1167,12 @@ class ReaderActivity : Activity(), ReaderHost {
                 val s = BookSession(this@ReaderActivity, b, d, newSettings)
                 fresh = s
                 s.listener = sessionListener
-                s.setViewport(page.width, page.height)
+                val (vw, vh) = pageTargetSize()
+                s.setViewport(vw, vh)
                 val target = if (s.sectionCount == oldCount) pos else s.counts.locateFraction(ratio)
                 val sec = target.section.coerceIn(0, s.sectionCount - 1)
                 val l = s.layout(sec)
+                if (l != null) preloadImages(s, l, l.pageForOffset(target.offset.coerceIn(0, l.content.length)))
                 if (session !== old) return@launch
                 if (l == null) {
                     // Keep reading the old parse rather than showing nothing.
@@ -986,12 +1184,18 @@ class ReaderActivity : Activity(), ReaderHost {
                 old.close()
                 safely { tts?.stop() }
                 safely { selection?.clear() }
+                // The search-results bar holds hits in the old parse's coordinates (the settings popup that started
+                // this re-open stays open: only the bar goes).
+                safely { ReaderPanels.closeSearchBar(this@ReaderActivity) }
                 ownerHighlights.clear()
                 returnStack.clear()
                 chip.visibility = View.GONE
                 lastChapterIdx = Int.MIN_VALUE
                 val off = target.offset.coerceIn(0, l.content.length)
-                if (s.setViewport(page.width, page.height)) {
+                // Positions saved from now on are in the new parse's coordinates.
+                writeTextPosition(b, s, DocPosition(sec, off))
+                val (nw, nh) = pageTargetSize()
+                if (s.setViewport(nw, nh)) {
                     // The view was resized while this session was being built (size changes went to the old
                     // one): lay the target out again for the current size instead of showing a stale layout.
                     anchor = DocPosition(sec, off)
@@ -1021,6 +1225,7 @@ class ReaderActivity : Activity(), ReaderHost {
     override fun setChromeVisible(visible: Boolean) {
         val v = visible && session != null && curLayout != null
         chromeVisible = v
+        pinPending = false
         chrome.setVisible(v)
         chrome.setPinned(app.pinChrome)
         if (v) {
@@ -1031,37 +1236,64 @@ class ReaderActivity : Activity(), ReaderHost {
         applyPinnedArea()
     }
 
+    /** "메뉴 고정" area wanted: the pinned bars are shown, or about to be shown for the book being opened. */
+    private fun pinnedArea(): Boolean = app.pinChrome && (chromeVisible || pinPending)
+
     /**
-     * With "메뉴 고정" the page area shrinks to the space between the bars so no text hides under them
-     * (the resulting size change re-lays out through onViewSizeChanged, keeping the position).
+     * The only owner of the page's top/bottom margins: the system-bar insets, or with "메뉴 고정" (while the bars are
+     * shown) the space the bars take, so no text hides under them. A size change re-lays out through
+     * onViewSizeChanged, keeping the position; showing / hiding unpinned chrome never changes the page size.
      */
     private fun applyPinnedArea() {
         val lp = page.layoutParams as? FrameLayout.LayoutParams ?: return
-        val pinned = app.pinChrome && chromeVisible
-        if (!pinned) {
-            if (lp.topMargin != 0 || lp.bottomMargin != 0) {
-                lp.topMargin = 0
-                lp.bottomMargin = 0
-                page.layoutParams = lp
-            }
-            return
+        var t = insets[1]
+        var b = insets[3]
+        if (pinnedArea()) {
+            // The bars pad themselves by the insets; max() covers bars that can't be measured yet.
+            val h = chromeBarHeights()
+            t = maxOf(t, h[0])
+            b = maxOf(b, h[1])
         }
-        chrome.top.post {
-            if (!(app.pinChrome && chromeVisible)) return@post
-            val t = chrome.top.height
-            val b = chrome.bottom.height
-            if (lp.topMargin != t || lp.bottomMargin != b) {
-                lp.topMargin = t
-                lp.bottomMargin = b
-                page.layoutParams = lp
-            }
+        if (lp.topMargin != t || lp.bottomMargin != b) {
+            lp.topMargin = t
+            lp.bottomMargin = b
+            page.layoutParams = lp
         }
+    }
+
+    /** Heights of the top / bottom chrome bars; measured now when they are hidden or not laid out yet. */
+    private fun chromeBarHeights(): IntArray {
+        val top = chrome.top
+        val bottom = chrome.bottom
+        fun laidOut(v: View) = v.visibility == View.VISIBLE && !v.isLayoutRequested && v.height > 0
+        if (laidOut(top) && laidOut(bottom)) return intArrayOf(top.height, bottom.height)
+        val w = root.width
+        if (w <= 0) return intArrayOf(top.height, bottom.height)
+        val ws = View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY)
+        val hs = if (root.height > 0) {
+            View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.AT_MOST)
+        } else {
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        }
+        top.measure(ws, hs)
+        bottom.measure(ws, hs)
+        return intArrayOf(top.measuredHeight, bottom.measuredHeight)
+    }
+
+    /** Size the page view gets at the next layout (its margins may have changed since the last one). */
+    private fun pageTargetSize(): Pair<Int, Int> {
+        val lp = page.layoutParams as? FrameLayout.LayoutParams
+        val w = root.width
+        val h = root.height
+        if (lp == null || w <= 0 || h <= 0) return page.width to page.height
+        val pw = w - root.paddingLeft - root.paddingRight - lp.leftMargin - lp.rightMargin
+        val ph = h - root.paddingTop - root.paddingBottom - lp.topMargin - lp.bottomMargin
+        return if (pw > 0 && ph > 0) pw to ph else page.width to page.height
     }
 
     private fun togglePin() {
         val on = !app.pinChrome
-        Settings.saveApp(app.copy(pinChrome = on))
-        app = Settings.app
+        saveApp(app.copy(pinChrome = on))
         chrome.setPinned(on)
         if (on && !chromeVisible) setChromeVisible(true) else applyPinnedArea()
     }
@@ -1274,7 +1506,9 @@ class ReaderActivity : Activity(), ReaderHost {
         // While listening to TTS the volume keys control the speech volume.
         if (!learned && KeyMap.isVolumeKey(code) && ttsSpeaking()) return super.dispatchKeyEvent(event)
         if (event.action == KeyEvent.ACTION_DOWN) {
-            if (!repeatFilter.accept(event.repeatCount, event.eventTime)) return true
+            // Learned keys (vendor function / fingerprint keys) bounce: one touch must turn one page.
+            val filter = if (learned) learnedRepeatFilter else repeatFilter
+            if (!filter.accept(event.repeatCount, event.eventTime)) return true
             keeper.poke()
             when (action) {
                 KeyAction.NEXT -> userTurn(true)
@@ -1292,6 +1526,8 @@ class ReaderActivity : Activity(), ReaderHost {
         when {
             safely { selection?.isActive } == true -> safely { selection?.clear() }
             ttsSpeaking() -> safely { tts?.stop() }
+            // The search-results bar goes first; the next BACK leaves the book.
+            safely { ReaderPanels.closeSearchBar(this) } == true -> {}
             chromeVisible -> setChromeVisible(false)
             else -> {
                 @Suppress("DEPRECATION")
@@ -1425,8 +1661,9 @@ class ReaderActivity : Activity(), ReaderHost {
         if (chromeVisible) bindChrome()
     }
 
+    /** Saves [a] (built from the live [app]); the caller has already applied its own change to the views. */
     internal fun saveApp(a: AppSettings) {
-        app = a
+        appliedApp = a
         Settings.saveApp(a)
     }
 
@@ -1464,9 +1701,10 @@ class ReaderActivity : Activity(), ReaderHost {
         applySettings(s.settings.copy(invert = !s.settings.invert))
     }
 
+    /** Full refresh of the whole reader window (page, chrome, overlays), not just the page view. */
     internal fun refreshScreen() {
         cadence.reset()
-        safely { Eink.fullRefresh(page) }
+        safely { Eink.fullRefresh(root) }
     }
 
     /**
@@ -1523,17 +1761,34 @@ class ReaderActivity : Activity(), ReaderHost {
     private fun updateChipPosition() {
         if (!::chip.isInitialized) return
         val lp = chip.layoutParams as FrameLayout.LayoutParams
-        val bottom = if (chromeVisible) {
+        var bottom = if (chromeVisible) {
             (chrome.bottomHeight.takeIf { it > 0 } ?: dp(120)) + dp(8)
         } else {
             insets[3] + dp(6)
         }
+        // Above the extras' bottom bars (search results, TTS), which would otherwise cover it and take its taps.
+        val bars = overlayBarsHeight()
+        if (bars > 0) bottom = maxOf(bottom, bars + dp(6))
         val left = insets[0] + dp(8)
         if (lp.bottomMargin != bottom || lp.leftMargin != left) {
             lp.bottomMargin = bottom
             lp.leftMargin = left
             chip.layoutParams = lp
         }
+    }
+
+    /** Height of the full-width bottom bars the extras show over the page (0 when none is shown). */
+    private fun overlayBarsHeight(): Int {
+        if (!::root.isInitialized) return 0
+        var h = 0
+        for (i in 0 until root.childCount) {
+            val v = root.getChildAt(i)
+            if (v.visibility != View.VISIBLE || isOwnView(v)) continue
+            val lp = v.layoutParams as? FrameLayout.LayoutParams ?: continue
+            if (lp.width != MATCH_PARENT || (lp.gravity and Gravity.VERTICAL_GRAVITY_MASK) != Gravity.BOTTOM) continue
+            h = maxOf(h, v.height + lp.bottomMargin)
+        }
+        return h
     }
 
     // ================================================================== auto page turn, refresh
@@ -1582,13 +1837,40 @@ class ReaderActivity : Activity(), ReaderHost {
         handler.postDelayed(saveRunnable, SAVE_DELAY_MS)
     }
 
-    private fun savePositionNow() {
+    /**
+     * Saves the position to the library. [persistText] (pause, close) also records which parse the coordinates
+     * belong to (TXT), so a later open under other parse options can find the place again ([TextPositions]).
+     */
+    private fun savePositionNow(persistText: Boolean = false) {
         handler.removeCallbacks(saveRunnable)
         val b = bookRef ?: return
-        if (curLayout == null || session == null) return
+        val s = session ?: return
+        if (curLayout == null) return
         val pos = anchor
         val prog = progress()
         ReaderIo.launch { Library.savePosition(b.id, pos.section, pos.offset, prog) }
+        if (persistText) writeTextPosition(b, s, pos)
+    }
+
+    /** (signature|fraction) recorded for [bookId], or null (IO thread safe). */
+    private fun readTextPosition(bookId: Long): String? = try {
+        textPosPrefs.getString("b$bookId", null)
+    } catch (t: Throwable) {
+        null
+    }
+
+    /** Records the parse signature of [s] and the char fraction of [pos] for [b] (TXT only; no identical writes). */
+    private fun writeTextPosition(b: Book, s: BookSession, pos: DocPosition) {
+        try {
+            val sig = LayoutKeys.textSignature(s.settings, s.document.format, b.encoding) ?: return
+            val key = "b${b.id}"
+            val value = TextPositions.encode(sig, s.counts.charProgress(pos.section, pos.offset))
+            if (lastTextPos == key to value) return
+            lastTextPos = key to value
+            textPosPrefs.edit().putString(key, value).apply()
+        } catch (t: Throwable) {
+            Log.w(TAG, "text position save failed", t)
+        }
     }
 
     private fun flushReadingTime() {

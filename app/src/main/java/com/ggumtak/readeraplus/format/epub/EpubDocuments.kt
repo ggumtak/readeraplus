@@ -9,10 +9,38 @@ import java.io.File
 /** EPUB entry points (see docs/ARCHITECTURE.md "format/epub"). Blocking: call off the main thread. */
 object EpubDocuments {
     /**
-     * Opens an EPUB (container + OPF only; TOC, sections and cover load lazily).
+     * Opens an EPUB: container, OPF and TOC, plus a text scan of any spine item large enough to be split into
+     * several sections; content documents and the cover load lazily.
      * @throws DocumentException when the file is not a readable EPUB.
      */
     fun open(file: File, options: ParseOptions): BookDocument = EpubBook.open(file, options)
+
+    /**
+     * Cover image bytes for thumbnails, or null when the book has none: container → OPF → cover lookup only,
+     * without the TOC and section scan of [open]. Finds the same cover as `open(file, …).coverImage()`.
+     * @throws DocumentException when the file is not a readable EPUB (or is DRM-protected, as [open]).
+     */
+    fun coverImage(file: File): ByteArray? {
+        EpubZip.open(file).use { zip ->
+            try {
+                checkDrm(zip)
+                val pkg = loadPackage(zip) ?: fallbackPackage(zip)
+                val spine = EpubBook.selectSpine(zip, pkg)
+                val path = try {
+                    EpubBook.findCover(zip, pkg, spine.firstOrNull())
+                } catch (_: Exception) {
+                    null
+                } ?: return null
+                return zip.read(path)
+            } catch (e: DocumentException) {
+                throw e
+            } catch (e: Exception) {
+                throw DocumentException("EPUB을 해석할 수 없습니다: ${file.name}", e)
+            } catch (e: StackOverflowError) {
+                throw DocumentException("EPUB을 해석할 수 없습니다: ${file.name}", e)
+            }
+        }
+    }
 
     /**
      * Library metadata from container.xml + OPF. A zip without a package document yields the file name as title.

@@ -81,4 +81,21 @@ object UriPaths {
         val dot = name.lastIndexOf('.')
         return if (dot > 0) "${name.substring(0, dot)} ($n)${name.substring(dot)}" else "$name ($n)"
     }
+
+    /**
+     * Where a copy of a [size]-byte file called [safe] goes in a folder: `(name, reuse)`. An earlier copy among the
+     * first [maxReuse] numbered names is reused only when [size] is known (> 0) and equal; otherwise the first free
+     * numbered name is returned, so an existing file (another book the library, its position and bookmarks point
+     * at) is never overwritten. [lengthOf] is the length of the file of that name, -1 for a non-file entry, or null
+     * when the name is free.
+     */
+    fun copyTarget(safe: String, size: Long, maxReuse: Int = 50, lengthOf: (String) -> Long?): Pair<String, Boolean> {
+        var n = 1
+        while (true) {
+            val name = numberedName(safe, n)
+            val len = lengthOf(name) ?: return name to false
+            if (size > 0 && n <= maxReuse && len == size) return name to true
+            n++
+        }
+    }
 }

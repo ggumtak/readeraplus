@@ -223,6 +223,22 @@ internal object PageLabel {
         return ans
     }
 
+    /** Page [index] (0-based) of [section], which has [pagesInSection] pages (≥ 1). */
+    class Target(val section: Int, val index: Int, val pagesInSection: Int)
+
+    /**
+     * Where global page [page] (1-based) of a [total]-page book is, from the sections' first pages ([startPageOf],
+     * 1-based, non-decreasing). The index is clamped to the section.
+     */
+    inline fun pageTarget(sectionCount: Int, page: Int, total: Int, startPageOf: (Int) -> Int): Target {
+        if (sectionCount <= 0) return Target(0, 0, 1)
+        val sec = sectionForPage(sectionCount, page, startPageOf)
+        val first = startPageOf(sec).coerceAtLeast(1)
+        val next = if (sec + 1 < sectionCount) startPageOf(sec + 1) else total + 1
+        val pagesInSec = (next - first).coerceAtLeast(1)
+        return Target(sec, (page - first).coerceIn(0, pagesInSec - 1), pagesInSec)
+    }
+
     /** Global page (1..[total]) for [percent] (0..100) of a book of [total] pages: 0 → 1, 100 → last. */
     fun pageForPercent(percent: Float, total: Int): Int {
         if (total <= 1) return 1

@@ -20,10 +20,12 @@ import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
@@ -37,6 +39,7 @@ import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
+import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,6 +48,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.lang.ref.SoftReference
 import java.lang.ref.WeakReference
 
 /**
@@ -69,10 +73,29 @@ internal object SearchPanel {
 
     private var last: State? = null
 
+    /** Soft: section texts of the last searched document, reused by the next query (see [textsFor]). */
+    @Volatile private var textCache: SoftReference<SectionTextCache>? = null
+
     fun show(host: ReaderHost, initialQuery: String) {
-        val doc = host.document
-        val prev = last?.takeIf { it.bookId == host.book.id && it.docRef.get() === doc && doc != null }
+        // host.book throws while no book is open (between books): only read it once a document is there.
+        val doc = host.document ?: run {
+            host.activity.toast("문서를 여는 중입니다")
+            return
+        }
+        val prev = last?.takeIf { it.docRef.get() === doc && it.bookId == host.book.id }
         SearchDialog(host, prev, initialQuery.trim()).show()
+    }
+
+    /** Section-text cache for [doc], created (replacing another document's) when needed. Main thread. */
+    internal fun textsFor(doc: BookDocument): SectionTextCache {
+        val n = doc.sections.size
+        textCache?.get()?.takeIf { it.isFor(doc, n) }?.let { return it }
+        return SectionTextCache(doc, n).also { textCache = SoftReference(it) }
+    }
+
+    /** Releases the cached section texts (the book closed). */
+    internal fun dropTextCache() {
+        textCache = null
     }
 
     internal fun remember(state: State) {
@@ -104,6 +127,12 @@ internal object SearchPanel {
 
     fun jumpTo(host: ReaderHost, state: State, index: Int, remember: Boolean) {
         val h = state.hits.getOrNull(index) ?: return
+        val doc = host.document
+        if (doc == null || state.docRef.get() !== doc) {
+            // Results of a document that is no longer open (another book, or re-opened with new parse options).
+            SearchNavBar.remove()
+            return
+        }
         if (highlightedSection >= 0 && highlightedSection != h.section) {
             runCatching { host.setHighlights("search", highlightedSection, emptyList()) }
         }
@@ -129,6 +158,10 @@ internal object SearchPanel {
 /** The search screen (full-screen dialog). */
 private class SearchDialog(private val host: ReaderHost, private var state: SearchPanel.State?, private val initialQuery: String) {
     private val ctx = host.activity
+    /** Only constructed while a document is open (SearchPanel.show). */
+    private val doc0 = host.document
+    private val bookId = runCatching { host.book.id }.getOrDefault(-1L)
+    private lateinit var list: ListView
     private val scope = MainScope()
     private var job: Job? = null
     private lateinit var dialog: Dialog
@@ -181,7 +214,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         root.addView(status, lp())
         root.addView(ctx.hairline())
         val frame = FrameLayout(ctx)
-        val list = ctx.einkListView()
+        list = ctx.einkListView()
         list.adapter = adapter
         list.setOnItemClickListener { _, _, position, _ ->
             val st = state ?: return@setOnItemClickListener
@@ -202,6 +235,8 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
             state?.let { SearchPanel.remember(it) }
         }
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        // While typing, only the volume keys page the results (a learned key may be an ordinary text key).
+        dialog.pageKeysScroll({ list }) { ev -> edit.isFocused && !KeyMap.isVolumeKey(ev.keyCode) }
 
         val st = state
         when {
@@ -227,6 +262,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
                 updateEmpty()
             }
         }
+        PanelRegistry.dialog(ctx, dialog)
     }
 
     private fun startSearch(raw: String) {
@@ -234,13 +270,14 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         if (q.isEmpty()) return
         hideKeyboard()
         val doc = host.document
-        if (doc == null) {
+        if (doc == null || doc !== doc0) {
+            // No document, or another one than this dialog was opened for (the book changed underneath).
             status.text = "문서를 여는 중입니다. 잠시 후 다시 검색하세요."
             return
         }
         job?.cancel()
         SearchPanel.clearHighlight(host)
-        val st = SearchPanel.State(host.book.id, doc, q)
+        val st = SearchPanel.State(bookId, doc, q)
         state = st
         SearchPanel.remember(st)
         adapter.notifyDataSetChanged()
@@ -252,6 +289,8 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         val doc = st.docRef.get() ?: return
         val total = doc.sections.size
         val q = st.query
+        // Strong while this scan runs; between queries only the (soft) SearchPanel cache holds the texts.
+        val texts = SearchPanel.textsFor(doc)
         renderStatus()
         updateEmpty()
         job = scope.launch {
@@ -262,7 +301,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
                 var s = st.scanned
                 while (s < total && count < SearchPanel.MAX_RESULTS) {
                     ensureActive()
-                    val text = runCatching { doc.loadSection(s).text }.getOrNull()
+                    val text = texts.text(s) { i -> runCatching { doc.loadSection(i).text }.getOrNull() }
                     if (text != null) {
                         TextSearch.scan(text, q) { off ->
                             batch.add(SearchPanel.Hit(s, off, off + q.length, SearchPanel.buildSnippet(text, off, off + q.length)))
@@ -368,6 +407,7 @@ internal object SearchNavBar {
         val parent = Overlay.parentOf(host) ?: return
         val ctx = host.activity
         remove()
+        if (index !in state.hits.indices) return
         val row = Overlay.bar(ctx)
         row.addView(ctx.flatIcon(R.drawable.ic_close, "검색 닫기") {
             SearchPanel.clearHighlight(host)
@@ -394,6 +434,12 @@ internal object SearchNavBar {
     }
 
     fun isShown(): Boolean = barRef?.get()?.parent != null
+
+    /** A bar is shown over [host]'s page. */
+    fun isShown(host: ReaderHost): Boolean {
+        val bar = barRef?.get() ?: return false
+        return bar.parent != null && bar.context === runCatching { host.activity }.getOrNull()
+    }
 
     fun remove() {
         barRef?.get()?.let { (it.parent as? ViewGroup)?.removeView(it) }

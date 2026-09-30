@@ -85,12 +85,19 @@ class TxtChaptersTest {
     fun specialsAlwaysJoinTheBestRule() {
         val p = TxtTestUtil.parse(book(listOf("프롤로그", "제1화 시작", "제2화 전개", "제3화 결말", "외전 1화", "에필로그", "작가의 말")))
         assertEquals(listOf("프롤로그", "제1화 시작", "제2화 전개", "제3화 결말", "외전 1화", "에필로그", "작가의 말"), titles(p))
-        // the text before the first chapter is its own untitled section
+        // a short text before the first chapter starts the first chapter's section (no nearly empty first page)
         val q = TxtTestUtil.parse(book(listOf("1화", "2화"), preface = "책 제목\n지은이"))
-        assertNull(q.titles[0])
-        assertEquals(0, q.flags[0] and TxtIndex.CHAPTER)
-        assertEquals("책 제목\n지은이", q.buildSection(0, true).text)
+        assertEquals("1화", q.titles[0])
+        assertEquals(2, q.sectionCount)
+        assertTrue(q.buildSection(0, true).text.startsWith("책 제목\n지은이\n1화\n"))
         assertEquals(listOf("1화", "2화"), titles(q))
+        // a longer one is its own untitled section
+        val long = TxtTestUtil.body(Random(4), TxtParser.PREFACE_MERGE_CHARS, "\n")
+        val q2 = TxtTestUtil.parse(book(listOf("1화", "2화"), preface = long))
+        assertNull(q2.titles[0])
+        assertEquals(0, q2.flags[0] and TxtIndex.CHAPTER)
+        assertEquals(long, q2.buildSection(0, true).text)
+        assertEquals(listOf("1화", "2화"), titles(q2))
     }
 
     @Test

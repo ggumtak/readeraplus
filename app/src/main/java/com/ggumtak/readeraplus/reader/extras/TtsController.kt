@@ -732,10 +732,10 @@ class TtsController(private val host: ReaderHost) {
         box.addView(ctx.row("TTS 엔진 설정", "시스템 TTS 엔진 · 음성 데이터 설치") {
             TextActions.start(ctx, Intent("com.android.settings.TTS_SETTINGS"))
         }, lp())
-        ctx.alert().setTitle("TTS 설정")
+        PanelRegistry.dialog(ctx, ctx.alert().setTitle("TTS 설정")
             .setView(ctx.einkScroll(box))
             .setPositiveButton("닫기", null)
-            .showNoAnim()
+            .showNoAnim())
     }
 
     private fun paramsChanged() {

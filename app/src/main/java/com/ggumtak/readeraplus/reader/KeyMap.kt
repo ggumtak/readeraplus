@@ -56,16 +56,26 @@ object KeyMap {
 
 /**
  * Drops key auto-repeat that arrives faster than [minIntervalMs] after the last accepted press, so holding a
- * key pages at a readable pace on e-ink. First presses (repeatCount == 0) are always accepted.
+ * key pages at a readable pace on e-ink. First presses (repeatCount == 0) are always accepted unless
+ * [throttleFreshPresses]: then every press closer than [minIntervalMs] to the last accepted one is dropped too
+ * (for learned keys such as a fingerprint / function key that fires several separate presses per touch).
  */
-class RepeatFilter(private val minIntervalMs: Long = 150) {
+class RepeatFilter(private val minIntervalMs: Long = 150, private val throttleFreshPresses: Boolean = false) {
     private var lastAccepted = Long.MIN_VALUE / 2
 
     fun accept(repeatCount: Int, timeMs: Long): Boolean {
-        if (repeatCount == 0 || timeMs - lastAccepted >= minIntervalMs) {
+        val fresh = repeatCount == 0 && !throttleFreshPresses
+        if (fresh || timeMs - lastAccepted >= minIntervalMs) {
             lastAccepted = timeMs
             return true
         }
         return false
+    }
+
+    companion object {
+        /** Built-in keys: auto-repeat paced, every fresh press counts. */
+        const val NORMAL_MS = 150L
+        /** Learned page keys: vendor function / fingerprint keys bounce, so one touch must turn one page. */
+        const val LEARNED_MS = 300L
     }
 }

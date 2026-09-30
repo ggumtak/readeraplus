@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- API 30+: ReaderWindow uses WindowInsetsController, which keeps the theme's light navigation-bar appearance. -->
+    <color name="reader_nav_bar">#FFFFFFFF</color>
+    <bool name="reader_light_nav_bar">true</bool>
+</resources>

@@ -23,6 +23,43 @@ internal class IntList(capacity: Int = 16) {
     fun toArray(): IntArray = a.copyOf(size)
 }
 
+/**
+ * Section texts of one document, kept between in-book searches so that the next query does not re-load every
+ * section (TXT: re-read + re-decode + paragraph rebuild; EPUB: full XHTML/CSS conversion) only to read its text.
+ * At most [maxChars] chars are kept (the rest is loaded on every scan). [owner] (the document) is held weakly.
+ * Thread-safe: a cancelled scan may still be finishing while the next one starts.
+ */
+internal class SectionTextCache(owner: Any, val size: Int, private val maxChars: Long = DEFAULT_MAX_CHARS) {
+    private val ownerRef = java.lang.ref.WeakReference(owner)
+    private val texts = arrayOfNulls<String>(size)
+    private var chars = 0L
+
+    fun isFor(owner: Any, size: Int): Boolean = ownerRef.get() === owner && this.size == size
+
+    /** Text of section [index]: cached, else [load]ed (null = failed, not cached) and cached while under the cap. */
+    fun text(index: Int, load: (Int) -> String?): String? {
+        if (index !in 0 until size) return null
+        synchronized(this) { texts[index]?.let { return it } }
+        val t = load(index) ?: return null
+        synchronized(this) {
+            val prev = texts[index]
+            if (prev != null) return prev
+            if (chars + t.length <= maxChars) {
+                texts[index] = t
+                chars += t.length
+            }
+        }
+        return t
+    }
+
+    val cachedChars: Long get() = synchronized(this) { chars }
+
+    companion object {
+        /** About 16 MB of UTF-16: a 15 MB CP949 web novel fits entirely. */
+        const val DEFAULT_MAX_CHARS = 8_000_000L
+    }
+}
+
 /** Case-insensitive (Latin) substring search and result snippets. */
 internal object TextSearch {
 

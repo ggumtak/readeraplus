@@ -35,10 +35,11 @@
         android:supportsRtl="false"
         android:theme="@style/AppTheme">
 
+        <!-- Standard launch mode on purpose: a singleTask launcher root would clear the task (finishing an open
+             ReaderActivity, its TTS and dialogs) whenever the app is relaunched from its home-screen icon. -->
         <activity
             android:name=".ui.library.LibraryActivity"
-            android:exported="true"
-            android:launchMode="singleTask">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

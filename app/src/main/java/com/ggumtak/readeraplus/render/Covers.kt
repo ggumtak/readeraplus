@@ -24,18 +24,25 @@ import com.ggumtak.readeraplus.engine.ParagraphBlock
 import com.ggumtak.readeraplus.engine.SectionContent
 import com.ggumtak.readeraplus.engine.Typesetter
 import com.ggumtak.readeraplus.format.BookFormat
-import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.format.epub.EpubDocuments
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
-/** Library cover thumbnails: EPUB cover image or a rendered mini first page for TXT. Disk-cached. */
+/**
+ * Library cover thumbnails: EPUB cover image or a rendered mini first page for TXT. Disk-cached as
+ * `cacheDir/thumbs/<bookId>/<version>@<w>x<h>.png` (see [CoverKeys]): writing or invalidating a thumbnail only
+ * lists that book's own directory, however large the library.
+ */
 object Covers {
     private const val TAG = "Covers"
-    private const val DIR = "covers"
+    private const val DIR = "thumbs"
+    /** Flat `covers/<id>_<mtime>_<w>x<h>.png` cache of earlier builds (its key lacked the TXT encoding). */
+    private const val LEGACY_DIR = "covers"
+    private val legacyChecked = AtomicBoolean(false)
     private const val MAX_SIDE = 2048
     /** Lines of text that fit on a TXT mini page. */
     private const val MINI_LINES = 18
@@ -50,8 +57,10 @@ object Covers {
         val w = widthPx.coerceAtMost(MAX_SIDE)
         val h = heightPx.coerceAtMost(MAX_SIDE)
         return try {
-            val dir = File(context.cacheDir, DIR)
-            val cached = File(dir, "${book.id}_${book.modifiedAt}_${w}x$h.png")
+            dropLegacyCache(context)
+            val dir = File(File(context.cacheDir, DIR), book.id.toString())
+            val version = CoverKeys.version(book.modifiedAt, book.format == BookFormat.TXT, book.encoding)
+            val cached = File(dir, CoverKeys.fileName(version, w, h))
             if (cached.isFile) {
                 decodeCached(cached)?.let { return it }
                 cached.delete()
@@ -62,7 +71,7 @@ object Covers {
             // Placeholders for unreadable files are not cached: permission may be granted later. A readable file
             // whose cover/preview can't be produced (corrupt EPUB, binary TXT) caches its placeholder, so the
             // library doesn't re-parse it on every bind.
-            if (readable) save(dir, cached, bmp, book)
+            if (readable) save(dir, cached, bmp, version)
             bmp
         } catch (oom: OutOfMemoryError) {
             null
@@ -79,11 +88,20 @@ object Covers {
     /** Deletes every cached thumbnail of [bookId] (all sizes and file versions). */
     fun invalidate(context: Context, bookId: Long) {
         try {
-            val dir = File(context.cacheDir, DIR)
-            val prefix = "${bookId}_"
-            dir.listFiles()?.forEach { if (it.name.startsWith(prefix)) it.delete() }
+            File(File(context.cacheDir, DIR), bookId.toString()).deleteRecursively()
         } catch (t: Throwable) {
             Log.w(TAG, "invalidate failed", t)
+        }
+    }
+
+    /** Removes the cache directory of earlier builds once per process (a single `exists` check afterwards). */
+    private fun dropLegacyCache(context: Context) {
+        if (!legacyChecked.compareAndSet(false, true)) return
+        try {
+            val legacy = File(context.cacheDir, LEGACY_DIR)
+            if (legacy.exists()) legacy.deleteRecursively()
+        } catch (t: Throwable) {
+            Log.w(TAG, "legacy cover cache cleanup failed", t)
         }
     }
 
@@ -102,7 +120,8 @@ object Covers {
     private fun generate(context: Context, book: Book, file: File, w: Int, h: Int): Bitmap? = when (book.format) {
         BookFormat.EPUB -> {
             val bytes = try {
-                EpubDocuments.open(file, ParseOptions()).use { it.coverImage() }
+                // Cover-only lookup (container → OPF → cover): no TOC parse or section scan per thumbnail.
+                EpubDocuments.coverImage(file)
             } catch (t: Throwable) {
                 Log.w(TAG, "epub cover failed: ${file.name}", t)
                 null
@@ -118,16 +137,13 @@ object Covers {
         return BitmapFactory.decodeFile(f.path, o)
     }
 
-    private fun save(dir: File, target: File, bmp: Bitmap, book: Book) {
+    /** Writes [bmp] to [target] inside the book's own directory [dir]. */
+    private fun save(dir: File, target: File, bmp: Bitmap, version: String) {
         try {
             if (!dir.isDirectory && !dir.mkdirs()) return
-            // Drop thumbnails of older versions of this file (other sizes of the current version stay).
-            val stalePrefix = "${book.id}_"
-            val currentPrefix = "${book.id}_${book.modifiedAt}_"
-            dir.listFiles()?.forEach {
-                val n = it.name
-                if (n.startsWith(stalePrefix) && !n.startsWith(currentPrefix)) it.delete()
-            }
+            // Drop thumbnails of older versions of this book (other sizes of the current version stay). Only this
+            // book's directory is listed: a few entries, not the whole library.
+            dir.listFiles()?.forEach { if (!CoverKeys.isVersion(it.name, version)) it.delete() }
             val tmp = File(dir, target.name + ".tmp" + Thread.currentThread().id)
             FileOutputStream(tmp).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
             if (!tmp.renameTo(target)) tmp.delete()
@@ -295,6 +311,38 @@ object Covers {
             px / (if (dm.scaledDensity > 0f) dm.scaledDensity else 1f)
         }
         return if (sp.isFinite() && sp > 0f) sp else 4f
+    }
+}
+
+/**
+ * Disk-cache names of cover thumbnails (pure, unit-tested). A thumbnail belongs to a *version* of its book: the
+ * file's mtime, plus the forced encoding for TXT (the mini page is decoded with it, so a changed encoding —
+ * from the library, the reader or a restored backup — must never show the old decoding).
+ */
+internal object CoverKeys {
+    private const val SIZE_SEP = '@'
+    private const val ENCODING_SEP = '~'
+
+    fun version(modifiedAt: Long, txt: Boolean, encoding: String): String {
+        val tag = if (txt) encodingTag(encoding) else ""
+        return if (tag.isEmpty()) modifiedAt.toString() else "$modifiedAt$ENCODING_SEP$tag"
+    }
+
+    fun fileName(version: String, w: Int, h: Int): String = "$version$SIZE_SEP${w}x$h.png"
+
+    /** True for files of [version] (any size, including a temp file being written for it). */
+    fun isVersion(name: String, version: String): Boolean =
+        name.length > version.length && name.startsWith(version) && name[version.length] == SIZE_SEP
+
+    /** Case-insensitive charset name reduced to file-name-safe characters ("" = auto-detect). */
+    private fun encodingTag(encoding: String): String {
+        val e = encoding.trim()
+        if (e.isEmpty()) return ""
+        val sb = StringBuilder(e.length)
+        for (c in e.lowercase(Locale.ROOT)) {
+            sb.append(if (c in 'a'..'z' || c in '0'..'9' || c == '-' || c == '_' || c == '.' || c == '+') c else '-')
+        }
+        return sb.toString()
     }
 }
 

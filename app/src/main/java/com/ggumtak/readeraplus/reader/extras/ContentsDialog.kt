@@ -3,12 +3,12 @@ package com.ggumtak.readeraplus.reader.extras
 import android.app.Dialog
 import android.graphics.Color
 import android.graphics.Typeface
-import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.widget.AbsListView
 import android.widget.BaseAdapter
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -38,6 +38,7 @@ import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
@@ -47,6 +48,12 @@ import kotlinx.coroutines.withContext
 /** Full-screen 목차 · 북마크 · 인용문 dialog. */
 internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private val ctx = host.activity
+    /**
+     * The book / document this dialog was opened for (only while one is open). host.book throws between books, and
+     * after another book is opened a stale row must not act on it: see [stale].
+     */
+    private val book = host.book
+    private val doc0 = host.document
     private val scope = MainScope()
     private lateinit var dialog: Dialog
     private val body = FrameLayout(ctx)
@@ -62,7 +69,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         // toolbar
         val bar = ctx.horizontal { minimumHeight = ctx.dp(56); setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
         bar.addView(ctx.flatIcon(R.drawable.ic_arrow_back, "뒤로") { dialog.dismiss() })
-        bar.addView(ctx.label(host.book.title, 19f, bold = true, maxLines = 1).apply { setPadding(ctx.dp(12), 0, ctx.dp(8), 0) }, lp(0, WRAP_CONTENT, 1f))
+        bar.addView(ctx.label(book.title, 19f, bold = true, maxLines = 1).apply { setPadding(ctx.dp(12), 0, ctx.dp(8), 0) }, lp(0, WRAP_CONTENT, 1f))
         shareAll = ctx.flatIcon(R.drawable.ic_share, "인용문 모두 공유") { shareAllQuotes() }.apply { visibility = View.GONE }
         bar.addView(shareAll)
         root.addView(bar, lp())
@@ -90,11 +97,36 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         root.addView(body, lp(MATCH_PARENT, 0, 1f))
         dialog = ctx.fullScreenDialog(root)
         dialog.setOnDismissListener { scope.cancel() }
+        dialog.pageKeysScroll({ currentList() })
         select(tab)
         dialog.show()
+        PanelRegistry.dialog(ctx, dialog)
+    }
+
+    /** The list of the selected tab (bookmarks / quotes wrap theirs in a FrameLayout), or null while loading. */
+    private fun currentList(): ListView? {
+        val v = tabViews[tab] ?: return null
+        if (v is ListView) return v
+        val g = v as? ViewGroup ?: return null
+        for (i in 0 until g.childCount) (g.getChildAt(i) as? ListView)?.let { return it }
+        return null
+    }
+
+    /**
+     * The reader moved on (another book, no book, or this book's document re-opened): the rows no longer apply.
+     * Opened while the document was still loading ([doc0] == null), the bookmark and quote rows stay valid.
+     */
+    private fun stale(): Boolean {
+        val current = runCatching { host.book }.getOrNull() ?: return true
+        if (current.id != book.id) return true
+        return doc0 != null && host.document !== doc0
     }
 
     private fun select(i: Int) {
+        if (stale()) {
+            dialog.dismiss()
+            return
+        }
         tab = i
         for (k in 0..2) {
             val sel = k == i
@@ -114,7 +146,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
 
     private fun goAndClose(pos: DocPosition) {
         dialog.dismiss()
-        host.goTo(pos, remember = true)
+        if (!stale()) host.goTo(pos, remember = true)
     }
 
     // ------------------------------------------------------------------ 목차
@@ -150,9 +182,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 marker.visibility = if (cur) View.VISIBLE else View.INVISIBLE
                 title.text = e.title.ifBlank { "(제목 없음)" }
                 title.typeface = if (cur) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                val lbl = labels[position] ?: PageLabel.pageOnly(
-                    runCatching { host.pageLabel(DocPosition(secs[position], offs[position].coerceAtLeast(0))) }.getOrNull(),
-                ).also { if (offs[position] >= 0) labels[position] = it }
+                val lbl = labels[position] ?: tocPageLabel(secs[position], offs[position].coerceAtLeast(0))
+                    .also { if (offs[position] >= 0) labels[position] = it }
                 page.text = lbl
                 return row
             }
@@ -169,45 +200,81 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 }
             }
         }
-        if (current > 3) list.setSelection(current - 3)
+        val initialFirst = if (current > 3) current - 3 else 0
+        if (initialFirst > 0) list.setSelection(initialFirst)
 
-        // Resolve anchored entries progressively (EPUB), refreshing the list at most every 300 ms.
+        // Anchored entries (EPUB 'ch05.xhtml#toc_5') are resolved on demand, never all up front: resolving every
+        // entry converts almost every section of the book when page counts came from the cache (nothing converted
+        // yet). First the current section's entries (▶ marker) and the rows on screen, then whatever is scrolled
+        // into view; one list refresh per batch, and only when a page label or the marker actually changed.
         if (offs.any { it < 0 }) {
-            scope.launch {
-                var last = SystemClock.uptimeMillis()
-                val pending = ArrayList<IntArray>()
-                withContext(Dispatchers.Default) {
-                    for (i in 0 until n) {
-                        if (!isActive) break
-                        if (offs[i] >= 0) continue
-                        val p = runCatching { doc.resolveToc(toc[i]) }.getOrNull() ?: DocPosition(secs[i], 0)
-                        synchronized(pending) { pending.add(intArrayOf(i, p.section, p.offset)) }
-                        val now = SystemClock.uptimeMillis()
-                        if (now - last >= 300 || i == n - 1) {
-                            last = now
-                            withContext(Dispatchers.Main) { applyResolved(pending, secs, offs, labels) }
+            val requested = BooleanArray(n)
+            var resolving: Job? = null
+            lateinit var resolveVisible: Runnable
+            fun resolve(indices: IntArray) {
+                for (i in indices) requested[i] = true
+                resolving = scope.launch {
+                    val found = withContext(Dispatchers.Default) {
+                        val out = arrayOfNulls<DocPosition>(indices.size)
+                        for (k in indices.indices) {
+                            if (!isActive) break
+                            val i = indices[k]
+                            out[k] = runCatching { doc.resolveToc(toc[i]) }.getOrNull() ?: DocPosition(secs[i], 0)
+                        }
+                        out
+                    }
+                    var changed = false
+                    for (k in indices.indices) {
+                        val p = found[k] ?: continue
+                        val i = indices[k]
+                        val before = labels[i] ?: tocPageLabel(secs[i], 0)
+                        secs[i] = p.section
+                        offs[i] = p.offset
+                        labels[i] = null
+                        if (tocPageLabel(p.section, p.offset) != before) changed = true
+                    }
+                    val newCurrent = currentIndex(secs, offs, here)
+                    if (newCurrent != current) {
+                        current = newCurrent
+                        changed = true
+                        // Not scrolled by the user yet: keep the current chapter in view.
+                        if (newCurrent >= 0 && list.firstVisiblePosition == initialFirst) {
+                            val sel = if (newCurrent > 3) newCurrent - 3 else 0
+                            if (sel != initialFirst) list.setSelection(sel)
                         }
                     }
+                    if (changed) adapter.notifyDataSetChanged()
+                    resolving = null
+                    list.post(resolveVisible) // rows scrolled in meanwhile
                 }
-                applyResolved(pending, secs, offs, labels)
-                val newCurrent = currentIndex(secs, offs, here)
-                if (newCurrent != current) current = newCurrent
-                adapter.notifyDataSetChanged()
             }
+            resolveVisible = Runnable {
+                if (resolving != null || !scope.isActive) return@Runnable
+                val first = list.firstVisiblePosition
+                val last = if (list.childCount > 0) list.lastVisiblePosition else first + 20
+                val want = IntList(32)
+                for (i in (first - 2).coerceAtLeast(0)..(last + 6).coerceAtMost(n - 1)) {
+                    if (offs[i] < 0 && !requested[i]) want.add(i)
+                }
+                if (want.size > 0) resolve(want.toArray())
+            }
+            val first = IntList(32)
+            for (i in 0 until n) if (offs[i] < 0 && secs[i] == here.section) first.add(i)
+            for (i in initialFirst until minOf(n, initialFirst + 24)) if (offs[i] < 0 && secs[i] != here.section) first.add(i)
+            if (first.size > 0) resolve(first.toArray())
+            list.setOnScrollListener(object : AbsListView.OnScrollListener {
+                override fun onScrollStateChanged(view: AbsListView, scrollState: Int) {}
+                override fun onScroll(view: AbsListView, firstVisible: Int, visibleCount: Int, totalCount: Int) {
+                    list.removeCallbacks(resolveVisible)
+                    list.postDelayed(resolveVisible, 150)
+                }
+            })
         }
         return list
     }
 
-    private fun applyResolved(pending: ArrayList<IntArray>, secs: IntArray, offs: IntArray, labels: Array<String?>) {
-        val batch = synchronized(pending) { ArrayList(pending).also { pending.clear() } }
-        if (batch.isEmpty()) return
-        for (r in batch) {
-            secs[r[0]] = r[1]
-            offs[r[0]] = r[2]
-            labels[r[0]] = null
-        }
-        ((tabViews[0] as? ListView)?.adapter as? BaseAdapter)?.notifyDataSetChanged()
-    }
+    private fun tocPageLabel(section: Int, offset: Int): String =
+        PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull())
 
     private fun currentIndex(secs: IntArray, offs: IntArray, here: DocPosition): Int {
         var best = -1
@@ -232,7 +299,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private fun loadBookmarks(container: FrameLayout) {
         container.removeAllViews()
         container.addView(ctx.emptyMessage("불러오는 중…"))
-        val bookId = host.book.id
+        val bookId = book.id
         scope.launch {
             val list = withContext(Dispatchers.IO) { runCatching { Library.bookmarks(bookId) }.getOrDefault(emptyList()) }
                 .sortedWith(compareBy({ it.section }, { it.offset }))
@@ -269,7 +336,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     }
 
     private fun bookmarkMenu(anchor: View, b: Bookmark, container: FrameLayout) {
-        ctx.popupMenu(anchor, listOf(
+        if (stale()) return
+        trackedMenu(anchor, listOf(
             MenuItem("이동", R.drawable.ic_bookmark) { goAndClose(DocPosition(b.section, b.offset)) },
             MenuItem("메모 편집", R.drawable.ic_edit) {
                 ctx.multilinePrompt("북마크 메모", b.note, "메모", minLines = 3) { text ->
@@ -293,7 +361,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private fun loadQuotes(container: FrameLayout) {
         container.removeAllViews()
         container.addView(ctx.emptyMessage("불러오는 중…"))
-        val bookId = host.book.id
+        val bookId = book.id
         scope.launch {
             val loaded = withContext(Dispatchers.IO) { runCatching { Library.quotes(bookId) }.getOrNull() }
             if (loaded != null) QuoteCache.put(bookId, loaded)
@@ -332,9 +400,10 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     }
 
     private fun quoteMenu(anchor: View, q: Quote, container: FrameLayout) {
-        ctx.popupMenu(anchor, listOf(
+        if (stale()) return
+        trackedMenu(anchor, listOf(
             MenuItem("복사", R.drawable.ic_content_copy) { TextActions.copy(ctx, q.text) },
-            MenuItem("공유", R.drawable.ic_share) { TextActions.share(ctx, quoteShareText(q), host.book.title) },
+            MenuItem("공유", R.drawable.ic_share) { TextActions.share(ctx, quoteShareText(q), book.title) },
             MenuItem("메모", R.drawable.ic_edit) {
                 ctx.multilinePrompt("인용문 메모", q.note, "메모", minLines = 3) { text ->
                     scope.launch {
@@ -348,9 +417,9 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                     scope.launch {
                         val remaining = withContext(Dispatchers.IO) {
                             runCatching { Library.deleteQuote(q.id) }
-                            runCatching { Library.quotes(host.book.id) }.getOrNull()
+                            runCatching { Library.quotes(book.id) }.getOrNull()
                         }
-                        if (remaining != null) refreshQuoteHighlights(host, q.section, remaining)
+                        if (remaining != null && !stale()) refreshQuoteHighlights(host, q.section, remaining)
                         loadQuotes(container)
                     }
                 }
@@ -362,8 +431,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         val sb = StringBuilder()
         sb.append('“').append(q.text.trim()).append('”')
         if (q.note.isNotBlank()) sb.append("\n메모: ").append(q.note.trim())
-        sb.append("\n— ").append(host.book.title)
-        if (host.book.author.isNotBlank()) sb.append(", ").append(host.book.author)
+        sb.append("\n— ").append(book.title)
+        if (book.author.isNotBlank()) sb.append(", ").append(book.author)
         return sb.toString()
     }
 
@@ -373,8 +442,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             return
         }
         val sb = StringBuilder()
-        sb.append("《").append(host.book.title).append("》")
-        if (host.book.author.isNotBlank()) sb.append(" — ").append(host.book.author)
+        sb.append("《").append(book.title).append("》")
+        if (book.author.isNotBlank()) sb.append(" — ").append(book.author)
         sb.append("\n인용문 ").append(quotes.size).append("개\n")
         for (q in quotes) {
             sb.append("\n“").append(q.text.trim()).append("”\n")
@@ -383,7 +452,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         }
         // Keep well below the binder transaction limit.
         val text = if (sb.length > 200_000) sb.substring(0, 200_000) + "\n…" else sb.toString()
-        TextActions.share(ctx, text, host.book.title)
+        TextActions.share(ctx, text, book.title)
     }
 
     // ------------------------------------------------------------------ rows
@@ -396,6 +465,10 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         inner.addView(ctx.label("", 13f, color = Ink.GRAY).apply { tag = "meta"; setPadding(0, ctx.dp(6), 0, 0) }, lp())
         addView(inner, lp())
         addView(ctx.hairline())
+    }
+
+    private fun trackedMenu(anchor: View, items: List<MenuItem>) {
+        PanelRegistry.popup(ctx, ctx.popupMenu(anchor, items))
     }
 
     private fun pageOf(section: Int, offset: Int): String =

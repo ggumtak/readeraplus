@@ -58,6 +58,8 @@ import java.lang.ref.WeakReference
  */
 internal class ReadingSettingsPopup(private val host: ReaderHost, private val anchor: View) {
     private val ctx = host.activity
+    /** The open book (the popup is only shown while one is open; host.book throws between books). */
+    private val book = host.book
     private var cur: ReaderSettings = Settings.reader
     private val handler = Handler(Looper.getMainLooper())
     private var dirty = false
@@ -101,6 +103,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         popup = pw
         try {
             pw.showAtLocation(anchor.rootView, Gravity.TOP or Gravity.END, ctx.dp(6), y)
+            PanelRegistry.popup(ctx, pw)
         } catch (e: RuntimeException) {
             // BadTokenException / IllegalStateException: the reader window is going away.
             popup = null
@@ -156,7 +159,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         addPageTurning(root)
         addTypography(root)
         addPage(root)
-        val isTxt = host.book.format == BookFormat.TXT
+        val isTxt = book.format == BookFormat.TXT
         if (isTxt) {
             addTxt(root)
             addEpub(root)
@@ -176,7 +179,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         val app = Settings.app
         root.addView(dropdownCard("화면 터치 (페이지 넘김)", tapModeLabel(app.tapZoneMode)) { anchorView, value ->
             val mode = Settings.app.tapZoneMode
-            ctx.popupMenu(anchorView, TapZoneMode.entries.map { m ->
+            menu(anchorView, TapZoneMode.entries.map { m ->
                 MenuItem(tapModeLabel(m), checked = m == mode) {
                     Settings.saveApp(Settings.app.copy(tapZoneMode = m))
                     value.text = tapModeLabel(m)
@@ -220,7 +223,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             update(cur.copy(letterSpacingPm = it.toInt()), debounce = true)
         })
         root.addView(dropdownCard("글자 정렬", alignLabel(cur.align)) { a, value ->
-            ctx.popupMenu(a, listOf(Align.JUSTIFY, Align.LEFT).map { al ->
+            menu(a, listOf(Align.JUSTIFY, Align.LEFT).map { al ->
                 MenuItem(alignLabel(al), checked = al == cur.align) {
                     update(cur.copy(align = al))
                     value.text = alignLabel(al)
@@ -228,7 +231,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             }, widthDp = 260)
         })
         root.addView(dropdownCard("줄바꿈", breakLabel(cur.lineBreak)) { a, value ->
-            ctx.popupMenu(a, listOf(LineBreakMode.WORD, LineBreakMode.CHAR).map { m ->
+            menu(a, listOf(LineBreakMode.WORD, LineBreakMode.CHAR).map { m ->
                 MenuItem(breakLabel(m), checked = m == cur.lineBreak) {
                     update(cur.copy(lineBreak = m))
                     value.text = breakLabel(m)
@@ -284,17 +287,17 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
     private fun addTxt(root: LinearLayout) {
         groupHeader(root, "TXT 파일")
-        if (host.book.format == BookFormat.TXT) {
-            root.addView(dropdownCard("인코딩 (이 책)", encodingLabel(host.book.encoding)) { a, _ ->
+        if (book.format == BookFormat.TXT) {
+            root.addView(dropdownCard("인코딩 (이 책)", encodingLabel(book.encoding)) { a, _ ->
                 val options = listOf("") + TxtDocuments.ENCODINGS
-                ctx.popupMenu(a, options.map { enc ->
-                    MenuItem(encodingLabel(enc), checked = enc == host.book.encoding) { changeEncoding(enc) }
+                menu(a, options.map { enc ->
+                    MenuItem(encodingLabel(enc), checked = enc == book.encoding) { changeEncoding(enc) }
                 }, widthDp = 240)
             })
         }
         root.addView(dropdownCard("빈 줄 처리", blankLabel(cur.txtBlankLines)) { a, value ->
             val modes = listOf(ParseOptions.BLANK_AUTO, ParseOptions.BLANK_REMOVE_ALL, ParseOptions.BLANK_COLLAPSE, ParseOptions.BLANK_KEEP)
-            ctx.popupMenu(a, modes.map { m ->
+            menu(a, modes.map { m ->
                 MenuItem(blankLabel(m), checked = m == cur.txtBlankLines) {
                     update(cur.copy(txtBlankLines = m))
                     value.text = blankLabel(m)
@@ -305,7 +308,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             update(cur.copy(txtStripIndent = v))
         })
         root.addView(dropdownCard("끊어진 줄 합치기", joinLabel(cur.txtJoinWrappedLines)) { a, value ->
-            ctx.popupMenu(a, listOf(1, 2, 0).map { m ->
+            menu(a, listOf(1, 2, 0).map { m ->
                 MenuItem(joinLabel(m), checked = m == cur.txtJoinWrappedLines) {
                     update(cur.copy(txtJoinWrappedLines = m))
                     value.text = joinLabel(m)
@@ -497,9 +500,14 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     // ------------------------------------------------------------------ actions
 
     private fun changeEncoding(enc: String) {
-        if (enc == host.book.encoding) return
+        if (enc == book.encoding) return
+        // The reader moved on to another book (or none) underneath this popup.
+        if (runCatching { host.book.id }.getOrNull() != book.id) {
+            popup?.dismiss()
+            return
+        }
         flush()
-        val bookId = host.book.id
+        val bookId = book.id
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
                 runCatching { Library.setEncoding(bookId, enc) }.isSuccess.also { saved ->
@@ -516,6 +524,11 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             ctx.toast("인코딩: ${encodingLabel(enc)} — 다시 여는 중…")
             if (!ctx.isFinishing) ctx.recreate()
         }
+    }
+
+    /** Popup menus are tracked for [ReaderPanels.dismissAll] (they outlive this popup otherwise). */
+    private fun menu(anchor: View, items: List<MenuItem>, widthDp: Int) {
+        PanelRegistry.popup(ctx, ctx.popupMenu(anchor, items, widthDp))
     }
 
     private fun fontName(id: String): String = runCatching { FontManager.font(id)?.name }.getOrNull() ?: id

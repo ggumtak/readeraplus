@@ -26,6 +26,13 @@ internal class TxtIndex(
     val chars: IntArray,
     /** Chapter title for sections that start a chapter, else null. */
     val titles: Array<String?>,
+    /**
+     * [CHAPTER] sections: the heading's line index relative to the section's first line. 0 normally; > 0 when a
+     * short preface (text before the first chapter) was merged into the first chapter's section.
+     */
+    val headLine: IntArray = IntArray(byteStart.size),
+    /** [CHAPTER] sections: char offset of the heading paragraph in the section text (the TOC entry offset). */
+    val headChar: IntArray = IntArray(byteStart.size),
 ) {
     val size: Int get() = byteStart.size
 
@@ -44,8 +51,10 @@ internal class TxtIndex(
 /** Persists [TxtIndex] under `Documents.cacheDir/txtindex/<hash>.idx`. All failures are silent (cache only). */
 internal object TxtIndexStore {
     /** Bump whenever parsing output could change for the same input. */
-    const val VERSION = 2
+    const val VERSION = 3
     private const val MAGIC = 0x52505458 // "RPTX"
+    /** Fixed bytes per section record: byteStart, byteEnd, flags, chars, headLine, headChar, title marker. */
+    private const val SECTION_BYTES = 6 * 4 + 1
     private const val MAX_FILES = 300
     private const val KEEP_FILES = 200
 
@@ -119,7 +128,7 @@ internal object TxtIndexStore {
 
     internal fun encode(x: TxtIndex): ByteArray {
         var size = 4 * 4 + 8 + x.key.length * 2 + 4 + x.encoding.length * 2 + 4 * 6
-        for (i in 0 until x.size) size += 17 + (x.titles[i]?.let { 4 + it.length * 2 } ?: 0)
+        for (i in 0 until x.size) size += SECTION_BYTES + (x.titles[i]?.let { 4 + it.length * 2 } ?: 0)
         val out = ByteBuffer.allocate(size)
         out.putInt(MAGIC)
         out.putInt(VERSION)
@@ -137,6 +146,8 @@ internal object TxtIndexStore {
             out.putInt(x.byteEnd[i])
             out.putInt(x.flags[i])
             out.putInt(x.chars[i])
+            out.putInt(x.headLine[i])
+            out.putInt(x.headChar[i])
             val t = x.titles[i]
             out.put(if (t != null) 1 else 0)
             if (t != null) putStr(out, t)
@@ -167,11 +178,13 @@ internal object TxtIndexStore {
         val stopIndent = inp.get().toInt() != 0
         val ignoreTerminal = inp.get().toInt() != 0
         val n = inp.getInt()
-        if (n < 1 || n > inp.remaining() / 17) return null
+        if (n < 1 || n > inp.remaining() / SECTION_BYTES) return null
         val bs = IntArray(n)
         val be = IntArray(n)
         val fl = IntArray(n)
         val ch = IntArray(n)
+        val hl = IntArray(n)
+        val hc = IntArray(n)
         val ti = arrayOfNulls<String>(n)
         var prevEnd = 0
         for (i in 0 until n) {
@@ -179,12 +192,18 @@ internal object TxtIndexStore {
             be[i] = inp.getInt()
             fl[i] = inp.getInt()
             ch[i] = inp.getInt()
+            hl[i] = inp.getInt()
+            hc[i] = inp.getInt()
             if (inp.get().toInt() != 0) ti[i] = getStr(inp) ?: return null
             if (bs[i] < prevEnd || be[i] < bs[i] || be[i] > fileLength || ch[i] < 0) return null
+            if (hl[i] < 0 || hc[i] < 0 || hc[i] > ch[i]) return null
             prevEnd = be[i]
         }
         if (inp.getInt() != MAGIC) return null
-        return TxtIndex(key, encoding, newline, TxtDecisions(blankMode, sceneRun, joinMin, stopIndent, ignoreTerminal), bs, be, fl, ch, ti)
+        return TxtIndex(
+            key, encoding, newline, TxtDecisions(blankMode, sceneRun, joinMin, stopIndent, ignoreTerminal),
+            bs, be, fl, ch, ti, hl, hc,
+        )
     }
 
     private fun putStr(out: ByteBuffer, s: String) {

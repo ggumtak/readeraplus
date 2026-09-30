@@ -10,20 +10,54 @@
         <item name="android:colorControlActivated">@android:color/black</item>
         <item name="android:colorControlHighlight">@android:color/transparent</item>
         <item name="android:textColorPrimary">@android:color/black</item>
-        <item name="android:textColorSecondary">#FF555555</item>
+        <item name="android:textColorSecondary">@color/ink_gray</item>
         <item name="android:statusBarColor">@android:color/white</item>
-        <item name="android:navigationBarColor">@android:color/white</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
+        <!-- White bar with dark buttons only where dark buttons exist (API 27+); black on API 26 (see colors.xml). -->
+        <item name="android:navigationBarColor">@color/nav_bar</item>
+        <item name="android:windowLightNavigationBar">@bool/light_nav_bar</item>
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:windowContentTransitions">false</item>
         <item name="android:windowActivityTransitions">false</item>
         <item name="android:overScrollMode">never</item>
-        <item name="android:fastScrollEnabled">true</item>
+        <!-- Static scrollbars: the platform ones fade in and out around every scroll (e-ink ghosting). No theme-wide
+             fast scroller either: it slides in/out on every scroll; lists that want one enable it always-visible. -->
+        <item name="android:fadeScrollbars">false</item>
     </style>
 
     <style name="ReaderTheme" parent="AppTheme">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowDisablePreview">true</item>
+        <!-- Before API 30 the reader drives the bars with systemUiVisibility flags that drop the light-navigation-bar
+             flag, so its bar stays black there (white from API 30, see colors.xml). -->
+        <item name="android:navigationBarColor">@color/reader_nav_bar</item>
+        <item name="android:windowLightNavigationBar">@bool/reader_light_nav_bar</item>
+    </style>
+
+    <!-- Full-screen dialogs (TOC, search, about): the app theme minus FLAG_FULLSCREEN, so the dialog does not flip
+         the system bars (fullScreenDialog() copies the owner's bar state instead). -->
+    <style name="InkScreenDialog" parent="AppTheme">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+
+    <!-- Alert dialogs: black accents (buttons, radio buttons, checkboxes), no press ripple, no dim behind, no
+         elevation shadow, no enter/exit animation; a 1px black border replaces the dim/shadow as the dialog edge. -->
+    <style name="InkDialog" parent="android:Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">@android:color/black</item>
+        <item name="android:colorControlNormal">@android:color/black</item>
+        <item name="android:colorControlActivated">@android:color/black</item>
+        <item name="android:colorControlHighlight">@android:color/transparent</item>
+        <item name="android:textColorPrimary">@android:color/black</item>
+        <item name="android:textColorSecondary">@color/ink_gray</item>
+        <item name="android:textColorAlertDialogListItem">@android:color/black</item>
+        <item name="android:windowBackground">@drawable/ink_dialog_bg</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowElevation">0dp</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:overScrollMode">never</item>
+        <item name="android:fadeScrollbars">false</item>
     </style>
 </resources>

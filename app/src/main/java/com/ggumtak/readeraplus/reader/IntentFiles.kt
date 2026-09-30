@@ -100,26 +100,19 @@ internal object IntentFiles {
         val safe = UriPaths.safeFileName(name ?: fallback, mime, "book_${System.currentTimeMillis()}")
         val dir = context.getExternalFilesDir("books") ?: File(context.filesDir, "books")
         if (!dir.isDirectory && !dir.mkdirs()) return null
-        // Reuse an earlier copy of the same size; never overwrite a same-named copy of a different book (the
-        // library, its position and bookmarks point at that file).
-        var target = File(dir, safe)
-        if (size > 0) {
-            for (n in 1..MAX_COPIES) {
-                val f = File(dir, UriPaths.numberedName(safe, n))
-                if (!f.exists()) {
-                    target = f
-                    break
-                }
-                if (f.isFile && f.length() == size) return f
-            }
-        }
+        // Reuse an earlier copy only when its size is known to match; never overwrite a same-named copy of a
+        // different book (the library, its position and bookmarks point at that file).
+        val (name0, reuse) = UriPaths.copyTarget(safe, size, MAX_COPIES) { lengthIn(dir, it) }
+        if (reuse) return File(dir, name0)
+        var target = File(dir, name0)
         val tmp = File(dir, "${target.name}.part")
         try {
             val input = context.contentResolver.openInputStream(uri) ?: return null
             input.use { ins -> FileOutputStream(tmp).use { out -> ins.copyTo(out, 64 * 1024) } }
-            if (target.exists()) target.delete()
+            // Another import may have taken the name while the stream was copied: rename() would replace it.
+            if (target.exists()) target = File(dir, UriPaths.copyTarget(safe, -1L, 0) { lengthIn(dir, it) }.first)
             if (!tmp.renameTo(target)) {
-                tmp.copyTo(target, overwrite = true)
+                tmp.copyTo(target, overwrite = false)
                 tmp.delete()
             }
             return target
@@ -127,6 +120,16 @@ internal object IntentFiles {
             Log.w(TAG, "copy failed for $uri", t)
             tmp.delete()
             return null
+        }
+    }
+
+    /** Length of [name] in [dir]: null when free, -1 when taken by something that is not a file. */
+    private fun lengthIn(dir: File, name: String): Long? {
+        val f = File(dir, name)
+        return when {
+            !f.exists() -> null
+            f.isFile -> f.length()
+            else -> -1L
         }
     }
 }

@@ -35,7 +35,8 @@ internal class TxtBook(
 
     override val toc: List<TocEntry> = buildList {
         for (i in 0 until index.size) {
-            if (index.isChapter(i)) add(TocEntry(index.titles[i] ?: "", 1, i, 0))
+            // offset > 0 when a short preface was merged in front of the chapter heading
+            if (index.isChapter(i)) add(TocEntry(index.titles[i] ?: "", 1, i, index.headChar[i]))
         }
     }
 

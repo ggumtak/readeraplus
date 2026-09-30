@@ -120,6 +120,15 @@ object FontManager {
         }
     }
 
+    /**
+     * Lowest weight that looks different from 400 in font [id] (100 for variable and system fonts, 400 for static
+     * files). The weight slider should start here; lighter settings render as 400 (see [FontMath.effectiveBase]).
+     */
+    fun minWeight(id: String): Int {
+        val info = resolve(id)
+        return FontMath.minWeight(info.variable, info.source == FontSource.SYSTEM)
+    }
+
     /** Extra synthetic stroke width (px) to emulate [weight] for a static font at [textSizePx]; 0 if not needed. */
     fun syntheticStroke(id: String, weight: Int, textSizePx: Float): Float {
         val info = resolve(id)

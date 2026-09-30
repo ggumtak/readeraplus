@@ -1,8 +1,10 @@
 package com.ggumtak.readeraplus.ui.kit
 
+import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -10,6 +12,8 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
+import android.os.Build
+import android.os.Looper
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
@@ -17,6 +21,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.Window
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -26,6 +33,7 @@ import android.widget.PopupWindow
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import com.ggumtak.readeraplus.R
 
 /**
  * Tiny programmatic UI kit. Everything is black on white (e-ink): no ripples, no animations,
@@ -47,7 +55,107 @@ fun Context.dp(v: Int): Int = dp(v.toFloat())
 fun Context.dpF(v: Float): Float = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics)
 fun Context.sp(v: Float): Float = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
 
-fun Context.toast(msg: CharSequence) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+/**
+ * Short status message. The system toast always fades in and out (an e-ink smear), so inside an activity that
+ * has the window focus the message is a static bordered box drawn in the activity's own window and hidden after
+ * [InkMessage.SHOW_MS] without animation. Falls back to a system toast when there is no activity, the activity is
+ * finishing (e.g. `toast(...); finish()`), or a dialog/popup has the focus and would cover the box.
+ */
+fun Context.toast(msg: CharSequence) {
+    val activity = activityOrNull()
+    val content = activity?.window?.peekDecorView()?.findViewById<View>(android.R.id.content) as? FrameLayout
+    if (activity == null || content == null) {
+        systemToast(msg)
+        return
+    }
+    // Judged one message later, on the main thread, so a toast right before finish() is still seen.
+    content.post {
+        if (activity.isFinishing || activity.isDestroyed || !activity.hasWindowFocus() || !content.isAttachedToWindow) {
+            systemToast(msg)
+        } else {
+            InkMessage.show(content, msg)
+        }
+    }
+}
+
+private fun Context.systemToast(msg: CharSequence) {
+    if (Looper.myLooper() == Looper.getMainLooper()) Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    else android.os.Handler(Looper.getMainLooper()).post { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
+}
+
+/** The activity behind this context (through ContextWrapper layers), or null. */
+private fun Context.activityOrNull(): Activity? {
+    var c: Context? = this
+    var depth = 0
+    while (c != null && depth++ < 16) {
+        if (c is Activity) return c
+        c = (c as? ContextWrapper)?.baseContext
+    }
+    return null
+}
+
+/**
+ * Bottom margin (px) for an in-window message: [base] above whatever part of the bottom system bars / keyboard
+ * ([barInsetBottom], from the window bottom) overlaps the content view, whose bottom edge is at
+ * [contentBottomInWindow] in a window [windowHeight] tall. Edge-to-edge windows (the reader) get the bar height
+ * added; windows that already fit the content above the bars get just [base].
+ */
+internal fun inkMessageBottomMargin(contentBottomInWindow: Int, windowHeight: Int, barInsetBottom: Int, base: Int): Int {
+    val overlap = contentBottomInWindow - (windowHeight - barInsetBottom.coerceAtLeast(0))
+    return base + overlap.coerceAtLeast(0)
+}
+
+/** The static toast replacement: one reusable box per activity content view. */
+private object InkMessage {
+    const val SHOW_MS = 2000L
+
+    private class Box(ctx: Context) : TextView(ctx) {
+        val hide = Runnable { visibility = View.GONE }
+    }
+
+    fun show(content: FrameLayout, msg: CharSequence) {
+        val ctx = content.context
+        var existing: Box? = null
+        for (i in 0 until content.childCount) {
+            val v = content.getChildAt(i)
+            if (v is Box) existing = v
+        }
+        val b = existing ?: Box(ctx).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(Ink.BLACK)
+            includeFontPadding = false
+            gravity = Gravity.CENTER
+            background = ctx.borderBox()
+            setPadding(ctx.dp(16), ctx.dp(12), ctx.dp(16), ctx.dp(12))
+            content.addView(this, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+        }
+        b.removeCallbacks(b.hide)
+        b.text = msg
+        if (content.width > 0) b.maxWidth = content.width - 2 * ctx.dp(24)
+        val loc = IntArray(2)
+        content.getLocationInWindow(loc)
+        val lp = b.layoutParams as FrameLayout.LayoutParams
+        val margin = inkMessageBottomMargin(loc[1] + content.height, content.rootView.height, bottomInset(content), ctx.dp(48))
+        if (lp.bottomMargin != margin) {
+            lp.bottomMargin = margin
+            b.layoutParams = lp
+        }
+        if (content.indexOfChild(b) != content.childCount - 1) b.bringToFront()
+        b.visibility = View.VISIBLE
+        b.announceForAccessibility(msg)
+        b.postDelayed(b.hide, SHOW_MS)
+    }
+
+    private fun bottomInset(v: View): Int {
+        val insets = v.rootWindowInsets ?: return 0
+        return if (Build.VERSION.SDK_INT >= 30) {
+            insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime()).bottom
+        } else {
+            @Suppress("DEPRECATION")
+            insets.systemWindowInsetBottom
+        }
+    }
+}
 
 /** Background with a flat gray pressed state and no ripple. */
 fun pressableBackground(base: Int = Color.TRANSPARENT): Drawable = StateListDrawable().apply {
@@ -220,21 +328,60 @@ fun Context.sliderRow(title: String, value: Int, max: Int, onChange: (Int) -> Un
 
 // ---------------------------------------------------------------- dialogs & popups
 
-/** Platform light alert dialog with window animations disabled. */
-fun Context.alert(): AlertDialog.Builder = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+/**
+ * Light alert dialog in the e-ink dialog theme ([R.style.InkDialog]): black accents, no ripple, no dim behind,
+ * no elevation shadow and no window animation (the theme's `@null` animation style is what disables it: a
+ * `setWindowAnimations(0)` before the decor exists means "use the theme's").
+ */
+fun Context.alert(): AlertDialog.Builder = AlertDialog.Builder(this, R.style.InkDialog)
 
 fun Dialog.noAnimation(): Dialog = apply { window?.setWindowAnimations(0) }
 
 /** Shows an alert built with [alert] without animation. */
 fun AlertDialog.Builder.showNoAnim(): AlertDialog = create().also { it.window?.setWindowAnimations(0); it.show() }
 
-/** A full-screen white dialog hosting [content] (used for TOC, search, settings sub-screens inside the reader). */
-fun Context.fullScreenDialog(content: View): Dialog =
-    Dialog(this, android.R.style.Theme_Material_Light_NoActionBar_Fullscreen).apply {
-        window?.setWindowAnimations(0)
-        window?.setBackgroundDrawable(ColorDrawable(Ink.WHITE))
+/**
+ * A full-screen white dialog hosting [content] (used for TOC, search, settings sub-screens inside the reader).
+ * A focused full-screen dialog takes over the system bars, so it asks for the same bar state as the activity
+ * below it: otherwise opening/closing it shows/hides a bar, which resizes (re-lays out) the reader behind it.
+ */
+fun Context.fullScreenDialog(content: View): Dialog {
+    val owner = activityOrNull()?.window
+    return Dialog(this, R.style.InkScreenDialog).apply {
         setContentView(content)
+        window?.let { w ->
+            w.setWindowAnimations(0)
+            w.setBackgroundDrawable(ColorDrawable(Ink.WHITE))
+            if (owner != null) matchSystemBars(w, owner)
+        }
     }
+}
+
+/** Makes [dialog] (not yet shown, decor installed) request [owner]'s current system-bar visibility and look. */
+private fun matchSystemBars(dialog: Window, owner: Window) {
+    dialog.statusBarColor = owner.statusBarColor
+    dialog.navigationBarColor = owner.navigationBarColor
+    val ownerDecor = owner.peekDecorView() ?: return
+    if (Build.VERSION.SDK_INT >= 30) {
+        val c = dialog.insetsController ?: return // pending controller before attach; replayed on show()
+        val oc = owner.insetsController
+        if (oc != null) {
+            val mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            c.setSystemBarsAppearance(oc.systemBarsAppearance and mask, mask)
+        }
+        val insets = ownerDecor.rootWindowInsets ?: return
+        var hide = 0
+        if (!insets.isVisible(WindowInsets.Type.statusBars())) hide = hide or WindowInsets.Type.statusBars()
+        if (!insets.isVisible(WindowInsets.Type.navigationBars())) hide = hide or WindowInsets.Type.navigationBars()
+        if (hide != 0) {
+            c.systemBarsBehavior = oc?.systemBarsBehavior ?: WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            c.hide(hide)
+        }
+    } else {
+        @Suppress("DEPRECATION")
+        dialog.decorView.systemUiVisibility = ownerDecor.systemUiVisibility
+    }
+}
 
 class MenuItem(val label: String, val iconRes: Int? = null, val checked: Boolean? = null, val enabled: Boolean = true, val onClick: () -> Unit)
 
@@ -292,13 +439,18 @@ fun Context.confirm(title: String, message: String, ok: String = "확인", onOk:
         .showNoAnim()
 }
 
-/** ListView without dividers/overscroll glow/fading edges, suited to e-ink. */
+/**
+ * ListView without dividers/overscroll glow/fading edges, suited to e-ink: a static (non-fading) scrollbar and
+ * no fast scroller (the auto-hiding one slides in/out on every scroll). A list that wants drag-to-seek sets
+ * `isFastScrollEnabled` and `isFastScrollAlwaysVisible` together, like the library.
+ */
 fun Context.einkListView(): ListView = ListView(this).apply {
     divider = null
     dividerHeight = 0
     overScrollMode = View.OVER_SCROLL_NEVER
     isVerticalFadingEdgeEnabled = false
     selector = ColorDrawable(Color.TRANSPARENT)
+    isFastScrollEnabled = false
     isScrollbarFadingEnabled = false
     cacheColorHint = Color.TRANSPARENT
 }

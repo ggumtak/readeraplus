@@ -168,6 +168,22 @@ internal object FontMath {
         return ((w + 25) / 50) * 50
     }
 
+    /** The regular weight: the lightest a static (non-variable) font file can show. */
+    const val REGULAR = 400
+
+    /**
+     * Lowest body weight that renders differently from [REGULAR]: variable fonts (`wght` axis) and the system
+     * faces can go lighter, a static file cannot (synthetic stroke only thickens).
+     */
+    fun minWeight(variable: Boolean, system: Boolean): Int = if (variable || system) 100 else REGULAR
+
+    /**
+     * Body weight actually drawn for a requested [weight]. Below [minWeight] a static font already looks exactly
+     * like 400, but bold runs (`base + 300`) would fall short of the bold file / stroke and lose their emphasis;
+     * clamping keeps "가늘게" on such a font a pure no-op.
+     */
+    fun effectiveBase(weight: Int, minWeight: Int): Int = weight.coerceIn(minWeight.coerceIn(100, 900), 900)
+
     /** Weight used for a run: bold adds 300, capped at 900. */
     fun runWeight(base: Int, bold: Boolean): Int {
         val b = base.coerceIn(100, 900)

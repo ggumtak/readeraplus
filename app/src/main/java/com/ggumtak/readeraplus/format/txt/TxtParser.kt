@@ -17,6 +17,12 @@ internal object TxtParser {
     const val CHAPTER_MAX_CHARS = 60_000
     /** Text without chapters is split once longer than this. */
     const val PLAIN_MAX_CHARS = 45_000
+    /**
+     * Text before the first chapter that takes fewer chars than this (paragraphs + separators: a title line, an
+     * author line, a short listing) is merged into the first chapter's section instead of getting a nearly
+     * empty page of its own. Far below the first chunk cut, so the heading always stays in the first chunk.
+     */
+    const val PREFACE_MERGE_CHARS = 400
 
     /** Result of the whole-file pass. Holds the decoded text: drop it after taking the index. */
     class Parsed internal constructor(
@@ -32,11 +38,15 @@ internal object TxtParser {
         val flags: IntArray,
         val chars: IntArray,
         val titles: Array<String?>,
+        /** See [TxtIndex.headLine]. */
+        val headLine: IntArray,
+        /** See [TxtIndex.headChar]. */
+        val headChar: IntArray,
     ) {
         val sectionCount: Int get() = byteStart.size
 
         fun toIndex(key: String): TxtIndex =
-            TxtIndex(key, decoder.name, newline, decisions, byteStart, byteEnd, flags, chars, titles)
+            TxtIndex(key, decoder.name, newline, decisions, byteStart, byteEnd, flags, chars, titles, headLine, headChar)
 
         /** Builds section [i] from the whole-file structures (reference for the byte-range path). */
         fun buildSection(i: Int, emphasizeHeadings: Boolean): SectionContent {
@@ -111,7 +121,11 @@ internal object TxtParser {
         if (firstHeading < 0) {
             sb.addChunks(0, paras.n, 0, null, chapter = false, maxUnsplit = PLAIN_MAX_CHARS)
         } else {
-            if (firstHeading > 0 && hasContent(paras, 0, firstHeading)) {
+            // A short preface starts the first chapter's section (which then begins at the file start);
+            // a longer one is its own untitled section.
+            val preface = if (firstHeading > 0) prefaceChars(paras, 0, firstHeading) else 0
+            val merge = preface in 1 until PREFACE_MERGE_CHARS
+            if (preface > 0 && !merge) {
                 sb.addChunks(0, firstHeading, 0, null, chapter = false, maxUnsplit = CHAPTER_MAX_CHARS)
             }
             var h = firstHeading
@@ -119,7 +133,12 @@ internal object TxtParser {
                 var next = h + 1
                 while (next < paras.n && paras.kind[next] != ParaKind.HEADING) next++
                 val line = paras.first[h]
-                sb.addChunks(h, next, line, titleByLine[line] ?: lines.text(line), chapter = true, maxUnsplit = CHAPTER_MAX_CHARS)
+                val title = titleByLine[line] ?: lines.text(line)
+                if (h == firstHeading && merge) {
+                    sb.addChunks(0, next, 0, title, chapter = true, maxUnsplit = CHAPTER_MAX_CHARS, heading = line)
+                } else {
+                    sb.addChunks(h, next, line, title, chapter = true, maxUnsplit = CHAPTER_MAX_CHARS)
+                }
                 h = next
             }
         }
@@ -127,9 +146,19 @@ internal object TxtParser {
         return sb.finish(dec, nl, d)
     }
 
-    private fun hasContent(p: ParaList, from: Int, to: Int): Boolean {
-        for (q in from until to) if (p.kind[q] != ParaKind.EMPTY) return true
-        return false
+    /**
+     * Chars paragraphs [from, to) take in a section (each paragraph + its separator); 0 when they are all empty
+     * (no preface). Stops counting once past [PREFACE_MERGE_CHARS] with content seen.
+     */
+    private fun prefaceChars(p: ParaList, from: Int, to: Int): Int {
+        var total = 0
+        var content = false
+        for (q in from until to) {
+            if (p.kind[q] != ParaKind.EMPTY) content = true
+            total += p.len[q] + 1
+            if (content && total >= PREFACE_MERGE_CHARS) break
+        }
+        return if (content) total else 0
     }
 
     /** Collects sections: paragraph ranges, byte ranges, flags, exact lengths. */
@@ -143,22 +172,26 @@ internal object TxtParser {
         var pFrom = IntArray(64)
         var pTo = IntArray(64)
         var firstLine = IntArray(64)
+        /** Absolute heading line of a chapter's first section (-1: none). */
+        var headAbs = IntArray(64)
         var flags = IntArray(64)
         var titles = arrayOfNulls<String>(64)
         private var scratch = IntArray(64)
 
-        private fun add(from: Int, to: Int, line: Int, title: String?, f: Int) {
+        private fun add(from: Int, to: Int, line: Int, title: String?, f: Int, heading: Int = -1) {
             if (count == pFrom.size) {
                 val cap = count * 2
                 pFrom = pFrom.copyOf(cap)
                 pTo = pTo.copyOf(cap)
                 firstLine = firstLine.copyOf(cap)
+                headAbs = headAbs.copyOf(cap)
                 flags = flags.copyOf(cap)
                 titles = titles.copyOf(cap)
             }
             pFrom[count] = from
             pTo[count] = to
             firstLine[count] = line
+            headAbs[count] = if (f and TxtIndex.CHAPTER != 0) heading else -1
             flags[count] = f
             titles[count] = title
             count++
@@ -166,13 +199,16 @@ internal object TxtParser {
 
         fun addEmpty() = add(0, 0, -1, null, 0)
 
-        /** Adds paragraphs [from, to) as one section, or several ~TARGET_CHARS chunks when longer than [maxUnsplit]. */
-        fun addChunks(from: Int, to: Int, line: Int, title: String?, chapter: Boolean, maxUnsplit: Int) {
+        /**
+         * Adds paragraphs [from, to) as one section, or several ~TARGET_CHARS chunks when longer than [maxUnsplit].
+         * [heading]: line of the chapter heading when it is not the first line [line] (merged preface).
+         */
+        fun addChunks(from: Int, to: Int, line: Int, title: String?, chapter: Boolean, maxUnsplit: Int, heading: Int = line) {
             val chapFlag = if (chapter) TxtIndex.CHAPTER else 0
             var total = 0L
             for (q in from until to) total += paras.len[q] + 1
             if (total <= maxUnsplit) {
-                add(from, to, line, title, chapFlag)
+                add(from, to, line, title, chapFlag, heading)
                 return
             }
             var start = from
@@ -182,7 +218,7 @@ internal object TxtParser {
             while (remaining > TARGET_CHARS * 3 / 2) {
                 val cut = chooseCut(start, to)
                 if (cut < 0) break
-                add(start, cut, startLine, if (first) title else null, if (first) chapFlag else 0)
+                add(start, cut, startLine, if (first) title else null, if (first) chapFlag else 0, heading)
                 var consumed = 0L
                 for (q in start until cut) consumed += paras.len[q] + 1
                 remaining -= consumed
@@ -190,7 +226,7 @@ internal object TxtParser {
                 startLine = paras.first[cut]
                 first = false
             }
-            add(start, to, startLine, if (first) title else null, if (first) chapFlag else 0)
+            add(start, to, startLine, if (first) title else null, if (first) chapFlag else 0, heading)
         }
 
         /**
@@ -236,6 +272,8 @@ internal object TxtParser {
             val bs = IntArray(n)
             val be = IntArray(n)
             val ch = IntArray(n)
+            val hl = IntArray(n)
+            val hc = IntArray(n)
             val fl = flags.copyOf(n)
             val lineBytes = lines.byteStart!!
             for (s in 0 until n) {
@@ -250,8 +288,22 @@ internal object TxtParser {
                 if (scratch.size < size) scratch = IntArray(size)
                 val k = TxtParagraphs.select(lines, paras, pFrom[s], pTo[s], titles[s], scratch)
                 ch[s] = TxtParagraphs.textLength(paras, scratch, k)
+                val head = headAbs[s]
+                if (head > firstLine[s] && firstLine[s] >= 0) {
+                    // merged preface: heading below the section start (the loader marks it by this line index)
+                    hl[s] = head - firstLine[s]
+                    var off = 0
+                    for (r in 0 until k) {
+                        val q = scratch[r]
+                        if (paras.kind[q] == ParaKind.HEADING && paras.first[q] == head) {
+                            hc[s] = off
+                            break
+                        }
+                        off += paras.len[q] + 1
+                    }
+                }
             }
-            return Parsed(dec, nl, d, lines, paras, pFrom.copyOf(n), pTo.copyOf(n), bs, be, fl, ch, titles.copyOf(n))
+            return Parsed(dec, nl, d, lines, paras, pFrom.copyOf(n), pTo.copyOf(n), bs, be, fl, ch, titles.copyOf(n), hl, hc)
         }
     }
 
@@ -405,7 +457,9 @@ internal object TxtParser {
                 lines.flags[last] = lines.flags[last] or LineFlags.SEG
             }
             if (f and TxtIndex.CHAPTER != 0) {
-                var h = 0
+                // the stored heading line (a merged preface precedes it), else the first non-blank line
+                var h = index.headLine[i]
+                if (h < 0 || h >= lines.count) h = 0
                 while (h < lines.count && lines.flags[h] and (LineFlags.BLANK or LineFlags.DELETED) != 0) h++
                 if (h < lines.count) lines.markHeading(h)
             }

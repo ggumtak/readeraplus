@@ -76,3 +76,43 @@ object Gestures {
     /** True when the gesture starts on the brightness strip at the left edge. */
     fun inBrightnessStrip(x: Float, widthPx: Int): Boolean = widthPx > 0 && x < widthPx * 0.10f
 }
+
+/**
+ * Saved reading positions are (section, offset) in the coordinates of the parse that produced them. A TXT parse
+ * depends on global options (chapter detection, blank lines, replace rules, ...) and the book's encoding, so the
+ * reader keeps, per book, the text signature of that parse ([LayoutKeys.textSignature]) and the position's char
+ * fraction. When the book is opened under a different signature, the position is found again by that fraction
+ * instead of reading stale coordinates (pure, unit-tested).
+ */
+object TextPositions {
+    /** How far the stored char fraction may be from the library's progress before the library wins (it is newer). */
+    const val MAX_DRIFT = 0.1f
+
+    fun encode(signature: String, fraction: Float): String =
+        signature + "|" + fraction.coerceIn(0f, 1f).let { if (it.isNaN()) 0f else it }
+
+    /** (signature, fraction) or null for a missing / malformed value. */
+    fun decode(value: String?): Pair<String, Float>? {
+        if (value.isNullOrEmpty()) return null
+        val bar = value.lastIndexOf('|')
+        if (bar <= 0 || bar == value.length - 1) return null
+        val f = value.substring(bar + 1).toFloatOrNull() ?: return null
+        if (f.isNaN()) return null
+        return value.substring(0, bar) to f.coerceIn(0f, 1f)
+    }
+
+    /**
+     * Char fraction to reopen at when the saved position belongs to another parse, or null to use the saved
+     * (section, offset) as is: no signature for this format ([current] null), nothing recorded yet, same parse, or
+     * the very start (the start of any parse). A library progress far from the recorded fraction means the position
+     * was changed elsewhere since (reset, restore): then that progress is used.
+     */
+    fun remapFraction(stored: String?, current: String?, section: Int, offset: Int, libraryProgress: Float): Float? {
+        if (current == null) return null
+        val s = decode(stored) ?: return null
+        if (s.first == current) return null
+        if (section <= 0 && offset <= 0) return null
+        val p = if (libraryProgress.isNaN()) s.second else libraryProgress.coerceIn(0f, 1f)
+        return if (Math.abs(p - s.second) <= MAX_DRIFT) s.second else p
+    }
+}

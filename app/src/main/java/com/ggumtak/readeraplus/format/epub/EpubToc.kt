@@ -191,7 +191,14 @@ internal object EpubTocParser {
      * Quick title scan of a content document for the fallback TOC: the first h1–h3 text in the body, else the
      * `<title>`. [bookTitle] is ignored as a `<title>` (generic per-file titles). Null when untitled.
      */
-    fun scanTitle(xhtml: String, bookTitle: String?): String? {
+    fun scanTitle(xhtml: String, bookTitle: String?): String? = scanTitle(xhtml, bookTitle, truncated = false)
+
+    /**
+     * [scanTitle] of a document prefix. With [truncated] (the prefix ends before the document does) the result
+     * is [UNDECIDED] when it could still change with more text: no heading was complete before the end and the
+     * body text limit was not reached. Otherwise it is what the full document would give.
+     */
+    fun scanTitle(xhtml: String, bookTitle: String?, truncated: Boolean): String? {
         val r = MarkupReader(xhtml)
         var inTitle = false
         var inHead = false
@@ -204,7 +211,10 @@ internal object EpubTocParser {
         var bodyChars = 0
         loop@ while (true) {
             when (r.next()) {
-                MarkupReader.EOF -> break@loop
+                MarkupReader.EOF -> {
+                    if (truncated) return UNDECIDED
+                    break@loop
+                }
                 MarkupReader.START -> {
                     val n = r.name
                     // HTML void elements (`<br>` without a slash) have no end tag: counting them as nesting
@@ -260,6 +270,9 @@ internal object EpubTocParser {
         if (bookTitle != null && t.equals(bookTitle, ignoreCase = true)) return null
         return t.take(200)
     }
+
+    /** [scanTitle] result for a truncated prefix that needs more text (compare by identity). */
+    @JvmField val UNDECIDED: String = String(charArrayOf('\u0000'))
 
     /** src of the first `<img>` / SVG `<image>` in a content document (raw href), or null. */
     fun firstImage(xhtml: String): String? {

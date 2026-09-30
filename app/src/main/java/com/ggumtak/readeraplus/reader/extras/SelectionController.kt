@@ -328,7 +328,11 @@ class SelectionController(private val host: ReaderHost) {
         list += Action("복사", R.drawable.ic_content_copy) { copy() }
         val q = editingQuote
         if (q == null) {
-            list += Action("인용", R.drawable.ic_format_quote) { saveQuote("") }
+            list += Action("인용", R.drawable.ic_format_quote) {
+                val snap = snapshot()
+                clear()
+                if (snap != null) saveQuote(snap, "")
+            }
             list += Action("메모", R.drawable.ic_sticky_note_2) { noteThenQuote() }
         } else {
             list += Action("메모", R.drawable.ic_sticky_note_2) { editQuoteNote(q) }
@@ -482,34 +486,50 @@ class SelectionController(private val host: ReaderHost) {
         showActions()
     }
 
-    private fun saveQuote(note: String) {
+    /** What a quote is made of, taken while the selection is valid (the page may change before it is saved). */
+    private class QuoteSnapshot(val bookId: Long, val section: Int, val start: Int, val end: Int, val text: String)
+
+    /** The current selection as a quote, or null when there is none (or nothing selectable in it). */
+    private fun snapshot(): QuoteSnapshot? {
+        if (!active || section < 0 || validPage() == null) return null
         val t = selectedText()
-        if (t.isEmpty()) {
-            clear()
-            return
-        }
-        val sec = section
-        val s = selStart
-        val e = selEnd
-        val bookId = host.book.id
-        clear()
+        if (t.isEmpty()) return null
+        val bookId = runCatching { host.book.id }.getOrNull() ?: return null
+        return QuoteSnapshot(bookId, section, selStart, selEnd, t)
+    }
+
+    private fun saveQuote(q: QuoteSnapshot, note: String) {
         scope.launch {
             val all = withContext(Dispatchers.IO) {
-                runCatching { Library.addQuote(bookId, sec, s, e, t, note) }
-                runCatching { Library.quotes(bookId) }.getOrNull()
+                runCatching { Library.addQuote(q.bookId, q.section, q.start, q.end, q.text, note) }
+                runCatching { Library.quotes(q.bookId) }.getOrNull()
             }
-            if (all != null) {
-                ContentsDialog.refreshQuoteHighlights(host, sec, all)
-                ctx.toast("인용문에 저장했습니다")
-            } else {
+            if (all == null) {
                 ctx.toast("저장하지 못했습니다")
+                return@launch
             }
+            // Only repaint when the same book is still open (the quote itself is saved either way).
+            if (runCatching { host.book.id }.getOrNull() == q.bookId) {
+                ContentsDialog.refreshQuoteHighlights(host, q.section, all)
+            } else {
+                QuoteCache.put(q.bookId, all)
+            }
+            ctx.toast("인용문에 저장했습니다")
         }
     }
 
     private fun noteThenQuote() {
+        // Snapshot now: TTS or a relayout may turn the page (and clear the selection) while the user types.
+        val snap = snapshot()
+        if (snap == null) {
+            clear()
+            return
+        }
         hideActions()
-        ctx.multilinePrompt("메모", "", "선택한 문장에 대한 메모", minLines = 3) { note -> saveQuote(note.trim()) }
+        ctx.multilinePrompt("메모", "", "선택한 문장에 대한 메모", minLines = 3) { note ->
+            if (active && section == snap.section && selStart == snap.start && selEnd == snap.end) clear()
+            saveQuote(snap, note.trim())
+        }
     }
 
     private fun editQuoteNote(q: Quote) {
@@ -554,8 +574,9 @@ class SelectionController(private val host: ReaderHost) {
 }
 
 /**
- * Selection handle: a black teardrop whose sharp corner ([anchorX], [anchorY], parent coordinates) touches the
- * selection's start (bottom-left) or end (bottom-right) corner. The view is larger than the drawing (touch target).
+ * Selection handle: a teardrop in the page's text colour (black, or white on the inverted page) whose sharp corner
+ * ([anchorX], [anchorY], parent coordinates) touches the selection's start (bottom-left) or end (bottom-right)
+ * corner. The view is larger than the drawing (touch target).
  */
 @SuppressLint("ViewConstructor")
 internal class HandleView(context: Context, val start: Boolean) : View(context) {
@@ -592,9 +613,22 @@ internal class HandleView(context: Context, val start: Boolean) : View(context) 
     }
 
     override fun onDraw(canvas: Canvas) {
+        // Page colours: black handles on the white page, white handles (black outline) on the inverted page.
+        val invert = runCatching { Settings.reader.invert }.getOrDefault(false)
+        paint.color = HandleColors.fill(invert)
+        outline.color = HandleColors.outline(invert)
         canvas.drawPath(path, outline)
         canvas.drawPath(path, paint)
     }
+}
+
+/** Selection handle colours for the page's colour scheme (pure; unit-tested). */
+internal object HandleColors {
+    /** Fill: the page's text colour (PageRenderer draws white on black when inverted). */
+    fun fill(invert: Boolean): Int = if (invert) Ink.WHITE else Ink.BLACK
+
+    /** Outline: the page's background colour, so the handle stands out over text. */
+    fun outline(invert: Boolean): Int = if (invert) Ink.BLACK else Ink.WHITE
 }
 
 /**

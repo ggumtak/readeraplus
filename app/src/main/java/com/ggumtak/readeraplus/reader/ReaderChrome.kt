@@ -14,6 +14,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
@@ -26,7 +27,8 @@ import com.ggumtak.readeraplus.ui.kit.vertical
 /**
  * Reader chrome (hidden by default): a top panel with actions, book title and a brightness row, and a bottom
  * panel with the page label, rotation lock, bookmark toggle and a page seek bar. White, 1px black lines,
- * no animation. Both panels swallow touches so taps never fall through to the page.
+ * no animation. Both panels swallow touches so taps never fall through to the page. While the seek bar is dragged
+ * a full-width preview box floats just above the bottom panel (outside the panels, so their heights never change).
  */
 internal class ReaderChrome(private val ctx: Context, private val actions: Actions) {
 
@@ -66,11 +68,16 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     private val bookmark: ImageButton
     private val pin: ImageButton
     private val seek: SeekBar
+    /** Seek preview ("p. ~1234 · 제3장 …"), shown over the page just above the bottom panel while dragging. */
+    private val seekInfo: TextView
 
     var isSeeking = false
         private set
     private var bindingBrightness = false
-    private var normalLabel: CharSequence = ""
+    // Last bound icon states: page turns re-bind the chrome, and an unchanged icon must not be redrawn (e-ink).
+    private var boundBookmarked: Boolean? = null
+    private var boundRotationLocked: Boolean? = null
+    private var boundPinned: Boolean? = null
 
     init {
         top = ctx.vertical {
@@ -135,9 +142,11 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             minimumHeight = ctx.dp(56)
             setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
         }
-        row.addView(View(ctx), LinearLayout.LayoutParams(ctx.dp(144), 1))
+        // The label takes all the room left of the buttons (≈ 208dp on the 360dp-wide Comet), so
+        // "~1234 / ~3259" fits; it is centred in that room rather than across the whole width.
         pageLabel = ctx.label("", 18f, bold = true, maxLines = 1).apply {
             gravity = Gravity.CENTER
+            setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
             minHeight = ctx.dp(48)
             background = pressableBackground()
             setOnClickListener { actions.onPageLabel() }
@@ -151,22 +160,28 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         pin = ctx.iconButton(R.drawable.ic_push_pin, "메뉴 고정") { actions.onPin() }
         row.addView(pin)
         bottom.addView(row, lp())
+        seekInfo = ctx.label("", 16f, bold = true, maxLines = 2).apply {
+            gravity = Gravity.CENTER
+            background = ctx.borderBox()
+            setPadding(ctx.dp(16), ctx.dp(10), ctx.dp(16), ctx.dp(10))
+            visibility = View.GONE
+        }
         seek = einkSeekBar().apply {
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
-                    if (fromUser && isSeeking) pageLabel.text = actions.onSeekPreview(p)
+                    if (fromUser && isSeeking) setSeekInfo(actions.onSeekPreview(p))
                 }
 
                 override fun onStartTrackingTouch(s: SeekBar) {
                     isSeeking = true
-                    normalLabel = pageLabel.text
                     actions.onSeekStart()
-                    pageLabel.text = actions.onSeekPreview(s.progress)
+                    setSeekInfo(actions.onSeekPreview(s.progress))
+                    showSeekInfo(true)
                 }
 
                 override fun onStopTrackingTouch(s: SeekBar) {
                     isSeeking = false
-                    pageLabel.text = normalLabel
+                    showSeekInfo(false)
                     actions.onSeekDone(s.progress)
                 }
             })
@@ -195,6 +210,10 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     fun attach(root: FrameLayout) {
         root.addView(top, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
         root.addView(bottom, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
+        root.addView(seekInfo, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM).apply {
+            leftMargin = ctx.dp(16)
+            rightMargin = ctx.dp(16)
+        })
         setVisible(false)
     }
 
@@ -202,6 +221,28 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         val v = if (visible) View.VISIBLE else View.GONE
         top.visibility = v
         bottom.visibility = v
+        if (!visible) showSeekInfo(false)
+    }
+
+    /** Views of the chrome itself (the host lays out other overlays around them). */
+    fun owns(v: View): Boolean = v === top || v === bottom || v === seekInfo
+
+    private fun setSeekInfo(text: CharSequence) {
+        if (seekInfo.text.toString() != text.toString()) seekInfo.text = text
+    }
+
+    private fun showSeekInfo(show: Boolean) {
+        if (!show) {
+            if (seekInfo.visibility != View.GONE) seekInfo.visibility = View.GONE
+            return
+        }
+        val lp = seekInfo.layoutParams as? FrameLayout.LayoutParams
+        val above = bottom.height + ctx.dp(8)
+        if (lp != null && lp.bottomMargin != above) {
+            lp.bottomMargin = above
+            seekInfo.layoutParams = lp
+        }
+        seekInfo.visibility = View.VISIBLE
     }
 
     val isVisible: Boolean get() = top.visibility == View.VISIBLE
@@ -226,17 +267,23 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     }
 
     fun setBookmarked(on: Boolean) {
+        if (boundBookmarked == on) return
+        boundBookmarked = on
         bookmark.setImageResource(if (on) R.drawable.ic_bookmark_fill else R.drawable.ic_bookmark)
         bookmark.contentDescription = if (on) "북마크 삭제" else "북마크 추가"
     }
 
     fun setPinned(on: Boolean) {
+        if (boundPinned == on) return
+        boundPinned = on
         pin.setImageResource(if (on) R.drawable.ic_push_pin_fill else R.drawable.ic_push_pin)
         pin.contentDescription = if (on) "메뉴 고정 해제" else "메뉴 고정"
         pin.isSelected = on
     }
 
     fun setRotationLocked(locked: Boolean) {
+        if (boundRotationLocked == locked) return
+        boundRotationLocked = locked
         rotation.setImageResource(if (locked) R.drawable.ic_screen_lock_rotation else R.drawable.ic_screen_rotation)
         rotation.isSelected = locked
     }

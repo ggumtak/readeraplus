@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import com.ggumtak.readeraplus.data.FileScanner
 import com.ggumtak.readeraplus.settings.Settings
 import java.util.concurrent.CopyOnWriteArrayList
@@ -17,7 +18,7 @@ internal object LibraryJobs {
     /** Raw pref: time of the last completed scan (ms). */
     const val PREF_LAST_SCAN = "lastScanAt"
 
-    /** Status-row updates during a scan: each one is an e-ink refresh, so at most once a second. */
+    /** Status-row updates during a scan or import: each one is an e-ink refresh, so at most once a second. */
     private const val PROGRESS_INTERVAL_MS = 1000L
 
     interface Listener {
@@ -58,17 +59,13 @@ internal object LibraryJobs {
         }
         val app = context.applicationContext
         progress()
+        val throttle = ProgressThrottle(PROGRESS_INTERVAL_MS, SystemClock.elapsedRealtime())
         background("library-scan") {
             var msg: String? = null
             try {
-                var lastPost = 0L
                 val total = FileScanner.scan(app) { n ->
                     scanFound = n
-                    val now = System.currentTimeMillis()
-                    if (now - lastPost >= PROGRESS_INTERVAL_MS) {
-                        lastPost = now
-                        progress()
-                    }
+                    if (throttle.ready(SystemClock.elapsedRealtime())) progress()
                 }
                 Settings.raw().edit().putLong(PREF_LAST_SCAN, System.currentTimeMillis()).apply()
                 if (announce) msg = "스캔 완료: 문서 ${total}개"
@@ -94,13 +91,16 @@ internal object LibraryJobs {
             importTotal = 0
         }
         progress()
+        // Files that are skipped or already known go by in milliseconds: one post per file would repaint the strip
+        // dozens of times a second. The final count needs no post: onJobDone refreshes the strip.
+        val throttle = ProgressThrottle(PROGRESS_INTERVAL_MS, SystemClock.elapsedRealtime())
         background("library-import") {
             var msg: String?
             try {
                 msg = work { d, t ->
                     imported = d
                     importTotal = t
-                    progress()
+                    if (throttle.ready(SystemClock.elapsedRealtime())) progress()
                 }
             } catch (t: Throwable) {
                 msg = "가져오기 실패: ${t.message ?: t.javaClass.simpleName}"
@@ -117,5 +117,18 @@ internal object LibraryJobs {
             Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
             block()
         }, name).apply { isDaemon = true }.start()
+    }
+}
+
+/**
+ * Rate limit for progress posts of one background job (confined to that job's thread): [ready] is true at most once
+ * per [intervalMs], counted from [lastPostAt] (the post made when the job started). A clock that went backwards
+ * lets the next post through.
+ */
+internal class ProgressThrottle(private val intervalMs: Long, private var lastPostAt: Long) {
+    fun ready(now: Long): Boolean {
+        if (now >= lastPostAt && now - lastPostAt < intervalMs) return false
+        lastPostAt = now
+        return true
     }
 }

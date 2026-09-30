@@ -7,14 +7,19 @@ import android.util.TypedValue
 import com.ggumtak.readeraplus.BuildConfig
 import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.Library
+import com.ggumtak.readeraplus.engine.FontMetricsPx
+import com.ggumtak.readeraplus.engine.IntSize
 import com.ggumtak.readeraplus.engine.LayoutConfig
 import com.ggumtak.readeraplus.engine.ParagraphBlock
+import com.ggumtak.readeraplus.engine.RunStyle
 import com.ggumtak.readeraplus.engine.SectionContent
 import com.ggumtak.readeraplus.engine.SectionLayout
+import com.ggumtak.readeraplus.engine.TextMeasurer
 import com.ggumtak.readeraplus.engine.Typesetter
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.render.AndroidTextMeasurer
+import com.ggumtak.readeraplus.render.FontCatalog
 import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.render.FontSource
 import com.ggumtak.readeraplus.render.ImageCache
@@ -55,6 +60,9 @@ class BookSession(
     interface Listener {
         /** Page counts progressed; [complete] once every section is counted (or loaded from the cache). */
         fun onCountsChanged(complete: Boolean)
+
+        /** [layout] of [section] was just laid out and cached for the current generation (e.g. a prefetch). */
+        fun onSectionStored(section: Int, layout: SectionLayout) {}
     }
 
     /** Immutable parameters of one layout generation (any layout-affecting change creates a new one). */
@@ -102,6 +110,11 @@ class BookSession(
         private set
 
     private var genCounter = 0
+    /**
+     * Id of the current generation for the worker threads (-1 once closed): a layout or count still running for an
+     * older generation stops at its next measuring call instead of holding the single layout thread.
+     */
+    @Volatile private var liveGenId = 0
     private var viewW = 0
     private var viewH = 0
 
@@ -149,7 +162,9 @@ class BookSession(
     /** Applies new settings: RELAYOUT when layout-affecting fields changed, REPAINT for colours/footer only. */
     fun updateSettings(new: ReaderSettings): Change {
         if (new == settings) return Change.NONE
-        val relayout = LayoutKeys.layoutChanged(settings, new)
+        // Only what can change this book's pages counts: the other format's options and weight steps that keep the
+        // same font file (only the synthetic stroke changes) are a repaint.
+        val relayout = LayoutKeys.layoutChanged(forLayout(settings), forLayout(new), document.format)
         settings = new
         if (!relayout) return Change.REPAINT
         rebuild()
@@ -162,6 +177,7 @@ class BookSession(
         val statusPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, settings.statusFontSizeSp, dm)
         val g = LayoutKeys.geometry(settings, viewW, viewH, dm.density, statusPx)
         genCounter++
+        liveGenId = genCounter
         generation = Generation(genCounter, settings, g, LayoutKeys.config(settings, g, txt = document.format == BookFormat.TXT), dm.density)
         invalidateJobs()
         cache.clear()
@@ -278,6 +294,7 @@ class BookSession(
     }
 
     private fun store(section: Int, layout: SectionLayout) {
+        val fresh = cache[section] !== layout
         cache[section] = layout
         lru.remove(section)
         lru.add(section)
@@ -288,6 +305,13 @@ class BookSession(
         }
         counts.set(section, layout.pageCount, layout.content.length)
         chapters.resolveAnchors(section, layout.content.anchors)
+        if (fresh && cache[section] === layout) {
+            try {
+                listener?.onSectionStored(section, layout)
+            } catch (t: Throwable) {
+                Log.w(TAG, "stored listener failed", t)
+            }
+        }
     }
 
     // ------------------------------------------------------------------ worker-thread code
@@ -297,10 +321,13 @@ class BookSession(
             layoutMeasurer = AndroidTextMeasurer(context, gen.settings) { images.size(it) }
             layoutGenId = gen.id
         }
-        val m = layoutMeasurer!!
+        val m = StaleCheck(layoutMeasurer!!, gen.id)
+        m.check()
         val content = loadContent(section).content
         return try {
             Typesetter(m, gen.config).layout(content)
+        } catch (e: CancellationException) {
+            throw e
         } catch (t: Throwable) {
             Log.w(TAG, "typesetting failed for section $section", t)
             Typesetter(m, gen.config).layout(errorContent(t))
@@ -316,12 +343,15 @@ class BookSession(
             countMeasurer = AndroidTextMeasurer(context, gen.settings) { images.size(it) }
             countGenId = gen.id
         }
-        val m = countMeasurer!!
+        val m = StaleCheck(countMeasurer!!, gen.id)
+        m.check()
         val loaded = loadContent(section)
         val c = loaded.content
         return try {
             val pages = Typesetter(m, gen.config).countPages(c)
             CountResult(pages, if (loaded.failed) -1 else c.length, c.anchors, loaded.failed)
+        } catch (e: CancellationException) {
+            throw e
         } catch (t: Throwable) {
             Log.w(TAG, "counting failed for section $section", t)
             val pages = try {
@@ -334,6 +364,31 @@ class BookSession(
     }
 
     private class Loaded(val content: SectionContent, val failed: Boolean)
+
+    /** Thrown on a worker thread when the generation it works for is gone (settings/size changed, closed). */
+    private class StaleWork : CancellationException("stale layout generation")
+
+    /**
+     * Measurer wrapper giving the typesetter a cancellation point: measuring (once per paragraph run, the bulk of
+     * a layout's cost) stops with [StaleWork] as soon as [genId] is no longer the live generation, so a stale
+     * prefetch or count never holds up the layout the user is waiting for.
+     */
+    private inner class StaleCheck(private val inner: TextMeasurer, private val genId: Int) : TextMeasurer {
+        override val emPx: Float get() = inner.emPx
+
+        fun check() {
+            if (liveGenId != genId) throw StaleWork()
+        }
+
+        override fun measure(text: String, start: Int, end: Int, style: RunStyle, out: FloatArray, outOffset: Int) {
+            check()
+            inner.measure(text, start, end, style, out, outOffset)
+        }
+
+        override fun metrics(style: RunStyle): FontMetricsPx = inner.metrics(style)
+
+        override fun imageSize(src: String): IntSize? = inner.imageSize(src)
+    }
 
     /** Section content; a readable error paragraph instead of a crash when the section can't be parsed. */
     private fun loadContent(section: Int): Loaded =
@@ -460,10 +515,29 @@ class BookSession(
             "?"
         }
         val fontScale = context.resources.configuration.fontScale
-        return LayoutKeys.key(
-            gen.settings, gen.settings.parseOptions(book.encoding), gen.geometry, gen.density,
+        return LayoutKeys.keyFor(
+            forLayout(gen.settings), document.format, book.encoding, gen.geometry, gen.density,
             "$fontIdentity|file=$bookFile|fs=$fontScale", BuildConfig.VERSION_CODE,
         )
+    }
+
+    /**
+     * [s] with its font weight replaced by the layout weight class ([LayoutKeys.layoutWeight]): weights that
+     * measure identically compare and hash the same, so e.g. 400 → 450 → 500 on a static font is only a repaint and
+     * keeps the cached page counts. Falls back to the raw weight when the font can't be resolved.
+     */
+    private fun forLayout(s: ReaderSettings): ReaderSettings {
+        val w = try {
+            val f = FontManager.font(s.fontId) ?: FontManager.font(FontCatalog.DEFAULT_ID)
+            if (f == null) {
+                s.fontWeight
+            } else {
+                LayoutKeys.layoutWeight(s.fontWeight, f.variable, f.source == FontSource.SYSTEM, f.boldPath != null)
+            }
+        } catch (t: Throwable) {
+            s.fontWeight
+        }
+        return if (w == s.fontWeight) s else s.copy(fontWeight = w)
     }
 
     /** Drops decoded images (memory pressure). */
@@ -482,6 +556,7 @@ class BookSession(
     fun close() {
         if (closed) return
         closed = true
+        liveGenId = -1
         invalidateJobs()
         scope.cancel()
         cache.clear()
