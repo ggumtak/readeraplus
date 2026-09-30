@@ -46,6 +46,7 @@ import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.dpF
 import com.ggumtak.readeraplus.ui.kit.horizontal
+import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
@@ -263,6 +264,7 @@ internal fun Context.multilinePrompt(
         gravity = Gravity.TOP or Gravity.START
         setTextColor(Ink.BLACK)
         setSelection(initial.length)
+        inkCursor(singleLine = false)
     }
     val box = vertical { setPadding(dp(20), dp(8), dp(20), 0) }
     if (message != null) box.addView(label(message, 14f, color = Ink.GRAY).apply { setPadding(0, 0, 0, dp(8)); setLineSpacing(0f, 1.2f) })
@@ -317,10 +319,14 @@ internal object Overlay {
 internal object TextActions {
     private const val PREF_LAST_DICT = "extras.lastDictApp"
 
-    fun copy(ctx: Context, text: String) {
+    /**
+     * Copies [text]. Android 13+ confirms a copy itself, so by default the toast is only shown below that; a caller
+     * that confirms in its own view passes [confirm] = false (a long-pressed label in a dialog).
+     */
+    fun copy(ctx: Context, text: String, confirm: Boolean = Build.VERSION.SDK_INT < 33) {
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
         cm.setPrimaryClip(ClipData.newPlainText("ReaderaPlus", text))
-        if (Build.VERSION.SDK_INT < 33) ctx.toast("복사했습니다")
+        if (confirm) ctx.toast("복사했습니다")
     }
 
     fun share(ctx: Context, text: String, subject: String? = null) {

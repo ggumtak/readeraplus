@@ -400,10 +400,7 @@ class BookSession(
         }
 
     private fun errorContent(t: Throwable): SectionContent {
-        val msg = when (t) {
-            is OutOfMemoryError -> "메모리가 부족해 이 부분을 표시하지 못했습니다."
-            else -> "이 부분을 불러오지 못했습니다." + (t.message?.let { " ($it)" } ?: "")
-        }
+        val msg = ReaderFormat.sectionError(t)
         return SectionContent(msg, listOf(ParagraphBlock(0, msg.length)))
     }
 

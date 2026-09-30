@@ -24,6 +24,7 @@ import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.horizontal
+import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
@@ -38,6 +39,8 @@ import java.io.File
 
 /** "내 리뷰", "문서 속성" and "페이지 이동" dialogs. */
 internal object InfoDialogs {
+    /** How long a key line of 문서 속성 reads "… · 복사했습니다" after a long press copied its value. */
+    private const val COPIED_NOTE_MS = 1500L
 
     // ------------------------------------------------------------------ 내 리뷰
 
@@ -92,8 +95,23 @@ internal object InfoDialogs {
         val box = activity.vertical { setPadding(activity.dp(24), activity.dp(8), activity.dp(24), activity.dp(8)) }
         fun field(key: String, value: String?) {
             if (value.isNullOrBlank()) return
-            box.addView(activity.label(key, 13f, bold = true, color = Ink.GRAY).apply { setPadding(0, activity.dp(10), 0, activity.dp(2)) })
-            box.addView(activity.label(value, 16f).apply { setTextIsSelectable(true); setLineSpacing(0f, 1.15f) })
+            val keyLabel = activity.label(key, 13f, bold = true, color = Ink.GRAY).apply { setPadding(0, activity.dp(10), 0, activity.dp(2)) }
+            box.addView(keyLabel)
+            val restoreKey = Runnable { keyLabel.text = key }
+            // Not selectable text: a full-width selectable label started a selection from a long press on blank paper.
+            // The label wraps its text, and a long press on it copies the whole value. The confirmation is the key
+            // line itself, for a moment (a toast over a dialog is the platform's fading one; Android 13+ also shows
+            // its own clipboard notice).
+            box.addView(activity.label(value, 16f).apply {
+                setLineSpacing(0f, 1.15f)
+                setOnLongClickListener {
+                    TextActions.copy(activity, value, confirm = false)
+                    keyLabel.removeCallbacks(restoreKey)
+                    keyLabel.text = "$key · 복사했습니다"
+                    keyLabel.postDelayed(restoreKey, COPIED_NOTE_MS)
+                    true
+                }
+            }, lp(WRAP_CONTENT, WRAP_CONTENT))
         }
         field("제목", book.title)
         field("작가", book.author.ifBlank { meta?.authors?.joinToString(", ") ?: "" }.ifBlank { "알 수 없음" })
@@ -144,6 +162,8 @@ internal object InfoDialogs {
                 inputType = type
                 setSingleLine(true)
                 setTextColor(Ink.BLACK)
+                // Opens with the book's value: the caret shows once the user taps into it (no blind edits mid-word).
+                inkCursor(singleLine = false)
             }
             box.addView(e, lp())
             return e
@@ -217,6 +237,7 @@ internal object InfoDialogs {
             setTextColor(Ink.BLACK)
             textSize = 22f
             gravity = Gravity.CENTER
+            inkCursor(singleLine = true)
         }
         box.addView(edit, lp())
 

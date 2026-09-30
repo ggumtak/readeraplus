@@ -45,6 +45,8 @@ internal object Compact {
     const val HEADER_SP = 12f
     const val TOGGLE_SP = 13f
     const val STEP_DP = 36
+    /** Common width of a stepper's value box, so the − / + buttons of every row line up. */
+    const val STEP_VALUE_DP = 60
     const val PAD_DP = 12
     const val LIST_ROW_DP = 40
     const val LIST_SP = 15f

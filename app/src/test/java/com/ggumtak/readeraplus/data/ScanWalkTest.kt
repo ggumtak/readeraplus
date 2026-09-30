@@ -4,6 +4,7 @@ import com.ggumtak.readeraplus.format.BookFormat
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import java.io.File
@@ -89,6 +90,51 @@ class ScanWalkTest {
         val r = FileScanner.walk(listOf(root.path), emptyList()) { calls += it }
         assertEquals(120, r.found.size)
         assertEquals(listOf(50, 100, 120), calls)
+    }
+
+    @Test
+    fun stopBeforeAnythingIsListed() {
+        file("Books/a.txt")
+        var checks = 0
+        try {
+            FileScanner.walk(listOf(root.path), emptyList(), stopWhen = { checks++; true }) { fail("nothing may be found") }
+            fail("expected Stopped")
+        } catch (_: FileScanner.Stopped) {
+        }
+        assertEquals(1, checks)
+    }
+
+    @Test
+    fun stopIsCheckedBetweenDirectories() {
+        for (d in 0 until 5) file("D$d/book.txt")
+        var checks = 0
+        var stopAfter = Int.MAX_VALUE
+        val stop = { ++checks > stopAfter }
+        // Unstopped: one check per root plus one per queued directory (5).
+        val all = FileScanner.walk(listOf(root.path), emptyList(), stop) {}
+        assertEquals(5, all.found.size)
+        assertEquals(6, checks)
+        // Stopping at the third directory: the walk ends there and returns nothing.
+        checks = 0
+        stopAfter = 3
+        try {
+            FileScanner.walk(listOf(root.path), emptyList(), stop) {}
+            fail("expected Stopped")
+        } catch (_: FileScanner.Stopped) {
+        }
+        assertEquals(4, checks)
+    }
+
+    @Test
+    fun stopIsCheckedInsideALargeDirectory() {
+        for (i in 0 until 300) file("Big/b$i.txt")
+        var readerInFront = false
+        try {
+            // The reader comes to the front once 50 books are found: the walk stops within the same directory.
+            FileScanner.walk(listOf(File(root, "Big").path), emptyList(), { readerInFront }) { n -> if (n >= 50) readerInFront = true }
+            fail("expected Stopped")
+        } catch (_: FileScanner.Stopped) {
+        }
     }
 
     @Test

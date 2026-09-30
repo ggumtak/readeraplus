@@ -20,6 +20,7 @@ import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewTreeObserver
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -40,6 +41,7 @@ import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.FileScanner
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.LibraryQuery
+import com.ggumtak.readeraplus.data.ReaderPresence
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
 import com.ggumtak.readeraplus.reader.ReaderActivity
@@ -56,12 +58,14 @@ import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.iconButton
+import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.popupMenu
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
+import com.ggumtak.readeraplus.ui.settings.ErrorLines
 import com.ggumtak.readeraplus.ui.settings.SettingsActivity
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -99,7 +103,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
         private const val SEARCH_DEBOUNCE_MS = 250L
         private const val LOADING_TEXT_DELAY_MS = 300L
-        private const val AUTO_SCAN_DELAY_MS = 1500L
+        /** The periodic rescan starts only after this long without a touch or key in the library. */
+        private const val AUTO_SCAN_IDLE_MS = 3000L
         private const val STATUS_HEIGHT_DP = 36
         /** Longest the launch splash is held while looking up the book to reopen (a stuck database shows the library). */
         private const val OPEN_LAST_MAX_WAIT_MS = 2000L
@@ -184,12 +189,17 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private val searchRunnable = Runnable { applySearch(searchEdit.text.toString()) }
     private val loadingRunnable = Runnable { showMessage("불러오는 중…", emptyList()) }
+    /** A periodic rescan is due this visit and waits for [AUTO_SCAN_IDLE_MS] of idleness ([autoScanRunnable]). */
+    private var autoScanPending = false
     private val autoScanRunnable = Runnable {
+        autoScanPending = false
         // Re-check when it fires: a scan started meanwhile (e.g. right after a permission grant) may have
         // finished already, and scanning twice in a row costs seconds of CPU and disk on the Comet.
         val last = Settings.raw().getLong(LibraryJobs.PREF_LAST_SCAN, 0L)
-        if (hasAccess && !LibraryJobs.scanning && LibraryText.rescanDue(last, System.currentTimeMillis())) {
-            LibraryJobs.startScan(this, announce = false)
+        if (hasAccess && !ReaderPresence.inFront && !LibraryJobs.scanning &&
+            LibraryText.rescanDue(last, System.currentTimeMillis())
+        ) {
+            LibraryJobs.startScan(this, announce = false, periodic = true)
         }
     }
 
@@ -274,13 +284,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         hasAccess = access
         updatePermissionPanel()
         val lastScan = Settings.raw().getLong(LibraryJobs.PREF_LAST_SCAN, 0L)
-        handler.removeCallbacks(autoScanRunnable)
+        cancelAutoScan()
         if (access && newlyGranted) {
             LibraryJobs.startScan(this, announce = true)
         } else if (access && LibraryText.rescanDue(lastScan, System.currentTimeMillis())) {
-            // Deferred so a book opened right away (or open-last-on-start) doesn't share the CPU/disk with
-            // the scan; leaving the screen before it fires postpones the scan to the next visit.
-            handler.postDelayed(autoScanRunnable, AUTO_SCAN_DELAY_MS)
+            // Deferred until the library is idle, so a book opened right away (or open-last-on-start) doesn't
+            // share the CPU/disk with the scan; leaving the screen before it fires postpones it to the next visit.
+            autoScanPending = true
+            restartAutoScanWait()
         }
         updateStatus()
         invalidateCounts()
@@ -312,6 +323,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        // A dialog or menu in front is not idle: the wait for the periodic scan starts over when it closes.
+        restartAutoScanWait()
         if (hasFocus && refreshOnFocus && uiBuilt) {
             invalidateCounts()
             reload()
@@ -321,8 +334,36 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     override fun onPause() {
         resumed = false
         refreshOnFocus = false
-        handler.removeCallbacks(autoScanRunnable)
+        cancelAutoScan()
         super.onPause()
+    }
+
+    /** Touch down or any key (Activity hook): the library is in use, so a pending periodic scan waits longer. */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        restartAutoScanWait()
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        // Idle time counts from the end of a drag, not from its start (onUserInteraction only sees the down).
+        if (autoScanPending && ev.actionMasked == MotionEvent.ACTION_UP) restartAutoScanWait()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /**
+     * (Re)starts the idle wait of a pending periodic scan; no-op when none is pending. Without the window focus
+     * (a dialog or menu is up, or focus has not arrived after onResume yet) it only drops the wait: the focus
+     * change starts it.
+     */
+    private fun restartAutoScanWait() {
+        if (!autoScanPending) return
+        handler.removeCallbacks(autoScanRunnable)
+        if (hasWindowFocus()) handler.postDelayed(autoScanRunnable, AUTO_SCAN_IDLE_MS)
+    }
+
+    private fun cancelAutoScan() {
+        autoScanPending = false
+        handler.removeCallbacks(autoScanRunnable)
     }
 
     @Suppress("DEPRECATION")
@@ -360,6 +401,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             // While typing a search, only volume keys page (learned keys could be ordinary text keys).
             if (dir != 0 && (!searchEdit.isFocused || isVolume)) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) scrollPage(dir)
+                restartAutoScanWait() // consumed here, so Activity.onUserInteraction never sees it
                 return true
             }
         }
@@ -491,6 +533,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 override fun afterTextChanged(s: Editable?) {
                     handler.removeCallbacks(searchRunnable)
                     handler.postDelayed(searchRunnable, SEARCH_DEBOUNCE_MS)
+                    restartAutoScanWait() // soft-keyboard typing reaches no activity input hook
                 }
             })
             setOnEditorActionListener { _, actionId, _ ->
@@ -503,6 +546,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                     false
                 }
             }
+            inkCursor(singleLine = true)
         }
         row.addView(searchEdit, lp(0, WRAP_CONTENT, 1f))
         row.addView(iconButton(R.drawable.ic_close, "지우기") {
@@ -909,7 +953,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         showMessage(msg, buttons)
     }
 
-    private fun showMessage(msg: String, buttons: List<Pair<String, () -> Unit>>) {
+    private fun showMessage(msg: CharSequence, buttons: List<Pair<String, () -> Unit>>) {
         emptyText.text = msg
         emptyButtons.removeAllViews()
         buttons.forEach { (text, action) ->
@@ -921,7 +965,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     private fun showError(t: Throwable) {
-        showMessage("서재를 불러오지 못했습니다.\n${t.message ?: t.javaClass.simpleName}", listOf("다시 시도" to { reload() }))
+        val msg = ErrorLines.reason(t)?.let { "서재를 불러오지 못했습니다.\n$it" } ?: "서재를 불러오지 못했습니다."
+        showMessage(ErrorLines.withGrayDetail(msg, t), listOf("다시 시도" to { reload() }))
     }
 
     private fun ensureCounts() {
@@ -959,13 +1004,18 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     override fun onJobProgress() {
-        if (uiBuilt) updateStatus()
+        if (uiBuilt && resumed) updateStatus() // else onResume refreshes the strip
     }
 
-    override fun onJobDone(message: String?) {
+    override fun onJobDone(message: String?, rowsChanged: Boolean) {
         if (!uiBuilt) return // the list is loaded fresh when the library is first shown
-        updateStatus()
-        changed(collections = false)
+        // Not in front (e.g. a book is opening): onResume refreshes the strip and the list anyway, and doing it now
+        // would compete with the reader (a query, and a redraw of a covered window). A scan that changed no book
+        // leaves the list as it is (the periodic one ends on an idle screen).
+        if (resumed) {
+            updateStatus()
+            if (rowsChanged) changed(collections = false)
+        }
         if (message != null) toast(message)
     }
 
@@ -1093,7 +1143,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                         changed()
                         ReaderActivity.open(this@LibraryActivity, book.id)
                     }
-                }.onFailure { toast("파일을 열 수 없습니다: ${it.message ?: it.javaClass.simpleName}") }
+                }.onFailure { toast(ErrorLines.line("파일을 열 수 없습니다", it)) }
             }
             return
         }
@@ -1294,7 +1344,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             } finally {
                 pendingWrites--
             }
-            r.onFailure { toast("저장하지 못했습니다: ${it.message ?: it.javaClass.simpleName}") }
+            r.onFailure { toast(ErrorLines.line("저장하지 못했습니다", it)) }
             // Rows equal to the optimistic ones are not redrawn; a book that left this shelf disappears.
             if (pendingWrites == 0) reload()
         }

@@ -135,23 +135,27 @@ object LineGeometry {
     /**
      * Top of a text line's glyph band (content-box px): where the ink of the line's letters roughly starts. The line
      * box ([LineInfo.top]..[LineInfo.bottom]) also holds the half-leading above and below, which is blank paper at
-     * airy line heights; selection, highlights and long-press use the band instead.
+     * airy line heights; selection, highlights and long-press use the band instead. Never outside the line box (at
+     * tight line heights the band would reach into the neighbouring lines).
      */
-    fun bandTop(layout: SectionLayout, ln: LineInfo): Float = ln.baseline - 0.95f * bandEm(layout, ln)
+    fun bandTop(layout: SectionLayout, ln: LineInfo): Float = maxOf(ln.top, ln.baseline - 0.95f * bandEm(layout, ln))
 
-    /** Bottom of a text line's glyph band (content-box px); see [bandTop]. */
-    fun bandBottom(layout: SectionLayout, ln: LineInfo): Float = ln.baseline + 0.30f * bandEm(layout, ln)
+    /** Bottom of a text line's glyph band (content-box px), never below the line box; see [bandTop]. */
+    fun bandBottom(layout: SectionLayout, ln: LineInfo): Float = minOf(ln.bottom, ln.baseline + 0.30f * bandEm(layout, ln))
 
     /** em × heading scale of [ln]: its line box is lineHeightEm·em·scale tall (LineInfo carries no ascent). */
     private fun bandEm(layout: SectionLayout, ln: LineInfo): Float =
         (ln.bottom - ln.top) / maxOf(1f, layout.config.lineHeightEm)
 
     /**
-     * Offset of a visible, non-space char whose glyph (its advance × the line's glyph band, grown by [slop] px on every
-     * side) contains (x, y) in content-box coordinates, or -1. Unlike [hitTest] it never snaps to the nearest line or
-     * char: margins, line gaps, paragraph gaps, the blank tail of a short line, images and rules all return -1.
+     * Offset of a visible, non-space char whose glyph (its advance × the line's glyph band, grown by [slop] px to the
+     * left and right and by [slopY] px above and below) contains (x, y) in content-box coordinates, or -1. Unlike
+     * [hitTest] it never snaps to the nearest line or char: margins, line gaps, paragraph gaps, the blank tail of a
+     * short line, images and rules all return -1. [slopY] defaults to none: the band already has air above the ink
+     * and reaches the descenders, and any vertical slop eats the white gap between lines (0.2 em from each side
+     * leaves almost nothing of it at 170%).
      */
-    fun glyphAt(layout: SectionLayout, page: PageInfo, x: Float, y: Float, slop: Float): Int {
+    fun glyphAt(layout: SectionLayout, page: PageInfo, x: Float, y: Float, slop: Float, slopY: Float = 0f): Int {
         val lines = page.lines
         var ln: LineInfo? = null
         for (idx in lines.indices) {
@@ -162,7 +166,7 @@ object LineGeometry {
             }
         }
         if (ln == null || ln.imageBlock != null || ln.isRule || ln.end <= ln.start) return -1
-        if (y < bandTop(layout, ln) - slop || y > bandBottom(layout, ln) + slop) return -1
+        if (y < bandTop(layout, ln) - slopY || y > bandBottom(layout, ln) + slopY) return -1
         val adv = layout.advances
         val t = layout.content.text
         var best = -1

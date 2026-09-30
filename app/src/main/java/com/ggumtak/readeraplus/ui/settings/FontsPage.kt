@@ -246,7 +246,7 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
                         .onSuccess { added += it }
                         .onFailure { e ->
                             val name = u.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: u.toString()
-                            failed += "$name (${e.message ?: "글꼴 파일이 아닙니다"})"
+                            failed += "$name (${ErrorLines.reason(e) ?: "글꼴 파일이 아닙니다"})"
                         }
                 }
             }

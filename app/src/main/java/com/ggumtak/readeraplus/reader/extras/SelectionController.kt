@@ -22,10 +22,13 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.Quote
 import com.ggumtak.readeraplus.engine.LineGeometry
+import com.ggumtak.readeraplus.engine.LineInfo
 import com.ggumtak.readeraplus.engine.OBJECT_CHAR
 import com.ggumtak.readeraplus.engine.PageInfo
+import com.ggumtak.readeraplus.engine.RectPx
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.reader.PageView
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
@@ -81,7 +84,11 @@ class SelectionController(private val host: ReaderHost) {
     /** Quotes of the book come from [QuoteCache] (shared with the contents dialog); reloaded once per controller. */
     private var quotesRequested = false
     private val main = Handler(Looper.getMainLooper())
-    /** A second long press while a selection is shown starts a new selection there (drag extends it). */
+    /**
+     * A second long press while a selection is shown starts a new selection there (drag extends it). Off the text
+     * ([glyphAt] finds no glyph) [startAt] does nothing: the selection stays, and with [tapCandidate] cleared the
+     * finger's UP is not taken for "a tap outside clears".
+     */
     private val reselect = Runnable {
         if (active && tapCandidate) {
             tapCandidate = false
@@ -96,16 +103,26 @@ class SelectionController(private val host: ReaderHost) {
     /** Optional "read aloud from here" hook (defaults to the TtsController created for the same host). */
     var onReadAloud: ((DocPosition) -> Unit)? = null
 
+    /**
+     * The glyph a long press at view coordinates (x, y) is on, or -1 on a margin, the leading between lines, a space
+     * or the blank end of a short line (set by the host; null = no check, the char [ReaderHost.hitTest] snaps to).
+     */
+    var glyphAt: ((Float, Float) -> Int)? = null
+
     val isActive: Boolean get() = active
 
-    /** Starts a selection at the word under view coordinates (x, y). Returns true if something was selected. */
+    /**
+     * Starts a selection at the word under view coordinates (x, y). Returns true if something was selected. Only
+     * long presses call this (the host's and [reselect]). The word is the one of the glyph [glyphAt] finds (within
+     * its slop, never a space next to it); where it finds none nothing happens, and a selection already shown stays.
+     */
     fun startAt(x: Float, y: Float): Boolean {
         val layout = host.currentLayout ?: return false
         val page = host.currentPage ?: return false
-        val off = host.hitTest(x, y)
+        val find = glyphAt
+        val off = if (find != null) find(x, y) else host.hitTest(x, y)
         val text = layout.content.text
         if (off < 0 || off >= text.length || off < page.start || off >= page.end) return false
-        if (active) clear()
         val sec = host.currentPosition().section
         ensureQuotes()
 
@@ -125,6 +142,8 @@ class SelectionController(private val host: ReaderHost) {
         if (e <= s) return false
         if (e - s == 1 && (text[s] == OBJECT_CHAR || SentenceSplitter.isSpace(text[s]))) return false
 
+        // Only now that there is a new word: a press that selects nothing keeps the current selection.
+        if (active) clear()
         section = sec
         selStart = s
         selEnd = e
@@ -150,7 +169,7 @@ class SelectionController(private val host: ReaderHost) {
                 downX = ev.x
                 downY = ev.y
                 main.removeCallbacks(reselect)
-                main.postDelayed(reselect, ViewConfiguration.getLongPressTimeout().toLong())
+                main.postDelayed(reselect, PageView.LONG_PRESS_MS)
             }
             MotionEvent.ACTION_MOVE -> {
                 if (fromLongPress) {
@@ -284,11 +303,12 @@ class SelectionController(private val host: ReaderHost) {
             parent.addView(h, FrameLayout.LayoutParams(h.sizePx, h.sizePx))
             h.setOnTouchListener(HandleDrag(h))
         }
-        sh.place(baseX + first.left, baseY + first.bottom, (first.bottom - first.top) / 2f)
-        eh.place(baseX + last.right, baseY + last.bottom, (last.bottom - last.top) / 2f)
+        // Anchored under the letters (the glyph band), not under the line box's blank leading.
+        sh.place(baseX + first.left, baseY + HandleAnchor.bottom(layout, page, first), HandleAnchor.halfHeight(layout, page, first))
+        eh.place(baseX + last.right, baseY + HandleAnchor.bottom(layout, page, last), HandleAnchor.halfHeight(layout, page, last))
     }
 
-    /** Drags a handle; the hit point is the handle's anchor moved up into the middle of the text line. */
+    /** Drags a handle; the hit point is the handle's anchor moved up into the middle of the glyph band. */
     private inner class HandleDrag(private val h: HandleView) : View.OnTouchListener {
         private var grabDx = 0f
         private var grabDy = 0f
@@ -576,7 +596,7 @@ class SelectionController(private val host: ReaderHost) {
 /**
  * Selection handle: a teardrop in the page's text colour (black, or white on the inverted page) whose sharp corner
  * ([anchorX], [anchorY], parent coordinates) touches the selection's start (bottom-left) or end (bottom-right)
- * corner. The view is larger than the drawing (touch target).
+ * corner, at the bottom of the letters ([HandleAnchor]). The view is larger than the drawing (touch target).
  */
 @SuppressLint("ViewConstructor")
 internal class HandleView(context: Context, val start: Boolean) : View(context) {
@@ -603,7 +623,7 @@ internal class HandleView(context: Context, val start: Boolean) : View(context) 
         if (start) path.addRect(cx, ay, ax, cy, Path.Direction.CW) else path.addRect(ax, ay, cx, cy, Path.Direction.CW)
     }
 
-    /** Places the handle so its corner sits at ([x], [y]) in parent coordinates. */
+    /** Places the handle so its corner sits at ([x], [y]) in parent coordinates; [halfLine] is the drag lift. */
     fun place(x: Float, y: Float, halfLine: Float) {
         anchorX = x
         anchorY = y
@@ -619,6 +639,37 @@ internal class HandleView(context: Context, val start: Boolean) : View(context) 
         outline.color = HandleColors.outline(invert)
         canvas.drawPath(path, outline)
         canvas.drawPath(path, paint)
+    }
+}
+
+/**
+ * Where a selection handle sits on a [LineGeometry.rangeRects] rect (pure; unit-tested): the bottom of the glyph
+ * band of the text line the rect was cut from (the band PageRenderer fills, kept inside the line box), lifted by half
+ * the band while dragging so the hit point stays on that line. An image rect (its box is the picture) keeps the box.
+ */
+internal object HandleAnchor {
+    /** The text line of [page] that [r] was cut from; null for an image (or when no line matches). */
+    fun lineOf(page: PageInfo, r: RectPx): LineInfo? {
+        val lines = page.lines
+        for (i in lines.indices) {
+            val ln = lines[i]
+            if (ln.top != r.top || ln.bottom != r.bottom) continue
+            if (ln.imageBlock != null) return null
+            if (!ln.isRule && ln.end > ln.start) return ln
+        }
+        return null
+    }
+
+    /** Anchor y (content-box px): the glyph band bottom of a text line, the box bottom of an image. */
+    fun bottom(layout: SectionLayout, page: PageInfo, r: RectPx): Float {
+        val ln = lineOf(page, r) ?: return r.bottom
+        return LineGeometry.bandBottom(layout, ln)
+    }
+
+    /** How far a dragged handle lifts its hit point above the anchor: half the glyph band (half the box for an image). */
+    fun halfHeight(layout: SectionLayout, page: PageInfo, r: RectPx): Float {
+        val ln = lineOf(page, r) ?: return (r.bottom - r.top) / 2f
+        return (LineGeometry.bandBottom(layout, ln) - LineGeometry.bandTop(layout, ln)) / 2f
     }
 }
 

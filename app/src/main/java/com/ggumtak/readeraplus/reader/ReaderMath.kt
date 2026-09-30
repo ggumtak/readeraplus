@@ -42,6 +42,44 @@ class EinkCadence(var every: Int = 0, var onChapter: Boolean = false) {
 }
 
 /**
+ * Rate limit for a label that follows a drag (brightness overlay, seek preview): on e-ink every text change is a
+ * panel update, so the label changes at most once per [intervalMs] while the drag goes on, and the caller shows the
+ * final value once the drag rests ([waitMs]) or ends (pure; main thread only). Times are uptime ms.
+ */
+class Throttle(private val intervalMs: Long) {
+    private var lastAt = NEVER
+
+    /** True when an update may be shown at [now] (and records it); false while the last one is too recent. */
+    fun tryAcquire(now: Long): Boolean {
+        if (now - lastAt in 0 until intervalMs) return false
+        lastAt = now
+        return true
+    }
+
+    /** Ms until [tryAcquire] succeeds (0 = now): when to show a value that was held back. */
+    fun waitMs(now: Long): Long {
+        val d = now - lastAt
+        return if (d in 0 until intervalMs) intervalMs - d else 0L
+    }
+
+    /** Records an update shown at [now] outside [tryAcquire] (a held-back value shown late). */
+    fun mark(now: Long) {
+        lastAt = now
+    }
+
+    /** A new drag: its first value shows at once. */
+    fun reset() {
+        lastAt = NEVER
+    }
+
+    companion object {
+        /** 4 Hz: fast enough to follow a finger, slow enough for the panel. */
+        const val LABEL_MS = 250L
+        private const val NEVER = Long.MIN_VALUE / 2
+    }
+}
+
+/**
  * Page turns that arrive while the page to turn from is still being laid out (a section change, a jump, a
  * relayout): each is counted (net direction, capped) and all are applied at once when the layout is shown, so fast
  * taps are never dropped and never replayed one draw at a time (pure; main thread only).

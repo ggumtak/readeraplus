@@ -188,7 +188,7 @@ internal object FontChooser {
                     (activity as? ReaderHost)?.applySettings(Settings.reader.copy(fontId = info.id))
                 }
             }.onFailure { e ->
-                activity.toast("폰트를 추가할 수 없습니다" + (e.message?.let { ": $it" } ?: ""))
+                activity.toast(ErrorText.fontImport(e))
             }
         }
     }

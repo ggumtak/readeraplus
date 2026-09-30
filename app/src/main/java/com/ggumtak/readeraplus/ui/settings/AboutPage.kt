@@ -38,7 +38,7 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
             setPadding(0, ctx.dp(6), 0, 0)
         })
         head.addView(ctx.label(
-            "이노스페이스원 코멧 같은 e-ink 기기를 위한 개인용 전자책 리더입니다. EPUB · TXT를 빠르게 열고, 글꼴 · 줄 간격 · 문단 간격 · 여백을 자유롭게 바꿀 수 있습니다.",
+            "e-ink 전자책 리더기를 위해 만든 가볍고 빠른 TXT·EPUB 리더입니다. 글꼴 · 줄 간격 · 문단 간격 · 여백을 자유롭게 바꿀 수 있습니다.",
             15f,
         ).apply { setPadding(0, ctx.dp(10), 0, 0); setLineSpacing(0f, 1.15f) })
         body.addView(head)
@@ -96,7 +96,8 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         val text = ctx.label("불러오는 중…", 14f).apply {
             setPadding(ctx.dp(16), ctx.dp(12), ctx.dp(16), ctx.dp(24))
             setLineSpacing(0f, 1.15f)
-            setTextIsSelectable(true)
+            // Not selectable: a long-press on a page-long text would start a selection (and its handles) by accident.
+            setTextIsSelectable(false)
         }
         val scroll = ctx.pageScroll(ctx.vertical().apply { addView(text, lp()) })
         var dialog: Dialog? = null
@@ -110,7 +111,7 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         activity.scope.launch {
             val content = withContext(Dispatchers.IO) {
                 runCatching { activity.assets.open(assetPath).use { String(it.readBytes(), Charsets.UTF_8) } }
-                    .getOrElse { "파일을 읽지 못했습니다: ${it.message}" }
+                    .getOrElse { ErrorLines.withGrayDetail("파일을 읽지 못했습니다", it) }
             }
             text.text = content
         }

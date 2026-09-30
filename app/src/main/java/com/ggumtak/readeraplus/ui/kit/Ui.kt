@@ -285,9 +285,10 @@ fun Context.switchRow(title: String, summary: String?, checked: Boolean, onChang
 
 /**
  * Gives a stepper's value label a FIXED width wide enough for every value in [min, max] (step [step]), so the
- * − / + buttons never move while the value changes (repeated taps stay on the same spot).
+ * − / + buttons never move while the value changes (repeated taps stay on the same spot). [minPx] gives every stepper
+ * of a panel one common width, so their buttons also line up in columns.
  */
-fun TextView.lockWidthForValues(min: Float, max: Float, step: Float, format: (Float) -> String) {
+fun TextView.lockWidthForValues(min: Float, max: Float, step: Float, format: (Float) -> String, minPx: Int = 0) {
     val p = paint
     var widest = 0f
     val lo = minOf(min, max)
@@ -296,7 +297,7 @@ fun TextView.lockWidthForValues(min: Float, max: Float, step: Float, format: (Fl
     // Sample every step (at most ~2000 labels, measured once when the row is built).
     for (i in 0..n) widest = maxOf(widest, p.measureText(format(lo + i * step)))
     widest = maxOf(widest, p.measureText(format(hi)))
-    val w = Math.ceil(widest.toDouble()).toInt() + paddingLeft + paddingRight + context.dp(6)
+    val w = maxOf(minPx, Math.ceil(widest.toDouble()).toInt() + paddingLeft + paddingRight + context.dp(6))
     minWidth = w
     maxWidth = w
     layoutParams = (layoutParams as? LinearLayout.LayoutParams ?: LinearLayout.LayoutParams(w, WRAP_CONTENT)).apply { width = w }
@@ -314,7 +315,7 @@ fun Context.stepperRow(
 ): LinearLayout {
     var v = value
     val valueText = label(format(v), 17f, maxLines = 1).apply { gravity = Gravity.CENTER }
-    valueText.lockWidthForValues(min, max, step, format)
+    valueText.lockWidthForValues(min, max, step, format, minPx = dp(72))
     fun set(nv: Float) {
         v = (Math.round(nv / step) * step).coerceIn(min, max)
         valueText.text = format(v)

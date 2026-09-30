@@ -83,4 +83,42 @@ class ReaderMathTest {
         assertEquals(GestureEnd.NONE, Gestures.end(-200f, 10f, 200f, slop, min, false, false))
         assertEquals(GestureEnd.NEXT, Gestures.end(0f, -300f, 300f, slop, min, false, true))
     }
+
+    @Test
+    fun throttleLetsOneUpdateThroughPerInterval() {
+        val t = Throttle(250)
+        assertTrue(t.tryAcquire(1000)) // the first value of a drag shows at once
+        assertEquals(250L, t.waitMs(1000))
+        assertFalse(t.tryAcquire(1010))
+        assertFalse(t.tryAcquire(1249))
+        assertEquals(1L, t.waitMs(1249))
+        assertTrue(t.tryAcquire(1250))
+        assertFalse(t.tryAcquire(1300))
+        assertTrue(t.tryAcquire(1600))
+        assertEquals(0L, t.waitMs(2000))
+        // 4 Hz: a 1 s drag with an event every 16 ms updates the label 4 times.
+        val d = Throttle(Throttle.LABEL_MS)
+        var shown = 0
+        for (now in 10_000L until 11_000L step 16) if (d.tryAcquire(now)) shown++
+        assertEquals(4, shown)
+    }
+
+    @Test
+    fun throttleMarkAndReset() {
+        val t = Throttle(250)
+        assertTrue(t.tryAcquire(0))
+        // A held-back value shown late counts as the last update.
+        t.mark(200)
+        assertFalse(t.tryAcquire(300))
+        assertEquals(150L, t.waitMs(300))
+        assertTrue(t.tryAcquire(450))
+        // A new drag starts fresh.
+        t.reset()
+        assertTrue(t.tryAcquire(460))
+        assertEquals(0L, Throttle(250).waitMs(5))
+        // A clock that went backwards (should not happen with uptime) never blocks for good.
+        val b = Throttle(250)
+        assertTrue(b.tryAcquire(1000))
+        assertTrue(b.tryAcquire(500))
+    }
 }

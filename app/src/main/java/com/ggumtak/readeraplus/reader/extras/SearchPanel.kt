@@ -36,6 +36,7 @@ import com.ggumtak.readeraplus.ui.kit.frameLp
 import com.ggumtak.readeraplus.ui.kit.fullScreenDialog
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
+import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
@@ -57,7 +58,8 @@ import java.lang.ref.WeakReference
  */
 internal object SearchPanel {
     const val MAX_RESULTS = 1000
-    private const val FLUSH_MS = 200L
+    /** Results and status reach the screen at most this often while scanning (each refresh is an e-ink update). */
+    const val FLUSH_MS = 500L
 
     class Hit(val section: Int, val start: Int, val end: Int, val snippet: CharSequence) {
         var page: String? = null
@@ -184,6 +186,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
             textSize = 19f
             background = null
             setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
+            inkCursor(singleLine = true)
             setOnEditorActionListener { _, actionId, ev ->
                 if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE ||
                     (ev != null && ev.keyCode == KeyEvent.KEYCODE_ENTER && ev.action == KeyEvent.ACTION_DOWN)
@@ -284,7 +287,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         resume(st)
     }
 
-    /** Scans sections from [SearchPanel.State.scanned] on a background thread, streaming hits every 200 ms. */
+    /** Scans sections from [SearchPanel.State.scanned] on a background thread, streaming hits every [SearchPanel.FLUSH_MS]. */
     private fun resume(st: SearchPanel.State) {
         val doc = st.docRef.get() ?: return
         val total = doc.sections.size
@@ -311,7 +314,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
                     }
                     s++
                     val now = SystemClock.uptimeMillis()
-                    if (now - lastFlush >= 200L || s >= total || count >= SearchPanel.MAX_RESULTS) {
+                    if (now - lastFlush >= SearchPanel.FLUSH_MS || s >= total || count >= SearchPanel.MAX_RESULTS) {
                         lastFlush = now
                         val out = ArrayList(batch)
                         batch.clear()
@@ -325,7 +328,8 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
                                 st.capped = count >= SearchPanel.MAX_RESULTS
                             }
                             if (state === st) {
-                                adapter.notifyDataSetChanged()
+                                // Rebinding the list redraws every visible row: only when there is something new.
+                                if (out.isNotEmpty() || done) adapter.notifyDataSetChanged()
                                 renderStatus()
                                 updateEmpty()
                             }
@@ -346,12 +350,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
     private fun renderStatus() {
         val st = state ?: run { status.text = ""; return }
         val total = st.docRef.get()?.sections?.size ?: 0
-        status.text = when {
-            !st.complete -> "검색 중… (섹션 ${st.scanned}/$total)  ·  ${st.hits.size}개"
-            st.capped -> "${st.hits.size}개 결과 (최대 ${SearchPanel.MAX_RESULTS}개까지 표시)"
-            st.hits.isEmpty() -> "결과 없음"
-            else -> "${st.hits.size}개 결과"
-        }
+        status.text = SearchText.status(st.scanned, total, st.hits.size, st.complete, st.capped, SearchPanel.MAX_RESULTS)
     }
 
     private fun updateEmpty() {

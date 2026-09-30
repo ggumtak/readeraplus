@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Process
@@ -54,6 +55,12 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     }
     private val statusAscent: Float
     private val statusDescent: Float
+    /** Vertical middle of the status digits relative to the baseline (negative = above it): the battery icon's centre. */
+    private val digitMiddle: Float
+    private val footerSepWidth: Float
+    /** Battery digits last drawn (rebuilt only when the level changes, so a draw allocates nothing). */
+    private var batteryLevelShown = -1
+    private var batteryText = ""
 
     private val fill = Paint().apply { style = Paint.Style.FILL }
     private val line = Paint().apply { style = Paint.Style.FILL }
@@ -89,6 +96,10 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val fm = statusPaint.fontMetrics
         statusAscent = -fm.ascent
         statusDescent = fm.descent
+        val digit = Rect()
+        statusPaint.getTextBounds("0", 0, 1, digit)
+        digitMiddle = if (digit.height() > 0) (digit.top + digit.bottom) / 2f else -0.36f * statusPaint.textSize
+        footerSepWidth = statusPaint.measureText(FOOTER_SEP)
         outline.color = fg
         line.color = fg
         ribbonPaint.color = fg
@@ -187,14 +198,24 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         }
         val fl = decor.footerLeft
         val fr = decor.footerRight
-        if (fl.isNullOrEmpty() && fr.isNullOrEmpty()) return
+        val battery = decor.battery
+        if (fl.isNullOrEmpty() && fr.isNullOrEmpty() && battery < 0) return
         val bandTop = top + ch
         val baseline = centredBaseline(bandTop, maxOf(bandTop, viewHeight.toFloat()))
-        var rightW = 0f
-        if (!fr.isNullOrEmpty()) {
-            rightW = statusPaint.measureText(fr)
-            canvas.drawText(fr, left + cw - rightW, baseline, statusPaint)
+        // Right part, from the right edge leftwards: battery icon + digits, separator, the footer's right text.
+        var x = left + cw
+        if (battery >= 0) {
+            x = drawBattery(canvas, battery, x, baseline)
+            if (!fr.isNullOrEmpty()) {
+                x -= footerSepWidth
+                canvas.drawText(FOOTER_SEP, x, baseline, statusPaint)
+            }
         }
+        if (!fr.isNullOrEmpty()) {
+            x -= statusPaint.measureText(fr)
+            canvas.drawText(fr, x, baseline, statusPaint)
+        }
+        val rightW = left + cw - x
         if (!fl.isNullOrEmpty()) {
             val avail = cw - rightW - (if (rightW > 0f) statusPaint.textSize else 0f)
             if (statusPaint.measureText(fl) <= avail) {
@@ -204,6 +225,39 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
                 canvas.drawText(t, 0, t.length, left, baseline, statusPaint)
             }
         }
+    }
+
+    /**
+     * Battery level as a small outline icon followed by its digits (no "%", which read like reading progress next to
+     * the percent), ending at [right] on [baseline]: a 1 px outline 0.9 × 0.5 status text size with a nub, filled in
+     * proportion to [level], then the digits 0.25 text size after it. Pixel-aligned for crisp e-ink edges. Returns
+     * the icon's left edge.
+     */
+    private fun drawBattery(canvas: Canvas, level: Int, right: Float, baseline: Float): Float {
+        val ts = statusPaint.textSize
+        val lv = level.coerceIn(0, 100)
+        if (lv != batteryLevelShown) {
+            batteryLevelShown = lv
+            batteryText = lv.toString()
+        }
+        val digitsX = right - statusPaint.measureText(batteryText)
+        canvas.drawText(batteryText, digitsX, baseline, statusPaint)
+        val nubW = BatteryMath.nubWidth(ts)
+        val bodyRight = Math.round(digitsX - BatteryMath.gap(ts) - nubW).toFloat()
+        val bodyLeft = bodyRight - BatteryMath.bodyWidth(ts)
+        val bodyH = BatteryMath.bodyHeight(ts)
+        val bodyTop = Math.round(baseline + digitMiddle - bodyH / 2f).toFloat()
+        val bodyBottom = bodyTop + bodyH
+        rect.set(bodyLeft + 0.5f, bodyTop + 0.5f, bodyRight - 0.5f, bodyBottom - 0.5f)
+        canvas.drawRect(rect, outline)
+        val nubH = BatteryMath.nubHeight(ts)
+        val nubTop = bodyTop + Math.round((bodyH - nubH) / 2f)
+        canvas.drawRect(bodyRight, nubTop, bodyRight + nubW, nubTop + nubH, line)
+        // The level fills the inside of the outline, one px of paper away from it.
+        val inL = bodyLeft + 2f
+        val fillR = BatteryMath.fillRight(inL, bodyRight - 2f, lv)
+        if (fillR > inL) canvas.drawRect(inL, bodyTop + 2f, fillR, bodyBottom - 2f, line)
+        return bodyLeft
     }
 
     private fun centredBaseline(top: Float, bottom: Float): Float {
@@ -258,6 +312,9 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             if (!any) continue
             val right = positions(layout, ln)
             val s = ln.start
+            // The glyph band, not the whole line box: at airy line heights the box is half blank leading.
+            val t = top + LineGeometry.bandTop(layout, ln)
+            val bt = top + LineGeometry.bandBottom(layout, ln)
             for (k in 0 until hs.size) {
                 val h = hs[k]
                 val a = maxOf(h.start, s)
@@ -267,8 +324,6 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
                 val xb = if (b >= ln.end) right else xs[b - s]
                 val l = left + xa
                 val r = left + xb
-                val t = top + ln.top
-                val bt = top + ln.bottom
                 when (h.kind) {
                     HighlightKind.QUOTE -> {
                         fillRect(canvas, l, t, r, bt, grey(0xD8))
@@ -467,6 +522,35 @@ internal object RibbonMath {
         return (contentRight - (left(viewWidth, density) - GAP_DP * density)).coerceAtLeast(0f)
     }
 }
+
+/**
+ * Footer battery icon geometry in px from the status text size `ts` (pure, unit-tested): a 0.9 × 0.5 ts outline with a
+ * 0.08 × 0.25 ts nub, 0.25 ts before the digits; sizes are whole px so the 1 px lines stay crisp on e-ink.
+ */
+internal object BatteryMath {
+    fun bodyWidth(ts: Float): Float = maxOf(6f, Math.round(0.9f * ts).toFloat())
+
+    fun bodyHeight(ts: Float): Float = maxOf(5f, Math.round(0.5f * ts).toFloat())
+
+    fun nubWidth(ts: Float): Float = maxOf(1f, Math.round(0.08f * ts).toFloat())
+
+    fun nubHeight(ts: Float): Float = maxOf(1f, Math.round(0.25f * ts).toFloat())
+
+    fun gap(ts: Float): Float = 0.25f * ts
+
+    /**
+     * Right edge of the level fill spanning [inLeft, inRight) for [level] percent: [inLeft] (no fill) at 0 or when there
+     * is no room, at least 1 px for any level above 0, [inRight] at 100.
+     */
+    fun fillRight(inLeft: Float, inRight: Float, level: Int): Float {
+        val lv = level.coerceIn(0, 100)
+        if (lv == 0 || !(inRight - inLeft >= 1f)) return inLeft
+        return maxOf(inLeft + 1f, Math.round(inLeft + (inRight - inLeft) * lv / 100f).toFloat()).coerceAtMost(inRight)
+    }
+}
+
+/** Separator between the footer's right text and the battery (the same as the reader's footer strings use). */
+private const val FOOTER_SEP = "  ·  "
 
 /** Background decoder for the images of neighbouring pages (one low-priority thread, latest request only). */
 private val imagePrefetcher = LatestTaskRunner("page-image-prefetch")

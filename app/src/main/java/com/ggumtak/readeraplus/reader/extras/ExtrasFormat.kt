@@ -4,9 +4,14 @@ import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.StylePreset
+import com.ggumtak.readeraplus.ui.kit.isNoSpace
+import com.ggumtak.readeraplus.ui.kit.ownMessage
+import com.ggumtak.readeraplus.ui.kit.userMessage
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.regex.PatternSyntaxException
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -278,6 +283,50 @@ internal object GoToText {
         val where = if (page > 0) "현재 $page${if (total > 0) " / $total" else ""}쪽  ·  " else "현재 "
         val note = if (!pagesKnown) "\n(쪽수 계산 중 — 퍼센트로 이동할 수 있습니다)" else ""
         return where + percent(fraction) + note
+    }
+}
+
+/** Error texts the extras show (never a raw exception message: platform ones are English and may hold paths). */
+internal object ErrorText {
+    /** "폰트를 추가할 수 없습니다: 글꼴 파일이 너무 큽니다" (just the first part when there is nothing useful to add). */
+    fun fontImport(t: Throwable): String {
+        val why = ownReason(t)
+            ?: if (t is IOException || t is SecurityException || t is OutOfMemoryError || isNoSpace(t)) userMessage(t) else null
+        return if (why != null) "폰트를 추가할 수 없습니다: $why" else "폰트를 추가할 수 없습니다"
+    }
+
+    /**
+     * The app's own reason (FontManager rejects a file with a Korean sentence meant for users), or null for a
+     * platform message, even one holding a Korean file name ([ownMessage]). A full disk or memory always reads as
+     * such, whatever the message.
+     */
+    fun ownReason(t: Throwable): String? = ownMessage(t)
+
+    /** "정규식이 올바르지 않습니다 (5번째 글자 근처)" for a pattern [Regex] rejected. */
+    fun regex(t: Throwable): String {
+        val p = t as? PatternSyntaxException
+        val len = p?.pattern?.length ?: 0
+        val at = p?.index ?: -1
+        return "정규식이 올바르지 않습니다" + when {
+            at < 0 || len == 0 -> ""
+            at >= len -> " (끝 부분)"
+            else -> " (${at + 1}번째 글자 근처)"
+        }
+    }
+}
+
+/** Status line of the search screen (refreshed at most every [SearchPanel.FLUSH_MS] while scanning). */
+internal object SearchText {
+    /** Share of sections scanned; at most 99 while the scan runs. */
+    fun percent(scanned: Int, total: Int): Int =
+        if (total <= 0) 0 else (scanned.toLong() * 100 / total).toInt().coerceIn(0, 99)
+
+    /** "검색 중 34%" (+ "  ·  8개" once something is found), then "57개 결과", "결과 없음" or the capped count. */
+    fun status(scanned: Int, total: Int, hits: Int, complete: Boolean, capped: Boolean, max: Int): String = when {
+        !complete -> "검색 중 ${percent(scanned, total)}%" + if (hits > 0) "  ·  ${hits}개" else ""
+        capped -> "${hits}개 결과 (최대 ${max}개까지 표시)"
+        hits == 0 -> "결과 없음"
+        else -> "${hits}개 결과"
     }
 }
 

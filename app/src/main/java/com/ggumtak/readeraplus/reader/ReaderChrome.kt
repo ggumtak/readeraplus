@@ -3,6 +3,7 @@ package com.ggumtak.readeraplus.reader
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -73,6 +74,18 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
 
     var isSeeking = false
         private set
+    /** The seek preview follows the drag at most 4 times a second (each text change is an e-ink update). */
+    private val seekThrottle = Throttle(Throttle.LABEL_MS)
+    /** Seek position whose preview was held back by [seekThrottle] (-1 = none). */
+    private var seekHeld = -1
+    private val showHeldSeek = Runnable {
+        val p = seekHeld
+        seekHeld = -1
+        if (isSeeking && p >= 0) {
+            seekThrottle.mark(SystemClock.uptimeMillis())
+            setSeekInfo(actions.onSeekPreview(p))
+        }
+    }
     private var bindingBrightness = false
     // Last bound icon states: page turns re-bind the chrome, and an unchanged icon must not be redrawn (e-ink).
     private var boundBookmarked: Boolean? = null
@@ -169,18 +182,24 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         seek = einkSeekBar().apply {
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
-                    if (fromUser && isSeeking) setSeekInfo(actions.onSeekPreview(p))
+                    if (fromUser && isSeeking) previewSeek(p)
                 }
 
                 override fun onStartTrackingTouch(s: SeekBar) {
                     isSeeking = true
                     actions.onSeekStart()
+                    // The start text is set outside the throttle: a touch on the track away from the thumb reports
+                    // its position (onProgressChanged) in this same event, which then replaces this text before the
+                    // first draw, so the box is drawn once, already showing the touched position.
+                    dropHeldSeek()
+                    seekThrottle.reset()
                     setSeekInfo(actions.onSeekPreview(s.progress))
                     showSeekInfo(true)
                 }
 
                 override fun onStopTrackingTouch(s: SeekBar) {
                     isSeeking = false
+                    dropHeldSeek()
                     showSeekInfo(false)
                     actions.onSeekDone(s.progress)
                 }
@@ -221,11 +240,35 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         val v = if (visible) View.VISIBLE else View.GONE
         top.visibility = v
         bottom.visibility = v
-        if (!visible) showSeekInfo(false)
+        if (!visible) {
+            dropHeldSeek()
+            showSeekInfo(false)
+        }
     }
 
     /** Views of the chrome itself (the host lays out other overlays around them). */
     fun owns(v: View): Boolean = v === top || v === bottom || v === seekInfo
+
+    /**
+     * Shows the preview of seek position [p] now, or once [seekThrottle] allows (the latest held position, so the box
+     * always ends on the value under the finger).
+     */
+    private fun previewSeek(p: Int) {
+        val now = SystemClock.uptimeMillis()
+        if (seekThrottle.tryAcquire(now)) {
+            dropHeldSeek()
+            setSeekInfo(actions.onSeekPreview(p))
+            return
+        }
+        if (seekHeld < 0) seekInfo.postDelayed(showHeldSeek, seekThrottle.waitMs(now))
+        seekHeld = p
+    }
+
+    private fun dropHeldSeek() {
+        if (seekHeld < 0) return
+        seekHeld = -1
+        seekInfo.removeCallbacks(showHeldSeek)
+    }
 
     private fun setSeekInfo(text: CharSequence) {
         if (seekInfo.text.toString() != text.toString()) seekInfo.text = text

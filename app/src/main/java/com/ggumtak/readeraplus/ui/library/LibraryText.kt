@@ -4,6 +4,7 @@ import android.content.Intent
 import android.view.KeyEvent
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
+import com.ggumtak.readeraplus.reader.ReaderFormat
 import java.util.Locale
 
 /**
@@ -275,16 +276,8 @@ internal object LibraryText {
         return p == f || p.startsWith("$f/")
     }
 
-    /** Human label for a TXT encoding choice ("" = auto). */
-    fun encodingLabel(charset: String): String = when (charset.uppercase(Locale.ROOT)) {
-        "" -> "자동 감지"
-        "UTF-8" -> "UTF-8 (유니코드)"
-        "MS949", "CP949", "X-WINDOWS-949", "WINDOWS-949" -> "CP949 (한국어 확장 완성형)"
-        "EUC-KR" -> "EUC-KR (한국어 완성형)"
-        "UTF-16LE" -> "UTF-16 LE"
-        "UTF-16BE" -> "UTF-16 BE"
-        else -> charset
-    }
+    /** Human label for a TXT encoding choice ("" = auto); the same wording as the reader's. */
+    fun encodingLabel(charset: String): String = ReaderFormat.encodingLabel(charset)
 
     const val ADB_HINT = "adb shell appops set com.ggumtak.readeraplus MANAGE_EXTERNAL_STORAGE allow"
 }

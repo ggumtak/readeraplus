@@ -209,6 +209,8 @@ class LibraryTextTest {
         assertTrue(LibraryText.encodingLabel("MS949").startsWith("CP949"))
         assertTrue(LibraryText.encodingLabel("utf-8").startsWith("UTF-8"))
         assertEquals("ISO-8859-1", LibraryText.encodingLabel("ISO-8859-1"))
+        // One wording in the library and the reader.
+        assertEquals(com.ggumtak.readeraplus.reader.ReaderFormat.encodingLabel("MS949"), LibraryText.encodingLabel("MS949"))
     }
 
     @Test

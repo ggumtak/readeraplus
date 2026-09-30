@@ -40,6 +40,8 @@ class PageDecor(
     /** Footer left/right strings or null. */
     val footerLeft: String? = null,
     val footerRight: String? = null,
+    /** Battery percent 0..100 drawn as a small battery icon + digits at the footer's right end; -1 = none. */
+    val battery: Int = -1,
 )
 
 /** Application context captured by [FontManager.init] (used by Eink/Covers helpers that have no context). */

@@ -2,6 +2,7 @@ package com.ggumtak.readeraplus.data
 
 import com.ggumtak.readeraplus.format.BookFormat
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -73,6 +74,27 @@ class ScanPlanTest {
         )
         assertEquals(listOf("/r/a-new.txt", "/r/changed.txt", "/r/new.txt"), plan.todo.map { it.first.path })
         assertEquals(listOf(null, 2L, null), plan.todo.map { it.second?.id })
+    }
+
+    @Test
+    fun aRescanThatFindsNothingNewChangesNoBook() {
+        // The periodic rescan of an unchanged library must not reload (and redraw) the idle library screen.
+        val k = listOf(known(1, "/r/a.txt"), known(2, "/r/b.txt"))
+        val same = FileScanner.plan(
+            k, foundMap(found("/r/a.txt"), found("/r/b.txt")), setOf("/r/gone-ignored.txt"), emptyList(),
+            vanished = { true }, userDataIds = noUserData,
+        )
+        // A dead "removed from library" mark is cleaned up, but no book row changes.
+        assertEquals(listOf("/r/gone-ignored.txt"), same.deadIgnored)
+        assertFalse(same.changesBooks)
+        val added = FileScanner.plan(
+            k, foundMap(found("/r/a.txt"), found("/r/b.txt"), found("/r/c.txt")), emptySet(), emptyList(),
+            vanished = { false }, userDataIds = noUserData,
+        )
+        assertTrue(added.changesBooks)
+        val removed = FileScanner.plan(k, foundMap(found("/r/a.txt")), emptySet(), emptyList(), vanished = { true }, userDataIds = noUserData)
+        assertEquals(listOf(2L), removed.gone)
+        assertTrue(removed.changesBooks)
     }
 
     @Test

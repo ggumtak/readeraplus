@@ -39,6 +39,7 @@ import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.icon
+import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.popupMenu
@@ -46,6 +47,7 @@ import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
+import com.ggumtak.readeraplus.ui.settings.ErrorLines
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -55,11 +57,11 @@ import kotlinx.coroutines.withContext
  * (Dispatchers.IO) and reports failures as a toast; the list is refreshed through LibraryActivity.changed().
  */
 
-/** Runs [work] on IO, then [done] on the main thread; failures become a toast prefixed with [errorPrefix]. */
+/** Runs [work] on IO, then [done] on the main thread; failures become a toast: [errorPrefix] and the reason. */
 internal fun <T> LibraryActivity.io(errorPrefix: String, work: () -> T, done: (T) -> Unit) {
     scope.launch {
         val r = withContext(Dispatchers.IO) { runCatching(work) }
-        r.onSuccess(done).onFailure { toast("$errorPrefix: ${it.message ?: it.javaClass.simpleName}") }
+        r.onSuccess(done).onFailure { toast(ErrorLines.line(errorPrefix, it)) }
     }
 }
 
@@ -107,7 +109,7 @@ private fun LibraryActivity.documentInfo(b: Book) {
         ReaderPanels.showDocumentInfo(this, b, null)
     } catch (t: Throwable) {
         refreshOnFocus = false
-        toast("문서 속성을 열 수 없습니다: ${t.message ?: t.javaClass.simpleName}")
+        toast(ErrorLines.line("문서 속성을 열 수 없습니다", t))
     }
 }
 
@@ -132,7 +134,7 @@ private fun LibraryActivity.shareBook(b: Book) {
     } catch (e: ActivityNotFoundException) {
         toast("공유할 앱이 없습니다")
     } catch (t: Throwable) {
-        toast("공유할 수 없습니다: ${t.message ?: t.javaClass.simpleName}")
+        toast(ErrorLines.line("공유할 수 없습니다", t))
     }
 }
 
@@ -145,6 +147,8 @@ private fun Context.formField(parent: android.widget.LinearLayout, title: String
         inputType = if (numeric) InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
         else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         setSingleLine(true)
+        // Opens with the book's value: the caret shows once the user taps into it, so a fix mid-word is not blind.
+        inkCursor(singleLine = false)
     }
     parent.addView(e, lp())
     return e
@@ -366,7 +370,7 @@ internal fun LibraryActivity.showAbout() {
     val vendor = try { Eink.vendorName() } catch (t: Throwable) { null }
     val msg = buildString {
         append("버전 ").append(BuildConfig.VERSION_NAME).append("\n\n")
-        append("ReadEra의 흐름을 참고해 새로 만든 개인용 전자책 리더입니다 (EPUB · TXT).\n")
+        append("e-ink 전자책 리더기를 위해 만든 가볍고 빠른 TXT·EPUB 리더입니다.\n")
         append("이노스페이스원 코멧 같은 전자잉크 기기에 맞춰 흑백 · 애니메이션 없는 화면으로 최적화했습니다.\n\n")
         append("기기: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
             .append(" (Android ").append(Build.VERSION.RELEASE).append(")\n")

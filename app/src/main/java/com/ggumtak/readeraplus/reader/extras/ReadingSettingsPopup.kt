@@ -21,6 +21,7 @@ import com.ggumtak.readeraplus.engine.LineBreakMode
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
+import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.Covers
 import com.ggumtak.readeraplus.render.FontManager
@@ -388,7 +389,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                 val t = text.trim()
                 val err = if (t.isEmpty()) null else runCatching { Regex(t) }.exceptionOrNull()
                 if (err != null) {
-                    ctx.toast("정규식 오류: ${err.message?.lineSequence()?.firstOrNull() ?: ""}")
+                    ctx.toast(ErrorText.regex(err))
                 } else {
                     update(cur.copy(txtChapterRegex = t))
                     value.text = t.ifBlank { "없음" }
@@ -481,8 +482,9 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         val row = ctx.compactRow()
         row.addView(ctx.compactLabelBlock(title), lp(0, WRAP_CONTENT, 1f))
         val valueView = ctx.label(format(v), Compact.VALUE_SP, maxLines = 1).apply { gravity = Gravity.CENTER }
-        // Fixed width for the widest possible value: the − / + buttons stay put while tapping repeatedly.
-        valueView.lockWidthForValues(min, max, step, format)
+        // Fixed width for the widest possible value (at least the common column width): the − / + buttons stay put
+        // while tapping repeatedly, and line up with the other rows' buttons.
+        valueView.lockWidthForValues(min, max, step, format, minPx = ctx.dp(Compact.STEP_VALUE_DP))
         fun set(nv: Float) {
             val s = Fmt.stepFloat(nv, step, min, max)
             if (s == v) return
@@ -627,13 +629,10 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             else -> "자동"
         }
 
-        fun encodingLabel(enc: String): String = when {
-            enc.isBlank() -> "자동 감지"
-            enc.equals("MS949", true) -> "MS949 (CP949 · 한글 완성형 확장)"
-            else -> enc
-        }
+        /** The reader's one encoding wording (the error panel's chooser and the library use it too). */
+        fun encodingLabel(enc: String): String = ReaderFormat.encodingLabel(enc.trim())
 
-        /** Short form for the row value (the list shows [encodingLabel]). */
-        fun encodingShort(enc: String): String = if (enc.isBlank()) "자동 감지" else enc
+        /** Short form for the row value: the list label without its note ("CP949", not "MS949"). */
+        fun encodingShort(enc: String): String = encodingLabel(enc).substringBefore(" (")
     }
 }

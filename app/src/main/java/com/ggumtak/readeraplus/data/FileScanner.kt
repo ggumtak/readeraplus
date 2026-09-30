@@ -27,12 +27,30 @@ object FileScanner {
     private const val PROGRESS_EVERY = 50
     private const val META_BATCH = 32
     private const val MAX_DEPTH = 40
+    /** Inside one large directory the stop check also runs every this many entries. */
+    private const val STOP_CHECK_EVERY = 64
 
     private val lock = Any()
+    private val NEVER: () -> Boolean = { false }
+
+    /**
+     * Thrown by [scan] when its stop check said so. Nothing is half-written: the walk writes nothing, and the sync
+     * stops while a metadata batch is still being read (each batch is written in its own transaction) or before any
+     * deletion, so the next scan simply picks up what is left.
+     */
+    class Stopped : RuntimeException("scan stopped")
 
     /** Scans roots (AppSettings.scanFolders or primary storage), adds new files, drops vanished ones.
-     *  Calls [progress] with the number of files found so far. Returns number of books in library. */
-    fun scan(context: Context, progress: (Int) -> Unit = {}): Int = synchronized(lock) {
+     *  Calls [progress] with the number of files found so far. Returns number of books in library.
+     *  [stopWhen] is checked between directories and before each metadata parse (any thread; keep it cheap);
+     *  when it returns true the scan ends with [Stopped]. [synced] learns whether the scan added, moved, refreshed
+     *  or removed any book (false: the library's rows are as they were, so a list shown needs no reload). */
+    fun scan(
+        context: Context,
+        stopWhen: () -> Boolean = NEVER,
+        synced: (changed: Boolean) -> Unit = {},
+        progress: (Int) -> Unit = {},
+    ): Int = synchronized(lock) {
         Library.init(context)
         Settings.init(context)
         val primary = Library.primaryRoot()
@@ -44,8 +62,8 @@ object FileScanner {
             DataPaths.dedupeRoots(defaultRoots(context).map { it.path }, primary)
         }
         val excluded = app.excludedFolders.filter { it.isNotBlank() }.map { DataPaths.normalize(it.trim(), primary) }
-        val walk = walk(roots, excluded, progress)
-        sync(context, walk, excluded)
+        val walk = walk(roots, excluded, stopWhen, progress)
+        synced(sync(context, walk, excluded, stopWhen))
         Library.count()
     }
 
@@ -85,13 +103,24 @@ object FileScanner {
         val unreadable: List<String>,
     )
 
-    /** Walks [roots] (normalised absolute paths) skipping [excluded] folders; pure java.io/nio. */
-    internal fun walk(roots: List<String>, excluded: List<String>, progress: (Int) -> Unit): WalkResult =
-        Walker(excluded, progress).run(roots)
+    /**
+     * Walks [roots] (normalised absolute paths) skipping [excluded] folders; pure java.io/nio. Throws [Stopped] when
+     * [stopWhen] returns true before a directory is listed (or within a large one).
+     */
+    internal fun walk(
+        roots: List<String>,
+        excluded: List<String>,
+        stopWhen: () -> Boolean = NEVER,
+        progress: (Int) -> Unit,
+    ): WalkResult = Walker(excluded, stopWhen, progress).run(roots)
 
     private class Dir(val path: String, val canonical: String, val depth: Int)
 
-    private class Walker(private val excluded: List<String>, private val progress: (Int) -> Unit) {
+    private class Walker(
+        private val excluded: List<String>,
+        private val stopWhen: () -> Boolean,
+        private val progress: (Int) -> Unit,
+    ) {
         private val found = HashMap<String, Found>(256)
         private val visited = HashSet<String>(256)
         private val queue = ArrayDeque<Dir>()
@@ -101,6 +130,7 @@ object FileScanner {
 
         fun run(roots: List<String>): WalkResult {
             for (r in roots) {
+                if (stopWhen()) throw Stopped()
                 if (isExcluded(r)) continue
                 val dir = File(r)
                 val canonical = try {
@@ -113,6 +143,7 @@ object FileScanner {
                 listedRoots += r
                 visitDir(Dir(r, canonical, 0), names)
                 while (queue.isNotEmpty()) {
+                    if (stopWhen()) throw Stopped()
                     val d = queue.removeFirst()
                     val list = safeList(File(d.path))
                     if (list == null) {
@@ -129,7 +160,9 @@ object FileScanner {
         private fun visitDir(dir: Dir, names: Array<String>) {
             val base = if (dir.path.endsWith("/")) dir.path else dir.path + "/"
             val canonBase = if (dir.canonical.endsWith("/")) dir.canonical else dir.canonical + "/"
-            for (name in names) {
+            for (i in names.indices) {
+                if (i > 0 && i % STOP_CHECK_EVERY == 0 && stopWhen()) throw Stopped()
+                val name = names[i]
                 if (name.isEmpty() || name[0] == '.') continue
                 val childPath = base + name
                 val format = DataPaths.bookFormatOf(name)
@@ -227,7 +260,10 @@ object FileScanner {
         val gone: List<Long>,
         /** "Removed from library" marks whose files are gone. */
         val deadIgnored: List<String>,
-    )
+    ) {
+        /** Whether applying this plan changes any book row (the "removed" marks are not shown anywhere). */
+        val changesBooks: Boolean get() = todo.isNotEmpty() || gone.isNotEmpty()
+    }
 
     /**
      * Decides what a scan changes (pure; IO comes in through [vanished] and [userDataIds]).
@@ -285,7 +321,8 @@ object FileScanner {
         return SyncPlan(todo, gone, deadIgnored)
     }
 
-    private fun sync(context: Context, walk: WalkResult, excluded: List<String>) {
+    /** Applies the scan to the library; returns [SyncPlan.changesBooks]. */
+    private fun sync(context: Context, walk: WalkResult, excluded: List<String>, stopWhen: () -> Boolean): Boolean {
         val db = Library.db()
         val known = db.queryList(LibrarySql.SELECT_SCAN_STATE, null) { c ->
             Known(c.getLong(0), c.getString(1) ?: "", c.getLong(2), c.getLong(3), c.getInt(4) != 0, c.getString(5) ?: "")
@@ -311,11 +348,18 @@ object FileScanner {
         val todo = plan.todo
         var i = 0
         while (i < todo.size) {
+            if (stopWhen()) throw Stopped()
             val end = minOf(i + META_BATCH, todo.size)
             val batch = todo.subList(i, end)
-            // A move of an unchanged file needs no parsing.
+            // A move of an unchanged file needs no parsing. Each parse (an EPUB's zip + OPF: tens of ms on the Comet)
+            // checks for a stop first; nothing of this batch is written yet.
             val metas = batch.map { (f, k) ->
-                if (k != null && k.path != f.path && k.mtime == f.mtime) null else Library.readMeta(File(f.path))
+                if (k != null && k.path != f.path && k.mtime == f.mtime) {
+                    null
+                } else {
+                    if (stopWhen()) throw Stopped()
+                    Library.readMeta(File(f.path))
+                }
             }
             db.inTransaction {
                 for (j in batch.indices) {
@@ -333,12 +377,14 @@ object FileScanner {
         }
 
         if (plan.gone.isNotEmpty() || plan.deadIgnored.isNotEmpty()) {
+            if (stopWhen()) throw Stopped()
             db.inTransaction {
                 for (id in plan.gone) Library.deleteBookRows(this, id)
                 for (p in plan.deadIgnored) exec(LibrarySql.DELETE_IGNORED, p)
             }
             for (id in plan.gone) Library.invalidateCover(id)
         }
+        return plan.changesBooks
     }
 
     /**

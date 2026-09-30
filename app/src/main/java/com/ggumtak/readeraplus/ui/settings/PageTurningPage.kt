@@ -121,7 +121,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         }.also(body::addView)
         val modeNote = ctx.note("읽기 화면의 e-ink 갱신 방식입니다. 기기의 e-ink 제어를 찾은 경우에만 적용됩니다 (확인 중…).")
         body.addView(modeNote)
-        body.addView(ctx.note("ReadEra처럼 잔상이 적게 하려면 기기 e-ink 설정에서 이 앱을 ReadEra와 같은 모드로 지정하세요."))
+        body.addView(ctx.note("잔상이 거슬리면 기기의 e-ink 설정(앱별 최적화)에서 이 앱의 새로고침 모드를 바꿔 보세요. 위의 'e-ink 화면 모드'에서 '기기 설정 따름' 외의 모드를 고르면 그 값이 우선합니다."))
         body.addView(ctx.stepperRow("전체 새로고침", app.einkRefreshEvery.toFloat(), 0f, 20f, 1f, { SettingsFormat.refreshEvery(it.toInt()) }) { v ->
             editApp { it.copy(einkRefreshEvery = v.toInt()) }
         })

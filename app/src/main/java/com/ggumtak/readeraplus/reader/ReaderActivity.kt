@@ -31,17 +31,21 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.Bookmark
 import com.ggumtak.readeraplus.data.Library
+import com.ggumtak.readeraplus.data.ReaderPresence
 import com.ggumtak.readeraplus.engine.LineGeometry
 import com.ggumtak.readeraplus.engine.PageInfo
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.format.BookDocument
+import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.format.DocumentException
 import com.ggumtak.readeraplus.format.Documents
+import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.reader.extras.PageJumpHost
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
 import com.ggumtak.readeraplus.reader.extras.SelectionController
 import com.ggumtak.readeraplus.reader.extras.TtsController
+import com.ggumtak.readeraplus.render.Covers
 import com.ggumtak.readeraplus.render.Eink
 import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.render.Highlight
@@ -53,7 +57,9 @@ import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.borderBox
+import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.dp
+import com.ggumtak.readeraplus.ui.kit.dpF
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.iconButton
@@ -92,8 +98,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
         private const val TAG = "ReaderActivity"
         private const val LOADING_DELAY_MS = 300L
-        /** Long-press selection needs the finger on a glyph (within this slop), not merely nearest to one. */
-        private const val LONG_PRESS_SLOP_DP = 6
+        /** Long-press selection needs the finger on a glyph's box (within this slop), not in the leading around it. */
+        private const val GLYPH_SLOP_DP = 4f
         private const val SAVE_DELAY_MS = 1000L
         private const val COUNT_DELAY_MS = 800L
         private const val MAX_RETURN_STACK = 16
@@ -135,6 +141,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private lateinit var brightnessOverlay: TextView
     private lateinit var errorPanel: LinearLayout
     private lateinit var errorText: TextView
+    private lateinit var errorDetailText: TextView
+    private lateinit var errorEncoding: TextView
+    /** The TXT book whose file could not be read or parsed: [인코딩 선택] reopens it with another encoding. */
+    private var failedBook: Book? = null
 
     private lateinit var keeper: ScreenOnKeeper
     private val repeatFilter = RepeatFilter(RepeatFilter.NORMAL_MS)
@@ -202,6 +212,24 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     /** Total pages when an exact (page) seek started: the seek bar's scale. */
     private var seekTotal = 0
     private var seekStartProgress = -1
+    /** The brightness overlay's text follows a drag at most 4 times a second (the window follows every event). */
+    private val brightnessThrottle = Throttle(Throttle.LABEL_MS)
+    /** Brightness whose overlay text was held back by [brightnessThrottle] (NaN = none). */
+    private var brightnessHeld = Float.NaN
+    private val showHeldBrightness = Runnable {
+        val v = brightnessHeld
+        brightnessHeld = Float.NaN
+        if (!v.isNaN() && brightnessOverlay.visibility == View.VISIBLE) {
+            brightnessThrottle.mark(SystemClock.uptimeMillis())
+            brightnessOverlay.text = ReaderFormat.brightness(v)
+        }
+    }
+    /** When [startOpen] began (uptime ms), for the "open … first page N ms" log. */
+    private var openStartedAt = 0L
+    /** Event time of the last key press (uptime ms): where a key turn's "turn N ms" starts. */
+    private var keyInputAt = 0L
+    /** Input event time of a user turn whose page is not shown yet (0 = none; only with [ReaderPerf.turns]). */
+    private var perfTurnFrom = 0L
 
     // ================================================================== lifecycle
 
@@ -269,6 +297,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
     override fun onResume() {
         super.onResume()
+        // The library's periodic auto-scan yields while a book is in front.
+        ReaderPresence.inFront = true
         applyAppSettings()
         resumedAt = SystemClock.elapsedRealtime()
         // Per-view refresh modes may be reset by the firmware while another app was in front.
@@ -283,6 +313,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
     override fun onPause() {
         super.onPause()
+        ReaderPresence.inFront = false
         stopAutoTurn(showToast = false)
         savePositionNow(persistText = true)
         flushReadingTime()
@@ -370,9 +401,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         chrome.attach(root)
         chrome.setBrightnessCollapsed(Settings.raw().getBoolean(PREF_BRIGHTNESS_COLLAPSED, false))
 
-        errorText = label("", 16f, color = Ink.GRAY).apply {
+        errorText = label("", 16f).apply {
             gravity = Gravity.CENTER
-            setPadding(0, dp(8), 0, dp(20))
+            setPadding(0, dp(10), 0, 0)
+        }
+        errorDetailText = label("", 13f, color = Ink.GRAY).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(6), 0, 0)
+            visibility = View.GONE
         }
         errorPanel = vertical {
             gravity = Gravity.CENTER_HORIZONTAL
@@ -383,14 +419,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         }
         errorPanel.addView(label("문서를 열 수 없습니다", 20f, bold = true).apply { gravity = Gravity.CENTER }, lp())
         errorPanel.addView(errorText, lp())
-        errorPanel.addView(label("닫기", 18f, bold = true).apply {
-            gravity = Gravity.CENTER
-            minWidth = dp(120)
-            minHeight = dp(48)
-            setPadding(dp(24), 0, dp(24), 0)
-            background = borderBox()
-            setOnClickListener { finish() }
-        }, lp(WRAP_CONTENT, WRAP_CONTENT))
+        errorPanel.addView(errorDetailText, lp())
+        // Stacked, not side by side: three labels in one row do not fit 360 dp at large font scales.
+        errorPanel.addView(errorButton("다시 시도") { retryOpen() }, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(20) })
+        errorEncoding = errorButton("인코딩 선택") { failedBook?.let { chooseEncodingAndRetry(it) } }
+        errorPanel.addView(errorEncoding, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(8) })
+        errorPanel.addView(errorButton("닫기") { finish() }, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(8) })
         root.addView(errorPanel, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
 
         root.setOnApplyWindowInsetsListener { _, wi ->
@@ -418,6 +452,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             }
         })
         setContentView(root)
+    }
+
+    private fun errorButton(text: String, onClick: () -> Unit): TextView = label(text, 18f, bold = true, maxLines = 1).apply {
+        gravity = Gravity.CENTER
+        minWidth = dp(180)
+        minHeight = dp(48)
+        setPadding(dp(24), 0, dp(24), 0)
+        background = borderBox()
+        setOnClickListener { onClick() }
     }
 
     private fun isOwnView(v: View): Boolean =
@@ -478,16 +521,64 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         if (statusText.visibility != View.GONE) statusText.visibility = View.GONE
     }
 
-    private fun showError(message: String) {
+    /**
+     * The error panel: [message] (from [ReaderFormat.openError] or our own), an optional grey [detail] line, and
+     * [다시 시도] / [인코딩 선택] / [닫기]. [book] is a TXT book whose file could not be read or parsed, the only failure
+     * another encoding can fix (not a missing file, nor a layout failure): it offers [인코딩 선택].
+     */
+    private fun showError(message: String, detail: String? = null, book: Book? = null) {
         cancelLoadingText()
         setChromeVisible(false)
         errorText.text = message
+        errorDetailText.text = detail ?: ""
+        errorDetailText.visibility = if (detail.isNullOrEmpty()) View.GONE else View.VISIBLE
+        failedBook = book
+        errorEncoding.visibility = if (book?.format == BookFormat.TXT) View.VISIBLE else View.GONE
         errorPanel.visibility = View.VISIBLE
+    }
+
+    private fun showError(t: Throwable, book: Book? = null) =
+        showError(ReaderFormat.openError(t), ReaderFormat.openErrorDetail(t), book)
+
+    /** [다시 시도]: the same intent again (a book that opened but could not be laid out is closed first). */
+    private fun retryOpen() {
+        if (session != null || bookRef != null) closeCurrentBook()
+        startOpen(intent)
+    }
+
+    /** [인코딩 선택] (TXT): saves the chosen encoding for [b], then opens it again with it. */
+    private fun chooseEncodingAndRetry(b: Book) {
+        val options = listOf("") + TxtDocuments.ENCODINGS
+        val labels = options.map { ReaderFormat.encodingLabel(it) }
+        val current = options.indexOfFirst { it.equals(b.encoding.trim(), ignoreCase = true) }.coerceAtLeast(0)
+        chooser("인코딩", labels, current) { i ->
+            val enc = options[i]
+            if (enc.equals(b.encoding.trim(), ignoreCase = true)) {
+                retryOpen()
+                return@chooser
+            }
+            scope.launch {
+                val saved = withContext(Dispatchers.IO) {
+                    try {
+                        Library.setEncoding(b.id, enc)
+                        // The TXT thumbnail is a rendering of the first page: redraw it with the new encoding.
+                        runCatching { Covers.invalidate(applicationContext, b.id) }
+                        true
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "setEncoding failed", t)
+                        false
+                    }
+                }
+                if (isDestroyed) return@launch
+                if (saved) retryOpen() else toast("인코딩을 저장하지 못했습니다")
+            }
+        }
     }
 
     // ================================================================== opening
 
     private fun startOpen(intent: Intent) {
+        openStartedAt = SystemClock.uptimeMillis()
         openJob?.cancel()
         errorPanel.visibility = View.GONE
         scheduleLoadingText()
@@ -503,17 +594,21 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         }
         openJob = scope.launch {
             var doc: BookDocument? = null
+            // The book while its file is read and parsed: a failure there may be the TXT encoding's ([인코딩 선택]).
+            var parsing: Book? = null
             var adopted = false
             try {
                 val (b, d, storedPos) = withContext(Dispatchers.IO) {
                     val b = IntentFiles.resolveBook(this@ReaderActivity, intent)
                     val f = File(b.path)
                     if (!f.isFile) throw DocumentException("파일을 찾을 수 없습니다.\n${b.path}")
+                    parsing = b
                     val d = Documents.open(f, settings.parseOptions(b.encoding))
                     doc = d
+                    if (d.sections.isEmpty()) throw DocumentException("내용이 없는 문서입니다.")
+                    parsing = null
                     Triple(b, d, readTextPosition(b.id))
                 }
-                if (d.sections.isEmpty()) throw DocumentException("내용이 없는 문서입니다.")
                 if (intent.getLongExtra(EXTRA_BOOK_ID, -1L) != b.id && getIntent() === intent) {
                     // A recreated activity reopens by id: a content:// grant may be gone by then.
                     setIntent(Intent(intent).putExtra(EXTRA_BOOK_ID, b.id))
@@ -558,7 +653,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
                 throw e
             } catch (t: Throwable) {
                 Log.w(TAG, "open failed", t)
-                showError(describe(t))
+                showError(t, parsing)
             } finally {
                 if (!adopted) {
                     try {
@@ -570,16 +665,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         }
     }
 
-    private fun describe(t: Throwable): String = when (t) {
-        is OutOfMemoryError -> "메모리가 부족합니다."
-        is DocumentException -> t.message ?: "알 수 없는 오류"
-        is SecurityException -> "파일 접근 권한이 없습니다."
-        else -> t.message?.let { "$it (${t.javaClass.simpleName})" } ?: t.javaClass.simpleName
-    }
-
     private fun afterOpen() {
         resumedAt = SystemClock.elapsedRealtime()
         if (selection == null) selection = safely { SelectionController(this) }
+        // Every long press selects the word of the glyph under the finger, also while a selection shows (a press on
+        // blank paper or a space keeps that selection).
+        selection?.glyphAt = { x, y -> glyphAtView(x, y, dpF(GLYPH_SLOP_DP)) }
         // Created up front (cheap: the engine starts on start()) so the selection popup's "여기서 읽기" finds
         // this host's controller, and BACK / volume keys see the same TTS session whoever started it.
         if (tts == null) tts = safely { TtsController(this) }
@@ -703,7 +794,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             s.renderer()
         } catch (t: Throwable) {
             Log.w(TAG, "renderer failed", t)
-            showError(describe(t))
+            showError(t)
             return
         }
         val sectionChanged = section != curSection || curLayout == null
@@ -721,6 +812,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             buildDecor(),
         )
         page.invalidate()
+        if (kind == Nav.OPEN) page.traceOpen(bookRef?.id ?: -1L, openStartedAt)
+        if (perfTurnFrom != 0L) {
+            if (kind == Nav.TURN) page.traceTurn(perfTurnFrom)
+            perfTurnFrom = 0L
+        }
         safely { selection?.onPageChanged() }
         if (chromeVisible) bindChrome()
         if (app.pinChrome && !pinShown && !chromeVisible) {
@@ -1066,7 +1162,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private fun userTurn(next: Boolean) {
         if (session == null || curLayout == null) return
         ownerHighlights.remove(OWNER_SEARCH)
+        // "turn N ms" starts at the input event that asked for this turn (the latest one: all run on this thread).
+        if (ReaderPerf.turns) perfTurnFrom = maxOf(page.lastInputAt, keyInputAt)
         val ok = turn(next)
+        if (!ok) perfTurnFrom = 0L
         if (ok) onManualTurn()
         if (ttsSpeaking()) safely { tts?.onUserNavigated() }
         if (!ok && navJob?.isActive != true && !layoutStale()) edgeToast(next)
@@ -1142,6 +1241,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         val header = if (st.showHeader) chapterTitle(curSection, p.start) else null
         var left: String? = null
         var right: String? = null
+        var battery = -1
         if (st.showFooter) {
             left = ReaderFormat.footerLeft(
                 if (st.footerPage) pageLabelOf(curSection, curPageIdx) else null,
@@ -1150,10 +1250,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             right = ReaderFormat.footerRight(
                 if (st.footerPercent) ReaderFormat.percent(progress()) else null,
                 if (st.footerClock) clock() else null,
-                if (st.footerBattery) battery() else null,
             )
+            if (st.footerBattery) battery = battery()
         }
-        return PageDecor(hl, isBookmarked(l, p), header, left, right)
+        return PageDecor(hl, isBookmarked(l, p), header, left, right, battery)
     }
 
     private fun addOverlapping(out: ArrayList<Highlight>, list: List<Highlight>, p: PageInfo) {
@@ -1172,7 +1272,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
     private fun sameDecor(a: PageDecor, b: PageDecor): Boolean {
         if (a.bookmarked != b.bookmarked || a.header != b.header || a.footerLeft != b.footerLeft ||
-            a.footerRight != b.footerRight || a.highlights.size != b.highlights.size
+            a.footerRight != b.footerRight || a.battery != b.battery || a.highlights.size != b.highlights.size
         ) return false
         for (i in a.highlights.indices) {
             val x = a.highlights[i]
@@ -1387,7 +1487,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             } catch (t: Throwable) {
                 Log.w(TAG, "reopen failed", t)
                 cancelLoadingText()
-                toast("문서를 다시 불러오지 못했습니다: ${describe(t)}")
+                val why = ReaderFormat.openError(t)
+                toast(if (why == ReaderFormat.OPEN_FAILED) "문서를 다시 불러오지 못했습니다" else "문서를 다시 불러오지 못했습니다: $why")
             } finally {
                 if (!adopted) {
                     if (fresh != null) fresh.close() else try {
@@ -1487,6 +1588,23 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         }
     }
 
+    /**
+     * The visible char whose glyph box (advance × the line's glyph band, [slopPx] wider on each side) holds (x, y) in
+     * view px, or -1: unlike [hitTest] it never snaps, so margins, line gaps, spaces, blank line ends and images give -1.
+     */
+    private fun glyphAtView(x: Float, y: Float, slopPx: Float): Int {
+        val f = page.frame ?: return -1
+        val p = f.layout.pages.getOrNull(f.pageIndex) ?: return -1
+        return try {
+            // Sideways slop only: above and below, the band's own air is the margin (a vertical slop would reach
+            // across most of the white gap between two lines).
+            LineGeometry.glyphAt(f.layout, p, x - f.left, y - f.top, slopPx, slopY = 0f)
+        } catch (t: Throwable) {
+            Log.w(TAG, "glyphAt failed", t)
+            -1
+        }
+    }
+
     override fun textOf(section: Int, start: Int, end: Int): String {
         val s = session ?: return ""
         val content = s.peek(section)?.content ?: try {
@@ -1564,12 +1682,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
         override fun onLongPress(x: Float, y: Float): Boolean {
             if (!app.longPressSelect || curLayout == null) return false
-            // hitTest snaps to the nearest char: a press on a margin, the blank end of a short line or the empty space
-            // below the text must not select that far-away word.
-            val off = hitTest(x, y)
-            if (off < 0 || !fingerOnChar(off, x, y, LONG_PRESS_SLOP_DP)) return false
+            // Only with the finger on a glyph: a press on a margin, in the leading between lines or paragraphs, on the
+            // blank end of a short line or below the text selects nothing (and its release turns no page).
+            if (glyphAtView(x, y, dpF(GLYPH_SLOP_DP)) < 0) return false
+            if (safely { selection?.startAt(x, y) } != true) return false
+            // Only once something is selected: a long press that selects nothing leaves the menu as it was.
             if (chromeVisible) setChromeVisible(false)
-            return safely { selection?.startAt(x, y) } == true
+            return true
         }
 
         override fun brightnessStart(): Float =
@@ -1615,10 +1734,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         runTapAction(TapZones.actionAt(app, x, y, page.width, page.height))
     }
 
-    /**
-     * hitTest snaps to the nearest char of a line; links and long-press selection need the finger on (or within
-     * [slopDp] of) that char's box.
-     */
+    /** hitTest snaps to the nearest char of a line; a link needs the finger on (or within [slopDp] of) that char's box. */
     private fun fingerOnChar(offset: Int, x: Float, y: Float, slopDp: Int = 10): Boolean {
         val f = page.frame ?: return false
         val p = f.layout.pages.getOrNull(f.pageIndex) ?: return false
@@ -1694,6 +1810,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
             // Learned keys (vendor function / fingerprint keys) bounce: one touch must turn one page.
             val filter = if (learned) learnedRepeatFilter else repeatFilter
             if (!filter.accept(event.repeatCount, event.eventTime)) return true
+            keyInputAt = event.eventTime
             keeper.poke()
             when (action) {
                 KeyAction.NEXT -> userTurn(true)
@@ -1833,15 +1950,41 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
     private fun setBrightness(value: Float, done: Boolean, overlay: Boolean) {
         val v = value.coerceIn(0f, 1f)
         ReaderWindow.applyBrightness(this, v)
-        if (overlay) {
-            brightnessOverlay.text = ReaderFormat.brightness(v)
-            brightnessOverlay.visibility = if (done) View.GONE else View.VISIBLE
-        }
+        if (overlay) showBrightnessOverlay(v, done)
         if (done) {
             Settings.raw().edit().putFloat(PREF_LAST_BRIGHTNESS, v).apply()
             saveApp(app.copy(brightness = v))
             if (chromeVisible) bindChrome()
         }
+    }
+
+    /**
+     * The left-edge brightness drag's overlay: its text changes at most every [Throttle.LABEL_MS] (a value held back
+     * shows once the finger rests), and the final value on [done], when it hides.
+     */
+    private fun showBrightnessOverlay(v: Float, done: Boolean) {
+        if (done) {
+            dropHeldBrightness()
+            brightnessThrottle.reset()
+            brightnessOverlay.text = ReaderFormat.brightness(v)
+            brightnessOverlay.visibility = View.GONE
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        if (brightnessThrottle.tryAcquire(now)) {
+            dropHeldBrightness()
+            brightnessOverlay.text = ReaderFormat.brightness(v)
+            brightnessOverlay.visibility = View.VISIBLE
+            return
+        }
+        if (brightnessHeld.isNaN()) handler.postDelayed(showHeldBrightness, brightnessThrottle.waitMs(now))
+        brightnessHeld = v
+    }
+
+    private fun dropHeldBrightness() {
+        if (brightnessHeld.isNaN()) return
+        brightnessHeld = Float.NaN
+        handler.removeCallbacks(showHeldBrightness)
     }
 
     internal fun setOrientationLock(lock: Int) {

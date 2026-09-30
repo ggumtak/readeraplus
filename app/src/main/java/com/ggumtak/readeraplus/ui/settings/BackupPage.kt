@@ -95,7 +95,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
                 statusText.text = "백업을 저장했습니다.\n" + lastBackupText()
                 ctx.toast("백업 완료")
             }.onFailure { e ->
-                statusText.text = "백업 실패: ${e.message ?: e.javaClass.simpleName}"
+                statusText.text = ErrorLines.withDetail(ErrorLines.line("백업 실패", e), e)
             }
         }
     }
@@ -130,7 +130,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
                     .setNegativeButton("나중에", null)
                     .showNoAnim()
             }.onFailure { e ->
-                statusText.text = "복원 실패: ${e.message ?: e.javaClass.simpleName}\n올바른 리더플러스 백업 파일인지 확인하세요."
+                statusText.text = ErrorLines.withDetail(ErrorLines.line("복원 실패", e) + "\n올바른 리더플러스 백업 파일인지 확인하세요.", e)
             }
         }
     }

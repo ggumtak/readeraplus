@@ -12,7 +12,6 @@ import android.provider.DocumentsContract
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.FileScanner
 import com.ggumtak.readeraplus.settings.Settings
@@ -62,6 +61,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         // show its latest status and receive its updates.
         statusText = ctx.note(if (ScanState.running) ScanState.status ?: "스캔 중…" else lastScanText()).also(body::addView)
         ScanState.sink = sink
+        ScanState.host = ctx
 
         fillFolders()
         return ctx.pageScroll(body)
@@ -70,6 +70,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
     override fun onShown() {
         permRow?.setSummary(StorageAccess.summary(ctx))
         ScanState.sink = sink
+        ScanState.host = ctx
     }
 
     override fun onResume() {
@@ -77,7 +78,10 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
     }
 
     override fun onDestroy() {
-        if (ScanState.sink === sink) ScanState.sink = null
+        if (ScanState.sink === sink) {
+            ScanState.sink = null
+            ScanState.host = null
+        }
     }
 
     private fun fillFolders() {
@@ -258,7 +262,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             }
             val done = result.fold(
                 onSuccess = { n -> "완료 — 서재에 ${n}권\n마지막 스캔: ${SettingsFormat.dateTime(System.currentTimeMillis())}" },
-                onFailure = { e -> "스캔 실패: ${e.message ?: e.javaClass.simpleName}" },
+                onFailure = { e -> ErrorLines.withDetail(ErrorLines.line("스캔 실패", e), e) },
             )
             ScanState.finish(appCtx, done, result.getOrNull()?.let { "스캔 완료: ${it}권" })
         }
@@ -272,7 +276,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
 
 /**
  * Process-wide state of the "지금 스캔" run: one scan at a time, and its status reaches whichever ScanPage is
- * currently shown (the page that started it may be gone). [sink] and [status] are main-thread only.
+ * currently shown (the page that started it may be gone). [sink], [host] and [status] are main-thread only.
  */
 internal object ScanState {
     @Volatile var running = false
@@ -280,6 +284,8 @@ internal object ScanState {
     var status: String? = null
         private set
     var sink: ((String) -> Unit)? = null
+    /** Activity of the page behind [sink]: the end-of-scan message is drawn in its window (no fading system toast). */
+    var host: Context? = null
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -297,12 +303,15 @@ internal object ScanState {
         main.post { if (running) publish(text) }
     }
 
-    /** Any thread: ends the run, shows [text] and an optional [toast] (application context; outlives pages). */
+    /**
+     * Any thread: ends the run, shows [text] and an optional [toast] — in the settings window when a scan page is
+     * still there, else through [appContext] (outlives pages).
+     */
     fun finish(appContext: Context, text: String, toast: String?) {
         main.post {
             running = false
             publish(text)
-            if (toast != null) Toast.makeText(appContext, toast, Toast.LENGTH_SHORT).show()
+            if (toast != null) (host ?: appContext).toast(toast)
         }
     }
 }
