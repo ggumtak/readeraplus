@@ -64,7 +64,7 @@ adb shell am start -W -n $PKG/.ui.library.LibraryActivity | tee -a shots/steps.t
 shot 40_library_after 5
 
 log "settings (via drawer; SettingsActivity is not exported)"
-tap_label "더보기" contains && sleep 1 && tap_label "설정" && shot 50_settings 3
+adb shell input tap 664 104; sleep 1; tap_label "설정" && shot 50_settings 3
 back
 
 adb logcat -d > shots/logcat.txt
