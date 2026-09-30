@@ -92,6 +92,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
         private const val TAG = "ReaderActivity"
         private const val LOADING_DELAY_MS = 300L
+        /** Long-press selection needs the finger on a glyph (within this slop), not merely nearest to one. */
+        private const val LONG_PRESS_SLOP_DP = 6
         private const val SAVE_DELAY_MS = 1000L
         private const val COUNT_DELAY_MS = 800L
         private const val MAX_RETURN_STACK = 16
@@ -1562,6 +1564,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
 
         override fun onLongPress(x: Float, y: Float): Boolean {
             if (!app.longPressSelect || curLayout == null) return false
+            // hitTest snaps to the nearest char: a press on a margin, the blank end of a short line or the empty space
+            // below the text must not select that far-away word.
+            val off = hitTest(x, y)
+            if (off < 0 || !fingerOnChar(off, x, y, LONG_PRESS_SLOP_DP)) return false
             if (chromeVisible) setChromeVisible(false)
             return safely { selection?.startAt(x, y) } == true
         }
@@ -1609,11 +1615,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost {
         runTapAction(TapZones.actionAt(app, x, y, page.width, page.height))
     }
 
-    /** hitTest snaps to the nearest char of a line; links need the finger on (or right next to) the glyph. */
-    private fun fingerOnChar(offset: Int, x: Float, y: Float): Boolean {
+    /**
+     * hitTest snaps to the nearest char of a line; links and long-press selection need the finger on (or within
+     * [slopDp] of) that char's box.
+     */
+    private fun fingerOnChar(offset: Int, x: Float, y: Float, slopDp: Int = 10): Boolean {
         val f = page.frame ?: return false
         val p = f.layout.pages.getOrNull(f.pageIndex) ?: return false
-        val slop = dp(10).toFloat()
+        val slop = dp(slopDp).toFloat()
         val cx = x - f.left
         val cy = y - f.top
         return try {
