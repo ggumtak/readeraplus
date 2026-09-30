@@ -13,13 +13,15 @@ android {
         applicationId = "com.ggumtak.readeraplus"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI passes its run number, so every build is a higher version than the one installed.
+        val buildNumber = System.getenv("BUILD_NUMBER")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+        versionCode = buildNumber
+        versionName = "0.1.$buildNumber"
     }
 
-    // Release signing comes from the environment (CI secrets); keys never live in the repo.
-    // Without them the build falls back to the debug key, which CI keeps in its cache so
-    // successive builds can update the installed app.
+    // Release signing comes from the environment (CI: the repository secrets, or the key kept in the Actions
+    // cache); keys never live in the repo. Local builds without it use the debug key. Every CI build must use
+    // the same key, or the APK cannot be installed over the previous one.
     val keystorePath = System.getenv("SIGNING_KEYSTORE_FILE")
     signingConfigs {
         if (keystorePath != null && file(keystorePath).exists()) {

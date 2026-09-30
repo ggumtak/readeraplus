@@ -3,18 +3,27 @@ name: Build APK
 on:
   push:
   workflow_dispatch:
+  # Keeps the cached signing key alive: GitHub evicts cache entries not used for 7 days, and a new key would
+  # make the next APK refuse to install over the old one (settings lost on reinstall).
+  schedule:
+    - cron: '23 4 */3 * *'
 
 permissions:
   contents: write
 
 concurrency:
-  group: build-${{ github.ref }}
+  # The scheduled key keep-alive must never cancel a running build (and vice versa).
+  group: build-${{ github.ref }}-${{ github.event_name == 'schedule' && 'keepalive' || 'build' }}
   cancel-in-progress: true
 
 jobs:
   build:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      # versionCode = run number: every build is a newer version of the same app.
+      BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
@@ -25,35 +34,77 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # Signing: prefer the repository secrets. Without them, reuse a debug key kept in the
-      # Actions cache so consecutive builds share one signature (updates install in place).
-      - name: Restore cached debug key
-        uses: actions/cache@v4
+      # Signing must be the SAME for every build, or Android refuses to install an update over the installed app
+      # ("package conflicts") and the user has to uninstall, losing settings and reading positions.
+      # Preferred: the repository secrets. Without them: one key generated on the first run and kept in this
+      # private repository's Actions cache (never in git), restored by every later build.
+      - name: Restore signing key
+        uses: actions/cache/restore@v4
         with:
-          path: ~/.android/debug.keystore
-          key: readeraplus-debug-keystore-v1
+          path: ~/.readeraplus-signing
+          key: readeraplus-signing-v2
 
-      - name: Prepare release key from secrets
+      - name: Prepare signing key
+        id: key
         env:
           KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SECRET_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SECRET_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SECRET_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-            echo "SIGNING_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+            {
+              echo "SIGNING_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore"
+              echo "SIGNING_STORE_PASSWORD=$SECRET_STORE_PASSWORD"
+              echo "SIGNING_KEY_ALIAS=$SECRET_KEY_ALIAS"
+              echo "SIGNING_KEY_PASSWORD=$SECRET_KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
             echo "Using release key from secrets"
-          else
-            echo "No signing secrets; using cached debug key"
+            exit 0
           fi
+          dir="$HOME/.readeraplus-signing"
+          if [ ! -f "$dir/release.keystore" ] || [ ! -f "$dir/pass" ]; then
+            echo "::warning::No cached signing key: generating a NEW one. Apps signed by an earlier key must be reinstalled once."
+            rm -rf "$dir" && mkdir -p "$dir"
+            pass="$(openssl rand -hex 24)"
+            printf '%s' "$pass" > "$dir/pass"
+            keytool -genkeypair -keystore "$dir/release.keystore" -storetype PKCS12 -alias readeraplus \
+              -keyalg RSA -keysize 3072 -validity 36500 -storepass "$pass" -keypass "$pass" \
+              -dname "CN=ReaderaPlus" > /dev/null
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+          pass="$(cat "$dir/pass")"
+          echo "::add-mask::$pass"
+          {
+            echo "SIGNING_KEYSTORE_FILE=$dir/release.keystore"
+            echo "SIGNING_STORE_PASSWORD=$pass"
+            echo "SIGNING_KEY_ALIAS=readeraplus"
+            echo "SIGNING_KEY_PASSWORD=$pass"
+          } >> "$GITHUB_ENV"
+          echo "Using the cached signing key"
+
+      - name: Save new signing key
+        if: steps.key.outputs.new == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.readeraplus-signing
+          key: readeraplus-signing-v2
 
       - name: Unit tests
         run: ./gradlew --stacktrace testDebugUnitTest
 
       - name: Build release APK
-        env:
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: ./gradlew --stacktrace assembleRelease
+
+      - name: Signing certificate
+        id: cert
+        continue-on-error: true
+        run: |
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          sha="$("$apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)"
+          echo "Signing certificate SHA-256: $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Rename APK
         run: |
@@ -76,7 +127,19 @@ jobs:
             --target "${GITHUB_SHA}" \
             --prerelease \
             --title "ReaderaPlus build ${GITHUB_RUN_NUMBER}" \
-            --notes "Automatic build from ${GITHUB_REF_NAME} @ ${GITHUB_SHA}"
+            --notes "Automatic build from ${GITHUB_REF_NAME} @ ${GITHUB_SHA} · signing certificate SHA-256 ${{ steps.cert.outputs.sha }}"
+
+  # Scheduled only: touches the cached signing key so it is never evicted between builds.
+  keep-signing-key:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.readeraplus-signing
+          key: readeraplus-signing-v2
+      - run: ls -la ~/.readeraplus-signing 2>/dev/null | sed -n '1,3p' || echo "no cached signing key"
 
   # On-demand emulator run (workflow_dispatch, or a commit message containing "[screens]"): drives the app with
   # adb and publishes screenshots + logs to the "ci-screens" prerelease for review.
