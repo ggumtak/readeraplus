@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.ui.settings
 
 import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.TapAction
 
 /**
  * Human-readable names for Android key codes and a description of what the reader does with a key
@@ -102,7 +103,7 @@ object KeyNames {
     /** "볼륨 아래 (25)". */
     fun label(code: Int): String = if (NAMES.containsKey(code)) "${NAMES[code]} ($code)" else "키 코드 $code"
 
-    /** Why [code] can't be assigned as a page key, or null when it can. */
+    /** Why [code] can't be given an action ("키 지정"), or null when it can. */
     fun unassignableReason(code: Int): String? = when (code) {
         BACK -> "뒤로 키는 지정할 수 없습니다"
         HOME, APP_SWITCH -> "홈 / 최근 앱 키는 앱에 전달되지 않습니다"
@@ -119,7 +120,16 @@ object KeyNames {
         NONE("동작 없음"),
     }
 
-    /** Assigned keys first, then volume keys per settings, then the built-in page / menu keys. */
+    /**
+     * What the reader does with a key, as the key test shows it: a key binding first ("다음 화", "시스템에 맡김"), then
+     * [readerEffect] (mirrors `reader.KeyMap.action`).
+     */
+    fun readerEffectLabel(code: Int, shift: Boolean, app: AppSettings): String {
+        val bound = app.keyBindings[code] ?: return readerEffect(code, shift, app).label
+        return if (bound == TapAction.NONE) "시스템에 맡김" else KeyActions.label(bound)
+    }
+
+    /** Learned page keys first, then volume keys per settings, then the built-in page / menu keys (no bindings). */
     fun readerEffect(code: Int, shift: Boolean, app: AppSettings): Effect {
         if (code in app.nextPageKeys) return Effect.NEXT
         if (code in app.prevPageKeys) return Effect.PREV
@@ -143,39 +153,80 @@ object KeyNames {
     }
 }
 
-/** Editing of the learned page keys ([AppSettings.nextPageKeys] / [AppSettings.prevPageKeys]). */
+/**
+ * The actions a key can be given ("이 키로 할 동작", T1-4), in the chooser's order, with the key wording: episodes are
+ * 화 and [TapAction.NONE] hands the key back to the system.
+ */
+object KeyActions {
+    val CHOICES: List<TapAction> = listOf(
+        TapAction.NEXT, TapAction.PREV, TapAction.NEXT_CHAPTER, TapAction.PREV_CHAPTER, TapAction.TOC, TapAction.MENU,
+        TapAction.BOOKMARK, TapAction.REFRESH, TapAction.INVERT, TapAction.TTS, TapAction.AUTO_TURN, TapAction.GOTO,
+        TapAction.NONE,
+    )
+
+    fun label(a: TapAction): String = when (a) {
+        TapAction.NEXT_CHAPTER -> "다음 화"
+        TapAction.PREV_CHAPTER -> "이전 화"
+        TapAction.NONE -> "없음(시스템에 맡김)"
+        else -> a.label
+    }
+}
+
+/**
+ * Editing of the keys the user assigned: [AppSettings.keyBindings] (key → action, what "키 지정" writes now) and the
+ * learned page keys of older versions ([AppSettings.nextPageKeys] / [AppSettings.prevPageKeys]). A key has one job:
+ * binding it drops it from the learned sets.
+ */
 object KeyAssign {
-    /** Assigns [code] to next ([next] = true) or previous page; a key is never in both sets. */
-    fun assign(app: AppSettings, code: Int, next: Boolean): AppSettings =
-        if (next) {
-            app.copy(nextPageKeys = app.nextPageKeys + code, prevPageKeys = app.prevPageKeys - code)
-        } else {
-            app.copy(prevPageKeys = app.prevPageKeys + code, nextPageKeys = app.nextPageKeys - code)
-        }
+    /** Gives [code] the action [action] (a binding wins over the learned sets in the reader; kept in one place). */
+    fun bind(app: AppSettings, code: Int, action: TapAction): AppSettings =
+        app.copy(
+            keyBindings = LinkedHashMap(app.keyBindings).apply { put(code, action) },
+            nextPageKeys = app.nextPageKeys - code,
+            prevPageKeys = app.prevPageKeys - code,
+        )
 
+    /** The action the user gave [code] (binding or learned page key), or null. */
+    fun actionOf(app: AppSettings, code: Int): TapAction? = app.keyBindings[code] ?: when (code) {
+        in app.nextPageKeys -> TapAction.NEXT
+        in app.prevPageKeys -> TapAction.PREV
+        else -> null
+    }
+
+    /** Every assigned key with its action, by key code (a binding shadows a learned entry of the same key). */
+    fun entries(app: AppSettings): List<Pair<Int, TapAction>> {
+        val out = LinkedHashMap<Int, TapAction>()
+        for (c in app.nextPageKeys) out[c] = TapAction.NEXT
+        for (c in app.prevPageKeys) out[c] = TapAction.PREV
+        out.putAll(app.keyBindings)
+        return out.entries.sortedBy { it.key }.map { it.key to it.value }
+    }
+
+    /** Removes whatever [code] was assigned (binding and learned entries). */
     fun remove(app: AppSettings, code: Int): AppSettings =
-        app.copy(nextPageKeys = app.nextPageKeys - code, prevPageKeys = app.prevPageKeys - code)
+        app.copy(
+            keyBindings = if (code in app.keyBindings) app.keyBindings - code else app.keyBindings,
+            nextPageKeys = app.nextPageKeys - code,
+            prevPageKeys = app.prevPageKeys - code,
+        )
 
-    fun clearAll(app: AppSettings): AppSettings = app.copy(nextPageKeys = emptySet(), prevPageKeys = emptySet())
-
-    /** Assigned keys as (code, isNext) sorted: next keys first, then by code. */
-    fun list(app: AppSettings): List<Pair<Int, Boolean>> =
-        app.nextPageKeys.sorted().map { it to true } + app.prevPageKeys.sorted().map { it to false }
+    fun clearAll(app: AppSettings): AppSettings =
+        app.copy(keyBindings = emptyMap(), nextPageKeys = emptySet(), prevPageKeys = emptySet())
 }
 
 /**
  * Key capture for the "키 지정" dialog. The first non-repeated DOWN of an assignable key is captured
- * ([Step.ASSIGN]); the dialog closes on that key's UP ([Step.CLOSE]). Closing on the UP rather than the DOWN
- * keeps the UP inside the dialog, so it never reaches the settings window (where a volume key's UP would
- * go to the system volume handling).
+ * ([Step.ASSIGN]); the dialog closes on that key's UP ([Step.CLOSE]) and the action chooser opens. Closing on the UP
+ * rather than the DOWN keeps the UP inside the dialog, so it never reaches the settings window (where a volume key's
+ * UP would go to the system volume handling).
  */
 class KeyCapture {
     enum class Step {
         /** Consume and do nothing (repeats, other keys after a capture, stray UPs). */
         IGNORE,
-        /** The key can't be a page key ([KeyNames.unassignableReason]); ask for another. */
+        /** The key can't be assigned ([KeyNames.unassignableReason]); ask for another. */
         REJECT,
-        /** Assign [captured] now. */
+        /** [captured] is the key: show it (the action is chosen after the key-up). */
         ASSIGN,
         /** The captured key was released: close the dialog. */
         CLOSE,

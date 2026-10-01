@@ -14,6 +14,7 @@ import com.ggumtak.readeraplus.render.FontCatalog
 import com.ggumtak.readeraplus.render.FontInfo
 import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.render.FontSource
+import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.confirm
@@ -125,12 +126,13 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         val userDir = File(activity.filesDir, "fonts").absolutePath
         for (f in fonts) listBox.addView(fontRow(f, faces[f.id], f.id == current, f.path.startsWith("$userDir/")))
         if (fonts.none { it.id == current }) {
-            missingNote = ctx.note("현재 글꼴('$current')을 찾을 수 없어 기본 글꼴(나눔명조)로 표시됩니다.").also(listBox::addView)
+            val fallback = fonts.firstOrNull { it.id == FontCatalog.DEFAULT_ID }?.name ?: "나눔명조"
+            missingNote = ctx.note("현재 글꼴('$current')을 찾을 수 없어 기본 글꼴($fallback)로 표시됩니다.").also(listBox::addView)
         }
     }
 
     private fun sourceLabel(f: FontInfo, deletable: Boolean): String = when (f.source) {
-        FontSource.BUNDLED -> if (f.id == FontCatalog.DEFAULT_ID) "기본 제공 · 기본값" else "기본 제공"
+        FontSource.BUNDLED -> if (f.id == DEFAULT_FONT) "기본 제공 · 기본값" else "기본 제공"
         FontSource.SYSTEM -> "시스템"
         FontSource.USER -> if (deletable) "추가한 글꼴" else "Fonts 폴더"
     }
@@ -190,7 +192,7 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
                     ctx.toast("삭제하지 못했습니다")
                     return@launch
                 }
-                if (Settings.reader.fontId == f.id) editReader { it.copy(fontId = FontCatalog.DEFAULT_ID) }
+                if (Settings.reader.fontId == f.id) editReader { it.copy(fontId = DEFAULT_FONT) }
                 ctx.toast("삭제했습니다")
                 load()
             }
@@ -264,6 +266,9 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
     }
 
     companion object {
+        /** The reading font of a fresh install ("기본값"; also what deleting the current font falls back to). */
+        private val DEFAULT_FONT = ReaderSettings().fontId
+
         /** Typefaces loaded before the list is first drawn (bundled fonts usually all fit). */
         private const val FIRST_BUDGET_MS = 400L
         /** Later batches: one e-ink update per batch. */

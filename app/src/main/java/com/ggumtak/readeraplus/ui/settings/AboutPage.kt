@@ -16,7 +16,6 @@ import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.fullScreenDialog
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
-import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.toolbar
 import com.ggumtak.readeraplus.ui.kit.vertical
@@ -42,6 +41,9 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
             15f,
         ).apply { setPadding(0, ctx.dp(10), 0, 0); setLineSpacing(0f, 1.15f) })
         body.addView(head)
+
+        body.section("네트워크")
+        body.addView(ctx.note("Wi-Fi 전송 화면이 열려 있을 때만 같은 Wi-Fi 안에서 파일을 받습니다. 외부 서버와 통신하지 않습니다."))
 
         body.section("라이선스")
         licensesBox = ctx.vertical().also(body::addView)

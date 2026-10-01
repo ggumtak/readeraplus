@@ -328,7 +328,7 @@ as you like, same package & signatures).
   segments; superscript shift `-0.35 em`, subscript `+0.2 em`; underline/strike/link underline as lines.
   Images: `drawBitmap(src, null, dstRect, filterPaint)`. Rules: centred line 25% of width, 1dp.
   Bookmarked: a black ribbon (small pentagon) at the view's top-right corner. No allocations per draw beyond
-  first use (reuse Paint/RectF/arrays).
+  first use (reuse Paint/RectF/arrays). Night mode draws images through one shared inverting `ColorMatrixColorFilter`.
 - **Covers.thumbnail(context, book, w, h)**: disk cache `cacheDir/covers/<id>_<mtime>_<w>x<h>.png`,
   memory cache handled by the caller. EPUB: `EpubDocuments.open` → `coverImage()` → sampled decode →
   centre-crop to w×h (fit if aspect differs a lot) on white. No cover → typographic placeholder (title in bold
@@ -346,11 +346,12 @@ as you like, same package & signatures).
     the default `EINK_MODE_SYSTEM` leaves the device's per-app setting alone, like ReadEra) and
     `Eink.vendorName(): String?` ("Bigme xrz" / "Rockchip" / "Onyx" / null) for a debug/info row.
     Never call the persistent `DisplayPolicyManager.setRefreshModeForPackage`.
-  - `Eink.fullRefresh(view)`: Bigme → `forceGlobalRefresh(4)` (fallback 176); Rockchip
-    `getSystemService("eink")` → `sendOneFullFrame()`; Onyx `View.refreshScreen`/EpdController; NTX
-    `postInvalidateDelayed(delay,l,t,r,b,mode)`; otherwise (and additionally when no vendor hook succeeded) the
-    universal fallback: draw a full black frame (overlay/foreground drawable), wait ~2 frames (`postDelayed`
-    ~100 ms), then remove it and invalidate.
+  - `Eink.fullRefresh(view, method, flashMs)` (R2): exactly one method. EINK_REFRESH_AUTO = Bigme GC16 → Bigme
+    CLEAN → Rockchip `sendOneFullFrame()` → Onyx `View.refreshScreen` → NTX `postInvalidateDelayed(…, mode)` →
+    flash; GC16 / CLEAN = xrz `forceGlobalRefresh` with the firmware's `EinkRefreshMode` numbers (else 4 / 176);
+    FLASH = one frame for `flashMs` (50..1000). A missing or detectably failing device method falls back to the
+    flash. `forceGlobalRefresh` is `void`: returning normally means "sent", never "refreshed" — [테스트] decides.
+    The flash frame is black, or white over a dark (night) background. `fullRefresh(view)` uses `configure()`.
 - Set `textLocale = Locale.KOREAN` on every TextPaint (Korean glyph variants for Hanja in fallback CJK fonts).
 - Never use `Charset.forName("CP949")` anywhere (Android ICU maps it to a wrong IBM table) — use MS949.
 Tests: font name-table parser (build a minimal sfnt in-test), stroke math, anything pure. (Most of render is
@@ -659,7 +660,9 @@ that outlive the release.
    a cadence that is already on. The default e-ink mode stays "system" (the device keeps its own waveform).
 6. **At most one `TxtIndexStore.VERSION` bump per release.** Each bump makes every large TXT parse in full once
    (≈ 1–1.5 s for 14 MB on the A53). Release 2 spends it on A5 (3 → 4). While a TXT over 4 MB is parsed in full
-   (`TxtDocuments.isBuildingIndex`) the delayed loading text reads "목차를 만드는 중…".
+   (`TxtDocuments.isBuildingIndex`) the delayed loading text reads "목차를 만드는 중…". The bump is also
+   `TxtDocuments.PARSE_VERSION`, part of `LayoutKeys.textSignature`: a saved TXT position is found again once by its
+   char fraction, since the new parse may split sections differently.
 
 Per turn: O(1) work and no allocation beyond what exists (the R2 footer items add one string per turn); no idle
 redraws, timers or polling; no animations anywhere. Page-turn taps are never debounced and fresh key presses never
@@ -677,9 +680,14 @@ throttled (only auto-repeat is paced).
   synthetic stroke) are NOT covered by the test: whoever changes glyph advances or line metrics bumps `ALGO_VERSION`
   by hand.
 - Counts are saved partially: the `page_counts` BLOB (little-endian int32 per section) may hold -1 for a section not
-  counted yet. The reader saves every 25 counted sections and on close (off the main thread, array copied first);
-  `PageCounts.setKnown` takes only entries ≥ 0 and rejects a length mismatch. Counting order: the section on screen,
-  then samples at 25 / 50 / 75 % (EPUB: single-part spine items only), then the rest.
+  counted yet (or counted as its error page: those are never cached). The reader saves every 25 counted sections, when
+  complete and on close (on `ReaderIo`, array copied on the main thread first; an older save never overwrites a newer
+  one), but an incomplete array only once its layout generation is 30 s old (`BookSession.SAVE_SETTLE_MS`): the table
+  keeps 3 keys per book, and every font size tried in the settings popup would otherwise push out the complete counts
+  of the layout the reader returns to. `PageCounts.setKnown` takes the counts (≥ 1), keeps sections already counted in
+  the session, and rejects a length mismatch or any value other than a count or -1. Counting order: the section on
+  screen, then samples at 25 / 50 / 75 % (EPUB: single-part spine items only), then the rest. The estimate ignores
+  counted sections under 2,000 chars once a larger one is counted.
 
 ### EPUB section-plan cache (A12-1)
 
@@ -692,6 +700,11 @@ throttled (only auto-repeat is paced).
   `afterOpen` through `ReaderIo.launch`, never on the opening thread.
 - **Rule:** bump `EpubPlanCache.VERSION` whenever `EpubSplit.partsFor`, `scan` or `assign` change. A golden test (fixed
   synthetic XHTML → expected parts and anchors) guards it, like `LayoutGoldenTest` guards `ALGO_VERSION`.
+- A plan is used only when the spine size, the scanned item indices and a hash of the TOC anchors asked for still
+  match; the recently-used touch is also deferred to `writeDeferredCaches`.
+- TXT replace rules: `RegexLiterals` (`format/txt/RulePrefilter.kt`) extracts the literals a line must contain for each
+  rule to match; `LineGate` skips the regex and the String creation for lines without them (sound: syntax it does not
+  fully understand → no prefilter for that rule, which then always runs its regex).
 
 ### Library database v2
 

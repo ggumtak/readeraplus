@@ -207,6 +207,70 @@ class TxtChaptersTest {
         assertEquals(listOf("1화", "2화"), titles(TxtTestUtil.parse(book(listOf("1화", "2화")), o2)))
     }
 
+    /**
+     * A5 sample: [episodes] times "N화 / 본문 / [note] / 짧은 글", then each of [tail] with a little body text.
+     * [head] headings come first (each with body text).
+     */
+    private fun notesBook(episodes: Int, tail: List<String> = emptyList(), note: String = "작가의 말", head: List<String> = emptyList()): String {
+        val r = Random(7)
+        val sb = StringBuilder()
+        for (h in head) sb.append(h).append("\n\n").append(TxtTestUtil.body(r, 800, "\n\n")).append("\n\n")
+        for (n in 1..episodes) {
+            sb.append(n).append("화\n\n").append(TxtTestUtil.body(r, 1500, "\n\n")).append("\n\n")
+            sb.append(note).append("\n\n").append("오늘도 읽어 주셔서 감사합니다!").append("\n\n")
+        }
+        for (h in tail) sb.append(h).append("\n\n").append(TxtTestUtil.body(r, 800, "\n\n")).append("\n\n")
+        return sb.toString()
+    }
+
+    private fun episodes(n: Int) = (1..n).map { "${it}화" }
+
+    @Test
+    fun recurringAuthorNotesStayInsideTheirEpisode() {
+        val p = TxtTestUtil.parse(notesBook(5))
+        assertEquals(episodes(5), titles(p))
+        // the note is still there: at the end of its episode's section, as an ordinary paragraph
+        val last = p.buildSection(p.sectionCount - 1, true)
+        assertTrue(last.text.endsWith("작가의 말\n오늘도 읽어 주셔서 감사합니다!"))
+        val note = last.blocks.first { last.text.substring(it.start, it.end) == "작가의 말" } as ParagraphBlock
+        assertEquals(0, note.style.headingLevel)
+
+        // 에필로그 always stays; a closing note of another kind after the last episode keeps its entry
+        assertEquals(episodes(5) + listOf("에필로그", "완결 후기"), titles(TxtTestUtil.parse(notesBook(5, listOf("에필로그", "완결 후기")))))
+        assertEquals(episodes(5) + "후기", titles(TxtTestUtil.parse(notesBook(5, listOf("후기")))))
+        // ... but not when it is the same kind as the recurring notes (the last episode's own note)
+        assertEquals(episodes(4), titles(TxtTestUtil.parse(notesBook(4, listOf("후기"), note = "후기"))))
+        // brackets and spacing don't hide a note; 프롤로그 and 외전 are never notes
+        assertEquals(
+            listOf("프롤로그") + episodes(4) + "외전 1화",
+            titles(TxtTestUtil.parse(notesBook(4, listOf("외전 1화"), note = "[ 작가의  말 ]", head = listOf("프롤로그")))),
+        )
+    }
+
+    @Test
+    fun fewAuthorNotesAndUserRulesAreKept() {
+        // fewer than 3 notes: unchanged (a single afterword, or a couple of notes)
+        assertEquals(listOf("1화", "작가의 말", "2화", "작가의 말"), titles(TxtTestUtil.parse(notesBook(2))))
+        // notes the user's own chapter regex matches are chapters
+        val o = ParseOptions(txtChapterRegex = "^(\\d+화|작가의 말)$")
+        assertEquals(episodes(3).flatMap { listOf(it, "작가의 말") }, titles(TxtTestUtil.parse(notesBook(3), o)))
+        // only specials in the book (no numbered episodes): every special stays a chapter
+        val specials = listOf("프롤로그", "작가의 말", "후기", "작가 후기", "에필로그")
+        assertEquals(specials, titles(TxtTestUtil.parse(book(specials))))
+    }
+
+    @Test
+    fun noteKinds() {
+        assertEquals(1, TxtChapters.noteKind("작가의 말"))
+        assertEquals(1, TxtChapters.noteKind("< 작가의말 >"))
+        assertEquals(2, TxtChapters.noteKind("작가 후기 - 감사합니다"))
+        assertEquals(3, TxtChapters.noteKind("【완결 후기】"))
+        assertEquals(4, TxtChapters.noteKind("후기"))
+        for (t in listOf("프롤로그", "에필로그", "서장", "종장", "서문", "외전", "번외", "후일담", "막간", "1화", null)) {
+            assertEquals("$t", 0, TxtChapters.noteKind(t))
+        }
+    }
+
     @Test
     fun singleHeadingIsNotAToc() {
         val p = TxtTestUtil.parse(book(listOf("제1화 유일한 장")))

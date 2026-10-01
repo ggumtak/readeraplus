@@ -2,6 +2,7 @@ package com.ggumtak.readeraplus.reader.extras
 
 import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.format.txt.TxtParser
+import com.ggumtak.readeraplus.format.txt.TxtPerfTest
 import com.ggumtak.readeraplus.format.txt.TxtTestUtil
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -11,8 +12,10 @@ import kotlin.random.Random
 /**
  * T1-10 acceptance: the first parse of a 15 MB CP949 web novel with all five cleanup packs switched on, against the
  * same parse without rules (the rules run in the line stage, once per source line). Printed for the report. The spec
- * gate (+30% on the line stage) needs the parser's per-rule literal prefilter (format/txt, not in this module's
- * reach); until then only a loose bound, so that a pathological pattern (catastrophic backtracking) fails the build.
+ * gate itself (+30% on the line stage) is `TxtPerfTest.cleanupPacksLineStage`; with the parser's per-rule literal
+ * prefilter (format/txt/RulePrefilter.kt) the whole parse costs about +15%, without it about 9×. The bound here is
+ * loose enough for a loaded machine and still fails when the prefilter stops working for a pack, or a pattern
+ * backtracks catastrophically.
  */
 class CleanupPacksPerfTest {
 
@@ -55,6 +58,13 @@ class CleanupPacksPerfTest {
         return best to last!!
     }
 
+    /** The parser's +30% gate (`TxtPerfTest`) runs a copy of the packs: it must be the packs users add. */
+    @Test
+    fun perfGateUsesThePacksUsersAdd() {
+        val added = CleanupPacks.ALL.map { p -> "${p.pattern} =>" + if (p.replacement.isEmpty()) "" else " ${p.replacement}" }
+        assertEquals(added, TxtPerfTest.CLEANUP_PACKS.split('\n'))
+    }
+
     @Test
     fun allPacksOnAFifteenMegabyteFile() {
         val packs = ParseOptions(txtReplaceRules = RuleList.serialize(CleanupPacks.ALL.map { it.item }))
@@ -74,6 +84,6 @@ class CleanupPacksPerfTest {
         )
         // The notices and nav lines are gone; the chapters are the same.
         assertEquals(p0.sectionCount, p1.sectionCount)
-        assertTrue("with packs $ruled ms vs $base ms", ruled < base * 15 + 500)
+        assertTrue("with packs $ruled ms vs $base ms", ruled < base * 2 + 100)
     }
 }

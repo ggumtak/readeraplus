@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.ui.settings
 
 import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.TapAction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -55,25 +56,86 @@ class KeyNamesTest {
 
     @Test
     fun learnedKeysWin() {
-        var a = AppSettings()
-        a = KeyAssign.assign(a, KeyNames.VOLUME_UP, next = true)
+        val a = AppSettings(nextPageKeys = setOf(KeyNames.VOLUME_UP), prevPageKeys = setOf(131))
         assertEquals(KeyNames.Effect.NEXT, KeyNames.readerEffect(KeyNames.VOLUME_UP, false, a))
-        a = KeyAssign.assign(a, 131, next = false)
         assertEquals(KeyNames.Effect.PREV, KeyNames.readerEffect(131, false, a))
     }
 
     @Test
-    fun assignMovesBetweenSets() {
-        var a = KeyAssign.assign(AppSettings(), 131, next = true)
-        assertTrue(131 in a.nextPageKeys)
-        a = KeyAssign.assign(a, 131, next = false)
-        assertFalse(131 in a.nextPageKeys)
-        assertTrue(131 in a.prevPageKeys)
-        a = KeyAssign.assign(a, 132, next = true)
-        assertEquals(listOf(132 to true, 131 to false), KeyAssign.list(a))
+    fun bindingsComeFirstInTheKeyTest() {
+        var a = AppSettings(prevPageKeys = setOf(131))
+        assertEquals("이전 페이지", KeyNames.readerEffectLabel(131, false, a))
+        a = KeyAssign.bind(a, 131, TapAction.NEXT_CHAPTER)
+        assertEquals("다음 화", KeyNames.readerEffectLabel(131, false, a))
+        // A volume key bound to NONE goes to the system even with volume paging on.
+        a = KeyAssign.bind(a, KeyNames.VOLUME_DOWN, TapAction.NONE)
+        assertEquals("시스템에 맡김", KeyNames.readerEffectLabel(KeyNames.VOLUME_DOWN, false, a))
+        assertEquals(KeyNames.Effect.PREV.label, KeyNames.readerEffectLabel(KeyNames.VOLUME_UP, false, a))
+        assertEquals(KeyNames.Effect.NONE.label, KeyNames.readerEffectLabel(700, false, a))
+    }
+
+    @Test
+    fun bindDropsTheLearnedEntry() {
+        var a = AppSettings(nextPageKeys = setOf(131, 132), prevPageKeys = setOf(133))
+        a = KeyAssign.bind(a, 131, TapAction.TOC)
+        a = KeyAssign.bind(a, 133, TapAction.NEXT)
+        assertEquals(setOf(132), a.nextPageKeys)
+        assertTrue(a.prevPageKeys.isEmpty())
+        assertEquals(mapOf(131 to TapAction.TOC, 133 to TapAction.NEXT), a.keyBindings)
+        assertEquals(TapAction.TOC, KeyAssign.actionOf(a, 131))
+        assertEquals(TapAction.NEXT, KeyAssign.actionOf(a, 132))
+        assertNull(KeyAssign.actionOf(a, 134))
+        // Re-binding replaces the action.
+        a = KeyAssign.bind(a, 131, TapAction.REFRESH)
+        assertEquals(TapAction.REFRESH, a.keyBindings[131])
+    }
+
+    @Test
+    fun entriesMergeBindingsAndLearnedKeysByCode() {
+        val a = AppSettings(
+            nextPageKeys = setOf(140),
+            prevPageKeys = setOf(120),
+            keyBindings = mapOf(25 to TapAction.NEXT_CHAPTER, 130 to TapAction.NONE),
+        )
+        assertEquals(
+            listOf(25 to TapAction.NEXT_CHAPTER, 120 to TapAction.PREV, 130 to TapAction.NONE, 140 to TapAction.NEXT),
+            KeyAssign.entries(a),
+        )
+        // A stale learned entry under a binding shows once, as the binding.
+        val b = AppSettings(nextPageKeys = setOf(25), keyBindings = mapOf(25 to TapAction.MENU))
+        assertEquals(listOf(25 to TapAction.MENU), KeyAssign.entries(b))
+        assertTrue(KeyAssign.entries(AppSettings()).isEmpty())
+    }
+
+    @Test
+    fun removeAndClearAll() {
+        var a = AppSettings(nextPageKeys = setOf(131), prevPageKeys = setOf(132), keyBindings = mapOf(133 to TapAction.TOC))
+        a = KeyAssign.remove(a, 133)
+        assertTrue(a.keyBindings.isEmpty())
         a = KeyAssign.remove(a, 131)
-        assertEquals(setOf<Int>(), a.prevPageKeys)
-        a = KeyAssign.clearAll(a)
-        assertTrue(a.nextPageKeys.isEmpty() && a.prevPageKeys.isEmpty())
+        assertTrue(a.nextPageKeys.isEmpty())
+        assertEquals(setOf(132), a.prevPageKeys)
+        val unchanged = KeyAssign.remove(a, 999)
+        assertEquals(a, unchanged)
+        a = KeyAssign.clearAll(KeyAssign.bind(a, 25, TapAction.PREV))
+        assertTrue(a.nextPageKeys.isEmpty() && a.prevPageKeys.isEmpty() && a.keyBindings.isEmpty())
+    }
+
+    @Test
+    fun actionChooser() {
+        // The spec's 13 choices, in order, ending with the hand-back.
+        assertEquals(13, KeyActions.CHOICES.size)
+        assertEquals(TapAction.NEXT, KeyActions.CHOICES.first())
+        assertEquals(TapAction.NONE, KeyActions.CHOICES.last())
+        assertEquals(KeyActions.CHOICES.size, KeyActions.CHOICES.toSet().size)
+        assertEquals(
+            listOf(
+                "다음 페이지", "이전 페이지", "다음 화", "이전 화", "목차", "메뉴", "북마크", "화면 새로고침", "흑백 반전",
+                "TTS 읽기", "자동 넘김", "페이지 이동", "없음(시스템에 맡김)",
+            ),
+            KeyActions.CHOICES.map { KeyActions.label(it) },
+        )
+        // Actions outside the chooser (restored from a backup) keep their tap-zone label.
+        assertEquals(TapAction.SEARCH.label, KeyActions.label(TapAction.SEARCH))
     }
 }

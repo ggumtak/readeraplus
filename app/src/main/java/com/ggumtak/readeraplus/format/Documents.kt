@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.format
 
 import com.ggumtak.readeraplus.format.epub.EpubDocuments
+import com.ggumtak.readeraplus.format.epub.EpubPlanCache
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import java.io.File
 
@@ -23,7 +24,7 @@ object Documents {
      * (`afterOpen` → `ReaderIo.launch`). Blocking IO; no-op when nothing is pending; never throws. Owner: FORMAT.
      */
     fun writeDeferredCaches() {
-        // R2 stub (owner: FORMAT).
+        EpubPlanCache.writePending()
     }
 
     /** Fast metadata for library scanning (EPUB: OPF only; TXT: title from file name + encoding sniff). */

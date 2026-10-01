@@ -3,6 +3,8 @@ package com.ggumtak.readeraplus.reader
 import com.ggumtak.readeraplus.engine.LayoutConfig
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.ParseOptions
+import com.ggumtak.readeraplus.format.epub.EpubPlanCache
+import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.render.FontMath
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import java.security.MessageDigest
@@ -23,7 +25,9 @@ object LayoutKeys {
      * Bump when the geometry rules ([geometry], [config]) or the key composition change so cached page counts are
      * recomputed (the typesetter's own output is [ALGO_VERSION]).
      * 2: keys are per format (the other format's parse options no longer count) and use the layout weight class.
-     * 3: [ALGO_VERSION] replaces the app's version code (A2).
+     * 3: [ALGO_VERSION] replaces the app's version code, and [keyFor] adds the format's parse version (A2).
+     * The parse version ([parseVersionOf]) covers the TXT parse and the EPUB section split only: a change to what the
+     * EPUB content parser makes of an item's XHTML (text, block styles) has no version of its own, so bump this then.
      */
     const val VERSION = 3
 
@@ -154,14 +158,16 @@ object LayoutKeys {
     /**
      * Identity of the text coordinates (section split and char offsets) a parse of a book of [format] produces, or
      * null when saved (section, offset) positions do not depend on changeable options (EPUB: spine items are fixed).
-     * TXT: every option that can move text between sections or shift offsets, plus the encoding; heading emphasis
-     * only styles text and is left out so toggling it never remaps a position.
+     * TXT: the parser's own version ([TxtDocuments.PARSE_VERSION]: an update that splits sections differently remaps
+     * each position once, by fraction), every option that can move text between sections or shift offsets, plus the
+     * encoding; heading emphasis only styles text and is left out so toggling it never remaps a position.
      */
     fun textSignature(s: ReaderSettings, format: BookFormat, encoding: String): String? {
         if (format == BookFormat.EPUB) return null
         val p = s.parseOptions(encoding)
         val sb = StringBuilder(128)
-        sb.append("t1|").append(p.txtBlankLines).append(',').append(p.txtStripIndent)
+        sb.append("t1|v").append(TxtDocuments.PARSE_VERSION)
+            .append('|').append(p.txtBlankLines).append(',').append(p.txtStripIndent)
             .append(',').append(p.txtJoinWrappedLines).append(',').append(p.txtDetectChapters)
             .append(",enc=").append(p.txtEncoding)
             .append(",re=").append(p.txtChapterRegex.length).append(':').append(p.txtChapterRegex)
@@ -190,7 +196,9 @@ object LayoutKeys {
 
     /**
      * [key] for a book of [format]: only the options that format depends on are part of it, so changing a TXT
-     * option keeps every EPUB's cached counts valid and vice versa.
+     * option keeps every EPUB's cached counts valid and vice versa. The format's [parseVersion] is part of it too:
+     * a parser update can change a section's text but keep the section count, and `PageCounts.setKnown` checks only
+     * the length.
      */
     fun keyFor(
         s: ReaderSettings,
@@ -200,7 +208,18 @@ object LayoutKeys {
         density: Float,
         fontIdentity: String,
         algoVersion: Int = ALGO_VERSION,
-    ): String = key(layoutPart(s, format), parseOptionsFor(s, format, encoding), g, density, fontIdentity, algoVersion)
+        parseVersion: Int = parseVersionOf(format),
+    ): String = key(
+        layoutPart(s, format), parseOptionsFor(s, format, encoding), g, density, "$fontIdentity|pv=$parseVersion",
+        algoVersion,
+    )
+
+    /**
+     * Version of the sections a parse of a book of [format] produces: TXT [TxtDocuments.PARSE_VERSION] (at most one
+     * bump per release), EPUB [EpubPlanCache.VERSION] (the section split).
+     */
+    fun parseVersionOf(format: BookFormat): Int =
+        if (format == BookFormat.EPUB) EpubPlanCache.VERSION else TxtDocuments.PARSE_VERSION
 
     /**
      * Stable key for cached page counts: every layout-affecting setting, the parse options, the content box,

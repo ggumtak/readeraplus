@@ -22,12 +22,10 @@ import android.net.Uri
 import android.os.Build
 import android.text.InputType
 import android.view.Gravity
-import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowInsets
-import android.widget.AbsListView
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -53,7 +51,6 @@ import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
-import com.ggumtak.readeraplus.ui.library.LibraryText
 import java.net.URLEncoder
 
 /*
@@ -175,29 +172,6 @@ internal fun SeekBar.einkStyle(): SeekBar = apply {
     thumbOffset = context.dp(10)
     splitTrack = false
     background = null
-}
-
-/**
- * Hardware page keys scroll [list] by a screen while this dialog has focus, like the library (the dialog window
- * gets the keys, not the reader): volume keys when "볼륨 키로 페이지 넘김" is on (swapped by the invert option),
- * PAGE_UP/DOWN and the learned page keys. Both DOWN and UP are consumed so the system volume panel never shows;
- * BACK and other keys are left alone. [skip] lets a caller keep a key (e.g. while typing in a search field).
- */
-internal fun Dialog.pageKeysScroll(list: () -> AbsListView?, skip: (KeyEvent) -> Boolean = { false }) {
-    setOnKeyListener { _, keyCode, ev ->
-        val a = Settings.app
-        val dir = LibraryText.keyDirection(keyCode, a.volumeKeysTurn, a.invertVolumeKeys, a.nextPageKeys, a.prevPageKeys)
-        if (dir == 0 || skip(ev)) return@setOnKeyListener false
-        if (ev.action == KeyEvent.ACTION_DOWN && ev.repeatCount == 0) list()?.let { scrollListPage(it, dir) }
-        true
-    }
-}
-
-/** Scrolls [v] by one screen minus a small overlap ([dir] = +1 down, -1 up). */
-internal fun scrollListPage(v: AbsListView, dir: Int) {
-    if (v.visibility != View.VISIBLE || v.childCount == 0) return
-    val h = v.height - v.paddingTop - v.paddingBottom
-    v.scrollListBy(dir * (h - v.context.dp(24)).coerceAtLeast(v.context.dp(48)))
 }
 
 /** Flat square icon button (no ripple) used inside cards and bars. */

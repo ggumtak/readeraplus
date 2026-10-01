@@ -44,7 +44,11 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         body.addView(ctx.navRow("백업 및 복원", "서재 기록 · 북마크 · 인용문 · 설정을 파일로 저장하고 되살립니다") {
             activity.push(SettingsActivity.PAGE_BACKUP)
         })
-        body.addView(ctx.toggleRow("앱 시작시 문서 읽기", "앱이 시작할 때 최근에 읽었던 책이나 문서를 이어서 봅니다", app.openLastOnStart) { v ->
+        body.addView(ctx.navRow("Wi-Fi로 책 받기", "같은 Wi-Fi의 PC · 휴대폰 브라우저에서 TXT · EPUB 파일을 보냅니다") {
+            activity.push(SettingsActivity.PAGE_WIFI)
+        })
+        body.addView(ctx.navRow("읽기 기록", "읽은 시간 · 연속 기록 · 잔디 · 올해 다 읽은 책") { activity.push(SettingsActivity.PAGE_STATS) })
+        body.addView(ctx.toggleRow("앱 시작 시 읽던 책 열기", "앱을 열면 마지막으로 읽던 책을 이어서 봅니다", app.openLastOnStart) { v ->
             editApp { it.copy(openLastOnStart = v) }
         })
         permRow = ctx.row("모든 파일 접근 권한", StorageAccess.summary(ctx)) { StorageAccess.request(activity) }.also(body::addView)
@@ -64,8 +68,11 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         }.also(body::addView)
 
         body.section("읽기 설정")
-        turnRow = ctx.navRow("페이지 넘김 및 페이지 표시", turnSummary(app)) { activity.push(SettingsActivity.PAGE_PAGE_TURNING) }.also(body::addView)
+        turnRow = ctx.navRow("넘김·화면 설정", turnSummary(app)) { activity.push(SettingsActivity.PAGE_PAGE_TURNING) }.also(body::addView)
         fontRow = ctx.navRow("글꼴 관리", "읽기 글꼴: …") { activity.push(SettingsActivity.PAGE_FONTS) }.also(body::addView)
+        body.addView(ctx.navRow("TXT 기본 정리 설정", "빈 줄 · 줄 합치기 · 챕터 인식 · 치환 규칙 (따로 정하지 않은 모든 TXT)") {
+            activity.push(SettingsActivity.PAGE_TXT_DEFAULTS)
+        })
         ttsRow = ctx.navRow("Text to speech (TTS)", ttsSummary(app)) { activity.push(SettingsActivity.PAGE_TTS) }.also(body::addView)
         lookupRow = ctx.navRow("사전 · 번역 · 웹 검색", "웹 검색: ${WebEngines.nameOf(app.webSearchUrl)}") {
             activity.push(SettingsActivity.PAGE_LOOKUP)
@@ -94,7 +101,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
 
         body.section("기타")
         cacheRow = ctx.row("캐시 비우기", "표지 · TXT 색인 · 쪽수 캐시 (계산 중…)") { clearCache() }.also(body::addView)
-        body.addView(ctx.row("설정 초기화", "읽기 · 넘김 · 화면 설정을 기본값으로 (스캔 폴더와 키 지정은 유지)") { resetSettings() })
+        body.addView(ctx.row("설정 초기화", "읽기 · 넘김 · 화면 설정을 기본값으로 (TXT 정리 설정 · 스캔 폴더 · 키 지정은 유지)") { resetSettings() })
         body.addView(ctx.navRow("정보", "버전 ${BuildConfig.VERSION_NAME}") { activity.push(SettingsActivity.PAGE_ABOUT) })
         return ctx.pageScroll(body)
     }
@@ -143,15 +150,19 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         val parts = ArrayList<String>()
         parts += TapZoneModel.modeName(app.tapZoneMode)
         if (app.volumeKeysTurn) parts += "볼륨 키"
-        val keys = app.nextPageKeys.size + app.prevPageKeys.size
+        val keys = KeyAssign.entries(app).size
         if (keys > 0) parts += "지정 키 ${keys}개"
         if (app.einkRefreshEvery > 0) parts += "새로고침 ${SettingsFormat.refreshEvery(app.einkRefreshEvery)}"
         return parts.joinToString(" · ")
     }
 
     private fun ttsSummary(app: AppSettings): String =
-        "속도 ${SettingsFormat.rate(app.ttsRate)} · 피치 ${SettingsFormat.pitch(app.ttsPitch)}" +
-            if (app.ttsSleepMinutes > 0) " · 수면 ${SettingsFormat.sleep(app.ttsSleepMinutes)}" else ""
+        "속도 ${SettingsFormat.rate(app.ttsRate)} · 음높이 ${SettingsFormat.pitch(app.ttsPitch)}" +
+            if (app.ttsSleepMinutes > 0 || app.ttsSleepChapters > 0) {
+                " · 수면 ${SettingsFormat.sleepChoice(app.ttsSleepMinutes, app.ttsSleepChapters)}"
+            } else {
+                ""
+            }
 
     private fun cacheDirs(): List<File> = listOfNotNull(activity.cacheDir, activity.externalCacheDir)
 
@@ -184,8 +195,13 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         }
     }
 
+    /**
+     * Back to the defaults, except what took the user work to set up: scan folders, assigned keys, the library view
+     * and the TXT cleanup defaults (their replacement rules; resetting them would also re-parse every TXT once).
+     */
     private fun resetSettings() {
-        ctx.confirm("설정 초기화", "글꼴 · 글자 크기 · 간격 · 여백과 넘김 · 화면 설정을 기본값으로 되돌릴까요?\n스캔 폴더와 지정한 키는 그대로 둡니다.", ok = "초기화") {
+        val msg = "글꼴 · 글자 크기 · 간격 · 여백과 넘김 · 화면 설정을 기본값으로 되돌릴까요?\nTXT 정리 설정 · 스캔 폴더 · 지정한 키는 그대로 둡니다."
+        ctx.confirm("설정 초기화", msg, ok = "초기화") {
             val old = Settings.app
             Settings.saveApp(
                 AppSettings().copy(
@@ -193,11 +209,23 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
                     excludedFolders = old.excludedFolders,
                     nextPageKeys = old.nextPageKeys,
                     prevPageKeys = old.prevPageKeys,
+                    keyBindings = old.keyBindings,
                     librarySort = old.librarySort,
                     libraryListMode = old.libraryListMode,
                 ),
             )
-            Settings.saveReader(ReaderSettings())
+            val r = Settings.reader
+            Settings.saveReader(
+                ReaderSettings().copy(
+                    txtBlankLines = r.txtBlankLines,
+                    txtStripIndent = r.txtStripIndent,
+                    txtJoinWrappedLines = r.txtJoinWrappedLines,
+                    txtDetectChapters = r.txtDetectChapters,
+                    txtChapterRegex = r.txtChapterRegex,
+                    txtEmphasizeHeadings = r.txtEmphasizeHeadings,
+                    txtReplaceRules = r.txtReplaceRules,
+                ),
+            )
             // Rebuild so every switch shows its new value.
             activity.rebuildTop()
             ctx.toast("기본값으로 되돌렸습니다")

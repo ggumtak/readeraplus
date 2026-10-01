@@ -38,4 +38,11 @@ class ReadingLogDaysTest {
         assertEquals(1, ReadingLog.speed(3600, 1, 0))
         assertEquals(600, ReadingLog.DEFAULT_CPM)
     }
+
+    @Test
+    fun speedSaturatesInsteadOfWrapping() {
+        // 1e17 chars in 10 minutes: 1e16 cpm, whose low 32 bits would be an arbitrary (even negative) speed.
+        assertEquals(Int.MAX_VALUE, ReadingLog.speed(600, 100_000_000_000_000_000L, 0))
+        assertEquals(Int.MAX_VALUE, ReadingLog.speed(1, Long.MAX_VALUE, 0))
+    }
 }

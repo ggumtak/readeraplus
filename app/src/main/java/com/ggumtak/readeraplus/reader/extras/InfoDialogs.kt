@@ -297,7 +297,7 @@ internal object InfoDialogs {
             for (k in 0..2) segments[k]?.let { setSegment(it, k == mode, enabled(k)) }
             if (!resetPad) return
             when (mode) {
-                MODE_PAGE -> pad.reset(NumPadState.lengthFor(total), "쪽 번호 1–$total")
+                MODE_PAGE -> pad.reset(NumPadState.lengthFor(total), "1–${total}쪽")
                 MODE_PERCENT -> pad.reset(3, "0–100%")
                 else -> {
                     val e = episodes ?: return

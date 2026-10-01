@@ -1,7 +1,10 @@
 package com.ggumtak.readeraplus.ui.settings
 
+import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.ReaderSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.TimeZone
 
@@ -76,5 +79,48 @@ class SettingsFormatTest {
             "https://search.naver.com/search.naver?query=%ED%95%9C%EA%B8%80%20a%2Bb",
             WebEngines.build("https://search.naver.com/search.naver?query=%s", "한글 a+b"),
         )
+    }
+
+    @Test
+    fun sleepChoicesIncludeEpisodes() {
+        // 끔 / 15 / 30 / 45 / 60 / 90분 / 이 화 끝까지 / 2화 끝까지 (T1-11).
+        assertEquals(
+            listOf("끔", "15분", "30분", "45분", "1시간", "1시간 30분", "이 화 끝까지", "2화 끝까지"),
+            SettingsFormat.SLEEP_CHOICES.map { (m, c) -> SettingsFormat.sleepChoice(m, c) },
+        )
+        // A chapter choice stores minutes 0; chapters win when both are set.
+        assertEquals(0 to 1, SettingsFormat.SLEEP_CHOICES[6])
+        assertEquals("이 화 끝까지", SettingsFormat.sleepChoice(30, 1))
+        assertEquals("3화 끝까지", SettingsFormat.sleepChoice(0, 3))
+        assertEquals(0, SettingsFormat.sleepIndex(0, 0))
+        assertEquals(4, SettingsFormat.sleepIndex(60, 0))
+        assertEquals(6, SettingsFormat.sleepIndex(0, 1))
+        assertEquals(7, SettingsFormat.sleepIndex(45, 2))
+        // Values no choice offers (an older build's 10 / 120분, a restored 3화) select nothing.
+        assertEquals(-1, SettingsFormat.sleepIndex(10, 0))
+        assertEquals(-1, SettingsFormat.sleepIndex(0, 3))
+    }
+
+    @Test
+    fun longPressTimes() {
+        assertEquals(listOf("0.4초", "0.5초", "0.7초", "1.0초"), SettingsFormat.LONG_PRESS_OPTIONS.map { SettingsFormat.longPress(it) })
+        assertEquals("0.5초 (기본)", SettingsFormat.longPressChoice(AppSettings().longPressMs))
+        assertEquals("0.7초", SettingsFormat.longPressChoice(700))
+        assertTrue(AppSettings().longPressMs in SettingsFormat.LONG_PRESS_OPTIONS)
+    }
+
+    @Test
+    fun timeLeftLabelsMatchThePopup() {
+        assertEquals(listOf("끔", "이 화", "책"), SettingsFormat.TIME_LEFT.map { it.first })
+        assertEquals("끔", SettingsFormat.timeLeft(ReaderSettings.TIME_LEFT_OFF))
+        assertEquals("이 화", SettingsFormat.timeLeft(ReaderSettings.TIME_LEFT_EPISODE))
+        assertEquals("책", SettingsFormat.timeLeft(ReaderSettings.TIME_LEFT_BOOK))
+        assertEquals("끔", SettingsFormat.timeLeft(99))
+    }
+
+    @Test
+    fun receivedLine() {
+        assertEquals("12.3 MB · 서재에 추가됨", SettingsFormat.received((12.3 * 1024 * 1024).toLong(), added = true))
+        assertEquals("500 B · 서재에 추가하지 못함", SettingsFormat.received(500, added = false))
     }
 }

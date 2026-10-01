@@ -1,25 +1,32 @@
 package com.ggumtak.readeraplus.ui.settings
 
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.DialogInterface
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
+import com.ggumtak.readeraplus.data.Shelf
+import com.ggumtak.readeraplus.render.DeviceCleanInfo
 import com.ggumtak.readeraplus.render.Eink
 import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.KeyHold
+import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.settings.TapZoneMode
+import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
-import com.ggumtak.readeraplus.ui.kit.iconButton
+import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.row
@@ -31,10 +38,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * "페이지 넘김 및 페이지 표시": tap-zone mode with a visual preview (3×3 editor in CUSTOM mode), swipes, volume
- * keys, learned page keys + key test, e-ink page mode and full refresh, auto page turn, and the page status line.
+ * "넘김·화면 설정": tap-zone mode with a visual preview (3×3 editor in CUSTOM mode), swipes and the long-press time,
+ * keys (key → action bindings with the "이 키로 할 동작" chooser, key hold, key test), the e-ink screen (page mode,
+ * refresh cadence by day and night, chapter / picture refreshes, the device's own ghost clearing, and a "고급" group
+ * with the refresh method, flash length, the refresh test and diagnostics), auto page turn, the book end, and the
+ * page status line. The reading-settings popup's "넘김·화면 설정" button opens this page; rows it shares with the
+ * popup use its labels and ranges.
  */
-internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_PAGE_TURNING, "페이지 넘김 및 페이지 표시") {
+internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_PAGE_TURNING, "넘김·화면 설정") {
     private val modeRows = LinkedHashMap<TapZoneMode, View>()
     private lateinit var preview: TapZoneView
     private lateinit var customTools: LinearLayout
@@ -44,6 +55,16 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     private var liveDialog: AlertDialog? = null
     /** The "키 지정" dialog while open (dismissed with the page). */
     private var keyDialog: AlertDialog? = null
+    /** The refresh test while open (dismissed with the page). */
+    private var testDialog: Dialog? = null
+
+    private lateinit var cleanText: TextView
+    private lateinit var cleanWarning: TextView
+    private lateinit var diagText: TextView
+    private var methodRow: View? = null
+    /** Read on IO when the page is built: the device's ghost clearing, and whether the xrz refresh exists. */
+    private var cleanInfo: DeviceCleanInfo? = null
+    private var hasXrz: Boolean? = null
 
     override fun build(): View {
         val app = Settings.app
@@ -96,19 +117,91 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         body.addView(ctx.toggleRow("스와이프로 넘김", "좌우로 밀어서 페이지 넘김 (오른쪽→왼쪽 = 다음)", app.swipeToTurn) { v -> editApp { it.copy(swipeToTurn = v) } })
         body.addView(ctx.toggleRow("세로 스와이프", "위로 밀면 다음 페이지, 아래로 밀면 이전 페이지", app.verticalSwipe) { v -> editApp { it.copy(verticalSwipe = v) } })
         body.addView(ctx.toggleRow("길게 눌러 텍스트 선택", "단어를 길게 누르면 선택 → 복사 · 인용 · 사전 · 검색", app.longPressSelect) { v -> editApp { it.copy(longPressSelect = v) } })
+        var pressRow: View? = null
+        pressRow = ctx.valueRow("길게 누르기 시간", SettingsFormat.longPress(app.longPressMs)) {
+            val opts = SettingsFormat.LONG_PRESS_OPTIONS
+            ctx.chooser("길게 누르기 시간", opts.map { SettingsFormat.longPressChoice(it) }, opts.indexOf(Settings.app.longPressMs)) { i ->
+                editApp { it.copy(longPressMs = opts[i]) }
+                pressRow?.setSummary(SettingsFormat.longPress(opts[i]))
+            }
+        }.also(body::addView)
 
         // ---- keys
         body.section("버튼 · 키")
-        body.addView(ctx.toggleRow("볼륨 키로 넘김", "볼륨 아래 = 다음, 볼륨 위 = 이전 (끄면 볼륨 조절)", app.volumeKeysTurn) { v -> editApp { it.copy(volumeKeysTurn = v) } })
+        body.addView(ctx.toggleRow("볼륨 키로 페이지 넘김", "볼륨 아래 = 다음, 볼륨 위 = 이전 (끄면 볼륨 조절)", app.volumeKeysTurn) { v -> editApp { it.copy(volumeKeysTurn = v) } })
         body.addView(ctx.toggleRow("볼륨 키 반대로", "볼륨 위 = 다음, 볼륨 아래 = 이전", app.invertVolumeKeys) { v -> editApp { it.copy(invertVolumeKeys = v) } })
-        body.addView(ctx.row("다음 페이지 키 지정", "기기 버튼 · 리모컨 · 키보드의 키를 눌러 다음 페이지로 지정") { learnKey(next = true) })
-        body.addView(ctx.row("이전 페이지 키 지정", "누른 키를 이전 페이지로 지정") { learnKey(next = false) })
+        body.addView(ctx.row("키 지정", "기기 버튼 · 리모컨 · 키보드의 키를 누른 뒤 그 키로 할 동작을 고릅니다", ctx.icon(R.drawable.ic_add, 24)) { learnKey() })
         keysBox = ctx.vertical().also(body::addView)
         fillKeys()
+        var holdRow: View? = null
+        holdRow = ctx.valueRow("키를 길게 누르면", app.keyHold.label) {
+            val all = KeyHold.entries
+            ctx.chooser("키를 길게 누르면", all.map { it.label }, all.indexOf(Settings.app.keyHold)) { i ->
+                editApp { it.copy(keyHold = all[i]) }
+                holdRow?.setSummary(all[i].label)
+            }
+        }.also(body::addView)
+        body.addView(ctx.note("다음·이전 페이지 키를 누르고 있을 때입니다. 누르는 순간 한 쪽은 바로 넘어가고, 0.5초쯤 누르고 있으면 고른 동작을 합니다."))
         keyTestRow = ctx.row("키 테스트", keyTestSummary()) { showKeyTest() }.also(body::addView)
         body.addView(ctx.note("Page Up/Down, 방향키, 스페이스, 미디어 다음/이전 키는 기본으로 페이지를 넘깁니다. 코멧의 사용자 키가 인식되지 않으면 기기 설정(KeyPack)에서 그 키를 '다음 페이지' 또는 볼륨 키로 지정한 뒤 여기서 확인하세요."))
 
         // ---- e-ink
+        addEink(body, app)
+
+        // ---- auto turn
+        body.section("자동 넘김")
+        body.addView(ctx.stepperRow("넘김 간격", app.autoTurnSeconds.coerceIn(5, 300).toFloat(), 5f, 300f, 5f, { SettingsFormat.seconds(it.toInt()) }) { v ->
+            editApp { it.copy(autoTurnSeconds = v.toInt()) }
+        })
+        body.addView(ctx.note("읽기 화면의 ⋮ 메뉴 → '자동 넘김'으로 켜고 끕니다. 화면을 터치하면 멈춥니다."))
+
+        // ---- book end (T1-2)
+        body.section("책 끝")
+        body.addView(ctx.toggleRow(
+            "끝까지 읽으면 완독 처리",
+            "마지막 쪽에서 다음으로 넘기면 '${Shelf.HAVE_READ.label}'으로 표시합니다 (끝 화면에서 되돌릴 수 있음)",
+            app.autoMarkFinished,
+        ) { v -> editApp { it.copy(autoMarkFinished = v) } })
+
+        // ---- page display (reader settings; the popup's labels and ranges)
+        val r = Settings.reader
+        body.section("페이지 표시")
+        body.addView(ctx.toggleRow("상단 챕터 제목", "페이지 위에 현재 챕터 제목 표시", r.showHeader) { v -> editReader { it.copy(showHeader = v) } })
+        body.addView(ctx.toggleRow("하단 정보 표시", "페이지 아래에 아래 항목을 표시합니다", r.showFooter) { v -> editReader { it.copy(showFooter = v) } })
+        body.addView(ctx.toggleRow("쪽수", "12 / 3259", r.footerPage) { v -> editReader { it.copy(footerPage = v) } })
+        body.addView(ctx.toggleRow("회차", "123/540화 (목차의 화 번호로, 책을 연 뒤 곧 표시)", r.footerEpisode) { v -> editReader { it.copy(footerEpisode = v) } })
+        body.addView(ctx.toggleRow("챕터 남은 쪽수", "챕터 끝까지 남은 쪽 수", r.footerChapterLeft) { v -> editReader { it.copy(footerChapterLeft = v) } })
+        var timeRow: View? = null
+        timeRow = ctx.valueRow("남은 시간", SettingsFormat.timeLeft(r.footerTimeLeft)) {
+            val opts = SettingsFormat.TIME_LEFT
+            val labels = opts.map { (label, v) -> label + (TIME_LEFT_EXAMPLES[v]?.let { " ($it)" } ?: "") }
+            ctx.chooser("남은 시간", labels, opts.indexOfFirst { it.second == Settings.reader.footerTimeLeft }) { i ->
+                editReader { it.copy(footerTimeLeft = opts[i].second) }
+                timeRow?.setSummary(opts[i].first)
+            }
+        }.also(body::addView)
+        body.addView(ctx.toggleRow("진행률", "34%", r.footerPercent) { v -> editReader { it.copy(footerPercent = v) } })
+        body.addView(ctx.toggleRow("시계", "페이지를 넘길 때만 갱신 (e-ink 절약)", r.footerClock) { v -> editReader { it.copy(footerClock = v) } })
+        body.addView(ctx.toggleRow("배터리", "배터리 잔량", r.footerBattery) { v -> editReader { it.copy(footerBattery = v) } })
+        body.addView(ctx.stepperRow("상태 표시 글자 크기", r.statusFontSizeSp, 8f, 16f, 0.5f, { SettingsFormat.sp(it) }) { v ->
+            editReader { it.copy(statusFontSizeSp = v) }
+        })
+        body.addView(ctx.toggleRow("흑백 반전", "검은 바탕에 흰 글씨", r.invert) { v -> editReader { it.copy(invert = v) } })
+        body.addView(ctx.toggleRow("페이지 여백", "끄면 여백을 최소로 줄입니다", r.pageMargins) { v -> editReader { it.copy(pageMargins = v) } })
+        return ctx.pageScroll(body)
+    }
+
+    override fun onShown() {
+        // Corner switches live on the main page; reflect them when coming back here.
+        val app = Settings.app
+        preview.bookmarkCorner = app.bookmarkByTouch
+        preview.invertCorner = app.invertByTouch
+        keyTestRow?.setSummary(keyTestSummary())
+    }
+
+    // ---------------------------------------------------------------- e-ink (T1-3)
+
+    private fun addEink(body: LinearLayout, app: AppSettings) {
         body.section("e-ink 화면")
         var modeRow: View? = null
         modeRow = ctx.valueRow("e-ink 화면 모드", SettingsFormat.einkMode(app.einkMode)) {
@@ -124,56 +217,113 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         body.addView(ctx.note("잔상이 거슬리면 기기의 e-ink 설정(앱별 최적화)에서 이 앱의 새로고침 모드를 바꿔 보세요. 위의 'e-ink 화면 모드'에서 '기기 설정 따름' 외의 모드를 고르면 그 값이 우선합니다."))
         body.addView(ctx.stepperRow("전체 새로고침", app.einkRefreshEvery.toFloat(), 0f, 20f, 1f, { SettingsFormat.refreshEvery(it.toInt()) }) { v ->
             editApp { it.copy(einkRefreshEvery = v.toInt()) }
+            updateCleanWarning()
         })
+        var nightRow: View? = null
+        nightRow = ctx.valueRow("밤 모드(반전)에서", EinkChoices.night(app.einkRefreshEveryNight)) {
+            val opts = EinkChoices.NIGHT
+            ctx.chooser("밤 모드(반전)에서", opts.map { EinkChoices.night(it) }, opts.indexOf(Settings.app.einkRefreshEveryNight)) { i ->
+                editApp { it.copy(einkRefreshEveryNight = opts[i]) }
+                nightRow?.setSummary(EinkChoices.night(opts[i]))
+                updateCleanWarning()
+            }
+        }.also(body::addView)
         body.addView(ctx.toggleRow("챕터 시작 시 새로고침", "새 챕터로 넘어갈 때 잔상을 지웁니다", app.einkRefreshOnChapter) { v -> editApp { it.copy(einkRefreshOnChapter = v) } })
-        val refreshRow = ctx.row("지금 새로고침 해보기", "e-ink 제어 확인 중…") {
-            runCatching { Eink.fullRefresh(activity.window.decorView) }.onFailure { ctx.toast("새로고침 실패") }
-        }
-        body.addView(refreshRow)
+        body.addView(ctx.toggleRow("그림 있는 쪽에서 새로고침", "그림이 있는 쪽으로 넘어가거나 벗어날 때 잔상을 지웁니다 (한 번 깜빡임)", app.einkFlashImages) { v ->
+            editApp { it.copy(einkFlashImages = v) }
+        })
+        cleanText = ctx.note("").apply { visibility = View.GONE }.also(body::addView)
+        cleanWarning = ctx.note(EinkChoices.DOUBLE_FLASH).apply {
+            setTextColor(Ink.BLACK)
+            visibility = View.GONE
+        }.also(body::addView)
+
+        // "고급": folded until opened (the method, the flash, the test and the readout are rarely touched).
+        val advanced = ctx.vertical { visibility = View.GONE }
+        val chevron: ImageView = ctx.icon(R.drawable.ic_expand_more, 24)
+        body.addView(ctx.row("고급", "새로고침 방식 · 깜빡임 길이 · 새로고침 시험 · 진단", chevron) {
+            val open = advanced.visibility != View.VISIBLE
+            advanced.visibility = if (open) View.VISIBLE else View.GONE
+            chevron.setImageResource(if (open) R.drawable.ic_expand_less else R.drawable.ic_expand_more)
+        })
+        body.addView(advanced, lp())
+        methodRow = ctx.valueRow("새로고침 방식", EinkChoices.method(app.einkRefreshMethod)) { chooseMethod() }.also(advanced::addView)
+        var flashRow: View? = null
+        flashRow = ctx.valueRow("깜빡임 길이", EinkChoices.flash(app.einkFlashMs)) {
+            val opts = EinkChoices.FLASH_MS
+            ctx.chooser("깜빡임 길이", opts.map { EinkChoices.flash(it) }, opts.indexOf(Settings.app.einkFlashMs)) { i ->
+                editApp { it.copy(einkFlashMs = opts[i]) }
+                flashRow?.setSummary(EinkChoices.flash(opts[i]))
+            }
+        }.also(advanced::addView)
+        advanced.addView(ctx.note("'자동'은 기기의 새로고침을 먼저 쓰고, 없거나 실패하면 검은 화면을 잠깐 띄웁니다. 깜빡임 길이는 그 검은 화면이 떠 있는 시간입니다."))
+        advanced.addView(ctx.row("새로고침 시험", "줄무늬 뒤에 글자를 띄우고 고른 방식으로 새로고침해 잔상이 지워지는지 봅니다") { startTest() })
+        advanced.addView(ctx.label("진단", 15f, bold = true).apply { setPadding(ctx.dp(16), ctx.dp(12), ctx.dp(16), 0) })
+        diagText = ctx.note("확인 중…").also(advanced::addView)
+
         activity.scope.launch {
-            // Vendor detection uses reflection once; keep it off the main thread.
-            val vendor = withContext(Dispatchers.IO) { runCatching { Eink.vendorName() }.getOrNull() }
-            val viewMode = withContext(Dispatchers.IO) { runCatching { Eink.supportsViewMode() }.getOrDefault(false) }
-            refreshRow.setSummary(if (vendor != null) "e-ink 제어: $vendor" else "기기 전용 제어 없음 — 검은 화면을 잠깐 띄워 잔상을 지웁니다")
-            modeNote.text = if (viewMode) {
-                "기기의 e-ink 제어(${vendor ?: "xrz"})를 찾았습니다. 고른 모드는 읽기 화면에 바로 적용됩니다 " +
+            // Vendor detection and the device readout use reflection once; keep them off the main thread.
+            val d = withContext(Dispatchers.IO) {
+                runCatching {
+                    Diag(Eink.vendorName(), Eink.supportsViewMode(), Eink.hasXrzRefresh(), Eink.deviceCleanInfo())
+                }.getOrDefault(Diag(null, false, false, null))
+            }
+            hasXrz = d.hasXrz
+            cleanInfo = d.clean
+            modeNote.text = if (d.viewMode) {
+                "기기의 e-ink 제어(${d.vendor ?: "xrz"})를 찾았습니다. 고른 모드는 읽기 화면에 바로 적용됩니다 " +
                     "('기기 설정 따름'으로 되돌리면 책을 다시 열 때부터 적용)."
             } else {
                 "이 기기는 앱에서 e-ink 모드를 바꿀 수 없음 — 기기의 e-ink 설정에서 앱별 모드/잔상 제거 주기를 조정하세요"
             }
+            EinkChoices.deviceClean(d.clean)?.let {
+                cleanText.text = it
+                cleanText.visibility = View.VISIBLE
+            }
+            updateCleanWarning()
+            val dm = ctx.resources.displayMetrics
+            diagText.text = EinkChoices.diagnostics(d.vendor, d.hasXrz, d.viewMode, d.clean, dm.widthPixels, dm.heightPixels, dm.densityDpi)
         }
-
-        // ---- auto turn
-        body.section("자동 넘김")
-        body.addView(ctx.stepperRow("넘김 간격", app.autoTurnSeconds.coerceIn(5, 300).toFloat(), 5f, 300f, 5f, { SettingsFormat.seconds(it.toInt()) }) { v ->
-            editApp { it.copy(autoTurnSeconds = v.toInt()) }
-        })
-        body.addView(ctx.note("읽기 화면의 ⋮ 메뉴 → '자동 넘김'으로 켜고 끕니다. 화면을 터치하면 멈춥니다."))
-
-        // ---- page display (reader settings)
-        val r = Settings.reader
-        body.section("페이지 표시")
-        body.addView(ctx.toggleRow("상단 챕터 제목", "페이지 위에 현재 챕터 제목 표시", r.showHeader) { v -> editReader { it.copy(showHeader = v) } })
-        body.addView(ctx.toggleRow("하단 정보", "페이지 아래에 쪽수 · 진행률 · 시계 · 배터리 표시", r.showFooter) { v -> editReader { it.copy(showFooter = v) } })
-        body.addView(ctx.toggleRow("쪽수", "12 / 3259", r.footerPage) { v -> editReader { it.copy(footerPage = v) } })
-        body.addView(ctx.toggleRow("챕터 남은 쪽", "챕터 끝까지 남은 쪽 수", r.footerChapterLeft) { v -> editReader { it.copy(footerChapterLeft = v) } })
-        body.addView(ctx.toggleRow("진행률", "34%", r.footerPercent) { v -> editReader { it.copy(footerPercent = v) } })
-        body.addView(ctx.toggleRow("시계", "페이지를 넘길 때만 갱신 (e-ink 절약)", r.footerClock) { v -> editReader { it.copy(footerClock = v) } })
-        body.addView(ctx.toggleRow("배터리", "배터리 잔량 %", r.footerBattery) { v -> editReader { it.copy(footerBattery = v) } })
-        body.addView(ctx.stepperRow("상태 글자 크기", r.statusFontSizeSp, 8f, 18f, 1f, { SettingsFormat.sp(it) }) { v ->
-            editReader { it.copy(statusFontSizeSp = v) }
-        })
-        body.addView(ctx.toggleRow("흑백 반전", "검은 바탕에 흰 글씨", r.invert) { v -> editReader { it.copy(invert = v) } })
-        body.addView(ctx.toggleRow("페이지 여백", "끄면 여백을 최소로 줄입니다", r.pageMargins) { v -> editReader { it.copy(pageMargins = v) } })
-        return ctx.pageScroll(body)
     }
 
-    override fun onShown() {
-        // Corner switches live on the main page; reflect them when coming back here.
-        val app = Settings.app
-        preview.bookmarkCorner = app.bookmarkByTouch
-        preview.invertCorner = app.invertByTouch
-        keyTestRow?.setSummary(keyTestSummary())
+    private class Diag(val vendor: String?, val viewMode: Boolean, val hasXrz: Boolean, val clean: DeviceCleanInfo?)
+
+    /** The double-flash warning shows while the device clears ghosts itself and an app cadence is on too. */
+    private fun updateCleanWarning() {
+        if (!::cleanWarning.isInitialized) return
+        val show = EinkChoices.doubleFlash(cleanInfo, Settings.app)
+        val v = if (show) View.VISIBLE else View.GONE
+        if (cleanWarning.visibility != v) cleanWarning.visibility = v
+    }
+
+    /** "새로고침 방식": the device methods are offered only where the xrz refresh exists (probed once, on IO). */
+    private fun chooseMethod() {
+        activity.scope.launch {
+            val xrz = hasXrz ?: withContext(Dispatchers.IO) { runCatching { Eink.hasXrzRefresh() }.getOrDefault(false) }.also { hasXrz = it }
+            val opts = EinkChoices.methods(xrz)
+            val sel = opts.indexOfFirst { it.second == Settings.app.einkRefreshMethod }
+            ctx.chooser("새로고침 방식", opts.map { it.first }, sel) { i -> setMethod(opts[i].second) }
+        }
+    }
+
+    private fun setMethod(m: Int) {
+        if (Settings.app.einkRefreshMethod != m) editApp { it.copy(einkRefreshMethod = m) }
+        methodRow?.setSummary(EinkChoices.method(m))
+    }
+
+    private fun startTest() {
+        if (testDialog?.isShowing == true) return
+        activity.scope.launch {
+            val xrz = hasXrz ?: withContext(Dispatchers.IO) { runCatching { Eink.hasXrzRefresh() }.getOrDefault(false) }.also { hasXrz = it }
+            val app = Settings.app
+            // A stored device method this firmware lacks would only test the flash: start from 자동 instead.
+            val start = if (!xrz && EinkChoices.isDeviceMethod(app.einkRefreshMethod)) EinkChoices.METHODS[0].second else app.einkRefreshMethod
+            val test = EinkTest(ctx, start, app.einkFlashMs, xrz) { m ->
+                setMethod(m)
+                ctx.toast("새로고침 방식: ${EinkChoices.method(m)}")
+            }
+            testDialog = test.show()
+        }
     }
 
     // ---------------------------------------------------------------- tap zones
@@ -211,44 +361,46 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         }
     }
 
-    // ---------------------------------------------------------------- keys
+    // ---------------------------------------------------------------- keys (T1-4)
 
+    /** The assigned keys, each with its action and [삭제]. */
     private fun fillKeys() {
         keysBox.removeAllViews()
-        val list = KeyAssign.list(Settings.app)
+        val list = KeyAssign.entries(Settings.app)
         if (list.isEmpty()) {
             keysBox.addView(ctx.note("지정한 키 없음"))
             return
         }
-        for ((code, next) in list) {
-            val remove = ctx.iconButton(R.drawable.ic_close, "지정 해제") {
+        for ((code, action) in list) {
+            val remove = ctx.textButton("삭제") {
                 editApp { KeyAssign.remove(it, code) }
                 fillKeys()
             }
-            keysBox.addView(ctx.row(KeyNames.label(code), if (next) "→ 다음 페이지" else "→ 이전 페이지", remove))
+            keysBox.addView(ctx.row(KeyNames.label(code), "→ ${KeyActions.label(action)}", remove) { chooseKeyAction(code) })
         }
-        keysBox.addView(ctx.buttonBar(ctx.textButton("모두 지우기") {
-            ctx.confirm("지정한 키 지우기", "지정한 키를 모두 지울까요?", ok = "지우기") {
-                editApp { KeyAssign.clearAll(it) }
-                fillKeys()
-            }
-        }))
+        if (list.size > 1) {
+            keysBox.addView(ctx.buttonBar(ctx.textButton("모두 지우기") {
+                ctx.confirm("지정한 키 지우기", "지정한 키를 모두 지울까요?", ok = "지우기") {
+                    editApp { KeyAssign.clearAll(it) }
+                    fillKeys()
+                }
+            }))
+        }
     }
 
     /**
-     * Dialog that captures the next key press and assigns it to next/previous page. The key is saved on its DOWN
-     * and the dialog closes on its UP, so both events stay inside the dialog (a volume key never reaches the
+     * Dialog that captures the next key press, then asks what it should do ([chooseKeyAction]). The key is taken on
+     * its DOWN and the chooser opens on its UP, so both events stay inside the dialog (a volume key never reaches the
      * system volume panel, and its UP never leaks into the settings window).
      */
-    private fun learnKey(next: Boolean) {
-        val target = if (next) "다음" else "이전"
-        val msg = ctx.label("$target 페이지로 쓸 키를 누르세요.\n\n(뒤로 키: 취소)", 17f).apply {
+    private fun learnKey() {
+        val msg = ctx.label("지정할 키를 누르세요.\n\n(뒤로 키: 취소)", 17f).apply {
             setPadding(ctx.dp(24), ctx.dp(16), ctx.dp(24), ctx.dp(8))
             setLineSpacing(0f, 1.15f)
         }
         val capture = KeyCapture()
         val dialog = ctx.alert()
-            .setTitle("$target 페이지 키 지정")
+            .setTitle("키 지정")
             .setView(msg)
             .setNegativeButton("닫기", null)
             .create()
@@ -260,15 +412,14 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
                 when (capture.onKey(down, keyCode, event.repeatCount)) {
                     KeyCapture.Step.REJECT -> msg.text = "${KeyNames.unassignableReason(keyCode)}\n\n다른 키를 누르세요."
                     KeyCapture.Step.ASSIGN -> {
-                        editApp { KeyAssign.assign(it, keyCode, next) }
-                        msg.text = "${KeyNames.label(keyCode)} → $target 페이지\n\n키를 떼면 닫힙니다."
+                        msg.text = "${KeyNames.label(keyCode)}\n\n키를 떼면 할 동작을 고릅니다."
                         if (keyCode == KeyNames.UNKNOWN) {
                             msg.append("\n(키 코드 0: 이름 없는 키는 모두 이 동작을 합니다)")
                         }
                     }
                     KeyCapture.Step.CLOSE -> {
                         d.dismiss()
-                        ctx.toast("${KeyNames.label(keyCode)} → $target 페이지")
+                        chooseKeyAction(keyCode)
                     }
                     KeyCapture.Step.IGNORE -> Unit
                 }
@@ -278,11 +429,22 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         })
         dialog.setOnDismissListener {
             if (keyDialog === dialog) keyDialog = null
-            if (capture.captured != -1) fillKeys()
         }
         dialog.window?.setWindowAnimations(0)
         keyDialog = dialog
         dialog.show()
+    }
+
+    /** "이 키로 할 동작": stores the binding (a learned page-key entry of the same key goes). */
+    private fun chooseKeyAction(code: Int) {
+        val actions = KeyActions.CHOICES
+        val current = KeyAssign.actionOf(Settings.app, code)
+        ctx.chooser("이 키로 할 동작 · ${KeyNames.name(code)}", actions.map { KeyActions.label(it) }, actions.indexOf(current)) { i ->
+            editApp { KeyAssign.bind(it, code, actions[i]) }
+            fillKeys()
+            keyTestRow?.setSummary(keyTestSummary())
+            ctx.toast("${KeyNames.label(code)} → ${KeyActions.label(actions[i])}")
+        }
     }
 
     /** Live key tester: shows each key's code and what the reader does with it (consumes all keys but Back). */
@@ -301,10 +463,10 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
             override fun onKey(d: DialogInterface, keyCode: Int, event: KeyEvent): Boolean {
                 if (keyCode == KeyEvent.KEYCODE_BACK) return false
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    val effect = KeyNames.readerEffect(keyCode, event.isShiftPressed, Settings.app)
+                    val effect = KeyNames.readerEffectLabel(keyCode, event.isShiftPressed, Settings.app)
                     out.text = "${KeyNames.name(keyCode)}\n" +
                         "키 코드 $keyCode · 스캔 코드 ${event.scanCode}\n" +
-                        "읽기 화면에서: ${effect.label}"
+                        "읽기 화면에서: $effect"
                     lastTested = keyCode to event.scanCode
                 }
                 return true
@@ -329,8 +491,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
 
     private fun keyTestSummary(): String {
         val (code, scan) = lastTested ?: return "눌러서 키 코드를 확인합니다"
-        val effect = KeyNames.readerEffect(code, false, Settings.app)
-        return "마지막 키: ${KeyNames.label(code)} · 스캔 $scan · ${effect.label}"
+        return "마지막 키: ${KeyNames.label(code)} · 스캔 $scan · ${KeyNames.readerEffectLabel(code, false, Settings.app)}"
     }
 
     override fun onDestroy() {
@@ -338,5 +499,15 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         liveDialog = null
         runCatching { keyDialog?.dismiss() }
         keyDialog = null
+        runCatching { testDialog?.dismiss() }
+        testDialog = null
+    }
+
+    private companion object {
+        /** The "남은 시간" chooser's examples (the footer's wording). */
+        val TIME_LEFT_EXAMPLES = mapOf(
+            ReaderSettings.TIME_LEFT_EPISODE to "이 화 3분",
+            ReaderSettings.TIME_LEFT_BOOK to "책 7시간 20분",
+        )
     }
 }

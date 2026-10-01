@@ -14,7 +14,8 @@ class ReadingDelta(val day: Int, val seconds: Long, val pages: Int, val chars: L
  * [MAX_PAGE_MS] (a page left on screen longer is idle time, not reading). Time is only counted between [resume] and
  * [pause], so the screen switched off, another app in front or TTS speaking in the background (which reports its own
  * time) count nothing. The reader flushes the delta to ReadingLog and Library.addReadingTime on IO at every pause,
- * when a book closes and when the local day changes (the next page shown after midnight starts the new day).
+ * when a book closes, when the end panel covers the last page and when the local day changes (the next page shown
+ * after midnight, or a resume on a later day, starts the new day).
  *
  * Per page: a few integer operations, no allocation (a [ReadingDelta] only when there is something to flush).
  * Times are elapsed-realtime ms.
@@ -46,9 +47,11 @@ class ReadingTracker {
         return done
     }
 
-    /** The reader is in front again: the page on screen counts from [now]. */
-    fun resume(now: Long) {
+    /** The reader is in front again on local day [today]: the page on screen counts from [now]. */
+    fun resume(now: Long, today: Int) {
         counting = true
+        // Nothing is pending after a pause: what is read from here on belongs to [today] (a wake after midnight).
+        if (seconds == 0L && pages == 0) day = today
         shownAt = if (hasPage) now else -1L
     }
 
@@ -60,17 +63,14 @@ class ReadingTracker {
         return take()
     }
 
-    /** Closes the page on screen as if it was turned now and returns what to flush; the page keeps counting. */
+    /**
+     * Closes the page on screen as if it was turned now and returns what to flush. The page then counts nothing until
+     * the next [onPageShown]: the book was closed, or the end panel covers it (counted again when the panel closes).
+     */
     fun flush(now: Long): ReadingDelta? {
         closePage(now)
-        if (counting && hasPage) shownAt = now
-        return take()
-    }
-
-    /** The book was closed: nothing is on screen until the next [onPageShown]. */
-    fun forgetPage() {
         hasPage = false
-        shownAt = -1L
+        return take()
     }
 
     /** Seconds counted but not flushed yet (the end panel's reading time adds them). */

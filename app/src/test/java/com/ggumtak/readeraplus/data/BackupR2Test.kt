@@ -1,6 +1,8 @@
 package com.ggumtak.readeraplus.data
 
 import com.ggumtak.readeraplus.format.BookFormat
+import com.ggumtak.readeraplus.format.txt.TxtDocuments
+import com.ggumtak.readeraplus.reader.TextPositions
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -83,6 +85,63 @@ class BackupR2Test {
             BackupJson.logFromJson(arr),
         )
         assertTrue(BackupJson.logFromJson(null).isEmpty())
+    }
+
+    @Test
+    fun hugeLogCountsAreCappedLikeOneAdd() {
+        // Every log read SUMs these; one saturated row (1e19 → Long.MAX_VALUE) would overflow SQLite's SUM.
+        val arr = JSONArray()
+            .put(JSONObject().put("day", 20260102).put("seconds", 60).put("pages", Int.MAX_VALUE).put("chars", 1e19))
+            .put(JSONObject().put("day", 20260103).put("seconds", 60).put("chars", "1e19"))
+            .put(JSONObject().put("day", 20260104).put("seconds", 60).put("chars", Long.MAX_VALUE))
+        assertEquals(
+            listOf(
+                BackupLogDay(20260102, 60, ReadingLog.MAX_ADD_PAGES, ReadingLog.MAX_ADD_CHARS),
+                BackupLogDay(20260103, 60, 0, ReadingLog.MAX_ADD_CHARS),
+                BackupLogDay(20260104, 60, 0, ReadingLog.MAX_ADD_CHARS),
+            ),
+            BackupJson.logFromJson(arr),
+        )
+    }
+
+    @Test
+    fun theTxtParseVersionTravelsWithTheBackup() {
+        val b = BackupJson.fromBook(book, false, emptyList(), emptyList(), emptyList())
+        val text = BackupJson.toJson(BackupData(1, 5, listOf(b), emptyList(), null, TxtDocuments.PARSE_VERSION))
+        assertEquals(TxtDocuments.PARSE_VERSION, JSONObject(text.toString()).getInt("txtParseVersion"))
+        assertEquals(TxtDocuments.PARSE_VERSION, BackupJson.parse(text.toString()).txtParseVersion)
+        // Older backups have none: 0, which no parse is.
+        assertFalse(BackupJson.toJson(BackupData(1, 5, listOf(b), emptyList(), null)).has("txtParseVersion"))
+        assertEquals(0, BackupJson.parse("{\"books\":[]}").txtParseVersion)
+        assertEquals(0, BackupJson.parse("{\"books\":[],\"txtParseVersion\":-3}").txtParseVersion)
+    }
+
+    @Test
+    fun txtPositionsOfAnotherParseAreFoundAgainByFraction() {
+        val v = TxtDocuments.PARSE_VERSION
+        val txt = BackupBook(path = book.path, fileName = book.fileName, size = 1, format = "TXT", posSection = 12,
+            posOffset = 340, progress = 0.42f)
+        // A backup without the key (from before R2) or of another parse version: the (section, offset) is stale.
+        assertTrue(BackupJson.remapsTextPosition(0, txt))
+        assertTrue(BackupJson.remapsTextPosition(v - 1, txt))
+        assertTrue(BackupJson.remapsTextPosition(v + 1, txt))
+        // Same parse: the coordinates are exact.
+        assertFalse(BackupJson.remapsTextPosition(v, txt))
+        // The start is the start of any parse; EPUB spine positions never move.
+        assertFalse(BackupJson.remapsTextPosition(0, txt.copy(posSection = 0, posOffset = 0)))
+        assertTrue(BackupJson.remapsTextPosition(0, txt.copy(posSection = 0)))
+        assertFalse(BackupJson.remapsTextPosition(0, txt.copy(format = "EPUB", fileName = "a.epub")))
+        // No (or an unknown) format: the file name decides.
+        assertTrue(BackupJson.remapsTextPosition(0, txt.copy(format = "")))
+        assertFalse(BackupJson.remapsTextPosition(0, txt.copy(format = "", fileName = "a.epub")))
+
+        // The record the restore writes matches no parse signature (16 hex chars), so the reader's next open goes to
+        // the restored progress instead of the stale coordinates.
+        val record = BackupJson.staleTextPosition(0.42f)
+        assertEquals(0.42f, TextPositions.decode(record)!!.second)
+        assertEquals(0.42f, TextPositions.remapFraction(record, "0123456789abcdef", 12, 340, 0.42f))
+        assertEquals(0f, TextPositions.decode(BackupJson.staleTextPosition(Float.NaN))!!.second)
+        assertEquals(1f, TextPositions.decode(BackupJson.staleTextPosition(7f))!!.second)
     }
 
     @Test

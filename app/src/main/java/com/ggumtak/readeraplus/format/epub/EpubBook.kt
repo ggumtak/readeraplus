@@ -62,6 +62,10 @@ internal class EpubBook private constructor(
     /** Estimated chars per spine item. */
     private val itemChars = IntArray(spine.size)
 
+    /** The plan came from [EpubPlanCache] (no item was scanned while opening; tests / diagnostics). */
+    internal var planFromCache = false
+        private set
+
     init {
         planSections()
     }
@@ -132,7 +136,9 @@ internal class EpubBook private constructor(
 
     /**
      * Fixes the part count of every spine item. Only items above [EpubSplit.SCAN_MIN_BYTES] are read (whole
-     * documents that big are rare outside converter output); their text scan also places the TOC anchors.
+     * documents that big are rare outside converter output); their text scan also places the TOC anchors. The
+     * result for those items is cached per file ([EpubPlanCache], A12-1): looked up only when such an item exists,
+     * and a fresh plan is staged for writing after the first page, never written here.
      */
     private fun planSections() {
         var wanted: Array<HashSet<String>?>? = null
@@ -142,6 +148,8 @@ internal class EpubBook private constructor(
             val w = wanted ?: arrayOfNulls<HashSet<String>>(spine.size).also { wanted = it }
             (w[r.item] ?: HashSet<String>().also { w[r.item] = it }).add(f)
         }
+        var big = IntArray(0)
+        var nBig = 0
         for ((i, item) in spine.withIndex()) {
             if (item.isImage) {
                 itemChars[i] = IMAGE_APPROX_CHARS
@@ -150,13 +158,51 @@ internal class EpubBook private constructor(
             val sz = zip.size(item.path)
             itemChars[i] = if (sz < 0) UNKNOWN_APPROX_CHARS else maxOf(1L, sz / 3).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             if (sz <= EpubSplit.SCAN_MIN_BYTES) continue
-            val scan = scanItem(item.path, wanted?.get(i) ?: emptySet<String>()) ?: continue
+            if (nBig == big.size) big = big.copyOf(maxOf(4, nBig * 2))
+            big[nBig++] = i
+        }
+        if (nBig == 0) return
+        val key = if (EpubPlanCache.dir() != null) EpubPlanCache.key(file) else null
+        val anchors = if (key != null) EpubPlanCache.anchorHash(big, nBig, wanted) else 0L
+        if (key != null) EpubPlanCache.load(key)?.let { if (usePlan(it, big, nBig, anchors)) return }
+
+        val chars = IntArray(nBig)
+        val frags = arrayOfNulls<Map<String, Int>>(nBig)
+        var complete = true
+        for (k in 0 until nBig) {
+            val i = big[k]
+            val scan = scanItem(spine[i].path, wanted?.get(i) ?: emptySet<String>())
+            if (scan == null) {
+                complete = false // maybe out of memory this time: not cached, the next open scans again
+                continue
+            }
+            chars[k] = scan.chars
             val n = EpubSplit.partsFor(scan.chars)
             if (n <= 1) continue
             parts[i] = n
             itemChars[i] = scan.chars
-            fragParts[i] = EpubSplit.assign(scan, n)
+            fragParts[i] = EpubSplit.assign(scan, n).also { frags[k] = it }
         }
+        if (complete && key != null) {
+            val items = big.copyOf(nBig)
+            EpubPlanCache.stage(key, EpubPlanCache.Plan(spine.size, anchors, items, IntArray(nBig) { parts[items[it]] }, chars, frags))
+        }
+    }
+
+    /** Applies a cached [plan] when it covers exactly the [n] scannable items [big]; false leaves everything as is. */
+    private fun usePlan(plan: EpubPlanCache.Plan, big: IntArray, n: Int, anchors: Long): Boolean {
+        if (plan.spineSize != spine.size || plan.anchors != anchors || plan.items.size != n) return false
+        for (k in 0 until n) if (plan.items[k] != big[k]) return false
+        for (k in 0 until n) {
+            val p = plan.parts[k]
+            if (p <= 1) continue
+            val i = big[k]
+            parts[i] = p
+            itemChars[i] = plan.chars[k]
+            fragParts[i] = HashMap(plan.frags[k] ?: emptyMap())
+        }
+        planFromCache = true
+        return true
     }
 
     private fun scanItem(path: String, wanted: Set<String>): EpubSplit.Scan? = try {

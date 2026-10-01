@@ -102,7 +102,13 @@ internal object Fmt {
         return "${r / 10}.${r % 10}x"
     }
 
-    fun minutes(min: Int): String = if (min <= 0) "끔" else "${min}분"
+    /** Sleep timer: "끔", "30분", "1시간", "1시간 30분" (the TTS settings page's wording). */
+    fun minutes(min: Int): String = when {
+        min <= 0 -> "끔"
+        min % 60 == 0 -> "${min / 60}시간"
+        min > 60 -> "${min / 60}시간 ${min % 60}분"
+        else -> "${min}분"
+    }
 
     /** Snaps [v] to [step] and clamps into [min, max]. */
     fun stepInt(v: Int, step: Int, min: Int, max: Int): Int {

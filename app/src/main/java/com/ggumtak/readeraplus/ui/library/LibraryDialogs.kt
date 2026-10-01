@@ -68,9 +68,15 @@ internal fun LibraryActivity.confirmDialog(title: String, message: String, ok: S
 
 /**
  * The single-book menu (⋮ on a card or compact row, [더보기] while selecting, a long-press in the trash). [onPick] runs
- * before the chosen item's action (the selection toolbar ends selection mode there).
+ * before the chosen item's action (the selection toolbar ends selection mode there). [flags]: offer the shelf flags
+ * (by default only where no card flag buttons show: 간단히 and 표지).
  */
-internal fun LibraryActivity.bookMenu(row: BookRow, anchor: View, onPick: (() -> Unit)? = null) {
+internal fun LibraryActivity.bookMenu(
+    row: BookRow,
+    anchor: View,
+    flags: Boolean = listMode != LibraryListMode.LIST,
+    onPick: (() -> Unit)? = null,
+) {
     val b = row.book
     val items = ArrayList<MenuItem>()
     fun item(label: String, icon: Int, action: () -> Unit) {
@@ -82,8 +88,7 @@ internal fun LibraryActivity.bookMenu(row: BookRow, anchor: View, onPick: (() ->
         item("영구 삭제", R.drawable.ic_delete_forever) { confirmDelete(b) }
     } else {
         item("읽기", R.drawable.ic_menu_book) { openBook(b) }
-        if (listMode != LibraryListMode.LIST) {
-            // Only list cards have flag buttons: the other views offer the flags here.
+        if (flags) {
             item(LibraryText.flagMenuLabel(Shelf.FAVORITES, b.favorite), if (b.favorite) R.drawable.ic_star_fill else R.drawable.ic_star) {
                 toggleFlag(row, BookFlag.FAVORITE)
             }

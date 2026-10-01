@@ -41,10 +41,13 @@ object ReadingLog {
     const val ALL_DAYS = 30
     const val ALL_MIN_SECONDS = 30 * 60L
 
-    /** One [add] never adds more than a day of reading (guards against clock jumps), like Library.addReadingTime. */
-    private const val MAX_ADD_SECONDS = 24L * 3600
-    private const val MAX_ADD_PAGES = 100_000
-    private const val MAX_ADD_CHARS = 100_000_000L
+    /**
+     * One [add] never adds more than a day of reading (guards against clock jumps), like Library.addReadingTime.
+     * A restored day's row is capped the same way (BackupJson.logFromJson): a huge value would overflow SQLite's SUM.
+     */
+    internal const val MAX_ADD_SECONDS = 24L * 3600
+    internal const val MAX_ADD_PAGES = 100_000
+    internal const val MAX_ADD_CHARS = 100_000_000L
 
     /** Local date of [epochMillis] as yyyymmdd (e.g. 20260930). Pure. */
     fun day(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): Int {
@@ -157,9 +160,12 @@ object ReadingLog {
 
     private fun clampInt(v: Long): Int = v.coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
 
-    /** Chars per minute of [seconds] / [chars] (rounded), or null below [minSeconds] or without characters. Pure. */
+    /**
+     * Chars per minute of [seconds] / [chars] (rounded, saturating at Int.MAX_VALUE), or null below [minSeconds] or
+     * without characters. Pure.
+     */
     fun speed(seconds: Long, chars: Long, minSeconds: Long): Int? {
         if (seconds <= 0 || seconds < minSeconds || chars <= 0) return null
-        return Math.round(chars * 60.0 / seconds).toInt().coerceAtLeast(1)
+        return Math.round(chars * 60.0 / seconds).coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
     }
 }

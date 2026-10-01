@@ -16,6 +16,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.net.InetAddress
+import java.net.SocketTimeoutException
 import java.nio.file.Files
 import java.text.Normalizer
 import kotlin.random.Random
@@ -597,6 +598,20 @@ class LanUploadTest {
     }
 
     @Test
+    fun aFolderThatCannotBeWrittenIsNotBlamedOnTheConnection() {
+        // The destination is a plain file: the temp file can't be created.
+        val base = harness()
+        val notADir = File(base.dir, "plain").apply { writeText("x") }
+        val h = Harness(notADir, longArrayOf(1_000), Recorder(), ArrayList())
+        val (status, body) = h.upload(listOf(file("a.txt", "hello")))
+        assertEquals(500, status)
+        assertEquals("${LanExchange.FAILED} (저장하지 못했습니다)", body)
+        assertEquals(listOf(body), h.events.errors)
+        assertTrue(h.added.isEmpty())
+        assertEquals(listOf("plain"), names(base.dir))
+    }
+
+    @Test
     fun refusesBadRequestsEarly() {
         val h = harness()
         val tooBig = h.upload(listOf(file("a.txt", "x")), length = (LanUpload.MAX_FILE_BYTES + 65 * 1024 + 1).toInt())
@@ -624,6 +639,63 @@ class LanUploadTest {
         h.exchange.handle(ByteArrayInputStream(raw), out)
         val text = String(out.toByteArray())
         assertTrue(text, text.startsWith("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n"))
+    }
+
+    @Test
+    fun aTrickledHeadIsCutOffAtItsDeadline() {
+        val h = harness()
+        // One byte per read, 500 ms apart, never ending the request line: answered 400 once HEAD_MS has passed,
+        // not after 16 KB (≈ days at one byte per socket timeout).
+        var reads = 0
+        val trickle = object : InputStream() {
+            override fun read(): Int {
+                h.clock[0] += 500
+                reads++
+                return 'G'.code
+            }
+        }
+        val out = ByteArrayOutputStream()
+        h.exchange.handle(trickle, out)
+        assertTrue(String(out.toByteArray()).startsWith("HTTP/1.1 400 "))
+        assertTrue("$reads", reads <= LanExchange.HEAD_MS / 500 + 1)
+        // A socket whose short reads time out is retried until the same deadline, then answered alike.
+        var timeouts = 0
+        val quiet = object : InputStream() {
+            override fun read(): Int {
+                h.clock[0] += 1_000
+                timeouts++
+                throw SocketTimeoutException("Read timed out")
+            }
+        }
+        val out2 = ByteArrayOutputStream()
+        h.exchange.handle(quiet, out2)
+        assertTrue(String(out2.toByteArray()).startsWith("HTTP/1.1 400 "))
+        assertTrue("$timeouts", timeouts in 2..LanExchange.HEAD_MS / 1_000 + 1)
+        // Without a deadline a timeout is the caller's (no endless retry).
+        try {
+            LanHttp.readHead(quiet)
+            fail()
+        } catch (e: SocketTimeoutException) {
+        }
+        // Slow wrong requests are no guesses at the code.
+        assertFalse(h.exchange.ignoring())
+    }
+
+    @Test
+    fun onlyAnUploadsBodyGetsTheLongTimeout() {
+        val h = harness()
+        var calls = 0
+        fun send(raw: ByteArray) = h.exchange.handle(ByteArrayInputStream(raw), ByteArrayOutputStream()) { calls++ }
+        send("GET /k7m3 HTTP/1.1\r\n\r\n".toByteArray())
+        send("GET /zzzz HTTP/1.1\r\n\r\n".toByteArray())
+        assertEquals(0, calls)
+        val body = multipart("bb", listOf(file("a.txt", "A")))
+        send(
+            ("POST /k7m3/upload HTTP/1.1\r\nContent-Type: multipart/form-data; boundary=bb\r\n" +
+                "Content-Length: ${body.size}\r\n\r\n").toByteArray() + body,
+        )
+        assertEquals(1, calls)
+        assertEquals(listOf("a.txt"), names(h.dir))
     }
 
     @Test

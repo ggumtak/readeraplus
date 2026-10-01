@@ -3,6 +3,8 @@ package com.ggumtak.readeraplus.reader
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.engine.LineBreakMode
 import com.ggumtak.readeraplus.format.BookFormat
+import com.ggumtak.readeraplus.format.epub.EpubPlanCache
+import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -108,6 +110,21 @@ class LayoutKeysTest {
         assertTrue(LayoutKeys.VERSION >= 3)
         // LayoutGoldenTest compares its 64-bit digest with this.
         assertTrue(LayoutKeys.GOLDEN_HASH.matches(Regex("[0-9a-f]{16}")))
+    }
+
+    @Test
+    fun keyCarriesTheFormatsParseVersion() {
+        // A2: without the app's version code, a parser update that changes section text but keeps the section count
+        // must still invalidate the counts (PageCounts.setKnown checks only the length).
+        val g = LayoutKeys.geometry(s, 720, 1440, density, statusPx)
+        val font = "BUNDLED:fonts/NanumMyeongjo.ttf"
+        assertEquals(TxtDocuments.PARSE_VERSION, LayoutKeys.parseVersionOf(BookFormat.TXT))
+        assertEquals(EpubPlanCache.VERSION, LayoutKeys.parseVersionOf(BookFormat.EPUB))
+        for (f in BookFormat.values()) {
+            val k = LayoutKeys.keyFor(s, f, "", g, density, font)
+            assertEquals(LayoutKeys.keyFor(s, f, "", g, density, font, LayoutKeys.ALGO_VERSION, LayoutKeys.parseVersionOf(f)), k)
+            assertNotEquals(LayoutKeys.keyFor(s, f, "", g, density, font, LayoutKeys.ALGO_VERSION, LayoutKeys.parseVersionOf(f) + 1), k)
+        }
     }
 
     @Test

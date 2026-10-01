@@ -1,0 +1,1530 @@
+# UI_SPEC: reader chrome, return point, brightness, status slots, polish (task #18)
+
+Status: buildable spec, design only. The repo was not edited.
+
+**Baseline.** HEAD `b3dbc72` plus the R2 working tree of 2026-09-30, which another workflow is still editing. Every code
+reference names a **symbol**. Line numbers are "≈" working-tree numbers and will drift.
+
+**Paths.** Relative to `app/src/main/java/com/ggumtak/readeraplus/`. Tests are under `app/src/test/java/…/<same path>`.
+
+**Inputs merged.**
+- `ui/audit.md` (screenshot audit), `ui/chrome.md` (chrome, slots, pin) and `ui/brightness.md` (Comet light).
+- `scroll/design-A/B/C`, and **[Δ] the final `scroll/SPEC.md`** (design B "stitched pages" + C's e-ink grafts).
+  This file was re-checked against it: §5.6, §7.1 and §7.4 now cite its real owners (READER_CORE, ENGINE_RENDER,
+  EXTRAS, DATA, UI) and API (`drawChrome`, `DeviceClass`, `onScrollStart`, `ScreenCounter`).
+
+**[Δ] Critic pass (2026-09-30).** Every change made by the adversarial review is marked **[Δ]** in place and listed in
+§10 (changelog). Where a [Δ] line contradicts an unmarked line elsewhere, the [Δ] line wins.
+
+**Precedence.** This file wins over the three sibling docs. Where it says "reference: brightness.md §3.2", that code
+is the intended implementation unless this file overrides a detail.
+
+**House rules.** These apply to every item below:
+- Nothing new happens before the first page.
+- A page turn is O(1) and allocates nothing for status text or drawing.
+- No idle redraws, no timers. **[Δ]** The page (and so the footer) is redrawn only when a page is shown (turn, jump,
+  open, relayout), at a scroll settle, on `onResume`, or when a *data* item on it changed (exact page count, episode
+  numbers, highlights, bookmark). A clock minute or battery percent never causes a redraw by itself (§5.3).
+- E-ink: no animations, no shadows or elevation, 1 px lines, black on white, touch targets ≥ 44 dp.
+- **[Δ]** No state is shown by grey alone. Fast e-ink waveforms (A2/DU) threshold `Ink.DISABLED` (#999) and
+  `Ink.LINE_LIGHT` (#AAA) to white, so every state also changes an icon, a glyph or the text. Light greys are only
+  used where losing them is harmless (separators, the inactive seek track).
+
+---
+
+## 0. Decisions
+
+### 0.1 The user's six points
+
+| # | User feedback (translated) | Decision |
+|---|---|---|
+| 1 | The page number floats awkwardly left of centre in the bottom bar. It looks cheap. | The bottom bar copies ReadEra's structure (§2.4). **"N / M"** is centred on the **full width**: 17 sp bold, tabular digits, no underline. Only **[rotation][pin]** sit on the right. The bookmark moves to the top action row, into ReadEra's 6th-icon slot. No grey "selected" squares anywhere: state is shown by swapping the icon. |
+| 2 | Let me pick what shows at bottom-left, bottom-centre and bottom-right (chapter title, time, battery, …). If I pick nothing, show no footer. A thin progress line like ReadEra's would be good too. | `enum StatusItem` (12 entries). Three **footer** slots, all `NONE` by default, so a fresh install has **no footer text**. There are also three **header** slots (default: chapter title in the centre, same as today), so the user can build the "마루뷰어" top line (7a7a0a23). A **progress line** (`progressBar = true`) sits in the bottom margin: a 1 px line with end caps and a position dot. With default margins it costs no text height. |
+| 3 | Moving the brightness bar at the top changes nothing. | The window override stays the default (it works on phones). Add an opt-in **device path** that writes `Settings.System.SCREEN_BRIGHTNESS` with WRITE_SETTINGS. On e-ink devices, a **one-time question** after the first drag finds out which path works. If neither works, the reader says so honestly and links to the device's own light panel instead of leaving a dead slider (§4). **[Δ]** The device path never puts back a stale value over one the user set in the system panel, always gives auto-brightness back, and is a device-local choice (not in backups). |
+| 4 | The pin makes pages flip back and forth. It should pin a page so I can return to it anytime, like the "< 10 페이지로 · 지우기" strip. | "메뉴 고정" (pinned chrome) and all its relayout paths are **deleted**. That is the root cause of the flipping (§2.6). The pin now sets the book's **return point**, stored per book. A **return strip** docked in the bottom bar reads "‹ 10 페이지로 · 지우기 · 512 페이지로 ›". The old "← 돌아가기 (p. N)" chip becomes the same component's floating form, shown after a remembered jump whenever the chrome is hidden (§3). **[Δ]** That includes a seek made with the menu open (today's chip survives closing the menu; so does the new one), and scrubbing the seek bar several times keeps the *first* origin. |
+| 5 | The icon to the right of the brightness slider opens options (ReadEra: "스와이프로 밝기 조절" + switch). | The icon is ⌄/⌃ (`ic_expand_more`/`ic_expand_less`) and opens an **options panel** under the slider. The brightness row is never hidden again (§2.3). |
+| 6 | Care much more about the UI. | §2.1 defines one visual system for the chrome: keylines, bands, type scale and state rules. §6 is the ranked polish list with exact values. §8 lists the CI screenshots that must prove each item. |
+
+### 0.2 Conflicts between the sibling docs, resolved
+
+| Topic | audit.md | chrome.md | brightness.md | **This spec** | Why |
+|---|---|---|---|---|---|
+| Label text | "3 / 167" | "10 / 3614" | – | **"N / M"** | ReadEra's "10 중 3614" is a literal translation and reads backwards in Korean. The same format appears in the footer item, the TOC, go-to and the strip. |
+| Title and label weight | medium (500) | bold | – | **bold (700) or regular (400) only** | Android's CJK system font ships weight 400 only. A 500 request renders Hangul regular and digits/Latin medium, so labels get mixed weights ("배드 본 블러드 **1-353**"). Two weights stay consistent on every firmware. |
+| Bookmark icon | removed from the bar | bottom-left of the bar | – | **top action row**, left of TTS | ReadEra's bottom bar has only [rotation][pin]. The top row has a free 6th slot (ReadEra's crown), which is also next to the ribbon's corner. |
+| Progress line span | page edges, 12 dp | text column | – | **page edges, 12 dp** (ReadEra) | This is the user's reference. With the scroll spec's 40 dp side margins, a column-wide line would look detached. |
+| Chapter ticks | none | 2–60 chapters | – | **none** (P2 option later) | Web-novel TXT files have hundreds of chapters, so ticks never show there. Leaving them out drops code, a redraw path and a test class. |
+| Pin model | single pin + strip | mark/other state machine + chip | – | **chrome.md's model**, with 2 changes (§3.2), **[Δ] plus 3 from the critic** (★3 chain keeps its first origin, ★4 the reading place survives a visit to the pin, ★5 the chip's offer survives the menu) | It keeps the jump origin reachable, and one component replaces the old chip. |
+| Brightness curve | linear | – | p² for both paths | **window path linear (unchanged); device path p²** | This avoids a one-time shift of every phone user's saved brightness. p² is only needed for the 1..255 device int. |
+| Brightness wiring | in ReaderActivity | – | in ReaderActivity (~200 lines) | **`LightController` (READER_UI) behind a `LightHost` interface** | Keeps ReaderActivity small, because the scroll spec edits the same file in parallel (§7). |
+| DB column | `BookPrefs` pin | `book_prefs.return_mark`, no bump (v2 unshipped) | – | **`return_mark` + `DB_VERSION = 3` via `ADDED_COLUMNS`** | R2 (v2) will very likely have shipped to the device before this lands. The column guard makes this safe either way. |
+| Popup height cap | 55 % with 9 × 44 dp | – | – | **`HEIGHT_FRACTION = 0.56`** | 9 × 44 dp + 2 px of border is 794 px, over 55 % of 1440 px (792 px). 0.56 avoids a scrollbar. |
+
+### 0.3 Open user questions: decided
+
+1. **Progress line default: ON.** The user wrote "readera처럼 … 막대기로 해서 해주는 것도 좋은 것 같아". Turning it off is one switch.
+2. **Big TXT total that jumps between opens (estimate).** This is out of scope. The label keeps its no-"~" estimate.
+   §9 R9 records it as a READER_B P2.
+
+---
+
+## 1. Contract changes (phase 0, the lead, one serial step merged with the scroll SPEC's contract step)
+
+Frozen files:
+- `settings/*`, `data/SettingsJson.kt`, `data/LibrarySchema.kt`
+- `ui/kit/Ui.kt`, `ui/kit/Toggle.kt`
+- `reader/ReaderHost.kt`, the frozen interfaces in `reader/extras/ReaderPanels.kt`
+- `AndroidManifest.xml`, `res/**`, `docs/**`
+
+Phase 0 also lands the **cross-owner skeleton files** (§1.9) and the **compile fallout** (§1.10), as R2 did with task
+#13. Every owner then compiles against fixed signatures from the first minute.
+
+### 1.1 `settings/ReaderSettings.kt`
+
+**New enum** (top level, next to `TapAction`):
+```kotlin
+/**
+ * What one slot of the page's status lines shows. The header and the footer each have three slots
+ * (left / centre / right). Stored by name ("r.footerLeft" = "CLOCK"): never rename an entry, only append.
+ * The declaration order is the chooser order. [short] labels the popup's slot buttons (≤ 6 Hangul).
+ * [example] is shown in choosers that have no live value.
+ */
+enum class StatusItem(val label: String, val short: String, val example: String?) {
+    NONE("없음", "없음", null),
+    CHAPTER("챕터 제목", "챕터 제목", "제3화 비밀"),
+    BOOK_TITLE("책 제목", "책 제목", "책 제목"),
+    PAGE("쪽 번호", "쪽 번호", "12 / 3259"),
+    PERCENT("진행률", "진행률", "34%"),
+    CHAPTER_PAGES_LEFT("챕터 남은 쪽", "남은 쪽", "챕터 5쪽 남음"),
+    EPISODE("회차", "회차", "123/540화"),
+    TIME_LEFT_EPISODE("이 화 남은 시간", "화 남은 시간", "이 화 3분"),
+    TIME_LEFT_BOOK("책 남은 시간", "책 남은 시간", "책 7시간 20분"),
+    CLOCK("시계", "시계", "14:05"),
+    BATTERY("배터리", "배터리", "80"),                       // [Δ] no "▭": U+25AD is missing from some firmware fonts
+    CLOCK_BATTERY("시계 · 배터리", "시계·배터리", "14:05 · 80");
+
+    /** Titles are the only items shortened with "…" when their slot is narrow. Numbers never are. */
+    val elastic: Boolean get() = this == CHAPTER || this == BOOK_TITLE
+}
+```
+
+**`ReaderSettings`:**
+- **Remove** `showHeader`, `showFooter`, `footerPage`, `footerChapterLeft`, `footerEpisode`, `footerTimeLeft`,
+  `footerPercent`, `footerClock` and `footerBattery`, and the companion's `TIME_LEFT_*`. Those move to
+  `StatusMigration` as legacy constants.
+- **Add**, in place of those fields:
+```kotlin
+    /** Status line at the top: left / centre / right. All NONE = no header band. Default: chapter title centred. */
+    val headerLeft: StatusItem = StatusItem.NONE,
+    val headerCenter: StatusItem = StatusItem.CHAPTER,
+    val headerRight: StatusItem = StatusItem.NONE,
+    /** Status line at the bottom. All NONE = no footer band. That is the default (user request). */
+    val footerLeft: StatusItem = StatusItem.NONE,
+    val footerCenter: StatusItem = StatusItem.NONE,
+    val footerRight: StatusItem = StatusItem.NONE,
+    /** ReadEra-style reading-progress line along the bottom edge, drawn in the bottom margin ("진행 막대"). */
+    val progressBar: Boolean = true,
+    val statusFontSizeSp: Float = 11f,            // unchanged
+```
+- **Add** to the class body. These are computed members, not constructor properties, so they are not part of `equals`:
+```kotlin
+    val hasHeader: Boolean get() = headerLeft != StatusItem.NONE || headerCenter != StatusItem.NONE || headerRight != StatusItem.NONE
+    val hasFooterText: Boolean get() = footerLeft != StatusItem.NONE || footerCenter != StatusItem.NONE || footerRight != StatusItem.NONE
+    fun shows(item: StatusItem): Boolean = headerLeft == item || headerCenter == item || headerRight == item ||
+        footerLeft == item || footerCenter == item || footerRight == item
+    /** [band] 0 = header, 1 = footer; [pos] 0 = left, 1 = centre, 2 = right. */
+    fun slot(band: Int, pos: Int): StatusItem = when (band * 3 + pos) {
+        0 -> headerLeft; 1 -> headerCenter; 2 -> headerRight; 3 -> footerLeft; 4 -> footerCenter; else -> footerRight }
+    fun withSlot(band: Int, pos: Int, item: StatusItem): ReaderSettings = when (band * 3 + pos) {
+        0 -> copy(headerLeft = item); 1 -> copy(headerCenter = item); 2 -> copy(headerRight = item)
+        3 -> copy(footerLeft = item); 4 -> copy(footerCenter = item); else -> copy(footerRight = item) }
+```
+- Companion: `const val PROGRESS_LANE_DP = 12`. Its users are `LayoutKeys` and `PageRenderer`.
+
+**`AppSettings`:**
+- **Remove** `pinChrome` and its KDoc.
+- **Add:**
+```kotlin
+    /**
+     * "기기 밝기 직접 조절": write the device brightness setting (WRITE_SETTINGS) instead of the window override.
+     * [Δ] Device-local: never exported or restored (SettingsJson.DROPPED_KEYS), like its verdict in `reader_light`.
+     * The WRITE_SETTINGS grant does not survive a reinstall, and a backup must never switch on a global-brightness
+     * writer on another device.
+     */
+    val brightnessDevice: Boolean = false,
+    /** "리더를 나가면 원래 밝기로": put the device brightness back when the reader leaves (device path only). */
+    val brightnessRestore: Boolean = true,
+    /** Slider POSITION 0..1, or -1 = the device's own. Window path: light = position. Device path: light = position² (LightCurve). */
+    val brightness: Float = -1f,                  // KDoc only
+```
+
+### 1.2 `settings/StatusMigration.kt` (new, contract, pure)
+
+```kotlin
+package com.ggumtak.readeraplus.settings
+
+/** Maps the ≤ R2 footer toggles to status slots (prefs and backups). Pure, JVM-tested. */
+object StatusMigration {
+    /** Present = the store is already slot-based. */
+    const val MARKER_KEY = "r.footerLeft"
+    val LEGACY_KEYS = listOf("r.showHeader", "r.showFooter", "r.footerPage", "r.footerChapterLeft", "r.footerEpisode",
+        "r.footerTimeLeft", "r.footerPercent", "r.footerClock", "r.footerBattery")
+    const val LEGACY_TIME_LEFT_OFF = 0; const val LEGACY_TIME_LEFT_EPISODE = 1; const val LEGACY_TIME_LEFT_BOOK = 2
+
+    /** The legacy fields; null = key absent (or of the wrong type). */
+    class Legacy(val showHeader: Boolean?, val showFooter: Boolean?, val page: Boolean?, val chapterLeft: Boolean?,
+                 val episode: Boolean?, val timeLeft: Int?, val percent: Boolean?, val clock: Boolean?, val battery: Boolean?) {
+        companion object {
+            /** Each read in try/catch: a wrongly typed pref reads as null (never throws). */
+            fun from(p: android.content.SharedPreferences): Legacy
+            /** BackupJson-style tolerant reads (Boolean / Number only). */
+            fun from(o: org.json.JSONObject): Legacy
+        }
+    }
+    class Slots(val headerLeft: StatusItem, val headerCenter: StatusItem, val headerRight: StatusItem,
+                val footerLeft: StatusItem, val footerCenter: StatusItem, val footerRight: StatusItem) {
+        fun applyTo(s: ReaderSettings): ReaderSettings = s.copy(headerLeft = headerLeft, headerCenter = headerCenter,
+            headerRight = headerRight, footerLeft = footerLeft, footerCenter = footerCenter, footerRight = footerRight)
+    }
+
+    fun migrate(l: Legacy): Slots {
+        val header = if (l.showHeader ?: true) StatusItem.CHAPTER else StatusItem.NONE
+        val page = l.page ?: true; val chapterLeft = l.chapterLeft ?: false; val episode = l.episode ?: false
+        val timeLeft = l.timeLeft ?: 0; val percent = l.percent ?: true; val clock = l.clock ?: true; val battery = l.battery ?: true
+        // The untouched old default is indistinguishable from "chosen" (saveReader writes every key): the user asked
+        // for "nothing chosen → no footer", so it becomes no footer.
+        val untouched = page && !chapterLeft && !episode && timeLeft == 0 && percent && clock && battery
+        if (!(l.showFooter ?: true) || untouched) return Slots(StatusItem.NONE, header, StatusItem.NONE, StatusItem.NONE, StatusItem.NONE, StatusItem.NONE)
+        val q = ArrayList<StatusItem>(5)
+        if (page) q += StatusItem.PAGE
+        if (episode) q += StatusItem.EPISODE
+        if (chapterLeft) q += StatusItem.CHAPTER_PAGES_LEFT
+        if (timeLeft == LEGACY_TIME_LEFT_EPISODE) q += StatusItem.TIME_LEFT_EPISODE
+        if (timeLeft == LEGACY_TIME_LEFT_BOOK) q += StatusItem.TIME_LEFT_BOOK
+        if (percent) q += StatusItem.PERCENT
+        val right = when { clock && battery -> StatusItem.CLOCK_BATTERY; clock -> StatusItem.CLOCK; battery -> StatusItem.BATTERY; else -> null }
+        return Slots(StatusItem.NONE, header, StatusItem.NONE,
+            q.getOrNull(0) ?: StatusItem.NONE, q.getOrNull(1) ?: StatusItem.NONE, right ?: q.getOrNull(2) ?: StatusItem.NONE)
+    }
+}
+```
+
+Examples (these are test cases):
+
+| Legacy setting | Footer slots |
+|---|---|
+| Old defaults | none |
+| page + % + clock | `12 / 3259 · 34% · 14:05` |
+| % + clock + battery | `34% · – · 14:05 [battery icon]80` |
+| Everything on | `PAGE · EPISODE · CLOCK_BATTERY` (drops 챕터 남은 쪽, 남은 시간 and %, as documented) |
+
+### 1.3 `settings/Settings.kt`
+
+- **`saveReader`**, in the same editor:
+  - `putString` for the 6 slot keys `r.headerLeft`, `r.headerCenter`, `r.headerRight`, `r.footerLeft`,
+    `r.footerCenter` and `r.footerRight`, each storing the enum name.
+  - `putBoolean("r.progressBar", …)`.
+  - `for (k in StatusMigration.LEGACY_KEYS) remove(k)`.
+- **`loadReader`:**
+  ```kotlin
+  val mig = if (p.contains(StatusMigration.MARKER_KEY)) null else StatusMigration.migrate(StatusMigration.Legacy.from(p))
+  headerLeft = mig?.headerLeft ?: enumOr(p.getString("r.headerLeft", null), d.headerLeft),   // ×6
+  progressBar = p.getBoolean("r.progressBar", d.progressBar),
+  ```
+  This is 9 extra map lookups, and only until the first save. It reads plain prefs only, as the R2 rule requires.
+- **`saveApp`:**
+  - `remove("a.pinChrome")` and **[Δ]** `remove("reader.brightnessCollapsed")` (the dead pref of the old collapse
+    button; this replaces the `onCreate` cleanup that §2.3 had put on the open path).
+  - `putBoolean("a.brightnessDevice", …)` and `putBoolean("a.brightnessRestore", …)`.
+- **`loadApp`:** read both brightness keys with their defaults.
+- **Merged with the scroll spec in the same pass** (independent keys):
+  - `r.marginBase` and the 18/18 → 40/40 margin migration;
+  - `a.readMode` / `a.scrollStyle` (or `a.scrollMode`) and `a.autoBackup`.
+
+### 1.4 `data/SettingsJson.kt`
+
+- **`readerToJson`:** put the 7 new keys. Legacy keys are never written.
+- **`readerFromJson(o, base)`**, after today's field mapping:
+  ```kotlin
+  val slotKeys = arrayOf("r.headerLeft", "r.headerCenter", "r.headerRight", "r.footerLeft", "r.footerCenter", "r.footerRight")
+  r = when {
+      slotKeys.any { o.has(it) } -> r.copy(headerLeft = enumOf(BackupJson.strOrNull(o, "r.headerLeft"), base.headerLeft), /* ×6 */)
+      StatusMigration.LEGACY_KEYS.any { o.has(it) } -> StatusMigration.migrate(StatusMigration.Legacy.from(o)).applyTo(r)
+      else -> r
+  }
+  r = r.copy(progressBar = BackupJson.bool(o, "r.progressBar", base.progressBar))
+  ```
+- **`appToJson` / `appFromJson`:** drop `a.pinChrome`. Map `a.brightnessRestore`. **[Δ]** `a.brightnessDevice` is
+  **not** mapped either way: it is device-local (§1.1), so a restore keeps this device's own value. (The earlier
+  "the backup carries the choice" rule restored a switch whose WRITE_SETTINGS grant is always gone after a
+  reinstall, and on another device it would have turned on global-brightness writes nobody chose there.)
+- **Dropped keys:**
+  ```kotlin
+  private val DROPPED_KEYS: Set<String> =
+      StatusMigration.LEGACY_KEYS.toSet() + "a.pinChrome" + "reader.brightnessCollapsed" +
+      "a.brightnessDevice"                                   // [Δ] device-local: never exported, never restored raw
+  ```
+  `a.brightnessDevice` must be in this set: a typed field that `appToJson` does not write would otherwise be
+  exported by `addUnmapped` and restored raw by `unmappedFromJson`. `TRANSIENT` does not help here, because it
+  filters only keys without the `r.` / `a.` prefix.
+  Both `addUnmapped` and `unmappedFromJson` skip `k in DROPPED_KEYS`. Without that, a device's un-migrated raw
+  legacy prefs would travel as "unmapped" keys and restore raw.
+- **Merged with the scroll spec in the same pass:**
+  - `r.marginBase` and its migration;
+  - the scroll mode / auto-backup app keys;
+  - additions to `TRANSIENT` (`installid`, `backupauto`, `restoreoffer`, `deviceclass`).
+  The light state lives in its own prefs file `reader_light`, never in `Settings.raw()`, so it needs no entry here.
+  **[Δ]** Android's own Auto Backup (`allowBackup="true"`, no rules file) *does* copy `reader_light.xml` to a new
+  install. That is harmless by design: `DeviceLight` ignores a pending original whose install stamp differs (§4.3),
+  and the verdict is keyed by `Build.FINGERPRINT`.
+
+### 1.5 `data/LibrarySchema.kt`
+
+```kotlin
+const val DB_VERSION = 3
+const val CREATE_BOOK_PREFS = "CREATE TABLE IF NOT EXISTS book_prefs(" +
+    "book_id INTEGER PRIMARY KEY," +
+    "txt_override TEXT," +
+    "finished_at INTEGER NOT NULL DEFAULT 0," +
+    "episode_label TEXT," +
+    "return_mark TEXT)"            // v3: the book's pinned return point (ReturnMarkCodec text), NULL = none
+/** v3 column for databases created by v2. */
+const val ADD_RETURN_MARK = "ALTER TABLE book_prefs ADD COLUMN return_mark TEXT"
+private val ADDED_COLUMNS = listOf(
+    AddedColumn("quotes", "style", 2, ADD_QUOTE_STYLE),
+    AddedColumn("book_prefs", "return_mark", 3, ADD_RETURN_MARK),
+)
+```
+
+How the upgrades behave:
+- **v1 → v3:** `CREATE_ALL` makes `book_prefs` with the column, and the column guard then skips the ALTER.
+- **v2 → v3:** the ALTER runs.
+- **An unshipped v2 build:** harmless.
+
+If another spec in the same run also bumps the schema, both share this single `3`.
+
+### 1.6 `ui/kit/Ui.kt` and `ui/kit/Toggle.kt` (kit tokens used by every owner)
+
+| Change | Exact code or value |
+|---|---|
+| `Ink.LINE_LIGHT` (new) | `0xFFAAAAAA.toInt()`: row separators inside lists, popups and panels, inset 16 dp (12 dp in the compact popup). Black `Ink.LINE` stays for panel edges and group breaks. |
+| `pressableBackground()` | Delete `addState(state_selected → PRESSED)`. Only `ReaderChrome` relies on it today (grep `isSelected =`), and this spec changes those uses to icon swaps. |
+| `label()` | Add `if (Build.VERSION.SDK_INT >= 33) { lineBreakWordStyle = LineBreakConfig.LINE_BREAK_WORD_STYLE_PHRASE; textLocale = Locale.KOREAN }`. This gives Korean word-boundary breaks ("이어서" never splits). The signature is unchanged. |
+| `keepAll(text: CharSequence): CharSequence` (new) | Inserts U+2060 WORD JOINER between two adjacent Hangul syllables (U+AC00..U+D7A3). Returns the same instance when nothing changes. Used **only** for multi-line summaries and notes: `row()` summary, SettingsPage `note()`, dialog messages. Never on tap targets or selectable or searchable text, because CI `tap_label` and span indices must stay intact. It is the fallback if §9 R6 finds that PHRASE is ignored for Korean. |
+| `row()` | Padding `(16, 10, 16, 10)` dp (end was 12). The summary is `label(keepAll(summary), 14f, GRAY)`. Trailing views end exactly at W − 16 dp. |
+| `sectionHeader()` | Padding `(16, 24, 16, 8)` dp. SETTINGS drops the hairline above sections (§6 P1-12). |
+| `toolbar()` title | Stays 20 sp bold. Padding start becomes 12 dp after the nav icon, as today. |
+| `Toggle.kt` `InkToggle.onDraw` | **Off:** white track, 1.5 dp black outline, **filled black knob** on the left. **On:** black track, white knob on the right. The knob radius is `track.height/2 − 3dp`. Size stays 52×32 dp. |
+
+### 1.7 Interfaces and KDoc
+
+- `reader/extras/ReaderPanels.kt` (frozen block), next to the R2 host capabilities:
+  ```kotlin
+  /** Live values of the status items for the slot chooser (ReaderActivity; main thread; null = no value now). */
+  interface StatusSampleHost { fun statusSample(item: StatusItem): String? }
+  ```
+- `reader/ReaderHost.kt`: KDoc of `goTo(pos, remember)` only: "remember = the origin becomes the book's return point
+  (ReturnNav): the docked strip, or the floating chip while the chrome is hidden."
+
+### 1.8 Manifest and res
+
+- `AndroidManifest.xml`:
+  - add `xmlns:tools="http://schemas.android.com/tools"`;
+  - add `<uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />`,
+    commented "기기 밝기 직접 조절 only (opt-in)".
+- `res/drawable/fast_scroll_thumb.xml`: a 4×40 dp black rect. `res/drawable/fast_scroll_track.xml`: a 1 dp
+  `#AAAAAA` line, inset 1.5 dp.
+- `res/values/themes.xml` `Base.AppTheme`: `android:fastScrollThumbDrawable` and `android:fastScrollTrackDrawable`
+  point at those two drawables. This is P1-14, LIBRARY's list.
+- **[Δ]** The final scroll SPEC adds no Auto Backup rules ("no manifest change", §3.1 there), so there is nothing to
+  exclude. If a later task adds `res/xml` rules, exclude `sharedpref/reader_light.xml` there.
+
+### 1.9 Cross-owner skeletons that phase 0 lands
+
+Signatures are fixed. Bodies are `TODO("owner: X")` or a safe stub (`// R3 stub (owner: X)`).
+
+| File (new unless noted) | Owner after phase 0 | Contents at phase 0 |
+|---|---|---|
+| `render/StatusDecor.kt` | RENDER | complete (plain holders, §5.2) |
+| `render/Render.kt` `PageDecor` | RENDER | new signature (§5.2) |
+| `reader/StatusModel.kt` | READER_UI | `StatusInputs` complete. `StatusModel.update` stub: clears the decor, returns false. `sample` returns null. `StatusText` signatures. |
+| `reader/ReturnNav.kt` | READER_UI | `ReturnHost` complete. `ReturnNav` API with empty `FrameLayout` views and no-op bodies. `ReturnPoints` and `ReturnMarkCodec` signatures. |
+| `reader/LightController.kt` | READER_UI | `LightHost` complete. `LightController` API; the stub `apply(pos)` does today's `ReaderWindow.applyBrightness`. |
+| `reader/LightCurve.kt`, `reader/DeviceLight.kt`, `reader/LightProbe.kt` | READER_UI | signatures (§4.2). SETTINGS calls them. |
+| `reader/ReaderChrome.kt` (existing) | READER_UI | the new constructor and `Actions` (§2.5), bodies adapted to compile |
+| `data/BookPrefs.kt` (existing) | DATA | `returnMark(bookId): String?` returns null; `setReturnMark(bookId, v)` is a no-op |
+
+### 1.10 Compile fallout that phase 0 applies (mechanical only; owners finish the real work)
+
+| File | Fallout edit |
+|---|---|
+| `reader/LayoutKeys.kt` | `s.showHeader` → `s.hasHeader`, `s.showFooter` → `s.hasFooterText`. `layoutPart` loses the legacy fields (READER_B completes §5.1). |
+| `reader/ReaderActivity.kt` | Replace `app.pinChrome` with `false` and drop `a.pinChrome` from `viewPart`. `buildDecor` returns `PageDecor(hl, bookmarked)`. `settings.footerEpisode` → `settings.shows(StatusItem.EPISODE)`. Adapt `chromeActions` to the new `Actions`. |
+| `reader/extras/ReadingSettingsPopup.kt` | `hideBars = true`. Delete "상단 챕터 제목", "하단 정보 표시", `footerItems()` and the 남은 시간 segment. |
+| `reader/extras/SelectionController.kt` | `if (s.showHeader)` → `if (s.hasHeader)` (≈ l.286) |
+| `render/Covers.kt` | `showHeader = false, showFooter = false` → `headerCenter = StatusItem.NONE, progressBar = false` (≈ l.205) |
+| `render/PageRenderer.kt` | `drawStatus` reads `decor.status` and draws nothing until RENDER lands §5.4 |
+| `ui/settings/PageTurningPage.kt` | Delete "메뉴 고정" (≈ l.91) and the 7 legacy status rows (≈ l.156-162) |
+| Tests | `LayoutKeysTest`, `CompactSettingsTest`, `ReaderFormatTest`, `ReaderReviewFixesTest`, `ReaderR2FeaturesTest`, `UserStylesTest`, `SettingsStoreTest`, `SettingsJsonTest`, `SettingsJsonR2Test`, `SettingsMappingTest` (use `bookmarkByTouch` where it used `pinChrome`): legacy fields → slot fields, compile only |
+
+Then `tools/typecheck.sh`, the contract tests (§8.1) and `tools/snapshot_contracts.sh`.
+
+### 1.11 Merge with the scroll SPEC's contract step
+
+Both specs edit `ReaderSettings.kt`, `Settings.kt`, `SettingsJson.kt`, `ReaderHost.kt` (KDoc) and
+`docs/ARCHITECTURE.md`. They touch **different fields and keys**, so the lead applies both lists in one pass.
+
+**[Δ] Checked against the final scroll SPEC (design B):**
+- It needs no `ContentOriginHost` (that was design A), so `ReaderPanels.kt`'s frozen block gets only
+  `StatusSampleHost` from this spec.
+- Its phase 0 also lands `engine/Layout.kt` (`PageInfo.lead`), `settings/UserStyles.kt` (`marginBase`), the
+  `PageRenderer.drawChrome/drawBody/drawOverlay/prefetchPage` stubs, `render/DeviceClass.kt`, `data/AutoBackup.kt`
+  and `data/InstallState.kt`. There is no overlap with §1.9.
+- `render/DeviceClass.kt` is shared: `DeviceLight.looksEink` calls it (§4.2), so its stub must return
+  `cached = null` and `probe = einkByBuild(...)`, never throw.
+- Its docs go to a new `docs/R3_INTERFACES.md`. This spec's interface rows (StatusItem/slots, `StatusDecor`,
+  `ReturnHost`/`ReturnNav`, `LightHost`, `book_prefs.return_mark`, the footer redraw rule) go there too, and the
+  ARCHITECTURE rows below go to `docs/ARCHITECTURE.md`.
+- Three lines of the scroll SPEC are void and are edited in the same pass:
+  - §1.10 `pageCallbacks.onScrollStart`: "Close unpinned chrome" becomes "close the chrome".
+  - §1.12 parity row "Relayout (…, rotation, **pinned chrome**, TXT re-parse)": drop "pinned chrome".
+  - §1.1 gate "CI screenshots of paged mode must differ only by the new margins" becomes "…only by the new margins,
+    the default footer (none), the progress line and the new chrome (§8.2)".
+- Its `14_reading_settings` expectation "the first row is '넘기는 방식 · 페이지 넘김'" means the first row of the
+  **페이지 넘김** section, which lives under "더보기". The main section stays at 9 rows (§6 P1-8), so the popup never
+  scrolls. EXTRAS must not put "넘기는 방식" above the fold.
+
+`docs/ARCHITECTURE.md` gets:
+- **Chrome:** bars are overlays, never resize the page; no pinned chrome.
+- **Status:** slots, progress line, zero-allocation model; **[Δ]** the redraw rule (House rules): the clock and the
+  battery are sampled only when a page is shown, at a scroll settle and on resume.
+- **Return point:** `book_prefs.return_mark`.
+- **Brightness:** window path, or the opt-in device path with a per-firmware verdict.
+- **Type scale:** two weights.
+- **R2 table:** the `footerEpisode` / `footerTimeLeft` rows become `StatusItem.EPISODE` / `TIME_LEFT_*`.
+- **Scroll spec rows:** delete any "pinned chrome" row.
+
+---
+
+## 2. Chrome redesign (READER_UI: `reader/ReaderChrome.kt`)
+
+### 2.1 One visual system (chrome, return strip, options panel)
+
+| Token | Value |
+|---|---|
+| Keylines | **Text** starts 20 dp from the left: the stroke of the back arrow (the 48 dp button at 4 dp row padding centres its 24 dp glyph at 16..40 dp, and `ic_arrow_back`'s ink starts at 4/24). **Trailing** content ends 16 dp from the right: icon glyph boxes and toggle tracks. |
+| Bands | Actions 56 · title ≈ 32 (17 sp line + 10 dp bottom) · brightness 48 · option rows ≥ 56 · return strip 44 · label 52 · seek 48 dp. Every tap target is ≥ 44 dp. |
+| Lines | Bar edges and band breaks: 1 **physical px** `Ink.LINE` (black). Inside a band group (strip → label row, between option rows): 1 px `Ink.LINE_LIGHT`, inset 20 dp on the left and 16 dp on the right. |
+| Type | **Primary** 17 sp bold (title, page label). **Secondary** 15 sp regular (strip items, option titles, question). **Tertiary** 13 sp regular `Ink.GRAY` (subtitles). **Disabled** `Ink.DISABLED`. Only two weights (§0.2). |
+| Digits | Page label and strip labels: `fontFeatureSettings = "tnum"` (set once) |
+| State | **Icon swap only**. `isSelected` is never used for looks. Bookmark: `ic_bookmark` ↔ `ic_bookmark_fill`. Rotation: `ic_screen_rotation` ↔ `ic_screen_lock_rotation`. Pin: `ic_push_pin` ↔ `ic_push_pin_fill`. Brightness: `ic_brightness_auto` (auto) ↔ `ic_brightness_medium` (manual). Options: `ic_expand_more` (closed) ↔ `ic_expand_less` (open). **[Δ]** Return strip, mark page on screen: `ic_chevron_left` ↔ a 16 dp `ic_push_pin_fill` and "N 페이지로" ↔ "N 페이지" (§3.4), so grey is never the only signal. |
+| Motion | None: no ripples (`pressableBackground`), `animationStyle = 0`, and no autosize steps (autosize is computed per text change, not animated) |
+
+### 2.2 Top bar (`ReaderChrome.top`, a vertical `LinearLayout`, white, clickable, top inset as padding)
+
+```
+┌──────────────────────────────────────────────┐
+│ ←                  🔖  🔊  🔍  ☰  ⚙  ⋮       │ actions 56dp, row padding 4dp h
+│ 배드 본 블러드 1-353 완                         │ title row: 17sp bold, 1 line, END ellipsis
+├──────────────────────────────────────────────┤ 1px black
+│ Ⓐ  ━━━━━━━━●───────────────────────   ⌄     │ brightness row 48dp
+├──────────────────────────────────────────────┤ 1px black (only while the options panel is open)
+│ [question row, only while asked, §4.4]        │
+│ 스와이프로 밝기 조절                     (●  ) │ option row ≥56dp
+│ 화면 왼쪽 가장자리를 위아래로 밀어 밝기를 바꿉니다 │
+│ ─────────────────────────────── (light)       │
+│ 기기 밝기 직접 조절                      (●  ) │ option row (§4.4)
+│ 전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다 │
+│ [기기 조명 설정 열기 ›, conditional, §4.4]      │
+└──────────────────────────────────────────────┘ 1px black (bar edge)
+```
+
+| View | Spec |
+|---|---|
+| actions row | `horizontal`, `minimumHeight 56dp`, padding `(4, 0, 4, 0)` dp. Contents: `[back 48]` `[spacer weight 1]` `[bookmark 48][tts 48][search 48][toc 48][gear 48][more 48]`. Content descriptions: "뒤로", "북마크 추가"/"북마크 삭제", "TTS 읽기", "검색", "목차", "읽기 설정", "더보기". On the Comet: 8 + 7·48 = 344 dp, spacer 16 dp. **Width guard [Δ]:** `bookmark` is `GONE` when the bar is under 352 dp wide. It is decided in `setVisible(true)` from `root.width − left − right insets` (cached; recomputed only when that width changes), **never inside an `OnLayoutChangeListener`**: changing visibility or sizes during a layout pass forces a second layout and draw, i.e. a second e-ink update on the first show. While it is hidden, the ⋮ menu gains "북마크 추가" / "북마크 삭제" (READER_CORE, `ReaderMenus`), so the action is never lost on a narrow phone. |
+| title row | Padding `(20, 0, 16, 10)` dp. `label("", 17f, bold = true, maxLines = 1)`, END ellipsis. One line, so the bar height never depends on the title. `setTitle` sets it only on change (existing guard). |
+| hairline | `ctx.hairline()` |
+| brightness row | Padding `(4, 0, 4, 0)` dp. Contents: `[auto 48]` `[SeekBar weight 1]` `[options 48]`. The auto button's content description is "시스템 밝기 따르기" (manual) or "직접 밝기 조절" (auto). The options button's is **"밝기 옵션"**. Verdict NONE (§4.4) replaces the auto button and the SeekBar with one 15 sp link "기기 조명 설정에서 조절 ›". |
+| SeekBar (`einkSeekBar`, shared with the seek row) | Thumb 16 dp (was 20), `thumbOffset 8dp`, padding `(12, 16, 12, 16)` dp, `minimumHeight 48dp`. Progress tint black, background tint `Ink.DISABLED`, `splitTrack = false`. **Auto look:** progress tint `Ink.DISABLED` and a hollow 16 dp ring thumb (white fill, 1.5 dp black stroke). **Manual look:** solid black thumb. Both thumb drawables are cached and swapped only when the look changes. The first `onProgressChanged(fromUser)` switches to the manual look immediately, so the icon never says "auto" mid-drag. **[Δ]** Content descriptions: "밝기" (brightness bar) and "페이지 위치" (seek bar). A bare SeekBar is read only as a percentage. |
+| options panel | A vertical `LinearLayout`, `GONE` by default, preceded by a black hairline that is visible with it. **[Δ] Built lazily:** the constructor adds only the empty container; its rows (question, two toggles, the panel link) are created on the first `setBrightnessOptionsOpen(true)`, so opening a book inflates nothing new before the first page. The `setLight*` / `setSwipeOption` setters only cache their values until the rows exist. It is **closed by `setVisible(false)`**. `LightController.bind()` reopens it while a question is pending. Rows are built by the private `optionRow(title, subtitle, trailing)`: `minHeight 56dp`, padding `(20, 8, 16, 8)` dp, title 15 sp, subtitle 13 sp GRAY `keepAll`, max 2 lines, tapping anywhere toggles; the trailing `InkToggle` ends at W − 16 dp. A light hairline separates rows. **[Δ] Accessibility:** the row is the one focusable unit. The toggle gets `importantForAccessibility = NO`, and the row's `AccessibilityDelegate` reports `isCheckable = true`, `isChecked` = the toggle's state, and the title and subtitle as its text. Otherwise TalkBack announces an unlabelled switch next to a clickable text block. |
+| bottom hairline | Black, the bar edge |
+
+Heights: 56 + ≈32 + 1 + 48 + 1 ≈ **138 dp** closed, plus the top inset. About 252 dp with two option rows open.
+
+### 2.3 Brightness row behaviour (item 5)
+
+- The ⌄/⌃ button toggles the options panel. It never hides the brightness row.
+  - Delete `brightnessShow`, `setBrightnessCollapsed` and `Actions.onBrightnessCollapsed`.
+  - In `ReaderActivity`, delete `PREF_BRIGHTNESS_COLLAPSED` (≈ l.120, 509, 2306).
+  - **[Δ]** No cleanup code in `onCreate` (a prefs write on the open path breaks "nothing new before the first
+    page"). `Settings.saveApp` removes the dead key (§1.3), and `DROPPED_KEYS` keeps it out of backups.
+- Opening or closing the panel changes the top bar's height. The bar is an overlay, so the page is **never** resized
+  (§2.6). That costs one partial e-ink update of the bar.
+- The row "스와이프로 밝기 조절" binds `AppSettings.brightnessSwipe`. Its action is `LightController.onSwipeSwitch(v)`,
+  which saves and **also sets `page.brightnessSwipe = v` through `LightHost`**. `saveApp` sets `appliedApp` first, so
+  `onAppSettingsSaved` would not apply it. At verdict NONE the row is disabled and its subtitle reads
+  "이 기기에서는 밝기 스와이프를 쓸 수 없습니다".
+- **[Δ]** `applyAppSettings` must stop writing `page.brightnessSwipe = app.brightnessSwipe` itself. The one writer is
+  `LightController.onAppSettingsApplied()`, which sets `app.brightnessSwipe && swipeUsable`. Otherwise every
+  `onResume` would switch a swipe back on that verdict NONE had turned off, and the swipe would move nothing.
+
+### 2.4 Bottom bar (`ReaderChrome.bottom`, a vertical `LinearLayout`, white, clickable, bottom inset as padding)
+
+```
+├──────────────────────────────────────────────┤ 1px black (bar edge)
+│ ‹ 10 페이지로            지우기          512 페이지로 › │ return strip 44dp — GONE when empty (§3)
+│ ─────────────────────────────── (light)       │ part of the strip
+│                  10 / 3614             ⟳  📌  │ label row 52dp (FrameLayout)
+│ ⏮  ━━━━━━●──────────────────────────────  ⏭  │ seek row 48dp
+└──────────────────────────────────────────────┘ (bottom inset)
+```
+
+| View | Spec |
+|---|---|
+| return strip | `ReturnNav.dock` (§3.4), inserted at index 1 by the constructor |
+| label row | `FrameLayout`, `minimumHeight 52dp`. |
+| ↳ `pageLabel` | `label("", 17f, bold = true, maxLines = 1)`. **[Δ]** `FrameLayout.LayoutParams(labelW, 48dp, Gravity.CENTER)` with a **fixed** width `labelW = rowW − 2·RESERVE` (`RESERVE = 4 + 48 + 48 + 8 = 108 dp`; `ChromeMath.labelMaxWidth`), not `WRAP_CONTENT`. Android documents autosize as unreliable with `wrap_content` (it can re-measure on every text change), and a fixed box also gives a steady, larger tap target. `labelW` is computed in `setVisible(true)` from `root.width − insets` and applied only when it changes, never in a layout listener (see the width guard in §2.2). `gravity = CENTER`, padding 12 dp on each side, `fontFeatureSettings = "tnum"`, `pressableBackground()`, tap → `actions.onPageLabel()`. **No underline**: delete the working tree's `Paint.UNDERLINE_TEXT_FLAG`. On the Comet `labelW` is 144 dp: "12345 / 23259" at 17 sp bold tnum measures about 110 dp plus 24 dp of padding. `setAutoSizeTextTypeUniformWithConfiguration(14, 17, 1, SP)` (API 26) covers large font scales. The label stays centred on the **full width** and can never run under an icon. **[Δ] Accessibility:** the content description is "페이지 이동, 3 / 167", set together with the text in `setPage` (chrome visible only, so the String is not a per-turn cost while reading). A fixed "페이지 이동" would hide the page number from TalkBack. CI taps it with `tap_label "페이지 이동" contains`. |
+| ↳ right cluster | `horizontal`, `LayoutParams(WRAP, 48dp, END or CENTER_VERTICAL)`, `marginEnd 4dp`: `[rotation 48][pin 48]`. Rotation: content description "화면 회전 잠금", long-press → `onRotationChooser()`, icon swap only. Pin: content descriptions in §3.1. |
+| seek row | `horizontal`, padding `(4, 0, 4, 0)` dp: `[⏮ 48 "이전 화"][SeekBar weight 1][⏭ 48 "다음 화"]` (the working tree's T1-5 buttons, kept) |
+| seek preview box | Unchanged mechanics. Its text changes to `ReaderFormat.previewLabel(page, chapter)` = **"1234쪽 · 제3장 …"** (was "p. 1234 · …"; READER_A, §6 P1-17). |
+
+Heights: 1 + 52 + 48 = **101 dp**, or 146 dp with the strip.
+
+### 2.5 `ReaderChrome` API (fixed at phase 0)
+
+```kotlin
+internal class ReaderChrome(
+    private val ctx: Context,
+    private val actions: Actions,
+    returnDock: View,                 // ReturnNav.dock, inserted into [bottom] at index 1
+    private val light: LightController, // brightness row + options panel talk to it directly
+) {
+    // [Δ] The constructor never passes `this` to [light]: ReaderActivity calls `light.attach(chrome)` right after
+    // construction. Leaking `this` from `init` would let LightController call setters on half-built views.
+    interface Actions {
+        fun onBack(); fun onTts(); fun onSearch(); fun onToc()
+        fun onSettings(anchor: View); fun onMore(anchor: View)
+        fun onBookmark()
+        fun onPageLabel()
+        fun onChapter(next: Boolean)
+        fun onRotation(); fun onRotationChooser()
+        /** The pin: this page becomes the book's return point (or is released, on that page). */
+        fun onPinHere()
+        fun onSeekStart(); fun onSeekPreview(progress: Int): String; fun onSeekDone(progress: Int)
+        // deleted: onPin (메뉴 고정), onBrightnessAuto, onBrightness, onBrightnessCollapsed (→ LightController)
+    }
+    val top: LinearLayout; val bottom: LinearLayout; val gear: ImageButton; val more: ImageButton
+    val isSeeking: Boolean; val isVisible: Boolean; val bottomHeight: Int
+    fun attach(root: FrameLayout)
+    fun setVisible(visible: Boolean)          // hiding also closes the options panel and the seek preview
+    fun owns(v: View): Boolean
+    fun setInsets(left: Int, topInset: Int, right: Int, bottomInset: Int)
+    fun setTitle(text: CharSequence)
+    fun setPage(label: String, max: Int, progress: Int)
+    fun setBookmarked(on: Boolean)            // top-row icon; cached, no redraw when unchanged
+    fun setPinned(pinned: Boolean, onMarkPage: Boolean)   // icon + content description (§3.1)
+    fun setRotationLocked(locked: Boolean)    // icon only
+    // Bound by LightController only (same owner):
+    fun setBrightness(pos: Float, auto: Boolean)
+    fun setBrightnessOptionsOpen(open: Boolean)
+    fun setSwipeOption(on: Boolean, enabled: Boolean, subtitle: String)
+    fun setLightAsk(kind: Int)                // LightController.ASK_NONE / ASK_WINDOW / ASK_DEVICE
+    fun setLightDevice(on: Boolean, subtitle: String, enabled: Boolean)
+    fun setBrightnessUnavailable(unavailable: Boolean)
+    fun setLightPanelRow(visible: Boolean, subtitle: String)
+}
+```
+Every setter compares with the last bound value and does nothing when it is unchanged. That is an e-ink rule: an
+unchanged view is never redrawn.
+
+### 2.6 Pinned chrome: root cause and exhaustive removal (item 4's "flipping")
+
+**Root cause** (confirmed in code, chrome.md §1):
+1. `togglePin()` calls `applyPinnedArea()`, which sets the **PageView's** margins to the bar heights. A PageView size
+   change runs `onViewSizeChanged` → `setViewport` → `rebuild()`: a new generation and page-count key, a relayout and
+   a recount.
+2. `setChromeVisible()` calls it on **every** menu open and close, so the label and seek bar jump between estimates.
+3. With the pin on, `handleTap` and `onSwipe` skip "close the chrome" (`if (chromeVisible && !app.pinChrome)`). The
+   taps a user makes to dismiss the menu therefore **turn pages back and forth**.
+4. The setting is an `AppSettings` field, so every book opens this way.
+
+**Removal**, READER_A unless noted:
+
+| Symbol | Change |
+|---|---|
+| fields `pinShown`, `pinPending` | delete |
+| `viewPart()` entry `a.pinChrome` | delete (phase 0) |
+| `startOpen`: `if (app.pinChrome && !pinShown) { pinPending = true; applyPinnedArea() }` | delete |
+| `showPage`: `if (app.pinChrome && !pinShown && !chromeVisible) { … }` | delete |
+| `closeCurrentBook`: `pinShown = false` | delete; add `returnNav.reset()` |
+| `setChromeVisible`: `pinPending = false`, `chrome.setPinned(app.pinChrome)`, `applyPinnedArea()` | delete; add `if (visible) returnNav.onChromeShown() else returnNav.onChromeHidden()` |
+| `pinnedArea()`, `chromeBarHeights()`, `togglePin()` | delete |
+| `applyPinnedArea()` | rename to `applyPageInsets()`: `topMargin = insets[1]`, `bottomMargin = insets[3]`, nothing else |
+| `applyAppSettings`: `chrome.setPinned(app.pinChrome)`, `applyPinnedArea()` | → `applyPageInsets()` |
+| `buildViews`: the `barsResized` listener on `chrome.top` / `chrome.bottom` | delete those two registrations and keep the one for extras overlays |
+| `onBarsResized()` | only `updateChipPosition()` |
+| `pageCallbacks.onSwipe` / `handleTap` / ≈ l.2439 / ≈ l.2588: `!app.pinChrome` guards | → unconditional (`if (chromeVisible) { closeChrome(); return }`) |
+| `openReadingSettings()` pinned branch | delete: always `ReaderPanels.showReadingSettings(this, chrome.gear)` |
+| `chromeActions.onPin = togglePin()` | → `onPinHere()` (§3.5) |
+| `ReaderChrome.setPinned` with `isSelected`, "메뉴 고정" | READER_UI (§2.5) |
+| `ReadingSettingsPopup.show`: `hideBars` / `anchor` branch | X-T: always hide the bars; `anchorBottom = Overlay.topInset(root)`; update the class KDoc |
+| `PageTurningPage` "메뉴 고정" row | SETTINGS (phase 0) |
+
+After this, the PageView's size depends **only** on the system insets. Showing or hiding the chrome flips overlay
+visibility, and a tap with the chrome up always closes it.
+
+---
+
+## 3. Pin = return point (READER_UI: `reader/ReturnNav.kt`; wiring READER_A)
+
+### 3.1 What the user sees
+
+| Action | Result |
+|---|---|
+| Menu open, tap the **pin** (outline icon, content description **"이 페이지 고정"**) | The icon fills. The strip appears: **"[pin icon] 10 페이지"** in grey and **"지우기"**. **[Δ]** On the mark's own page the left item swaps the chevron for a small filled pin and drops "로" (it is where you are, not a link), so the state survives e-ink waveforms that turn grey into white. The page does not move or relayout, and there is no toast. |
+| Read on, open the menu | The strip reads "‹ 10 페이지로" (black, tappable) · "지우기". The pin's content description is "이 페이지로 고정 옮기기". |
+| Tap "‹ 10 페이지로" | Jump to page 10 with the menu still open. The strip reads "[pin icon] 10 페이지" (grey) · "지우기" · **"512 페이지로 ›"** (where you were). Tapping them alternately toggles between the two places. |
+| On page 10, tap the pin (filled, content description **"고정 해제"**) | Same as 지우기: cleared. The icon returns to outline and the strip disappears. |
+| TOC, search, bookmark or go-to jump **with the menu hidden** | A **floating chip** appears bottom-left: "‹ 37 페이지로 \| ✕". It hides after 2 manual turns, on ✕, or on using or clearing a place. **[Δ]** Opening the menu only *covers* it (the strip shows the same place); closing the menu brings it back while the 2 turns have not passed. |
+| Seek-bar jump (menu open) | The origin appears at once in the strip as "‹ N 페이지로". **[Δ]** Closing the menu shows it as the chip, as today's chip does after a seek (the old code showed it even with the menu up). **[Δ] Scrubbing:** further seeks, go-tos or TOC jumps made before any manual turn keep the *first* origin, so fine-tuning the seek bar never loses the way back to where you were reading. |
+| Next day, reopen the book | The pin is still there. It loads **after** the first page and shows in the strip the next time the menu opens. |
+
+Where the pin stays off the page:
+- Pinned places never float over the page. The page stays clean, and the pin is "언제든" one menu tap away.
+- **[Δ]** This is the one reading of "띄워주는" that could still be wrong (§9 R13). If D2 shows that the user expects the
+  pinned link on the page with the menu closed, set `ReturnNav.PIN_FLOATS = true` (one constant, default false). The
+  chip then shows "‹ N 페이지로 | ✕" whenever a pin exists, the menu is hidden and the mark is not on screen. It
+  never hides by turns, and ✕ hides it until the next pin or jump. No other code changes, and there is still no
+  relayout because the chip is an overlay.
+- Chapter ⏮/⏭, auto turn and TTS do not create return points (unchanged).
+
+### 3.2 `ReturnPoints` (pure, JVM-tested; in `ReturnNav.kt`)
+
+State:
+- `mark: DocPosition?`: pinned, or temporary (a jump origin);
+- `pinned: Boolean`;
+- `other: DocPosition?`: the second place;
+- **[Δ]** `offer: Chip { NONE, MARK, OTHER }`: the place the last remembered jump offers back. It replaces the
+  earlier `chip` field, which also encoded whether the chrome was up. The floating chip shows iff `offer != NONE`,
+  the chrome is hidden and that place is not on screen (§3.4), so the offer survives opening and closing the menu;
+- `turns: Int`: manual turns since that jump; **[Δ]** `chainOffer: Chip`: the `offer` the first jump of the current
+  chain set;
+- **[Δ]** `landed: Boolean`: true after a remembered jump until the next manual turn, use, pin or clear. It means
+  "only passing through; not reading here yet".
+
+Transitions (chrome.md §4.2 with the changes marked ★; ★3–★5 are the critic's [Δ]):
+
+| Call | Effect |
+|---|---|
+| `pin(here, onMark)` | If `pinned && onMark` → `clear()`. ★1 Else if `!pinned && mark != null && !onMark` → `other = mark` (a temporary origin is kept as the other place), then `mark = here; pinned = true`. Otherwise `mark = here; pinned = true`, and `other = null` if `other` is on this page. Always `offer = NONE; landed = false`. |
+| `jumped(from, fromOnMark)` **[Δ]** (no `chrome` argument any more) | ★3 If `landed`: the places stay as they are (the chain keeps its **first** origin: scrubbing the seek bar three times still returns to where you were reading); `offer = chainOffer` (re-armed if ✕ had hidden it) and `turns = 0`. Otherwise: if `!pinned` → `mark = from; other = null; offer = MARK`. If pinned and `fromOnMark` → `offer = MARK`, and ★4 **`other` is kept** (the place you were reading before you visited the pin stays reachable; the old rule set it to null and lost it). If pinned and not `fromOnMark` → `other = from; offer = OTHER`. Then `chainOffer = offer; turns = 0; landed = true`. |
+| `useMark(here, onMark)` | `if (mark == null \|\| onMark) null else { other = here; offer = NONE; landed = false; mark }` |
+| `useOther(here, onMark)` | `val t = other ?: return null; other = if (onMark) null else here; offer = NONE; landed = false; t` |
+| `clear()` | Everything null or false. `offer = NONE`. |
+| `manualTurn(): Boolean` | `landed = false`. Then, if `offer != NONE && ++turns >= 2` → `offer = NONE`, return true (hide now). |
+| `hideChip()` (✕) | `offer = NONE` (the places stay: the strip still has them) |
+| `restorePinned(pos)` | If `pinned`, no-op. Else, if `mark != null`, `other = mark`. Then `mark = pos; pinned = true`. |
+| `reparsed(p)` | `other = null; offer = NONE; landed = false`. If `pinned && p != null` → `mark = p`, else `mark = null; pinned = false`. |
+
+★2 Only the **pinned** mark is persisted. Temporary marks are session-only, like today's chip.
+
+★5 **[Δ]** The chip's visibility is derived, not stored: `offer != NONE && !chromeVisible && !isOnCurrentPage(target)`.
+Today's chip survives a menu open and close (and even shows over the open menu after a seek). The earlier draft hid it
+for good when the menu opened, and never offered it after a seek made with the menu up. That was a regression.
+
+### 3.3 Persistence
+
+**`ReturnMarkCodec`** (pure, in `ReturnNav.kt`):
+- **Format:** `"m1|<section>|<offset>|<charFraction>|<textSignature or empty>"`.
+- **`decode`** is tolerant. It returns null for a bad prefix, bad numbers, NaN, or a negative section or offset, and
+  it clamps the fraction to 0..1.
+- **Placement when restoring:**
+  - TXT whose stored signature differs from `LayoutKeys.textSignature(...)` → `counts.locateFraction(fraction)`;
+  - otherwise `DocPosition(section.coerceIn, offset.coerceIn)`. EPUB always uses this, since its signature is null.
+
+**DATA, `data/BookPrefs.kt`:**
+```kotlin
+/** This book's pinned return point (ReturnMarkCodec text) or null. Blocking IO; null for a missing row. */
+fun returnMark(bookId: Long): String?
+/** Stores [value] (null clears). UPDATE, then INSERT when no row changed; the row's other columns are kept. */
+fun setReturnMark(bookId: Long, value: String?)
+```
+- **Backups:** `Backup` export and import carry it in the book's `book_prefs` entry as `"returnMark"`, keyed by path
+  like the other book_prefs fields. Old backups without it restore unchanged. The scroll spec's auto-backup inherits
+  it.
+- **Deletes:** `deleteBookRows` already deletes the row. `resetProgress` ("읽은 기록 초기화") also sets
+  `return_mark = NULL`.
+
+**When it is read and written:**
+- **Load:** `afterOpen()` (after the first page) → `ReaderIo.launch { BookPrefs.returnMark(id) }` → main thread →
+  `returnNav.restore(text)`. **[Δ]** Guard on the main thread first: `if (isDestroyed || bookRef?.id != id ||
+  session !== s) return`. Without it, a book closed or switched (next part, intent) during the read gets the
+  previous book's pin. `restore` is also a no-op after `reset()` until the next `afterOpen`.
+- **[Δ] Placement** reuses `TextPositions.remapFraction`'s rule (signature differs → fraction; the very start →
+  as is). It does not add a second heuristic.
+- **Save:** on pin, move, clear and reparse, through `ReturnHost.saveReturnMark(text)` → `ReaderIo.launch { BookPrefs.setReturnMark(id, text) }`.
+
+### 3.4 `ReturnNav` (views and logic; fixed API)
+
+```kotlin
+internal interface ReturnHost {                       // implemented by ReaderActivity (READER_A)
+    val chromeVisible: Boolean
+    fun currentPosition(): DocPosition                // paged: page start; scroll: top line
+    fun isOnCurrentPage(pos: DocPosition): Boolean    // paged: on the page; scroll: in the visible range
+    fun globalPageOf(pos: DocPosition): Int           // 1-based; estimate until counted (never "~")
+    /** Jump without creating a return point; the chrome stays as it is. Scroll mode: top-line placement. */
+    fun jumpToReturn(pos: DocPosition)
+    fun charProgressOf(pos: DocPosition): Float       // counts.charProgress
+    fun locateFraction(f: Float): DocPosition         // counts.locateFraction
+    fun textSignature(): String?                      // LayoutKeys.textSignature(...) for TXT, null for EPUB
+    fun saveReturnMark(text: String?)                 // IO write
+    fun onReturnChanged()                             // host: chrome.setPinned(...), updateChipPosition()
+}
+internal class ReturnNav(ctx: Context, private val host: ReturnHost) {
+    val dock: View            // the docked strip (ReaderChrome inserts it)
+    val chip: View            // the floating chip (ReaderActivity adds it to root, BOTTOM|START)
+    val pinned: Boolean
+    fun markOnScreen(): Boolean                        // pinned mark is on the current page (pin icon state)
+    fun onJump(from: DocPosition)                      // every remembered jump
+    fun onManualTurn()
+    fun onPinPressed()
+    fun onChromeShown()                                // [Δ] hides the chip VIEW (offer kept) + bind
+    fun onChromeHidden()                               // [Δ] shows the chip iff offer != NONE and its place is off screen
+    fun bind()                                         // chrome visible: bind dock labels (cached; 0 alloc if unchanged)
+    fun restore(saved: String?)
+    fun markFraction(): Float                          // before a reparse, with the OLD counts (NaN = no pin)
+    fun reparsed(fraction: Float, exact: Boolean)      // after it; exact = EPUB with the same section count
+    fun reset()
+}
+```
+
+**Dock**, a 44 dp `FrameLayout` plus a light hairline under it:
+- **Left** `TextView`:
+  - placement: `START|CENTER_VERTICAL`, height MATCH, `paddingStart 14dp` (so the chevron stroke lands on the 20 dp
+    keyline), `paddingEnd 12dp`;
+  - text: 15 sp regular, tnum; compound drawable `ic_chevron_left` 18 dp, tinted like the text, `drawablePadding 2dp`;
+  - text "N 페이지로"; `pressableBackground()`.
+  - **Disabled** while the mark's page is on screen. **[Δ]** The state changes glyph and text, not only colour: the
+    compound drawable becomes a 16 dp `ic_push_pin_fill` (the drawable, not an emoji), the text becomes "N 페이지"
+    (no "로": it is not a link), the colour is `Ink.GRAY` (#555, which survives every waveform), it is not
+    clickable, and the content description is "지금 보는 쪽이 고정한 쪽입니다". Grey `Ink.DISABLED` alone thresholds
+    to white under the Comet's fast modes, and would contradict §2.1's "icon swap only".
+- **Centre** "지우기": `CENTER`, `minWidth 72dp`, padding 16 dp on each side, 15 sp. It sits on the page label's axis.
+- **Right**: mirrored, with `ic_chevron_right` at the end. Visible iff `other != null && !isOnCurrentPage(other)`.
+- The dock is shown iff `mark != null || other != null`, with the chrome visible.
+- Label strings are rebuilt only when a page number changes (cached ints), so `bind()` on a page turn with the chrome
+  up allocates nothing.
+- **[Δ] Fit rule.** With 5-digit pages or a large font scale, three items overflow 360 dp. Measured example: "‹ 12345
+  페이지로" is about 137 dp, which is only 4 dp from "지우기". After a label change, `bind()` measures the two side
+  labels (`paint.measureText` on the cached Strings, no allocation). If `left + right + centre + 2·8 dp > rowW`, or
+  either side would cross the centre box, both sides switch to the **short form** "‹ 12345" / "23259 ›". Their content
+  descriptions keep the full "12345 페이지로". The check runs only when a label or `rowW` changes.
+- **[Δ] Lazy views.** `dock` starts as an empty `GONE` `FrameLayout`, and its three TextViews and hairline are
+  created on the first `bind()` with a non-empty state. `chip` likewise starts empty and is filled on its first
+  show. `buildViews` therefore adds two empty frames before the first page, instead of about ten views.
+
+**Chip:**
+- `borderBox()` containing `[label 44 dp tall: chevron + "N 페이지로", 15 sp, padding (12, 0, 14, 0) dp]`, a 1 px
+  vertical hairline, and `[✕ 44×44 dp, content description "닫기"]`.
+- MARK shows "‹ N 페이지로". OTHER shows "N 페이지로 ›", with the chevron at the end.
+- ✕ **only hides** it. 지우기 clears.
+- **Position** (READER_A `updateChipPosition`, hidden-chrome branch only):
+  `bottomMargin = insets[3] + dp(PROGRESS_LANE_DP) + dp(4)`, so it clears the progress line; above extras bars as
+  today. `leftMargin = insets[0] + dp(8)`.
+
+**Wording:** `ReaderFormat.returnChip` ("← 돌아가기 (p. N)") is deleted by READER_A. ReturnNav owns the strings "N
+페이지로" and "지우기".
+
+### 3.5 READER_A wiring (`ReaderActivity`)
+
+1. Replace `returnStack`, `MAX_RETURN_STACK`, `chip`, `chipLabel`, `turnsSinceJump`, `pushReturn`, `showReturnChip`,
+   `useReturnChip` and `dismissReturnChip` with `private lateinit var returnNav: ReturnNav`. In `buildViews`, create
+   `light = LightController(lightHost)` and `returnNav = ReturnNav(this, returnHost)` before
+   `ReaderChrome(this, chromeActions, returnNav.dock, light)`, **[Δ]** then `light.attach(chrome)`. Add
+   `returnNav.chip` to `root`.
+   - Implement `ReturnHost` and `LightHost` as **private inner objects** (`private val returnHost = object : ReturnHost { … }`),
+     not on the activity class. Their members (`chromeVisible`, `app`, `activity`, …) would otherwise clash with the
+     activity's own fields and with `ReaderHost`.
+2. `pushReturn(pos)` call sites (`goTo`, `goToPage`, `goToProgress`, `followLink`, seek release) → `returnNav.onJump(pos)`.
+   Keep their guards.
+3. `onManualTurn()` → `returnNav.onManualTurn()`.
+4. `chromeActions.onPinHere()` → `returnNav.onPinPressed()`.
+5. `ReturnHost` members:
+   - `jumpToReturn(p)` = `jumpTo(p.section, p.offset, -1)`. The scroll spec's `jumpTo` branch handles scroll mode.
+   - `saveReturnMark(t)` = `ReaderIo.launch { BookPrefs.setReturnMark(id, t) }`.
+   - `onReturnChanged()` = `if (chromeVisible) bindChrome(); updateChipPosition()`.
+6. `bindChrome()` adds `returnNav.bind()` and `chrome.setPinned(returnNav.pinned, returnNav.markOnScreen())`.
+7. `sessionListener.onCountsChanged(complete = true)` → `if (chromeVisible) returnNav.bind()`. The labels become exact.
+8. `reopenDocument`: `val f = returnNav.markFraction()` before switching sessions (old counts), then
+   `returnNav.reparsed(f, exact = epub && sameSectionCount)`. This replaces `dismissReturnChip()`.
+9. `closeCurrentBook`: `returnNav.reset()`.
+10. `afterOpen`: the persisted-pin load (§3.3).
+
+---
+
+## 4. Brightness (item 3; READER_UI owns the code, READER_A the hooks, SETTINGS the pages)
+
+### 4.1 Diagnosis and decision
+
+- **Fact:** only `WindowManager.LayoutParams.screenBrightness` is set (`ReaderWindow.applyBrightness`). The user
+  confirms the Comet's front light ignores it.
+- **Likely cause:** the Comet is very likely a Bigme build (LM3630A cold and warm channels, custom `Settings.System`
+  keys `ColdValue`, `screen_brightness_cold`, …). On Android 14 an app can **read** those keys but **write** only
+  `PUBLIC_SETTINGS` (`screen_brightness`, `screen_brightness_mode`), and only with WRITE_SETTINGS. The sysfs nodes
+  need root. Source: brightness.md §1, F1–F9.
+- **Decision:**
+  1. Keep the window path as the default (phones).
+  2. Add an **opt-in device path** ("기기 밝기 직접 조절").
+  3. **Ask once per firmware**, and only on e-ink, whether the light changed.
+  4. If nothing works, verdict NONE: the reader shows an honest link instead of a dead slider.
+  5. Warm light is shown as a link only; no warm slider this round.
+- **§9 R1 is the main risk:** neither path may move the Comet's light. The flow is built to discover that and say so.
+
+### 4.2 Components (`reader/`, READER_UI; signatures fixed at phase 0)
+
+| File | API | Notes |
+|---|---|---|
+| `LightCurve.kt` (pure) | `LEVEL_MIN = 1`, `LEVEL_MAX = 255`; `out(pos) = pos²`, `pos(out) = √out`, `level(out, min, max)`, `fraction(level, min, max)`, `isExternal(value, ours, sinceOurWriteMs, queued, echoMs = 1500)` | reference: brightness.md §3.1. **Device path only.** The window path keeps `ReaderWindow.applyBrightness(activity, pos)` linear with its 0.01 floor, and `ReaderWindow.systemBrightness()` stays. |
+| `DeviceLight.kt` (process-wide `object`) | `init(ctx)`, `set(out)`, `restore()`, `restoreIfStale(ctx)`, `refresh()`, `verdict(ctx)`, `setVerdict(ctx, v)`, `asks(ctx)`, `countAsk(ctx)`, `looksEink(ctx)` **[Δ]** (IO; = `DeviceClass.cached(ctx) ?: DeviceClass.probe(ctx)` from the scroll SPEC, no word list of its own), `@Volatile noPermission`, `@Volatile deviceOut`, `onExternal: Runnable?`, `onNoPermission: Runnable?`, `VERDICT_UNKNOWN/WINDOW/DEVICE/NONE`, `MIN_GAP_MS = 100`, `ECHO_MS = 1500` | reference: brightness.md §3.2, **normative**: one serial `HandlerThread` created lazily; latest value wins; ≤ 10 writes/s; nothing allocated while dragging; manual mode forced once; the original value and mode committed to the `reader_light` prefs before the first write; install-stamp guard; `SecurityException` → `noPermission`. |
+| `LightProbe.kt` (IO only, read-only) | `lightKeys(ctx): Map<String,String>`, `hasWarm(keys)`, `coldNode()`, `warmNode()`, `read(file)`, `report(ctx): List<String>` | reference: brightness.md §3.3. `report` also reads the xrz getters by reflection (getters only). |
+| `LightController.kt` | see below | brightness.md §4, moved behind `LightHost` |
+
+```kotlin
+internal interface LightHost {                        // implemented by ReaderActivity (READER_A)
+    val activity: Activity
+    val handler: Handler
+    val app: AppSettings                              // the live one
+    val chromeVisible: Boolean
+    fun saveApp(a: AppSettings)                       // ReaderActivity.saveApp
+    fun setPageBrightnessSwipe(on: Boolean)           // page.brightnessSwipe = on
+    fun showChrome()                                  // setChromeVisible(true)
+}
+internal class LightController(private val host: LightHost) {
+    companion object { const val ASK_NONE = 0; const val ASK_WINDOW = 1; const val ASK_DEVICE = 2 }
+    fun attach(chrome: ReaderChrome)                  // [Δ] called by ReaderActivity right after `ReaderChrome(...)`
+    fun onCreate()                                    // window override only, no IO
+    fun afterFirstPage()                              // afterOpen: DeviceLight.init, verdict (IO), first device write, observer, warm probe
+    fun onAppSettingsApplied()                        // applyAppSettings(): apply(app.brightness) + swipe flag
+    fun onResume(); fun onPause(); fun onDestroy(finishing: Boolean)
+    fun markOwnLaunch()                               // right before the reader starts our SettingsActivity
+    fun currentPos(): Float                           // PageView.brightnessStart
+    fun onDrag(pos: Float, done: Boolean)             // slider AND edge swipe; save + PREF_LAST_BRIGHTNESS on done; first-drag question
+    fun onAuto()                                      // Ⓐ: auto ↔ manual (last position)
+    fun onSwipeSwitch(on: Boolean)
+    fun onAnswer(yes: Boolean); fun onDeviceSwitch(on: Boolean); fun onOpenPanel()
+    fun bind()                                        // from bindChrome(): setBrightness, setLight*, setSwipeOption, reopen panel if asking
+    val swipeUsable: Boolean                          // false at verdict NONE
+}
+```
+
+READER_A hooks, one line each:
+- `onCreate` → `light.onCreate()`.
+- `afterOpen` → `light.afterFirstPage()`.
+- `applyAppSettings` → `light.onAppSettingsApplied()`. This replaces `ReaderWindow.applyBrightness(this, app.brightness)`.
+- `onResume` / `onPause` / `onDestroy` → the matching `light.*` call.
+- Before `startActivity(SettingsActivity)` from the reader menu → `light.markOwnLaunch()`.
+- `pageCallbacks.brightnessStart()` → `light.currentPos()`.
+- `pageCallbacks.onBrightness(v, done)` → `light.onDrag(v, done)`, plus today's `showBrightnessOverlay(v, done)`.
+- `bindChrome()` → `light.bind()`.
+- Delete `setBrightness(...)` and the chrome's brightness actions; `PREF_LAST_BRIGHTNESS` moves into LightController
+  with the same key.
+- Add `a.brightnessDevice` to `viewPart()`.
+
+### 4.3 Lifecycle and restore policy
+
+The policy decided in brightness.md §6 is kept as is:
+- **When the device path writes:** only after the first page (`lightReady`).
+- **Observer:** registered only while the reader is in front with the device path on. It watches
+  `Settings.System.SCREEN_BRIGHTNESS`.
+- **Leaving the reader** (`onPause`, screen interactive, not our own settings page) with `brightnessRestore` on →
+  `DeviceLight.restore()`.
+- **Screen off:** no restore.
+- **Crash:** the pending original is repaired by `DeviceLight.restoreIfStale` from LIBRARY. That is one line in
+  `LibraryActivity`, on IO, **after the first list is shown**.
+- **User changes the light in the device panel while reading** → `isExternal` → their value wins: nothing is put back,
+  and the slider adopts it (`adoptDeviceLight`, round-trip exact).
+- **Ⓐ (auto)** → restore now and stop writing. **Switch off** → restore now.
+- **Revoked permission** → `SecurityException` → window path at once. The subtitle says so.
+
+**[Δ] Four fixes to brightness.md §3.2 (normative; `LightCurveTest` covers the pure parts):**
+1. **Never put back a stale value.** The observer is off while the reader is paused or the screen is off, and after a
+   crash. A value the user set in the system panel during that time must win.
+   - `DeviceLight` persists `K_LAST` (the level it last wrote) with `apply()` when a drag finishes and right before
+     `restore()`. It is never persisted per drag write.
+   - `restoreTask` (and so `restoreIfStale`) reads the current level first. It puts the original back only if
+     `LightCurve.stillOurs(current, last)` is true, i.e. `|current − last| ≤ max(2, last / 32)`, which tolerates
+     vendor quantisation. Otherwise it just clears `pending`.
+   - Example: the reader crashes at 30 (original 200), and the user then sets 120 in the panel. The next library
+     start keeps 120. The old code would have forced 200.
+2. **Auto-brightness always comes back.** `brightnessRestore = false` ("나가도 그대로 유지") keeps the *level*, but
+   the mode is always restored: if `origMode` was automatic, leaving the reader writes the mode back. Without this, a
+   phone would silently lose auto-brightness for good. The switch subtitle then reads
+   "… · 나가도 그대로 유지 (자동 밝기는 다시 켜짐)" when `origMode` was automatic. The Comet has no light sensor, so
+   nothing changes there.
+3. **No pending record without permission.** `write()` checks `Settings.System.canWrite(c)` once per enable, on the
+   light thread, before it commits `pending`. A restored or revoked switch then leaves no half-recorded original
+   behind. `SecurityException` stays the per-write signal.
+4. **E-ink detection** is `DeviceClass` (scroll SPEC §1.11), shared with scroll STEP. brightness.md's own
+   `EINK_WORDS` is dropped. It matched `Build.DEVICE` "comet", which is also the **Pixel 9 Pro Fold's codename**, and
+   brand-only "hisense", which also makes LCD phones. `DeviceClass.einkByBuild` must match makers by
+   `MANUFACTURER`/`BRAND` ("innospace", "bigme", "onyx", "boox", …) and Hisense only by e-ink model
+   ("A5", "A7", "A9", "Touch"), never by device codename substrings. `DeviceClassTest` adds a
+   `("Google", "google", "Pixel 9 Pro Fold")` → false case.
+
+### 4.4 The verdict flow and UI states
+
+The state machine is reference brightness.md §4.3, and the pure `nextVerdict(ask, yes)` is extracted for tests.
+
+- **Trigger:** the first finished drag while the verdict is `UNKNOWN`.
+  - `looksEink(ctx)` (**[Δ]** `DeviceClass`) is false (phones) → verdict WINDOW silently. Nothing is ever asked.
+  - E-ink and asked < 3 times → **ASK_WINDOW**.
+- **ASK_WINDOW:** the question row appears at the top of the options panel, and the panel opens the next time the
+  chrome shows: **"전면광 밝기가 바뀌었나요?"** [예] [아니요]. Buttons are 15 sp bold, each ≥ 56×48 dp.
+  - 예 → verdict WINDOW.
+  - 아니요 → dialog §4.5-A → [허용하러 가기] → `ACTION_MANAGE_WRITE_SETTINGS` (`package:` uri; fallback without the
+    uri; fallback dialog §4.5-C) → back in the reader, `canWrite` checked on IO:
+    - granted → `brightnessDevice = true`, apply now, **ASK_DEVICE**;
+    - not granted → toast "권한이 허용되지 않아 앱 화면 밝기로 조절합니다".
+- **ASK_DEVICE:** "막대를 움직여 보세요. 전면광이 바뀌나요?" [예] [아니요].
+  - 예 → verdict DEVICE.
+  - 아니요 → restore, `brightnessDevice = false`, verdict NONE, swipe off (`setPageBrightnessSwipe(false)`), dialog §4.5-B.
+- **Auto-confirm:** brightness.md §4.4. After each finished drag, with a 400 ms delay and an IO read: a readable
+  LM3630A node that changed, or a vendor light key that followed our write, answers 예 by itself.
+- **Persistence:** the verdict is stored in `reader_light` prefs with `Build.FINGERPRINT`, so an OTA asks again. It is
+  device-local and never backed up. "밝기 방식 다시 확인" resets it.
+
+**Verdict NONE, brightness row:** `[ic_brightness_medium] 기기 조명 설정에서 조절 [ic_chevron_right]` (15 sp link,
+weight 1, 48 dp, the drawables as 24 dp / 18 dp compound drawables) plus the ⌄ button. **[Δ]** No "☼" or "›"
+characters: U+263C is missing from some firmware fonts, and the chevron drawable matches the strip's.
+
+**Options rows**, in order:
+
+| Row | When | Title / subtitle / action |
+|---|---|---|
+| question | asked | per ASK_* above |
+| 스와이프로 밝기 조절 | always | "화면 왼쪽 가장자리를 위아래로 밀어 밝기를 바꿉니다" / NONE: disabled, "이 기기에서는 밝기 스와이프를 쓸 수 없습니다" |
+| 기기 밝기 직접 조절 | always | Subtitles:<br>• off: "전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다"<br>• on + restore: "기기 전체 밝기를 바꿉니다 · 리더를 나가면 원래대로"<br>• on, no restore: "… · 나가도 그대로 유지"<br>• permission missing: "'시스템 설정 수정' 권한이 필요합니다 · 눌러서 허용"<br>• NONE: disabled, "이 기기는 앱이 전면광을 바꿀 수 없습니다"<br>Turning it on → the permission flow if needed. Turning it off → restore. |
+| 기기 조명 설정 열기 › | a warm channel was detected, or verdict NONE | "색온도(따뜻한 빛)는 기기 조명에서 바꿉니다" (NONE: "밝기와 색온도는 기기 조명에서 조절합니다"). Opens `ACTION_DISPLAY_SETTINGS`; if that does not resolve, toast "화면 위에서 아래로 내려 기기 조명을 조절하세요". |
+
+### 4.5 Dialogs
+
+All use `ctx.alert()` (InkDialog) with no animation. The texts are brightness.md §5.3–5.5, verbatim:
+- **A. "기기 밝기 직접 조절":** explains the global effect and the restore-on-leave behaviour. Buttons [취소]
+  [허용하러 가기].
+- **B. "앱에서 조명을 바꿀 수 없어요":** buttons [확인] [기기 설정 열기].
+- **C. "권한 화면을 찾을 수 없어요":** shows the adb one-liner
+  `adb shell appops set com.ggumtak.readeraplus WRITE_SETTINGS allow`. Buttons [닫기] [명령 복사].
+
+### 4.6 Settings pages (SETTINGS)
+
+- **`MainPage`, "읽기 설정"**, right after "스와이프로 밝기 조절" (≈ l.74):
+  - toggle **기기 밝기 직접 조절** (subtitles as §4.4; on without `canWrite` → dialog A → permission page;
+    `SettingsPage.onResume()` re-checks `canWrite` on IO);
+  - toggle **리더를 나가면 원래 밝기로** (disabled while the one above is off), "켜 두면 다른 앱과 서재는 원래 밝기를
+    씁니다. 끄면 리더에서 바꾼 밝기가 기기 밝기로 남습니다.";
+  - row **밝기 방식 다시 확인**, "다음에 밝기를 조절할 때 어떤 방식이 되는지 다시 묻습니다" →
+    `DeviceLight.setVerdict(ctx, VERDICT_UNKNOWN)` on IO;
+  - nav row **기기 조명 설정 열기**.
+- **`AboutPage`**, new section "조명 진단" (P1):
+  - `LightProbe.report(ctx)` lines, filled on IO when the page opens, each copyable;
+  - a [변화 감지 30초] button (brightness.md §5.7). It registers a `ContentObserver` on
+    `Settings.System.CONTENT_URI` with descendants for 30 s and lists changed keys.
+  This is how the user reports what the Comet firmware does (§9 D1).
+
+### 4.7 Cost
+
+- A page turn does no brightness work.
+- **Drag (main thread):** one volatile float, one CAS and a pooled Message. At most 10 settings writes a second, on
+  the light thread.
+- **Idle:** no timers. The observer is registered only in front on the device path.
+- **E-ink:** the question row, link and subtitles are each one partial update of the top bar, and only when they
+  change.
+
+---
+
+## 5. Status slots and progress line
+
+### 5.1 Geometry (READER_B: `reader/LayoutKeys.kt`)
+
+```kotlin
+fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, statusPx: Float): PageGeometry {
+    …ml, mr, mt, mb as today…
+    val band = Math.round(statusPx * STATUS_BAND)
+    val header = if (s.hasHeader) band else 0
+    val footer = if (s.hasFooterText) band else 0
+    val lane = if (s.progressBar) Math.round(ReaderSettings.PROGRESS_LANE_DP * density) else 0
+    val mbEff = maxOf(mb, lane)                   // the line lives in the bottom margin; only a margin < 12 dp grows
+    var h = viewH - mt - mbEff - header - footer
+    var top = mt + header
+    …minBox rule as today…
+}
+
+/** Only a band appearing or disappearing (or the lane outgrowing the margin) moves a line. */
+private fun layoutPart(s: ReaderSettings): ReaderSettings {
+    val mbDp = if (s.pageMargins) s.marginBottomDp.coerceAtLeast(0) else TINY_MARGIN_DP
+    val hh = s.hasHeader; val ff = s.hasFooterText
+    return s.copy(
+        invert = false,
+        headerLeft = StatusItem.NONE, headerCenter = if (hh) StatusItem.CHAPTER else StatusItem.NONE, headerRight = StatusItem.NONE,
+        footerLeft = if (ff) StatusItem.PAGE else StatusItem.NONE, footerCenter = StatusItem.NONE, footerRight = StatusItem.NONE,
+        progressBar = s.progressBar && mbDp < ReaderSettings.PROGRESS_LANE_DP,
+        statusFontSizeSp = if (hh || ff) s.statusFontSizeSp else ReaderSettings().statusFontSizeSp,
+    )
+}
+```
+- The key composition is unchanged. **No `LayoutKeys.VERSION` bump.**
+- A migrated user whose footer disappears gets a taller box, so a new key, so one background recount. The scroll
+  spec's 40 dp side margins cause a recount anyway, so the two coincide.
+- **Item ↔ item is a repaint. `NONE` ↔ item is a relayout.**
+
+Comet numbers (density 2; 11 sp = 22 px; `band = round(22 × 2.2) = 48 px`; default `mb = 16 dp = 32 px`;
+`lane = 24 px`):
+
+| Config | Content bottom | Footer text band (baseline centred) | Line `yc` |
+|---|---|---|---|
+| **Default** (no footer text, line on) | 1440 − 32 = **1408** (same as no line) | – | 1428 |
+| Footer text + line | 1440 − 32 − 48 = 1360 | [1360, 1416] | 1428 |
+| Footer text, no line | 1360 | [1360, 1440] (today's rule) | – |
+| `pageMargins = false` (4 dp) + line | 1440 − 24 = 1416 (8 dp less text) | – | 1428 |
+
+### 5.2 Shared types (RENDER owns them; phase 0 lands them)
+
+`render/Render.kt`:
+```kotlin
+class PageDecor(
+    val highlights: List<Highlight> = emptyList(),
+    val bookmarked: Boolean = false,
+    /** Status slots + progress of the page on screen (shared, mutable, UI thread only); null = draw none (covers, thumbnails). */
+    val status: StatusDecor? = null,
+    /** StatusDecor.version when this decor was built: sameDecor compares this int, never strings. */
+    val statusVersion: Int = 0,
+)   // header, footerLeft, footerRight, battery: deleted
+```
+`render/StatusDecor.kt`:
+```kotlin
+/** One slot: text in a fixed buffer, or a title by reference, plus an optional battery icon with its digits. */
+class StatusSlot {
+    @JvmField val chars = CharArray(CAPACITY); @JvmField var length = 0
+    @JvmField var text: String? = null                    // elastic title (CHAPTER / BOOK_TITLE), drawn instead of chars
+    @JvmField var battery = -1                            // ≥ 0: icon + batteryChars after the chars
+    @JvmField val batteryChars = CharArray(3); @JvmField var batteryLength = 0
+    val isEmpty: Boolean get() = length == 0 && text == null && battery < 0
+    /** Sets chars from [src][0, n) and the battery; true when anything changed. No allocation. */
+    fun set(src: CharArray, n: Int, battery: Int): Boolean
+    fun setText(t: String?): Boolean                      // equals compare; the reference is kept (never copied)
+    fun clear(): Boolean
+    companion object { const val CAPACITY = 48 }
+}
+class StatusBand {
+    @JvmField val left = StatusSlot(); @JvmField val center = StatusSlot(); @JvmField val right = StatusSlot()
+    val isEmpty: Boolean get() = left.isEmpty && center.isEmpty && right.isEmpty
+}
+class StatusDecor {
+    @JvmField val header = StatusBand(); @JvmField val footer = StatusBand()
+    /**
+     * [Δ] The progress lane exists (= settings.progressBar). The lane decides the footer band's geometry, so it comes
+     * from the settings, never from the data: an unknown position must not move the footer text by 12 dp.
+     */
+    @JvmField var lane = false
+    /** 0..1 dot position; < 0 = unknown (lane drawn with its track and caps, no dot). */
+    @JvmField var progress = -1f
+    /** Bumped by StatusModel.update whenever anything drawn changed. */
+    @JvmField var version = 0
+}
+```
+
+### 5.3 The model (READER_UI: `reader/StatusModel.kt`; filled by READER_A)
+
+```kotlin
+/** Inputs of one status update for the page on screen. Reused, primitives and existing references only. */
+internal class StatusInputs {
+    @JvmField var page = 0; @JvmField var total = 0              // globalPage / counts.total()
+    @JvmField var percent = 0                                     // ReaderFormat.percent(progress())
+    @JvmField var bar = -1f                                       // char progress of the page start; last page = 1; -1 = off
+    @JvmField var chapterTitle: String? = null; @JvmField var bookTitle: String? = null
+    @JvmField var chapterStartsHere = false                       // the page begins the chapter: CHAPTER draws nothing (§6 P1-16)
+    @JvmField var chapterPagesLeft = -1
+    @JvmField var minutesEpisode = -1; @JvmField var minutesBook = -1
+    @JvmField var epNumbered = false; @JvmField var epNumber = -1; @JvmField var epMax = -1
+    @JvmField var tocIndex = -1; @JvmField var tocCount = 0
+    @JvmField var minuteOfDay = -1; @JvmField var is24 = true
+    @JvmField var battery = -1
+}
+internal class StatusModel {
+    val decor = StatusDecor()
+    /** Fills decor for the slots of [s]. Zero allocation. True when anything drawn changed (then decor.version++). */
+    fun update(s: ReaderSettings, inp: StatusInputs, trackPx: Int): Boolean
+    /** One-off String of [item] for the slot chooser (allocates; never on a turn). */
+    fun sample(item: StatusItem, inp: StatusInputs): String?
+}
+/** Allocation-free formatters; output identical to their ReaderFormat twins (tested). Return the new length. */
+internal object StatusText {
+    fun page(buf: CharArray, at: Int, page: Int, total: Int): Int        // "12 / 3259" (total ≥ page)
+    fun percent(buf: CharArray, at: Int, p: Int): Int                    // "34%"
+    fun clock(buf: CharArray, at: Int, minuteOfDay: Int, is24: Boolean): Int  // "14:05" / "2:05"
+    fun chapterLeft(buf: CharArray, at: Int, pages: Int): Int            // "챕터 5쪽 남음" / "챕터 마지막 쪽"
+    fun episode(buf: CharArray, at: Int, numbered: Boolean, n: Int, max: Int, idx: Int, count: Int): Int  // "123/540화" / "87/612"
+    fun timeLeft(buf: CharArray, at: Int, book: Boolean, minutes: Int): Int   // "이 화 3분" / "책 7시간 20분" / "… 1분 미만"
+    fun int(buf: CharArray, at: Int, v: Int): Int
+}
+```
+
+**`update` rules:**
+- **Formatting:**
+  - Only the items in the 6 slots are formatted.
+  - Korean constant pieces are copied with `String.getChars`, which does not allocate.
+  - An unknown input (−1 or null) leaves that slot empty.
+- **Items:**
+  - CHAPTER uses `setText(chapterTitle)`, or clears the slot when `chapterStartsHere`. BOOK_TITLE uses
+    `setText(bookTitle)`.
+  - BATTERY: `battery = level`, `batteryChars` = digits, no chars.
+  - CLOCK_BATTERY: chars = the clock, plus the battery.
+- **Progress line:** **[Δ]** `decor.lane = s.progressBar`; `decor.progress = if (s.progressBar) inp.bar else -1f`.
+  For change detection, the dot counts as moved only when `round(bar × trackPx)` changed.
+
+**READER_A `buildDecor()`** (and the scroll spec's settle path):
+- **Fill scope:** fill only the inputs whose item `settings.shows(…)`. `bar` is filled when `progressBar` is on.
+- **Chapter:** one `chapters.indexAt` when CHAPTER or EPISODE is shown (existing).
+  `chapterStartsHere = idx >= 0 && chapters.section(idx) == curSection && chapters.offset(idx) == p.start`.
+- **Page / percent:** `page`, `total` and `percent` from the existing helpers (O(1)).
+  `bar = if (last page of the book) 1f else counts.charProgress(curSection, p.start)`.
+- **Clock without `Calendar`:** `minuteOfDay = (((now + tz.getOffset(now)) / 60_000) % 1440).toInt()`. `tz` is a
+  cached `TimeZone.getDefault()` and `is24` a cached `DateFormat.is24HourFormat(this)`, both refreshed in `onResume`.
+  Today's `clock()` allocates a `Calendar` and a `String` per turn: delete it.
+- **Battery:** today's sticky read, at most once a minute, with the `IntentFilter` cached in a field.
+- **[Δ] When the clock and battery are sampled (the footer redraw rule).** `buildDecor(sample: Boolean)`:
+  - `sample = true` only from `showPage` (turn, jump, open, relayout), the scroll settle and `onResume`. `onResume`
+    uses `refreshDecor(onlyIfChanged = true)`; the window is redrawn on resume anyway, so this adds no e-ink update.
+  - Every other caller passes `false`: `refreshDecor` from counts complete, highlights, bookmarks, quote reload,
+    episodes and `redraw()`, and `repaint()`. They reuse the last `minuteOfDay` / `battery` in `StatusInputs`. A
+    background event therefore redraws the page only when *its own* data changed. Without this, a counts-complete
+    event 3 minutes after a turn would also move the clock, which is an unsolicited full-page e-ink update. Today's
+    `clock()` in `buildDecor` already has that bug.
+- **[Δ] Mutation invariant.** `status.update` mutates the one shared `StatusDecor` that the frame on screen also
+  points to. It may run only in the same main-thread step that installs the new `PageFrame` / `scroll.decor` and
+  invalidates. `refreshDecor` and `repaint` already return early when the frame is stale, and that check must stay
+  **before** `buildDecor`. `sameDecor` compares the `statusVersion` snapshots, never the shared object.
+- **Highlights:** allocate the `ArrayList` **lazily**, only when a highlight overlaps the page; otherwise `emptyList()`.
+- **Result:** `val changed = status.update(settings, inputs, trackPx)`, then
+  `PageDecor(hl, bookmarked, status.decor, status.decor.version)`.
+  `trackPx = viewW − 2·round(12dp) − 2·round(rCap + rDot)` (§5.4).
+- **`sameDecor(a, b)`:** today's highlight and bookmark comparison, plus `a.statusVersion == b.statusVersion`.
+- **Episodes:** `scheduleEpisodes()` when `settings.shows(StatusItem.EPISODE)`, in `afterOpen`, `reopenDocument` and
+  `episodeLabel`.
+- **`StatusSampleHost.statusSample(item)`:** fill a scratch `StatusInputs` for the current page, then
+  `status.sample(item, it)`. This allocates, but only when the popup list opens.
+- **`ReaderFormat`:** delete `footerLeft`, `footerRight` and `returnChip`. Their tests move to `StatusTextTest`.
+
+### 5.4 Drawing (RENDER: `render/PageRenderer.kt` + pure `render/StatusMath.kt`, `render/ProgressMath.kt`)
+
+`statusPaint.fontFeatureSettings = "tnum"`, set once in the constructor. Delete `FOOTER_SEP` and `footerSepWidth`.
+
+**Shared entry point**, called by `draw(...)` (paged) and **[Δ]** by the scroll SPEC's `drawChrome(canvas, decor,
+contentLeft, contentTop, contentWidth, contentHeight, viewWidth, viewHeight)`. `drawChrome` has no ribbon argument:
+it computes `ribbonH` from `decor.bookmarked` exactly as `draw()` does, so the header keeps clear of the ribbon that
+`drawOverlay` paints last.
+```kotlin
+internal fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Float, cw: Float, ch: Float,
+                        viewW: Int, viewH: Int, ribbonH: Float) {
+    val st = decor.status ?: return
+    val lane = if (st.lane) Math.round(ReaderSettings.PROGRESS_LANE_DP * density) else 0   // [Δ] settings, not data
+    if (!st.header.isEmpty) {
+        val inset = RibbonMath.headerInset(…)                     // as today: keeps the ribbon clear
+        drawBand(canvas, st.header, left + inset, cw - 2 * inset, centredBaseline(0f, top), HEADER)
+    }
+    if (!st.footer.isEmpty) drawBand(canvas, st.footer, left, cw, centredBaseline(top + ch, (viewH - lane).toFloat()), FOOTER)
+    if (lane > 0) drawProgress(canvas, st.progress, viewW, viewH)
+}
+```
+
+**`drawBand`:**
+- **Measuring:** each non-empty slot's natural width is measured with no allocation: `statusPaint.measureText(chars,
+  0, n)` or `measureText(text, 0, len)`, plus the battery width (`BatteryMath` body + nub + 2 px + digits) and a
+  0.5 em gap when a slot has both chars and a battery.
+- **Allocation:** `StatusMath.allocate(...)`.
+- **[Δ] Cached per version.** The renderer keeps the six slot x positions and widths in a `FloatArray(12)` keyed by
+  `(st.version, cw, header inset)`. Measuring and allocation run only when that key changes (a page turn with a
+  changed status), never per draw. Redraws of the same page (TTS highlight, selection, and **every frame of the
+  scroll SPEC's SMOOTH mode**, 60–120 draws a second) then cost 6 `drawText` calls and nothing else.
+- **Drawing:** all three slots on **one shared baseline**: left at `x0`, centre at `x0 + (w − wc)/2` (exactly centred
+  on the text column), right at `x0 + w − wr`. Chars use `canvas.drawText(char[], 0, n, x, y, paint)`; the battery
+  uses the existing pixel-aligned `drawBattery`.
+
+**`StatusMath.allocate(w, gap, nl, nc, nr, el, ec, er, minElastic, out: FloatArray)`** is pure and tested.
+- **Inputs:**
+  - `n*`: natural widths (0 = empty);
+  - `e*`: elastic (title) slots;
+  - `gap = max(statusPx, 8dp)`, i.e. 1 em;
+  - `minElastic = 3·statusPx`.
+- **Rules:**
+  - **No centre:** natural widths if `nl + nr + gap ≤ w`. Otherwise shrink the elastic side(s):
+    - both elastic → split `w − gap`, where a side that needs ≤ half keeps its natural width;
+    - one elastic → it gets `w − gap − fixedOther`;
+    - both fixed and overflowing → hide the left.
+  - **Centre present:** `side = max(fixed widths of L, R)`, and `wc = ec ? min(nc, w − 2(side + gap)) : nc`. Each
+    side gets `room = (w − wc)/2 − gap`: an elastic side gets `min(n, room)`; a fixed side is `n` if `n ≤ room`,
+    else hidden.
+  - An elastic slot allocated less than `min(natural, minElastic)` is hidden (0). It never shows a lone "…".
+  - **Fixed items are never shortened.**
+- **Ellipsizing:** each of the 6 slot positions caches `(srcRef, allocatedPx) → CharSequence`, like today's
+  `ellipsizedHeader`. So `TextUtils.ellipsize` runs only when the title or its width changes (about once per chapter).
+- **Worked example:** 40 dp side margins → `w = 280dp`, gap 11 dp. Left `123 / 3614` (55 dp), centre = chapter title,
+  right `14:05` (28 dp). The title gets `280 − 2·(55 + 11) = 148 dp`.
+
+**`drawProgress`** (`ProgressMath` pure; px at density 2 in brackets). Black on white only (inverted: white on
+black). Order: track, caps, dot.
+
+| Element | Geometry | Paint |
+|---|---|---|
+| lane | bottom `PROGRESS_LANE_DP = 12dp` (24 px) of the view | – |
+| `yc` | `viewH − round(6dp)` (1428), an integer px | – |
+| track | rect `[x0, yc, x1, yc + 1)`, **1 physical px**, `x0 = round(12dp)` (24), `x1 = viewW − round(12dp)` (696) | `fg`, FILL, no AA |
+| end caps | circles `rCap = 1.5dp` (3 px) at `(x0, yc + .5)` and `(x1, yc + .5)` | `fg`, AA |
+| dot | circle `rDot = 3dp` (6 px) at `(round(d0 + f·(d1 − d0)) + .5, yc + .5)`, with `d0 = x0 + rCap + rDot` and `d1 = x1 − rCap − rDot`. At 0 it touches the start cap ("●●", as ReadEra); at 1 it touches the end cap. `trackPx = d1 − d0`. | `fg`, AA |
+
+- **[Δ] Unknown position** (`progress < 0` with `lane`): track and caps only, no dot. The band geometry does not change.
+- **Page edges, not the text column:** this matches ReadEra (4f482943) and is independent of the side margins.
+- **Not interactive:** taps follow the tap zones.
+- **Cost:** 1 rect and 3 circles per draw.
+
+### 5.5 Settings UX
+
+**Reading-settings popup** (EXTRAS_TOOLS, `ReadingSettingsPopup.addPage`, which replaces the phase-0-deleted rows):
+```
+상태 표시                                            (compactHeader; black group line above)
+위     [ 없음 ] [ 챕터 제목 ] [ 없음 ]                  44dp slot-map row
+아래   [ 없음 ] [   없음   ] [ 없음 ]                  44dp slot-map row
+진행 막대                                       (●  )   44dp switch row, summary "화면 맨 아래 가는 선"
+상태 글자 크기                            (−) 11 (+)    44dp; visible iff hasHeader || hasFooterText
+```
+- **Slot-map row:** `compactRow(topLine = true)` with a 40 dp label ("위" / "아래", 15 sp), then 3 buttons.
+  - **Layout:** `weight 1`, 4 dp gaps, **44 dp tall** (the touch target), visual box 36 dp via
+    `InsetDrawable(box, 0, 4dp, 0, 4dp)`.
+  - **Text:** 13 sp, `maxLines 1`, END ellipsis, `item.short`.
+  - **Filled slot:** 1 dp solid black border, radius 0, black text.
+  - **Empty slot:** 1 dp **dashed** border (`GradientDrawable.setStroke(1dp, Ink.GRAY, 3dp, 2dp)`) and "없음" in
+    `Ink.GRAY`. **[Δ]** The earlier value was `Ink.DISABLED`. #999 thresholds to white in fast e-ink modes, which
+    would leave an empty-looking, unlabelled button. Dashed vs solid carries the state, and #555 stays visible.
+  - **Content description:** **"아래 오른쪽: 시계"** (band word, position word, colon, item label). CI uses it.
+- **Tap** → `CompactList.show(ctx, button, entries, widthPx = max(dp(220), button.width), maxHeightFraction = 0.8f)`.
+  - `entries = StatusItem.entries.map { ListEntry(it.label, checked = it == cur, note = sampleOrExample(it)) { update(cur.withSlot(band, pos, it)) } }`.
+  - `sampleOrExample` = `(host as? StatusSampleHost)?.statusSample(it) ?: it.example`, shown right-aligned in grey.
+    The user sees the live value ("3 / 167", "1%", "제1화 시작", "14:05", "100"). **[Δ]** `sample(CHAPTER)` ignores
+    `chapterStartsHere`, so the chooser shows the title even on a chapter's first page.
+  - `CompactList.show` and `PopupGeometry.dropdown` gain `maxHeightFraction: Float = PopupGeometry.HEIGHT_FRACTION`
+    (X-T, not frozen). 12 rows × 40 dp = 480 dp fits under 0.8 × 720 dp.
+- **Apply:** `update()` → `host.applySettings(global)`. Item ↔ item repaints; NONE ↔ item relays out.
+
+**Settings page** (SETTINGS, `PageTurningPage`, section "페이지 표시", ≈ l.155):
+```kotlin
+section("상태 표시줄")
+note("위 · 아래 줄의 왼쪽 · 가운데 · 오른쪽에 보일 정보를 고르세요. 한 줄이 모두 '없음'이면 그 줄은 나타나지 않습니다.")
+for (band in 0..1) for (pos in 0..2)   // "위 · 왼쪽" … "아래 · 오른쪽"
+    valueRow(title(band, pos), r.slot(band, pos).label) { chooser(title, StatusItem.entries.map { "${it.label}${it.example?.let { e -> "  ($e)" } ?: ""}" }, idx) { i -> editReader { it.withSlot(band, pos, StatusItem.entries[i]) } } }
+toggleRow("진행 막대", "화면 맨 아래에 읽은 위치를 가는 선과 점으로 표시", r.progressBar) { v -> editReader { it.copy(progressBar = v) } }
+// existing "상태 표시 글자 크기" stepper stays; 흑백 반전 / 페이지 여백 rows stay where they are
+```
+
+**"기본값 복원"** (popup footer) resets to `ReaderSettings()`: header = chapter title, no footer, line on. The confirm
+text already mentions 상태 표시.
+
+### 5.6 Scroll mode ([Δ] rewritten against the final scroll SPEC, design B + C grafts)
+
+- **Bands:** the header band, footer band and progress lane are **fixed in the viewport**. The geometry above is
+  identical in both modes (scroll SPEC §1.4: "viewport = the paged content box"). The scroll SPEC's
+  `PageRenderer.drawChrome` (§1.8 there) draws the background and calls `drawStatus(...)`, which draws the slots **and**
+  the progress line unchanged. `drawBody` clips the text to the content box, so the lane is never scrolled over.
+- **When the status updates:** at **settle** only (scroll SPEC §1.6 "the whole settle pipeline"), never per frame.
+  `onTopPageChanged` rebuilds `scroll.decor` with `buildDecor(sample = true)`. Every settle also re-samples; if the
+  version changed, `scroll.decor` is rebuilt in the same step. Inputs:
+  - `page` / `total` = the **real** paged page holding the anchor line (design B: exact, not an estimate);
+  - `bar` = the char progress of the anchor line (`counts.charProgress(section, anchor.offset)`), 1 at `atBookEnd()`;
+  - `chapterStartsHere` = the anchor line is the chapter start.
+- **One e-ink update per STEP [Δ].** In STEP mode the settle (and so the status update) must run in the same
+  main-thread task as the step's `invalidate()`, so the moved text and the new footer land in **one** frame. Posting
+  the settle would draw twice, i.e. two e-ink updates per tap.
+- **Return point:** `ReturnHost.currentPosition()` = the virtual page's `(vp.section, vp.page.start)` (scroll SPEC
+  §1.10); `isOnCurrentPage` = inside `visibleRanges`. `onManualTurn()` is called once per step and once per screen of
+  accumulated drag (`ScreenCounter`). `jumpToReturn` = `showAt(…, TOP, JUMP)` through the existing `jumpTo` branch.
+- **Pinned chrome:** does not exist any more. The scroll SPEC's two mentions are edited in the phase-0 pass (§1.11):
+  `onScrollStart` closes the chrome unconditionally, and the §1.12 relayout row drops "pinned chrome".
+- **SMOOTH frames:** `drawChrome` runs every frame. The per-version cache (§5.4) keeps that at 6 `drawText` calls
+  plus 1 rect and 3 circles, with 0 measuring and 0 allocation.
+- **Side margins:** 40 dp shown as "0" does not interact. Slot text follows the text column; the line follows the
+  page edges.
+
+### 5.7 Costs
+
+| Event | Work | Allocation |
+|---|---|---|
+| Page turn | `update`: ≤ 6 slots, each O(1) into fixed buffers; `indexAt` O(log C) (existing); `charProgress` O(1); clock via cached tz; battery ≤ 1/min | **0 bytes for status**; highlight list only when a highlight overlaps. `PageFrame` + `PageDecor` remain (existing, one small object each). |
+| Draw | ≤ 6 `drawText` (char[]), ≤ 2 batteries, 1 rect + 3 circles; **[Δ]** `measureText` only when `decor.version` or the width changed: < 0.1 ms | 0 (the ellipsize cache changes once per chapter) |
+| Counts complete | page labels exact; with default settings (no PAGE item) **no status redraw** (version unchanged) | 0 |
+| Slot change item → item | repaint | – |
+| Slot change NONE ↔ item | relayout plus one recount under the new key (cached afterwards) | – |
+| Background refresh (counts, highlights, bookmark, episodes) **[Δ]** | clock and battery are **not** re-sampled; a redraw happens only when that event's own data changed | 0 |
+| `onResume` **[Δ]** | clock and battery re-sampled; `refreshDecor(onlyIfChanged)` rides on the resume redraw | 0 |
+| Timers, idle work | **none**: the clock refreshes on turns, settles and resume only | – |
+
+---
+
+## 6. Polish list (P0 all, P1 most), with exact locations and values
+
+"≈ l." = working-tree line. Owners use the §7 abbreviations.
+
+| # | P | Owner | Location (symbol, ≈ line) | Exact change |
+|---|---|---|---|---|
+| 1 | P0 | READER_UI | `ReaderChrome` init, `pageLabel` (≈ l.150-165), `row` → `FrameLayout` | §2.4 (full-width centre, 17 sp bold, tnum, no underline, **[Δ]** fixed width `rowW − 216dp` set outside layout passes, autosize 14–17 sp, content description with the page) |
+| 2 | P0 | READER_A, READER_UI, X-T, SET, contract | §2.6 table | pinned chrome deleted; pin = return point (§3) |
+| 3 | P0 | READER_UI, READER_A, SET, LIB, contract | §4 | device path, verdict flow, honest fallback |
+| 4 | P0 | READER_UI | `ReaderChrome` `brightnessShow`, expand button (≈ l.118-145) | §2.2/2.3 options panel |
+| 5 | P0 | contract, READER_B, RENDER, READER_UI, READER_A, X-T, SET | §1.1, §5 | slots + progress line |
+| 6 | P0 | contract + READER_UI | `Ui.kt` `pressableBackground` (≈ l.161-165); `ReaderChrome.setPinned/setRotationLocked/setBrightness` (`isSelected`, ≈ l.330-348) | delete `state_selected`; icon swap only |
+| 7 | P1 | X-T | `ReadingSettingsPopup.show()` (≈ l.100-150); `ExtrasFormat.PopupGeometry` (≈ l.342-374) | `showAtLocation(root, TOP or CENTER_HORIZONTAL, 0, place.top)`. `SIDE_GAP_DP = 16`, `MAX_WIDTH_DP = 400` → `width = min(screenW − 16dp, 400dp)`. `settings(...)`: `top = anchorBottom + 8dp` where `anchorBottom = Overlay.topInset(root)`. `HEIGHT_FRACTION = 0.56f`. |
+| 8 | P1 | X-T | `CompactUi.Compact` (≈ l.35-52), `compactRow`, `compactToggle` (≈ l.100-120), `addTypography` | `ROW_DP = 44`, `STEP_DP = 44`, `LABEL_SP = 15f`, `VALUE_SP = 16f`, `HEADER_SP = 13f`, toggle `minHeight = 36dp`. Merge 정렬 and 줄바꿈 into one row "정렬 [왼쪽│양쪽]   줄바꿈 [어절│글자]" → `MAIN_ROWS = 9` (9 × 44 = 396 dp). Group lines: `compactRowBackground(…, topLine)` draws `Ink.LINE_LIGHT` inset 12 dp for ordinary rows; **black** only before section headers (페이지 넘김, 글자, 페이지, 상태 표시, TXT 파일, EPUB 파일) and before 더보기. The 더보기 row shows "더보기" + chevron only (drop the grey summary). |
+| 9 | P1 | contract (Ui.kt) | `label()`, `row()` summary, `note()` | PHRASE line breaking on API 33+; `keepAll()` for summaries and notes (§1.6). Verify on the Comet (§9 D3). |
+| 10 | P1 | READER_UI, X-N | `ReaderChrome` title row (≈ l.115); `ContentsDialog` title (≈ l.72) | Chrome title padding `(20, 0, 16, 10)`, 17 sp bold, 1 line. TOC title 20 sp bold through the kit toolbar style (was 19 sp). |
+| 11 | P1 | READER_UI, RENDER | `pageLabel`; `PageRenderer.statusPaint` (≈ l.46) | `fontFeatureSettings = "tnum"`, set once |
+| 12 | P1 | contract (Toggle.kt, Ui.kt), SET | `InkToggle.onDraw`; `Ui.row()`; `SettingsPage.section` (≈ l.80-83), `navRow`/`valueRow` (≈ l.92-97) | Off = filled black knob (§1.6). Row end padding 16 dp. `section()` drops the hairline above (spacing only, header padding 24/8). `navRow` chevron and `valueRow` ▾ are both 24 dp `Ink.GRAY`. |
+| 13 | P1 | X-T | `SelectionController.actionList()` / `showActions()` (≈ l.360-410) | One row of 5: **복사, 인용 (or 메모 when a quote exists), 메모 (or 인용 삭제), 사전·번역, ⋮ 더보기**. ⋮ opens `popupMenu` with 공유, 문단, 검색, 웹 검색, 여기서 읽기, 문구 지우기. Cells `(W − 16dp)/5` wide, 56 dp tall, labels 13 sp. `borderBox(radiusDp = 0f)`. Pure helper `SelectionActions.split(list): Pair<primary, overflow>` (tested). |
+| 14 | P1 | LIBRARY, contract (res) | `LibraryViews` card (≈ l.150-166); `LibraryActivity` list (≈ l.424-432) | Card padding `(10, 10, 6, 10)` dp. Card border removed: a 1 px `LINE_LIGHT` separator between cards, inset 8 dp; pressed = `PRESSED` fill. The cover keeps its 1 px border. List `paddingEnd 12dp`. Theme fast-scroll drawables (§1.8). **Coordinate with task #19 (library views)** if it runs in the same pass: same owner, same files. |
+| 15 | P1 | READER_UI | `ReturnNav.chip` | Same language as the strip: "‹ N 페이지로 \| ✕", 15 sp regular, 1 px border, radius 0 (§3.4). |
+| 16 | P1 | READER_A, READER_UI | `buildDecor` `chapterStartsHere`; `StatusModel.update` | The header chapter title is not drawn on the page that begins that chapter ("프롤로그" over "프롤로그"). The band stays, so no relayout. |
+| 17 | P1 | READER_A | `ReaderFormat.previewLabel` (≈ l.148) | "1234쪽 · 제3장 …" (was "p. 1234 · …"); `ReaderFormatTest` updated |
+| 18 | P1 | X-T | `compactToggle` / `setCompactToggle` | A joined segmented control: one 1 px border, 1 px inner dividers, no radius. Selected = black fill + white **regular** text. There is no weight change, so the bold-width reservation hack goes. |
+
+**Deferred (P2; not in this run):**
+- Selection handles as teardrops.
+- TOC current-row bar (drop the ▶ glyph).
+- Search page-number style and snippet word cut.
+- Library title weight and progress-fill thickness.
+- Drawer selected state (bar instead of fill).
+- Status font default 12 sp.
+- Popup title header, and the "일반 설정" link.
+- Chapter ticks on the progress line.
+- Big-TXT estimate stability (§9 R9).
+
+---
+
+## 7. Owner map (disjoint files; compatible with the scroll SPEC in one implementation run)
+
+### 7.1 Owners
+
+The R2 owners are kept. READER_A's UI files are carved out into **READER_UI**. None of the three scroll designs edits
+a READER_UI file: they touch `ReaderActivity`, `PageView`, `ReaderFormat`, `ReaderMenus` and new scroll files. The
+scroll spec's owners then do not change, and READER_A's load halves.
+
+| Owner | Files (main + their tests) | This spec's work | The scroll spec's work in the same files (for the same agent) |
+|---|---|---|---|
+| **CONTRACT** (lead, phase 0, serial) | `settings/*` (incl. new `StatusMigration.kt`), `data/SettingsJson.kt`, `data/LibrarySchema.kt`, `ui/kit/Ui.kt`, `ui/kit/Toggle.kt`, `reader/ReaderHost.kt`, frozen block of `reader/extras/ReaderPanels.kt`, `AndroidManifest.xml`, `res/**`, `docs/**`, `tools/ci/*`, skeletons and fallout (§1.9–1.10) | §1; CI steps §8.2 | ReadMode/ScrollStyle/autoBackup fields, `r.marginBase` migration, TRANSIENT keys, `PageInfo.lead`, `UserStyles` `marginBase`, the scroll stubs (§1.11), docs (**[Δ]** no `ContentOriginHost`: design B needs none) |
+| **READER_UI** (new) | `reader/ReaderChrome.kt`, new `reader/ReturnNav.kt`, `reader/StatusModel.kt`, `reader/LightController.kt`, `reader/LightCurve.kt`, `reader/DeviceLight.kt`, `reader/LightProbe.kt`, new `reader/ChromeMath.kt` (pure: label max width, keylines) | §2, §3.2–3.4, §4.2–4.5, §5.3 model, polish 1, 4, 6, 10, 11, 15, 16 | none |
+| **READER_A** | `reader/ReaderActivity.kt`, `PageView.kt`, `ReaderFormat.kt`, `ReaderMenus.kt`, `ReaderWindow.kt` (holds `ReaderIo`; this spec does not edit it, and the window brightness path is unchanged), `KeyMap.kt`, `TapZones.kt`, `ReaderMath.kt`, `ChapterIndex.kt`, `IntentFiles.kt`, `UriPaths.kt`, `TxtOverrides.kt`, `EndPanel.kt`, `ReadingTracker.kt`, plus the scroll spec's new reader files | §2.6 removals, §3.5 wiring, §4.2 hooks, §5.3 `buildDecor` / clock / battery / `StatusSampleHost`, polish 16, 17 | **[Δ]** final SPEC: `ScrollMath` / `ScrollReader`, the `scroll?.let` branch points, `PageView.ScrollInput`, `switchMode`, menu labels (as READER_CORE) |
+| **READER_B** | `reader/BookSession.kt`, `PageCounts.kt`, `LayoutKeys.kt` | §5.1 | **[Δ]** final SPEC: `touch(section, shownTo)`, `startsUnit` (as READER_CORE); no strip config, no counts guard |
+| **RENDER** | `render/*` except `FontCatalog.kt`: `PageRenderer.kt`, `Render.kt`, `StatusDecor.kt`, new `StatusMath.kt`, `ProgressMath.kt`, `Covers.kt` | §5.2, §5.4, polish 11 | **[Δ]** final scroll SPEC: `drawChrome` / `drawBody` / `drawOverlay` / `prefetchPage`, `drawLine(decode)`, `DeviceClass` (as ENGINE_RENDER, §7.1 mapping) |
+| **EXTRAS_TOOLS** | `reader/extras/*` except EXTRAS_NAV's files: `ReadingSettingsPopup.kt`, `CompactUi.kt`, `ExtrasFormat.kt`, `SelectionController.kt`, `ReaderPanels.kt` (non-frozen part), … | §5.5 popup, §2.6 popup branch, polish 7, 8, 13, 18 | "넘기는 방식" row, the side-margin stepper and `Fmt.signed` |
+| **EXTRAS_NAV** | `ContentsDialog.kt`, `InfoDialogs.kt`, `SearchPanel.kt`, `Episodes.kt`, `ui/kit/InkPager.kt`, `InkNumPad.kt` | polish 10 (TOC title) only | none required |
+| **SETTINGS** | `ui/settings/*` | §4.6, §5.5 page, polish 12 (SettingsPage) | PageTurningPage "넘기는 방식" section, MainPage brightness summary in scroll mode, BackupPage auto-backup |
+| **LIBRARY** | `ui/library/*` | `DeviceLight.restoreIfStale` call (§4.3), polish 14 | auto-backup triggers, the restore offer |
+| **DATA** | `data/*` except the frozen ones: `BookPrefs.kt`, `Backup*.kt`, `BookRows.kt`, `Library*.kt` | §3.3 (`returnMark`, backup `"returnMark"`, `resetProgress`) | `AutoBackup.kt`, `InstallState.kt`, envelope `origin` / `summary` |
+| **FORMAT** | `format/**` | none | none |
+
+Shared hot spots, and why they do not conflict:
+- **`ReaderActivity.kt`:** one owner (READER_A) does both specs' edits. This spec's edits there are hooks and
+  deletions; the logic lives in READER_UI files.
+- **`PageRenderer.kt`:** one owner (RENDER = ENGINE_RENDER). `drawStatus` becomes the single entry point that the
+  scroll SPEC's `drawChrome` calls **[Δ]**. The scroll SPEC keeps the paged `draw()` byte-identical *for its own
+  changes*; this spec's status changes inside `drawStatus` are the only paged-draw change.
+- **`ReadingSettingsPopup.kt`:** one owner (X-T). This spec edits `addPage`, `show()` and `Compact`. The scroll spec
+  edits `addPageTurning` and the margins row.
+- **`PageTurningPage.kt`:** one owner (SET). The status section here; the "넘기는 방식" section from the scroll spec.
+- **`LayoutKeys.kt`:** one owner (READER_B = READER_CORE). `geometry` / `layoutPart` here. **[Δ]** The final scroll SPEC
+  does not touch it (its viewport is the paged content box); only its margin test expectations change.
+  Scroll mode must stay out of `layoutPart`.
+
+If the run wants a single reader owner, merge READER_UI into READER_A; nothing else changes.
+
+**[Δ] Combined run with the final scroll SPEC (its §4 owner names win; this spec's names map onto them):**
+
+| This spec | Scroll SPEC owner in a combined run | Notes |
+|---|---|---|
+| CONTRACT | CONTRACT (the lead) | One phase-0 commit "R3" with both specs' §1 lists, after R2 merges |
+| READER_A + READER_B | **READER_CORE** | The scroll SPEC's READER_CORE already absorbs READER_B (`BookSession`); it also takes `LayoutKeys.kt` / `PageCounts.kt` and `ReaderMenus` (bookmark fallback, §2.2). |
+| READER_UI | **READER_UI** (kept separate) | The scroll SPEC's Risk 2 says "READER_CORE owns all of `reader/*.kt`". It is amended to "…except `ReaderChrome.kt` and the new `ReturnNav`, `StatusModel`, `Light*`, `DeviceLight`, `ChromeMath`". The scroll SPEC edits none of these. |
+| RENDER | **ENGINE_RENDER** | `PageRenderer.kt` gets both specs' work (`drawStatus`/`drawBand`/`drawProgress` plus `drawChrome`/`drawBody`/`drawOverlay`); also `Render.kt`, `StatusDecor.kt`, `StatusMath.kt`, `ProgressMath.kt`, `Covers.kt`, `DeviceClass.kt` |
+| EXTRAS_TOOLS + EXTRAS_NAV | **EXTRAS** | The scroll SPEC's EXTRAS "only `ReadingSettingsPopup.kt` changes" is widened to `CompactUi.kt`, `ExtrasFormat.kt`, `SelectionController.kt`, the non-frozen part of `ReaderPanels.kt` and `ContentsDialog.kt` (polish 7, 8, 10, 13, 18) |
+| SETTINGS + LIBRARY | **UI** | `ui/settings/*` and `ui/library/*`. `tools/ci/screenshots.sh` moves to UI as well, per the scroll SPEC, so both specs' shots are in one file. |
+| DATA | DATA | `BookPrefs.returnMark`, backup `"returnMark"`, `resetProgress`, plus the scroll SPEC's `AutoBackup` / `InstallState` |
+
+Dependencies across owners in phase 1 are only phase-0 stubs:
+- READER_UI → `DeviceClass` (ENGINE_RENDER stub);
+- READER_CORE → `ReturnNav`, `LightController`, `StatusModel` (READER_UI stubs);
+- EXTRAS → `StatusSampleHost`.
+
+### 7.2 Phases
+
+1. **Phase 0 (CONTRACT, serial):**
+   - §1.1–1.8 **plus the scroll spec's contract requests**;
+   - skeletons (§1.9) and fallout (§1.10);
+   - contract tests (§8.1 "contract");
+   - `tools/typecheck.sh` green and `tools/snapshot_contracts.sh`.
+2. **Phase 1 (parallel):** all other owners. Each owner runs `tools/typecheck.sh --own` and its tests.
+   - READER_A codes against READER_UI's phase-0 signatures; READER_UI's stubs are safe no-ops, so the order does not
+     matter.
+   - RENDER and READER_B are independent.
+   - X-T needs only `StatusSampleHost` and `StatusItem`.
+3. **Phase 2 (lead):**
+   - full `tools/unittest.sh`, then a `[screens]` CI run;
+   - check every §8.2 expectation against the screenshots;
+   - the adversarial review pass;
+   - remove any `// R3 stub` left behind: `grep -rn 'R3 stub\|TODO("owner' app/src/main/java` must print nothing.
+
+### 7.3 Order inside an owner, for the smallest broken window
+
+- **READER_A:** removals (§2.6) first. They delete most relayout paths and make the chrome an overlay.
+- **READER_UI:** `ReaderChrome` layout and the ReturnPoints/Codec tests, then `ReturnNav` views, `StatusModel`, and the
+  light components.
+
+### 7.4 [Δ] The scroll SPEC's assumptions, checked (the SPEC now exists)
+
+| Earlier assumption | Final scroll SPEC | Consequence here |
+|---|---|---|
+| Keeps the R2 owners and does not edit READER_UI's files | Renames owners (READER_CORE, ENGINE_RENDER, EXTRAS, DATA, UI); edits no READER_UI file | §7.1 mapping table |
+| Status bands fixed in scroll mode, drawn through `drawStatus`, updated at settle | Yes: `drawChrome` → the shared private `drawStatus`; decor rebuilt at settle / top-page change | §5.4 entry point, §5.6 |
+| "Page" in scroll mode = the paged-equivalent page of the top line | Better: the **real** page holding the anchor line (exact) | §5.6 inputs |
+| No pinned chrome, no bar-driven resize | Two stale mentions ("Close unpinned chrome", "pinned chrome" in the relayout row) | edited in phase 0 (§1.11) |
+| Contract edits use different fields and keys | Yes: `readMode`, `scrollStyle`, `autoBackup`, `r.marginBase`, `TRANSIENT` additions | merged in one pass |
+| (new) E-ink detection | `render/DeviceClass.kt` | `DeviceLight.looksEink` uses it (§4.3 fix 4) |
+| (new) Paged-shot gate "differ only by the margins" | Would fail on this spec's chrome/footer | gate text widened (§1.11) |
+
+## 8. Tests
+
+### 8.1 JVM (`tools/unittest.sh`)
+
+| Owner | Test | Cases |
+|---|---|---|
+| contract | `settings/StatusMigrationTest` (new) | absent keys → header CHAPTER, footer NONE; **untouched old defaults → footer NONE**; `showFooter=false` → NONE; `showHeader=false` → header NONE; page only → left PAGE; page+%+clock → PAGE/PERCENT/CLOCK; %+clock+battery → PERCENT/NONE/CLOCK_BATTERY; everything → PAGE/EPISODE/CLOCK_BATTERY; timeLeft 1/2; `Legacy.from(JSONObject)` with wrong types → null fields |
+| contract | `settings/SettingsStoreTest` (+) | legacy prefs load migrated; after `saveReader` the legacy keys are gone and the marker exists; round trip of every item in every slot; unknown enum name → default; `saveApp` removes `a.pinChrome`; `brightnessDevice`/`brightnessRestore` round trip; `slot`/`withSlot` cover all 6 positions |
+| contract | `data/SettingsJsonStatusTest` (new) | old backup with legacy defaults → NONE; customised legacy → mapping; new-backup round trip; `a.pinChrome` in an old backup neither mapped nor restored raw; `addUnmapped` never exports a `DROPPED_KEYS` key; **[Δ]** `a.brightnessDevice = true` on the device is never exported, and one in a backup never changes the device's value |
+| contract | `data/LibrarySchemaV2Test` (+ v3 cases) | fresh file has `book_prefs.return_mark`; v1 → v3 and v2 → v3 via `upgradeStatements` (ALTER only when missing); every `LibrarySql` statement prepares |
+| contract | `ui/kit/KitResourcesTest` (+) | `keepAll` inserts U+2060 only between Hangul syllables; ASCII and mixed text unchanged; the same instance is returned when there is no Hangul pair |
+| READER_UI | `reader/StatusTextTest` (new) | each formatter equals its `ReaderFormat` twin over ranges: page 1..99999 × totals, percent 0..100, all 1440 minutes × 12/24 h, chapterLeft −1..999, episode both modes, durations 0..6000 min; the 48-char buffer is never exceeded |
+| READER_UI | `reader/StatusModelTest` (new) | only shown items are formatted; `update` returns false for identical inputs and true for a changed minute, battery, page or dot px; dot < 1 px → false; `chapterStartsHere` blanks CHAPTER only; **[Δ]** `lane` follows `progressBar` even when `bar = −1`; `sample(CHAPTER)` ignores `chapterStartsHere`; **zero allocation**: 10 000 `update` calls allocate 0 bytes after warm-up (extract `TypesetterPerfTest`'s `getThreadAllocatedBytes` helper into `test/.../AllocCounter.kt`) |
+| READER_UI | `reader/ReturnPointsTest` (new) | every §3.2 transition, incl. ★1 pin-with-temporary-mark keeps it as `other`; toggle `useMark`/`useOther`; `manualTurn` hides the chip after 2 turns and keeps the state; `restorePinned` demotes a temporary mark; `reparsed`. **[Δ]** ★3 three jumps with no manual turn in between keep the first origin, and one manual turn starts a new chain; ✕ then another jump re-arms `chainOffer`; ★4 pinned, jump from the mark keeps `other`; ★5 `offer` survives a chrome show/hide (a pure `chipVisible(state, chromeVisible, targetOnScreen)`); pin and clear reset `landed` |
+| READER_UI | `reader/ReturnMarkCodecTest` (new) | round trip; malformed, NaN or negative → null; fraction clamped; empty signature = EPUB |
+| READER_UI | `reader/LightCurveTest` (new) | brightness.md §8: monotonic; `level` in 1..255; `level(out(pos(fraction(v)))) == v` for v in 1..255; `isExternal` table; **[Δ]** `stillOurs(current, last)` (equal, ±2, ±last/32 → true; the user's 120 vs our 30 → false); `LightProbe.KEY_RE` matches `ColdValue`, `screen_brightness_warm`, `LastWarmLight`, `screen_cool_brightness` and not `font_scale`; the pure `nextVerdict(ask, yes)` covers all 5 edges |
+| READER_UI | `reader/ChromeMathTest` (new) | `labelMaxWidth(rowW = 720 px, density 2) = 288 px`; the label centre equals the row centre for any label width ≤ max; **[Δ]** `stripShort(left, centre, right, rowW, gap)`: false for "‹ 10 페이지로" at 720 px, true for "‹ 12345 페이지로" + "23259 페이지로 ›" at 1.3× font scale; `bookmarkFits(rowW)` flips at 352 dp |
+| READER_A | `ReaderFormatTest`, `ReaderReviewFixesTest`, `ReaderR2FeaturesTest` (edit) | drop `returnChip`, `footerLeft/Right`; `previewLabel` → "1234쪽 · …" |
+| READER_B | `reader/LayoutKeysTest` (+) | no bands when all NONE; header band iff `hasHeader`; item swap (PAGE→CLOCK, CHAPTER→BOOK_TITLE) is **not** a layout change; NONE→PAGE is; `progressBar` toggle with mb 16 dp gives the same geometry and no layout change; with `pageMargins = false`: box −8 dp and a layout change; `statusFontSizeSp` change with no bands: no layout change; the §5.1 table at density 2 |
+| RENDER | `render/StatusMathTest` (new) | centre exactly centred with fixed sides; elastic centre = `w − 2(side + gap)`; fixed items never shrink; two elastic sides split; an elastic slot below `min(natural, 3em)` hidden; empty-centre cases; overflow of two fixed slots hides the left |
+| RENDER | `render/ProgressMathTest` (new) | `yc` is an integer; track x0/x1; dot at f = 0 touches the start cap and at 1 the end cap; px rounding; `trackPx` |
+| RENDER (ENGINE_RENDER) | `render/DeviceClassTest` (scroll SPEC, **[Δ]** +) | `("Google", "google", "Pixel 9 Pro Fold")` → false (codename "comet"); a Hisense LCD phone → false; Hisense A5/A7/A9 → true; Innospace → true |
+| RENDER | `render/StatusDrawCacheTest` **[Δ]** (new, pure part of the cache key) | same `(version, cw, inset)` → no re-measure; a changed version or width → re-measure |
+| X-T | `CompactSettingsTest` (edit), `PopupGeometryTest` (+) | width `min(W − 16dp, 400dp)`, centred; `top = inset + 8dp`; `HEIGHT_FRACTION 0.56` fits 9 × 44 dp + 2 px at 1440 px; `dropdown(maxHeightFraction = 0.8)` |
+| X-T | `SelectionActionsTest` (new) | `split` → 5 primary in order (quote vs no quote variants), the rest in overflow; `문구 지우기` only for TXT |
+| DATA | `data/BookPrefsBackupTest` (new or +) | `returnMark` in the book_prefs backup entry keyed by path; an old backup without it; `resetProgress` clears it |
+
+### 8.2 Emulator screenshots (`tools/ci/screenshots.sh`, CONTRACT/lead; **[Δ]** the UI owner in a combined run with the scroll SPEC; run with `[screens]`)
+
+New helpers:
+- **`rawshot NAME`:** `adb exec-out screencap > shots/NAME.raw`, raw RGBA with no PNG, for pixel comparisons.
+- **`tools/ci/raw_equal.py A.raw B.raw Y0 Y1`:** standard library only. It prints `EQUAL` or `DIFF n` for rows
+  `[Y0, Y1)` and logs to `steps.txt`. It never fails the job, like the other steps. **[Δ]** It reads the header
+  instead of assuming it: `w, h, fmt` as three little-endian uint32, and the header size is `file size − w·h·4`
+  (12 bytes before Android 8.x, 16 with the colour-space field on the emulator's Android 14). It prints `BADSIZE`
+  when the sizes differ. Row ranges must stay inside the PageView: the system bars (status-bar clock) change
+  between shots.
+
+Content descriptions used below are fixed by this spec: "밝기 옵션", "이 페이지 고정", "고정 해제", "지우기", "N 페이지로",
+"아래 가운데: 없음", "페이지 이동".
+
+| Shot | Steps (after today's 10–12) | What it must show |
+|---|---|---|
+| `10_txt_page1` | as today (defaults) | **No footer text.** The progress line spans x 24..696 px at y = 1428, with a 1 px track, dots at both ends and the position dot touching the start cap. The header shows the chapter title unless the page begins that chapter. |
+| `13_txt_chrome` | as today; also `rawshot 13_txt_chrome` | Top: back, then 🔖 🔊 🔍 ☰ ⚙ ⋮. The title is one line starting at x = 40 px. The brightness row is visible, **Ⓐ has no grey square**, and ⌄ sits at the right. Bottom: "3 / 167" **centred on x = 360 ± 2 px**, not underlined, bold. Only ⟳ and [pin icon] (outline) on the right. The seek row has ⏮ and ⏭. No strip. |
+| `13b_pin` | `tap_label "이 페이지 고정"`; shot; `rawshot 13b_pin` | The pin is **filled**. The strip reads **[Δ]** "(pin icon) 3 페이지" in grey (no chevron, no "로") · "지우기" above the label row. `raw_equal 13_txt_chrome 13b_pin 360 1100` → **EQUAL** (the page did not move or relayout; **[Δ]** rows start at 360 so the top bar's edge, about 324 px with a 24 dp inset, is never included). |
+| `13c_pin_close` | `adb shell input tap 360 700`; shot; `rawshot 13c` | The chrome is **closed** and **no page turn** happened: `raw_equal` against a `rawshot 12b` taken right after `12_txt_tap_right` → EQUAL over **[Δ]** the PageView rows (`dumpsys` bounds, or 80..1440 when the status bar shows). No chip (pinned marks never float; pinning is not a jump). |
+| `13d_return` | volume-down ×5; tap 360 720; shot `13d_strip`; `tap_label "3 페이지로" contains`; shot `13d_return` | `13d_strip`: label "8 / 167"; strip "‹ 3 페이지로" (black) · "지우기". `13d_return`: label "3 / 167"; strip **[Δ]** "(pin icon) 3 페이지" (grey) · "지우기" · "8 페이지로 ›". |
+| `13e_brightness_opts` | `tap_label "밝기 옵션"`; shot | The brightness row is **still visible**, the icon is now ⌃, and the panel lists "스와이프로 밝기 조절" (switch, off with a filled knob) and "기기 밝기 직접 조절". No question row (the emulator is not e-ink). |
+| `13f_clear` | `tap_label "지우기"`; shot (no `back`: the chrome stays open for today's `14_reading_settings` step) | The strip is gone and the pin is an outline |
+| `13g_seek_chip` **[Δ]** | after `13f` (menu open, no pin, page 3): drag the seek bar thumb to 70 % with `input swipe`, release; drag again to 60 %, release; tap 360 700 (closes the menu); shot. Then volume-down ×2, shot `13h_chip_gone`; tap 360 720 (reopens the menu for `14_reading_settings`) | `13g`: the chip "‹ 3 페이지로 \| ✕" floats bottom-left above the progress line. It offers the **first** origin of both seeks (★3) and appears even though both seeks were made with the menu open (★5). `13h`: the chip is gone after 2 manual turns. |
+| `14_reading_settings` | as today | The popup is **horizontally centred** (side gaps 16 ± 1 px each), its top 16 px below the status inset, rows 88 px tall, 정렬 and 줄바꿈 on **one row**, no scrollbar, light row lines, black group lines |
+| `14b_status_slots` | in the popup: `tap_label "더보기" contains`, swipe up inside the popup; shot | "상태 표시": 위 [없음(dashed)][챕터 제목][없음(dashed)] / 아래 all dashed; 진행 막대 switch on |
+| `14c_slot_list` | `tap_label "아래 가운데: 없음"`; shot; `tap_label "쪽 번호"` (the list closes); `back` once (closes the popup; a second back would leave the reader) | The list shows 12 items, with live notes on the right ("3 / 167", "1%", "2:39" …) and "없음" checked |
+| `10b_footer_slots` | shot after 14c (the page is visible) | The footer centre shows the page label (e.g. "3 / 1xx"; the total may change after the relayout) **centred on the text column**, on the same baseline band above the progress line. The page relaid out once (a footer band now exists). |
+| `17_selection` | as today | **One row of 5** (복사 · 인용 · 메모 · 사전·번역 · ⋮) with no hole |
+| `50_settings` | as today; plus `tap_label "페이지 넘김" contains`, scroll to "상태 표시줄", shot `51_status_page` | Off switches have filled knobs. Trailing controls end at x = 688 px. No black lines between sections. `51`: six slot rows + 진행 막대. |
+| `01_library` | as today | Card padding 20 px, hairline separators instead of boxes, a thin fast-scroll thumb |
+
+The scroll spec's screenshots, if it adds any, must also show the footer, progress line and return strip fixed while
+the text scrolls.
+
+---
+
+## 9. Risks and device checks
+
+| # | Risk | Mitigation / check |
+|---|---|---|
+| R1 | **Neither brightness path moves the Comet's front light** (likely if it is a Bigme build) | The verdict flow ends in NONE: the original value is restored, and the honest "기기 조명 설정에서 조절 ›" replaces the slider. **D1** tells us for sure. |
+| R2 | `screen_brightness` works but maps oddly (vendor 36-step quantisation, a 0–100 range, a floor that stays lit) | The echo window ignores the vendor echoing back. The 5/220 test in D1 shows the range. Add a learned `levelMax` only if needed (brightness.md R2). |
+| R3 | Global side effect of the device path (other apps, crash) | Restore on leave by default. The original is committed before the first write. `restoreIfStale` runs at library start. Install-stamp guard. |
+| R4 | Removing pinned chrome surprises someone who used it | It was the bug the user reported. There is no replacement mode. Old prefs and backups are dropped silently (`DROPPED_KEYS`). |
+| R5 | Migration hides a footer that a user liked | Only the untouched old default migrates to "none", which is the user's own request. Any customised footer maps to slots. |
+| R6 | `LINE_BREAK_WORD_STYLE_PHRASE` is ignored for Korean on the Comet's Android 14 | **D3.** If words still split, turn on `keepAll()` for `label()` text of more than 12 chars that is not a tap target. The helper already exists. |
+| R7 | The CJK bold is synthetic (fake bold) on some firmwares and looks smeared at 17 sp | This is today's rendering already. If D2 shows smear, drop the page label to regular with 18 sp (one constant in `ReaderChrome`). |
+| R8 | 1 px progress track and 3 px caps under the Comet's per-app waveform (A2/fast snaps greys) | Pure black/white art survives any waveform. The dot is 6 px radius. D2 checks legibility; if needed, a 2 px track is one `ProgressMath` constant. |
+| R9 | Big TXT total still jumps between opens while estimating (43828 → 32719) | Out of scope (READER_B P2: seed the prior from persisted counts of the same font family). The strip, label and footer all use the same `globalPageOf`, so they never disagree with each other. |
+| R10 | The DB v3 bump races another spec's bump in the same run | One shared `DB_VERSION = 3`; `ADDED_COLUMNS` entries are independent and column-guarded |
+| R11 | The shared mutable `StatusDecor` is drawn by an off-screen renderer (future page thumbnails, task #19) | Thumbnails must pass `PageDecor(status = null)` or their own `StatusDecor`. Documented in `PageDecor`'s KDoc. |
+| R12 | Library polish collides with task #19's library views | Same LIBRARY owner. If #19 runs in the same pass, apply polish 14 on top of its views. Otherwise #19 inherits it. |
+| R13 **[Δ]** | The user reads "띄워주는" as "the pinned link stays on the page with the menu closed", not "shown in the menu" | D2 asks the question outright. The fallback is the single constant `ReturnNav.PIN_FLOATS = true` (§3.1): an overlay chip, still no relayout. |
+| R14 **[Δ]** | Greys vanish under the Comet's fast per-app waveforms (A2/DU threshold #999 and #AAA to white) | No state depends on grey alone (House rules). Light lines only separate, and losing them is harmless. D2 also photographs the chrome in the device's "fast" mode. |
+| R15 **[Δ]** | The device path fights another app or the system over `screen_brightness` (auto-dim, a vendor light service) | The echo window plus `isExternal`: their value wins and the slider adopts it. `stillOurs` stops a stale put-back (§4.3 fix 1). |
+
+**Device checks for the user** (one Comet session; screenshots back):
+- **D1, brightness** (brightness.md §9):
+  1. Drag the bar fully left, then fully right, and answer the question honestly.
+  2. If 아니요: allow "시스템 설정 수정", come back and drag again.
+  3. 설정 › 정보 › 조명 진단: screenshot, then tap [변화 감지 30초], move the device's own brightness slider and then
+     its 색온도 slider, and take a second screenshot.
+  4. With adb, optionally: `settings list system` before/after moving the device slider; `settings put system
+     screen_brightness 5` / `220`; `ls -lZ /sys/bus/i2c/devices/*-0036/`; `input keyevent 220/221`.
+- **D2, chrome look:** open a book, tap the centre, photograph the bars.
+  - The label is centred and crisp.
+  - No grey squares.
+  - The pin works: tap it, turn 5 pages, tap "‹ N 페이지로", and the page never flips on its own.
+  - **[Δ] Ask the user:** "고정 버튼을 누른 뒤 메뉴를 닫았을 때, '‹ N 페이지로' 줄이 책 화면 위에 계속 떠 있어야 하나요,
+    아니면 메뉴를 열었을 때만 보이면 되나요?" (R13).
+  - **[Δ]** Repeat the photo with the Comet's per-app refresh mode set to its fastest mode: the pinned-page item
+    still reads as "(pin) N 페이지", and the empty status slots still show "없음".
+  - The progress line is visible at the bottom.
+- **D3, Korean line breaks:** settings summaries and the brightness option subtitle break only between words.
+- **D4, return pin persistence:** pin, close the book, reopen, open the menu. The strip still shows "‹ N 페이지로".
+- **D5 [Δ], brightness put-back:** with the device path on, set the light in the reader, then
+  `adb shell am force-stop com.ggumtak.readeraplus` (a stand-in for a crash). Change the light in the system panel,
+  then open the library. The panel's value stays: `restoreIfStale` does not put the old original back over it.
+
+---
+
+## 10. [Δ] Changelog: adversarial review (2026-09-30)
+
+Each entry names the problem found and where it is fixed.
+
+| # | Problem | Fix (section) |
+|---|---|---|
+| C1 | Written before the scroll SPEC existed. It cited design A/C APIs (`drawFrame`, `drawStrip`, `stripConfig`, `ContentOriginHost`, a "paged-equivalent" page) and R2 owner names that the final SPEC (design B) renamed. | Re-checked against `scroll/SPEC.md`: §1.11 merge list (void "unpinned chrome" and "pinned chrome" lines, widened paged-shot gate, "넘기는 방식" stays under 더보기), §5.6 rewritten, §7.1 owner mapping, §7.4 assumption table |
+| C2 | Any `refreshDecor` (counts complete, highlights, bookmarks, episodes) re-read the clock, so a background event could redraw the page with only a new minute: an unsolicited e-ink update. Today's `clock()` has the same bug. | House rules; §5.3 `buildDecor(sample)`: the clock and battery are sampled only when a page is shown, at settle and on resume; §5.7 |
+| C3 | Whether the progress lane existed depended on the data (`progress ≥ 0`), so an unknown position would move the footer text by 12 dp. | §5.2 `StatusDecor.lane` from the settings; §5.4 draws track and caps without a dot |
+| C4 | Scroll SMOOTH draws the chrome at 60–120 fps, which meant 6 `measureText` calls per frame. | §5.4 slot widths and x positions cached per `(version, cw, inset)` |
+| C5 | Seeking with the menu open left no chip after the menu closed (today's app shows one). Opening the menu killed the chip for good. A second seek overwrote the first origin, and visiting the pin lost the reading position. | §3.1, §3.2 ★3 `landed`/`chainOffer`, ★4 keep `other`, ★5 derived `offer`; §3.4 API; tests §8.1; CI `13g`/`13h` |
+| C6 | State shown by grey alone (the mark-page item, empty slots, "없음") disappears under fast e-ink waveforms. This also contradicted §2.1's "icon swap only". | House rules; §2.1; §3.4 pin glyph + "N 페이지"; §5.5 `Ink.GRAY` dashes; R14 |
+| C7 | The strip overflowed with 5-digit pages or a large font scale (4 dp to spare at 1.0×). | §3.4 fit rule with the short form "‹ N" / "N ›"; `ChromeMathTest` |
+| C8 | `WRAP_CONTENT` with autosize (unsupported by Android), and sizes and visibility set from layout listeners, meant a second layout, i.e. a second e-ink update on the first chrome show. | §2.2 width guard and §2.4 fixed label width, both computed in `setVisible(true)` |
+| C9 | Open path: about ten return-strip/chip views, the options rows and a prefs cleanup ran before the first page. | §2.2 lazy options rows; §3.4 lazy dock and chip; §1.3/§2.3 cleanup moved to `Settings.saveApp` |
+| C10 | `LightController.attach` was called from inside `ReaderChrome`'s constructor, leaking `this` before the fields existed. | §2.5, §3.5, §4.2: ReaderActivity calls `light.attach(chrome)` |
+| C11 | Brightness side effects: a stale original put back over a value the user set later (after a crash or with the observer off); auto-brightness left off for good with "keep"; `pending` recorded without permission; the switch travelled in backups to devices without the grant; the e-ink word list matched the Pixel 9 Pro Fold ("comet") and Hisense LCD phones. | §4.3 fixes 1–4 (`stillOurs`, mode always restored, `canWrite` before `pending`, `DeviceClass`); §1.1/§1.4 `a.brightnessDevice` device-local via `DROPPED_KEYS`; tests; D5; R15 |
+| C12 | `applyAppSettings` re-enabled a swipe that verdict NONE had turned off, on every resume. | §2.3: `LightController` is the single writer of `page.brightnessSwipe` |
+| C13 | The async return-mark load had no book or session guard (a switched book could get the previous book's pin). | §3.3 guard; placement reuses `TextPositions.remapFraction` |
+| C14 | Accessibility: the page label's description hid the page number, option rows read as unlabelled switches, and the seek bars had no labels. | §2.4, §2.2 |
+| C15 | Glyphs missing from some firmware fonts ("▭", "☼"). | §1.1 examples, §4.4 drawables |
+| C16 | CI: `raw_equal` assumed the header size, and its row ranges included the top bar and the status-bar clock. | §8.2 header parsing, PageView-only rows, `13b` rows 360..1100 |
+| C17 | The one open reading of the user's "띄워주는" (a pinned link floating on the page) was not tracked. | §3.1 `PIN_FLOATS` fallback, R13, a D2 question |

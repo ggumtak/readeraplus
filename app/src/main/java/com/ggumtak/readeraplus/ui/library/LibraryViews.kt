@@ -3,10 +3,13 @@ package com.ggumtak.readeraplus.ui.library
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.StateListDrawable
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -14,9 +17,11 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.AbsListView
 import android.widget.BaseAdapter
 import android.widget.FrameLayout
+import android.widget.GridView
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Book
@@ -364,7 +369,8 @@ internal class CompactRowHolder(private val ctx: Context, private val actions: B
         root = ctx.vertical { layoutParams = AbsListView.LayoutParams(MATCH_PARENT, WRAP_CONTENT) }
         val line = ctx.horizontal {
             minimumHeight = ctx.dp(56)
-            setPadding(ctx.dp(16), ctx.dp(6), 0, ctx.dp(6))
+            // The right gap puts ⋮'s icon clear of the fast scroller's strip (FastScrollEdge) and its track.
+            setPadding(ctx.dp(16), ctx.dp(6), ctx.dp(16), ctx.dp(6))
             background = pressableBackground()
             setOnClickListener { row?.let { actions.tap(it, more) } }
             setOnLongClickListener { row?.let { actions.longPress(it, more) }; true }
@@ -607,4 +613,72 @@ internal class GroupAdapter(
 /** Bold label helper used by the drawer header. */
 internal fun TextView.bold(on: Boolean) {
     typeface = if (on) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+}
+
+// ---------------------------------------------------------------------------------------------- lists
+
+/**
+ * Where the library's always-visible fast scroller may start a drag. The platform one claims every touch-down in the
+ * right 48dp of the list over its whole height (its minimum touch target around the track), so the ⋮ of a compact
+ * row or a card, and the right part of a cover in the last grid column, never got their taps. The library lists
+ * hand it only touch-downs in the right [EDGE_DP] (its thumb is drawn in the right 8dp); one further left reaches
+ * the book under the finger. A drag from there still scrolls the list normally.
+ */
+internal object FastScrollEdge {
+    /** Strip at the right edge that still grabs the fast scroller. */
+    const val EDGE_DP = 24
+    /** Band that is kept from it: wider than the platform's 48dp claim, in case a vendor thumb is wider. */
+    const val CLAIM_DP = 96
+
+    /**
+     * The x (px) shown to the fast scroller for a touch-down at [x] in a list [width] px wide: [x] itself in the
+     * edge strip and left of the band, 0 (outside any right-side claim) in between.
+     */
+    fun downX(x: Float, width: Int, edgePx: Int, claimPx: Int): Float =
+        if (x >= width - claimPx && x < width - edgePx) 0f else x
+
+    /** A copy of [ev] moved out of the fast scroller's band (recycle it after use), or null to pass [ev] as it is. */
+    fun shiftedDown(list: AbsListView, ev: MotionEvent): MotionEvent? {
+        if (ev.actionMasked != MotionEvent.ACTION_DOWN || !list.isFastScrollEnabled) return null
+        // The scroller sits on the left in a right-to-left layout: nothing here applies.
+        if (list.layoutDirection == View.LAYOUT_DIRECTION_RTL) return null
+        val ctx = list.context
+        val x = downX(ev.x, list.width, ctx.dp(EDGE_DP), ctx.dp(CLAIM_DP))
+        if (x == ev.x) return null
+        return MotionEvent.obtain(ev).apply { offsetLocation(x - ev.x, 0f) }
+    }
+}
+
+/** The library's book / group list: the kit's `einkListView()` look, with the fast scroller confined to [FastScrollEdge]. */
+internal class LibraryListView(ctx: Context) : ListView(ctx) {
+    init {
+        divider = null
+        dividerHeight = 0
+        overScrollMode = View.OVER_SCROLL_NEVER
+        isVerticalFadingEdgeEnabled = false
+        selector = ColorDrawable(Color.TRANSPARENT)
+        isScrollbarFadingEnabled = false
+        cacheColorHint = Color.TRANSPARENT
+    }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        val shifted = FastScrollEdge.shiftedDown(this, ev) ?: return super.onInterceptTouchEvent(ev)
+        try {
+            return super.onInterceptTouchEvent(shifted)
+        } finally {
+            shifted.recycle()
+        }
+    }
+}
+
+/** The 표지 grid, with the fast scroller confined to [FastScrollEdge] like [LibraryListView]. */
+internal class LibraryGridView(ctx: Context) : GridView(ctx) {
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        val shifted = FastScrollEdge.shiftedDown(this, ev) ?: return super.onInterceptTouchEvent(ev)
+        try {
+            return super.onInterceptTouchEvent(shifted)
+        } finally {
+            shifted.recycle()
+        }
+    }
 }

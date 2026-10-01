@@ -36,7 +36,8 @@ internal class EndInfo(
  * The end-of-book panel (T1-2): "다 읽었습니다", the title, the reading time, [다음 권 읽기 ›] with the next file's name
  * (only when one was found), the 완독 toggle, and [서재로] [처음부터] [리뷰 쓰기]. A white box with a 1px border over
  * the page, no animation, filled before it is shown: one e-ink update. A tap anywhere but on a button closes it (the
- * reader stays on the last page), like BACK or "previous". Built once per reader and reused. Main thread only.
+ * reader stays on the last page), like BACK or "previous". Built when a book first ends in the reader, then reused.
+ * Main thread only.
  */
 internal class EndPanel(private val ctx: Context, private val actions: Actions) {
 

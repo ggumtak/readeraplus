@@ -123,17 +123,43 @@ internal object TxtChars {
 
 /**
  * Compiled replace rules (`pattern => replacement`, `#` comment lines). Patterns are immutable and shared;
- * [applier] creates the per-thread matchers.
+ * [applier] creates the per-thread matchers. Each rule carries the literals one of which a line must contain for
+ * the rule to match ([RegexLiterals]): the regex runs only on lines that have them, and when every rule has such
+ * literals a [LineGate] passes most lines through without making a String of them (T1-10: the cleanup packs).
  */
 internal class ReplaceRules private constructor(
     private val patterns: Array<Pattern>,
     private val replacements: Array<String>,
+    /** Per rule: sets of literals, each of which must have a string in the line for the rule to match. */
+    private val needs: Array<List<Array<String>>>,
 ) {
     val size: Int get() = patterns.size
+
+    /** Null when some rule has no required literal (every line then goes through the regexes). */
+    internal val gate: LineGate? = LineGate.of(needs.map { it.firstOrNull() })
 
     /** Stateful applier (reuses one Matcher per rule). Not thread-safe; create one per parse. */
     inner class Applier {
         private val matchers: Array<Matcher> = Array(patterns.size) { patterns[it].matcher("") }
+
+        /**
+         * The rules applied to line `a[s, e)`: null when they leave it unchanged (most lines: those without any
+         * rule's literals are rejected by the gate without allocating), else the rewritten line. Same outcome as
+         * [apply] on that text.
+         */
+        fun apply(a: CharArray, s: Int, e: Int): String? {
+            val g = gate
+            if (g != null && !g.mayMatch(a, s, e)) return null
+            return applyPassed(a, s, e)
+        }
+
+        /** [apply] for a line the [gate] already let through ([LineGate.scanLine]). */
+        fun applyPassed(a: CharArray, s: Int, e: Int): String? {
+            if (e <= s) return null
+            val str = String(a, s, e - s)
+            val r = apply(str)
+            return if (r === str || r == str) null else r
+        }
 
         /**
          * Applies all rules in order; returns [line] itself when nothing matched. Never throws: a rule the regex
@@ -143,6 +169,7 @@ internal class ReplaceRules private constructor(
         fun apply(line: String): String {
             var s = line
             for (r in matchers.indices) {
+                if (!hasNeeds(s, needs[r])) continue
                 val m = matchers[r]
                 s = try {
                     m.reset(s)
@@ -161,12 +188,28 @@ internal class ReplaceRules private constructor(
 
     fun applier(): Applier = Applier()
 
+    /** True when [line] holds a string of every set in [sets] (the rule may match). */
+    private fun hasNeeds(line: String, sets: List<Array<String>>): Boolean {
+        for (set in sets) {
+            var found = false
+            for (lit in set) {
+                if (line.contains(lit)) {
+                    found = true
+                    break
+                }
+            }
+            if (!found) return false
+        }
+        return true
+    }
+
     companion object {
         /** Parses the rule text; returns null when there is no valid rule. */
         fun parse(text: String): ReplaceRules? {
             if (text.isBlank()) return null
             val ps = ArrayList<Pattern>()
             val rs = ArrayList<String>()
+            val ns = ArrayList<List<Array<String>>>()
             for (raw in text.split('\n')) {
                 val line = raw.trimEnd('\r')
                 val t = line.trim()
@@ -182,12 +225,13 @@ internal class ReplaceRules private constructor(
                     if (!validReplacement(rep, p.matcher("").groupCount(), pat)) continue
                     ps.add(p)
                     rs.add(rep)
+                    ns.add(RegexLiterals.required(pat))
                 } catch (_: Exception) {
                     // invalid pattern: skipped
                 }
             }
             if (ps.isEmpty()) return null
-            return ReplaceRules(ps.toTypedArray(), rs.toTypedArray())
+            return ReplaceRules(ps.toTypedArray(), rs.toTypedArray(), ns.toTypedArray())
         }
 
         /**
@@ -330,11 +374,20 @@ internal class LineTable(
             if (n == 0) return t
             val proc = LineProcessor(t, cfg)
             val segment = cfg.segment && (bm == null || bm.decoder.canAdvance)
+            val gate = cfg.rules?.gate
             var cs = 0
             var bpos = bm?.dataStart ?: 0
             while (true) {
                 var ce = cs
-                while (ce < n && buf[ce] != nl) ce++
+                // With replace rules, the literal gate runs in the same pass as the newline search.
+                var may = true
+                if (gate == null) {
+                    while (ce < n && buf[ce] != nl) ce++
+                } else {
+                    val r = gate.scanLine(buf, cs, n, nl)
+                    ce = r.toInt()
+                    may = r ushr 32 != 0L
+                }
                 val lineByte = bpos
                 if (bm != null) {
                     val nb = if (ce < n) bm.decoder.nextNewline(bm.bytes, bpos, bm.dataEnd, nl.code) else -1
@@ -349,14 +402,14 @@ internal class LineTable(
                     var segFlags = LineFlags.SEG
                     while (ceText - a > MAX_SEGMENT_CHARS) {
                         val b = chooseSplit(buf, a)
-                        proc.add(a, b, ab, segFlags)
+                        proc.add(a, b, ab, segFlags, may)
                         if (bm != null) ab = bm.decoder.advance(bm.bytes, ab, bm.dataEnd, b - a)
                         a = b
                         segFlags = LineFlags.SEG or LineFlags.CONT
                     }
-                    proc.add(a, ce, ab, segFlags)
+                    proc.add(a, ce, ab, segFlags, may)
                 } else {
-                    proc.add(cs, ce, lineByte, 0)
+                    proc.add(cs, ce, lineByte, 0, may)
                 }
                 if (ce >= n) break
                 cs = ce + 1
@@ -395,7 +448,8 @@ internal class LineTable(
 private class LineProcessor(private val t: LineTable, private val cfg: LineConfig) {
     private val applier = cfg.rules?.applier()
 
-    fun add(s0: Int, e0: Int, byteStart: Int, segFlags: Int) {
+    /** Adds line `buf[s0, e0)`; [rulesMay] false when the rules' literal gate showed that no rule can match. */
+    fun add(s0: Int, e0: Int, byteStart: Int, segFlags: Int, rulesMay: Boolean) {
         val i = t.count
         t.ensure(i + 1)
         t.count = i + 1
@@ -406,11 +460,10 @@ private class LineProcessor(private val t: LineTable, private val cfg: LineConfi
         var e = e0
         var f = segFlags
         if (e > s && arr[e - 1] == '\r') e--
-        if (applier != null && e > s) {
-            val str = String(arr, s, e - s)
-            val r = applier.apply(str)
-            if (r !== str && r != str) {
-                if (isBlank(r) && !isBlank(str)) {
+        if (applier != null && rulesMay && e > s) {
+            val r = applier.applyPassed(arr, s, e)
+            if (r != null) {
+                if (isBlank(r) && !isBlank(arr, s, e)) {
                     t.start[i] = s
                     t.end[i] = s
                     t.flags[i] = f or LineFlags.DELETED
@@ -484,6 +537,11 @@ private class LineProcessor(private val t: LineTable, private val cfg: LineConfi
 
     private fun isBlank(s: String): Boolean {
         for (c in s) if (!TxtChars.isWs(c) && c >= ' ') return false
+        return true
+    }
+
+    private fun isBlank(a: CharArray, s: Int, e: Int): Boolean {
+        for (k in s until e) if (!TxtChars.isWs(a[k]) && a[k] >= ' ') return false
         return true
     }
 }

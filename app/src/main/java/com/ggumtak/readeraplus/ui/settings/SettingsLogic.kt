@@ -1,10 +1,18 @@
 package com.ggumtak.readeraplus.ui.settings
 
+import com.ggumtak.readeraplus.reader.extras.VoiceChoice
+import com.ggumtak.readeraplus.render.DeviceCleanInfo
+import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_MODE_FAST
 import com.ggumtak.readeraplus.settings.EINK_MODE_HD
 import com.ggumtak.readeraplus.settings.EINK_MODE_NORMAL
 import com.ggumtak.readeraplus.settings.EINK_MODE_REGAL
 import com.ggumtak.readeraplus.settings.EINK_MODE_SYSTEM
+import com.ggumtak.readeraplus.settings.EINK_REFRESH_AUTO
+import com.ggumtak.readeraplus.settings.EINK_REFRESH_CLEAN
+import com.ggumtak.readeraplus.settings.EINK_REFRESH_FLASH
+import com.ggumtak.readeraplus.settings.EINK_REFRESH_GC16
+import com.ggumtak.readeraplus.settings.ReaderSettings
 import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -177,6 +185,44 @@ object SettingsFormat {
     /** Sleep timer choices in minutes (0 = off). */
     val SLEEP_OPTIONS: List<Int> = listOf(0, 15, 30, 45, 60, 90)
 
+    /**
+     * "수면 타이머" choices as (minutes, chapters) (T1-11): 끔 / 15 / 30 / 45 / 60 / 90분 / 이 화 끝까지 / 2화 끝까지.
+     * Chapters ([AppSettings.ttsSleepChapters]) win over minutes, so a chapter choice stores minutes 0.
+     */
+    val SLEEP_CHOICES: List<Pair<Int, Int>> = SLEEP_OPTIONS.map { it to 0 } + listOf(0 to 1, 0 to 2)
+
+    /** "끔", "30분", "1시간 30분", "이 화 끝까지", "2화 끝까지". */
+    fun sleepChoice(minutes: Int, chapters: Int): String = when {
+        chapters == 1 -> "이 화 끝까지"
+        chapters >= 2 -> "${chapters}화 끝까지"
+        else -> sleep(minutes)
+    }
+
+    /** Index of the saved values in [SLEEP_CHOICES]; -1 for values no choice offers (an older build's 10 / 120분). */
+    fun sleepIndex(minutes: Int, chapters: Int): Int =
+        if (chapters > 0) SLEEP_CHOICES.indexOfFirst { it.second == chapters } else SLEEP_CHOICES.indexOf(minutes to 0)
+
+    /** "길게 누르기 시간" choices in ms ([AppSettings.longPressMs]). */
+    val LONG_PRESS_OPTIONS: List<Int> = listOf(400, 500, 700, 1000)
+
+    /** 400 → "0.4초", 1000 → "1.0초" (the default gets " (기본)" in the chooser, see [longPressChoice]). */
+    fun longPress(ms: Int): String = String.format(Locale.US, "%.1f초", ms.coerceAtLeast(0) / 1000f)
+
+    fun longPressChoice(ms: Int): String = longPress(ms) + if (ms == AppSettings().longPressMs) " (기본)" else ""
+
+    /** "남은 시간" footer item ([ReaderSettings.footerTimeLeft]), the popup's [끔] [이 화] [책]. */
+    val TIME_LEFT: List<Pair<String, Int>> = listOf(
+        "끔" to ReaderSettings.TIME_LEFT_OFF,
+        "이 화" to ReaderSettings.TIME_LEFT_EPISODE,
+        "책" to ReaderSettings.TIME_LEFT_BOOK,
+    )
+
+    fun timeLeft(value: Int): String = TIME_LEFT.firstOrNull { it.second == value }?.first ?: TIME_LEFT[0].first
+
+    /** A received book's second line on the Wi-Fi page: "12.3 MB · 서재에 추가됨". */
+    fun received(bytes: Long, added: Boolean): String =
+        bytes(bytes) + if (added) " · 서재에 추가됨" else " · 서재에 추가하지 못함"
+
     /** Screen orientation choices: label to `ActivityInfo.SCREEN_ORIENTATION_*` value. */
     val ORIENTATIONS: List<Pair<String, Int>> = listOf(
         "자동 회전" to -1,
@@ -247,6 +293,119 @@ object SettingsFormat {
         val f = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = tz }
         return f.format(Date(millis))
     }
+}
+
+/** The e-ink rows of "넘김·화면 설정" (T1-3): choices, labels and the device readout. */
+object EinkChoices {
+    /** "새로고침 방식" ([AppSettings.einkRefreshMethod]): label to value, in the chooser's order. */
+    val METHODS: List<Pair<String, Int>> = listOf(
+        "자동 (기본)" to EINK_REFRESH_AUTO,
+        "기기 GC16" to EINK_REFRESH_GC16,
+        "기기 잔상 제거 (CLEAN)" to EINK_REFRESH_CLEAN,
+        "검은 화면 깜빡임" to EINK_REFRESH_FLASH,
+    )
+
+    /** True for the Bigme xrz methods, offered only where the firmware has the global refresh (`Eink.hasXrzRefresh`). */
+    fun isDeviceMethod(method: Int): Boolean = method == EINK_REFRESH_GC16 || method == EINK_REFRESH_CLEAN
+
+    /** The methods this device can offer. */
+    fun methods(hasXrz: Boolean): List<Pair<String, Int>> = METHODS.filter { hasXrz || !isDeviceMethod(it.second) }
+
+    /** Label of a stored method (an unknown value reads as 자동). */
+    fun method(value: Int): String = METHODS.firstOrNull { it.second == value }?.first ?: METHODS[0].first
+
+    /** The method [다른 방식 시험] tries after [current]: the next one this device offers, wrapping around. */
+    fun next(current: Int, hasXrz: Boolean): Int {
+        val list = methods(hasXrz).map { it.second }
+        val i = list.indexOf(current)
+        return list[(i + 1).mod(list.size)]
+    }
+
+    /** "깜빡임 길이" ([AppSettings.einkFlashMs]). */
+    val FLASH_MS: List<Int> = listOf(100, 200, 350)
+
+    fun flash(ms: Int): String = "${ms}ms" + if (ms == AppSettings().einkFlashMs) " (기본)" else ""
+
+    /** "밤 모드(반전)에서" ([AppSettings.einkRefreshEveryNight]): -1 = same as by day. */
+    val NIGHT: List<Int> = listOf(-1, 3, 5, 10, 20)
+
+    fun night(value: Int): String = if (value < 0) "낮과 같게" else SettingsFormat.refreshEvery(value)
+
+    /** "기기 자체 잔상 제거: 켜짐 · 10쪽마다" / "…: 켜짐" / "…: 꺼짐"; null when the device has no such setting. */
+    fun deviceClean(info: DeviceCleanInfo?): String? {
+        info ?: return null
+        val state = when {
+            !info.autoClean -> "꺼짐"
+            info.everyPages > 0 -> "켜짐 · ${info.everyPages}쪽마다"
+            else -> "켜짐"
+        }
+        return "기기 자체 잔상 제거: $state"
+    }
+
+    const val DOUBLE_FLASH = "기기와 앱이 모두 잔상을 지우면 두 번 깜빡입니다. 한쪽만 켜세요."
+
+    /**
+     * The "진단" readout of the 고급 group (T1-3a, from T2-20): the vendor API found, whether the device refresh methods
+     * and view modes work here, the device's own ghost clearing and the screen.
+     */
+    fun diagnostics(
+        vendor: String?,
+        hasXrz: Boolean,
+        viewMode: Boolean,
+        clean: DeviceCleanInfo?,
+        widthPx: Int,
+        heightPx: Int,
+        dpi: Int,
+    ): String =
+        listOf(
+            "e-ink 제어: " + (vendor ?: "없음 (검은 화면을 잠깐 띄워 잔상을 지웁니다)"),
+            "기기 새로고침 (GC16 · CLEAN): " + if (hasXrz) "사용 가능" else "없음",
+            "e-ink 화면 모드 바꾸기: " + if (viewMode) "가능" else "안 됨",
+            deviceClean(clean) ?: "기기 자체 잔상 제거: 확인할 수 없음",
+            "화면: $widthPx × $heightPx px · $dpi dpi",
+        ).joinToString("\n")
+
+    /** True when the device clears ghosts by itself and the app has a page cadence too (day or night). */
+    fun doubleFlash(info: DeviceCleanInfo?, app: AppSettings): Boolean =
+        info?.autoClean == true && (app.einkRefreshEvery > 0 || app.einkRefreshEveryNight > 0)
+}
+
+/**
+ * The "목소리" chooser of the TTS page (A13): Korean voices first, then the other languages by name, each numbered
+ * within its language: "한국어 · 목소리 2 (고음질, 오프라인)". The same wording as the reader's own voice chooser.
+ */
+object TtsVoices {
+    /** One engine voice: [lang] = ISO 639 code, [language] = its name in Korean ("한국어"). */
+    class Info(
+        val name: String,
+        val lang: String,
+        val language: String,
+        val quality: Int,
+        val network: Boolean,
+        val notInstalled: Boolean,
+    )
+
+    /** "기본 음성": [AppSettings.ttsVoice] "" (the engine's default voice for Korean). */
+    const val DEFAULT = "기본 음성"
+
+    fun list(voices: List<Info>): List<Pair<Info, String>> {
+        val sorted = voices.sortedWith(
+            compareBy<Info>({ if (it.lang == "ko") 0 else 1 }, { it.language }, { it.lang }, { it.name }),
+        )
+        val counts = HashMap<String, Int>()
+        return sorted.map { v ->
+            val n = (counts[v.lang] ?: 0) + 1
+            counts[v.lang] = n
+            v to label(v, n)
+        }
+    }
+
+    /** The reader's own wording ([VoiceChoice.label]), so a voice reads the same in both choosers. */
+    fun label(v: Info, number: Int): String =
+        VoiceChoice.label(VoiceChoice.Info(v.name, v.lang, v.language, v.quality, v.network, v.notInstalled), number)
+
+    /** android.speech.tts.Voice.QUALITY_*: 400 and up high, 300 normal, below low. */
+    fun quality(q: Int): String = VoiceChoice.quality(q)
 }
 
 /** Web search URL templates offered in "사전 · 번역 · 웹 검색". `%s` = URL-encoded query. */

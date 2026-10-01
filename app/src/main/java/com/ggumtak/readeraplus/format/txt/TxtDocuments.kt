@@ -7,6 +7,7 @@ import com.ggumtak.readeraplus.format.ParseOptions
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * TXT entry point. The first open of a file decodes it completely (off the main thread), detects chapters and
@@ -19,6 +20,17 @@ object TxtDocuments {
     private const val SNIFF_BYTES = 64 * 1024
 
     /**
+     * Version of what [open] makes of the same file and options (section split, char offsets). It changes exactly when
+     * the TXT index does (`TxtIndexStore.VERSION`, at most once per release; 4 = author notes stay in their episode,
+     * A5). Saved (section, offset) coordinates belong to one version, so the reader's text signature
+     * (`LayoutKeys.textSignature`) should include it.
+     */
+    internal const val PARSE_VERSION = TxtIndexStore.VERSION
+
+    /** Paths [open] is parsing in full right now, with the number of such opens (two may overlap). */
+    private val building = ConcurrentHashMap<String, Int>()
+
+    /**
      * Opens [file] (blocking: IO + parsing; never on the main thread).
      * @throws DocumentException when the file can't be read or is too large.
      */
@@ -29,6 +41,8 @@ object TxtDocuments {
         val key = TxtIndexStore.key(file, options)
         val cached = TxtIndexStore.load(key, length)
         if (cached != null) return TxtBook(file, cached, options)
+        val path = file.path
+        building.merge(path, 1) { a, b -> a + b }
         val index = try {
             val bytes = readAll(file, length)
             val parsed = TxtParser.parse(bytes, bytes.size, options)
@@ -42,6 +56,8 @@ object TxtDocuments {
         } catch (e: RuntimeException) {
             // never expected; keeps the "throws DocumentException" contract for callers that only catch that
             throw DocumentException("TXT 파일을 열지 못했습니다: ${file.name}", e)
+        } finally {
+            building.computeIfPresent(path) { _, n -> if (n > 1) n - 1 else null }
         }
         return TxtBook(file, index, options)
     }
@@ -50,12 +66,11 @@ object TxtDocuments {
      * R2 (A5): true while [open] is parsing [path] in full because it has no usable index (a first open, or the first
      * open after a `TxtIndexStore.VERSION` bump or an option change). The reader's delayed loading text (shown after
      * 300 ms) then reads "목차를 만드는 중…" instead of "불러오는 중…" for files over 4 MB. Reading it costs nothing on
-     * the open path (a volatile field set by [open]). Any thread. Owner: FORMAT.
+     * the open path ([open] marks the path in a concurrent map only when it has to parse). [path] as given to [open]
+     * (`File(path)`). Any thread. Owner: FORMAT.
      */
-    fun isBuildingIndex(path: String): Boolean {
-        // R2 stub (owner: FORMAT).
-        return false
-    }
+    fun isBuildingIndex(path: String): Boolean =
+        building.isNotEmpty() && (building.containsKey(path) || building.containsKey(File(path).path))
 
     /** Title from the file name; encoding sniffed from the first 64 KB. Never throws for unreadable files. */
     fun readMeta(file: File): DocMeta {

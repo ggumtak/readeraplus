@@ -43,7 +43,8 @@ import java.util.concurrent.ArrayBlockingQueue
  * - `java.net.ServerSocket` bound to the site-local IPv4 address of a `wlan*` interface (never 0.0.0.0, so it is not
  *   reachable over USB tethering or a VPN), port 8080, else 8081–8089. One accept thread plus one handler thread,
  *   `Connection: close`, 30 s socket timeouts. A connection that sends nothing (a browser's spare pre-connection) is
- *   dropped as soon as another one waits, so it can't hold the single handler for 30 s.
+ *   dropped as soon as another one waits, and a request head must arrive within 10 s however slowly its bytes come
+ *   ([LanExchange.HEAD_MS]), so neither can hold the single handler.
  * - Access code: [LanCode.LENGTH] chars from [LanCode.ALPHABET] (31 unambiguous chars: no 0/o/1/l/i), random per
  *   start. Routes: `GET /<code>` → an inline Korean upload page (multi-file input, drop zone, < 3 KB of plain JS with
  *   XHR progress in the browser); `POST /<code>/upload` → multipart body streamed to disk (never buffered whole);
@@ -211,8 +212,8 @@ class LanUpload(private val context: Context, private val destDir: File, private
             s.soTimeout = POLL_MS
             val input = BufferedInputStream(s.getInputStream(), BUFFER)
             if (!awaitRequest(input)) return
-            s.soTimeout = TIMEOUT_MS
-            exchange.handle(input, BufferedOutputStream(s.getOutputStream(), 8 * 1024))
+            // The head is read in POLL_MS reads against its deadline; only an upload's body gets the long timeout.
+            exchange.handle(input, BufferedOutputStream(s.getOutputStream(), 8 * 1024)) { s.soTimeout = TIMEOUT_MS }
         }
 
         /**
@@ -310,13 +311,39 @@ internal class LanExchange(
     /** Thrown by [MultipartReader.copyBody] beyond its limit. */
     class TooLarge : IOException("part too large")
 
+    /** Writing the received file failed (the folder, not the connection): the page says so instead of "연결이 끊겼습니다". */
+    private class DiskError(cause: IOException) : IOException(cause.message, cause)
+
+    /** The temp file's stream with its failures marked as [DiskError]. */
+    private class DiskOutput(private val out: OutputStream) : OutputStream() {
+        override fun write(b: Int) = disk { out.write(b) }
+        override fun write(b: ByteArray, off: Int, len: Int) = disk { out.write(b, off, len) }
+        override fun flush() = disk { out.flush() }
+        override fun close() = disk { out.close() }
+
+        private inline fun disk(block: () -> Unit) {
+            try {
+                block()
+            } catch (e: DiskError) {
+                throw e
+            } catch (e: IOException) {
+                throw DiskError(e)
+            }
+        }
+    }
+
     /** True while too many wrong paths make the server ignore every request (the connection is just closed). */
     fun ignoring(): Boolean = guard.blocked(now())
 
-    /** Reads one request from [input] and answers it on [out] (nothing at all while [ignoring]). */
-    fun handle(input: InputStream, out: OutputStream) {
+    /**
+     * Reads one request from [input] and answers it on [out] (nothing at all while [ignoring]). The head must arrive
+     * within [HEAD_MS] (400 otherwise); [beforeBody] runs before an upload's body is read (the server lengthens the
+     * socket's read timeout there).
+     */
+    fun handle(input: InputStream, out: OutputStream, beforeBody: () -> Unit = {}) {
         if (ignoring()) return
-        val head = LanHttp.readHead(input)
+        val deadline = now() + HEAD_MS
+        val head = LanHttp.readHead(input) { now() >= deadline }
         if (head == null) {
             respond(out, 400, TEXT, BAD_REQUEST)
             return
@@ -328,6 +355,7 @@ internal class LanExchange(
             }
             LanHttp.Route.UPLOAD -> {
                 guard.onRight()
+                beforeBody()
                 upload(head, input, out)
             }
             LanHttp.Route.WRONG_METHOD -> respond(out, 405, TEXT, "허용되지 않는 요청입니다")
@@ -403,10 +431,14 @@ internal class LanExchange(
             return
         } catch (e: IOException) {
             if (stopped()) return
-            val message = if (isNoSpace(e)) NO_SPACE else "$FAILED (연결이 끊겼습니다)"
+            val (status, message) = when {
+                isNoSpace(e) -> 507 to NO_SPACE
+                e is DiskError -> 500 to "$FAILED (저장하지 못했습니다)"
+                else -> 400 to "$FAILED (연결이 끊겼습니다)"
+            }
             events.error(message)
             // The browser may still read this if only the rest of its body was lost.
-            respond(out, 400, TEXT, message)
+            respond(out, status, TEXT, message)
             return
         }
         for (p in problems) events.error(p)
@@ -423,13 +455,18 @@ internal class LanExchange(
         val temp = File(destDir, "$TEMP_PREFIX${System.nanoTime()}$TEMP_SUFFIX")
         var done = false
         try {
-            val size = FileOutputStream(temp).use { fo -> parts.copyBody(fo, LanUpload.MAX_FILE_BYTES) }
+            val fo = try {
+                FileOutputStream(temp)
+            } catch (e: IOException) {
+                throw DiskError(e)
+            }
+            val size = DiskOutput(fo).use { parts.copyBody(it, LanUpload.MAX_FILE_BYTES) }
             if (size == 0L) {
                 problems += "$EMPTY: ${LanNames.display(name)}"
                 return null
             }
             val target = File(destDir, LanNames.unique(name) { File(destDir, it).exists() })
-            if (!temp.renameTo(target)) throw IOException("rename failed")
+            if (!temp.renameTo(target)) throw DiskError(IOException("rename failed"))
             done = true
             return target
         } finally {
@@ -449,6 +486,12 @@ internal class LanExchange(
     }
 
     companion object {
+        /**
+         * Time for a whole request head (a browser sends it at once). Before the access code is known, a peer
+         * trickling one byte per read timeout must not hold the only handler thread for days.
+         */
+        internal const val HEAD_MS = 10_000L
+
         /** Multipart headers and boundaries around one file: generous. */
         private const val MAX_OVERHEAD_BYTES = 64L * 1024
         private const val MAX_FIELD_BYTES = 64L * 1024
@@ -471,7 +514,8 @@ internal class LanExchange(
 
         private val STATUS = mapOf(
             200 to "OK", 400 to "Bad Request", 404 to "Not Found", 405 to "Method Not Allowed", 411 to "Length Required",
-            413 to "Payload Too Large", 415 to "Unsupported Media Type", 507 to "Insufficient Storage",
+            413 to "Payload Too Large", 415 to "Unsupported Media Type", 500 to "Internal Server Error",
+            507 to "Insufficient Storage",
         )
 
         private fun respond(out: OutputStream, status: Int, type: String, body: String, bodyless: Boolean = false) {
@@ -732,16 +776,17 @@ internal object LanHttp {
 
     /**
      * Reads a request head (request line and headers up to the empty line, at most 16 KB) from [input], leaving
-     * the body unread. Null when malformed, too large or the stream ends early.
+     * the body unread. Null when malformed, too large, the stream ends early or [expired] turns true (checked before
+     * every byte; with it, a read that times out is retried until then).
      */
-    fun readHead(input: InputStream): Head? {
+    fun readHead(input: InputStream, expired: (() -> Boolean)? = null): Head? {
         val budget = intArrayOf(MAX_HEAD_BYTES)
-        val first = readLine(input, budget) ?: return null
+        val first = readLine(input, budget, expired) ?: return null
         val (method, path) = requestLine(first) ?: return null
         val headers = LinkedHashMap<String, String>()
         var count = 0
         while (true) {
-            val line = readLine(input, budget) ?: return null
+            val line = readLine(input, budget, expired) ?: return null
             if (line.isEmpty()) break
             if (++count > MAX_HEADERS) return null
             val colon = line.indexOf(':')
@@ -753,11 +798,17 @@ internal object LanHttp {
         return Head(method, path, headers)
     }
 
-    /** One CRLF (or bare LF) terminated line as Latin-1, charged to [budget]; null at EOF or over budget. */
-    private fun readLine(input: InputStream, budget: IntArray): String? {
+    /** One CRLF (or bare LF) terminated line as Latin-1, charged to [budget]; null at EOF, over budget or [expired]. */
+    private fun readLine(input: InputStream, budget: IntArray, expired: (() -> Boolean)?): String? {
         val sb = StringBuilder(64)
         while (true) {
-            val b = input.read()
+            if (expired != null && expired()) return null
+            val b = try {
+                input.read()
+            } catch (e: SocketTimeoutException) {
+                if (expired == null) throw e
+                continue
+            }
             if (b < 0) return null
             if (--budget[0] < 0) return null
             if (b == '\n'.code) {

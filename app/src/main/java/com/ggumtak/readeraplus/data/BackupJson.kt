@@ -1,5 +1,7 @@
 package com.ggumtak.readeraplus.data
 
+import com.ggumtak.readeraplus.format.BookFormat
+import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -80,6 +82,11 @@ internal class BackupData(
     val collections: List<String>,
     /** `{reader:{…}, app:{…}, other:{…}, otherTypes:{…}}` or null when absent. */
     val settings: JSONObject?,
+    /**
+     * The TXT parse the books' (section, offset) positions belong to: [TxtDocuments.PARSE_VERSION] of the build that
+     * wrote the file, 0 = unknown (a backup from before R2). See [BackupJson.remapsTextPosition].
+     */
+    val txtParseVersion: Int = 0,
 )
 
 /**
@@ -88,7 +95,7 @@ internal class BackupData(
  *
  * R2 added two optional per-book keys (so the format version stays 1: older builds ignore them, older backups lack
  * them): `readingLog` (`[{day, seconds, pages, chars}]`) and `prefs` (`{txtOverride: {…}, finishedAt,
- * episodeLabel}`), both written only when the book has any.
+ * episodeLabel}`), both written only when the book has any; and the top-level `txtParseVersion`.
  */
 internal object BackupJson {
     const val FORMAT = "readeraplus-backup"
@@ -96,7 +103,9 @@ internal object BackupJson {
 
     /** Log rows kept per book on restore (≈ 27 years of daily reading). */
     private const val MAX_LOG_DAYS = 10_000
-    private const val MAX_DAY_SECONDS = 24L * 3600
+
+    /** Signature of a restored position's parse record: no parse has it (theirs are hex). */
+    private const val STALE_TEXT_SIGNATURE = "restored"
 
     fun fromBook(
         b: Book,
@@ -142,6 +151,7 @@ internal object BackupJson {
         root.put("format", FORMAT)
         root.put("version", data.version)
         root.put("createdAt", data.createdAt)
+        if (data.txtParseVersion > 0) root.put("txtParseVersion", data.txtParseVersion)
         if (data.settings != null) root.put("settings", data.settings)
         root.put("collections", JSONArray().also { a -> data.collections.forEach { a.put(it) } })
         val books = JSONArray()
@@ -248,6 +258,7 @@ internal object BackupJson {
             books = books,
             collections = strings(root.optJSONArray("collections")),
             settings = root.optJSONObject("settings"),
+            txtParseVersion = int(root, "txtParseVersion", 0).coerceAtLeast(0),
         )
     }
 
@@ -320,8 +331,9 @@ internal object BackupJson {
     }
 
     /**
-     * Log rows of a backup entry: malformed days and empty rows dropped, values clamped (a book can't be read more
-     * than 24 h a day), a day listed twice merged (the larger value of each column), ascending, capped.
+     * Log rows of a backup entry: malformed days and empty rows dropped, values clamped to what one ReadingLog.add may
+     * write (a book can't be read more than 24 h a day; a huge count would overflow SQLite's SUM in every log read),
+     * a day listed twice merged (the larger value of each column), ascending, capped.
      */
     fun logFromJson(arr: JSONArray?): List<BackupLogDay> {
         if (arr == null || arr.length() == 0) return emptyList()
@@ -332,9 +344,9 @@ internal object BackupJson {
             if (!ReadingLog.isDay(day)) continue
             val d = BackupLogDay(
                 day = day,
-                seconds = long(o, "seconds", 0L).coerceIn(0L, MAX_DAY_SECONDS),
-                pages = int(o, "pages", 0).coerceAtLeast(0),
-                chars = long(o, "chars", 0L).coerceAtLeast(0L),
+                seconds = long(o, "seconds", 0L).coerceIn(0L, ReadingLog.MAX_ADD_SECONDS),
+                pages = int(o, "pages", 0).coerceIn(0, ReadingLog.MAX_ADD_PAGES),
+                chars = long(o, "chars", 0L).coerceIn(0L, ReadingLog.MAX_ADD_CHARS),
             )
             if (d.seconds == 0L && d.pages == 0 && d.chars == 0L) continue
             val prev = byDay[day]
@@ -347,6 +359,26 @@ internal object BackupJson {
         val out = ArrayList(byDay.values)
         return if (out.size > MAX_LOG_DAYS) out.subList(out.size - MAX_LOG_DAYS, out.size).toList() else out
     }
+
+    /**
+     * True when [b]'s restored position must be found again by its fraction on the next open (the restore then
+     * writes [staleTextPosition] for it): a TXT position saved under another parse version than this build's
+     * ([backupParseVersion] 0 = a backup from before R2) names a place in another section split. The very start is
+     * the same place in any parse; EPUB positions (spine items) never move.
+     */
+    fun remapsTextPosition(backupParseVersion: Int, b: BackupBook): Boolean {
+        if (backupParseVersion == TxtDocuments.PARSE_VERSION || (b.posSection <= 0 && b.posOffset <= 0)) return false
+        val format = BookFormat.entries.firstOrNull { it.name == b.format } ?: BookFormat.forFile(b.fileName)
+        return format == BookFormat.TXT
+    }
+
+    /**
+     * The reader's parse record (`TextPositions.encode`: "signature|fraction") for a [remapsTextPosition] book: its
+     * signature matches no parse, so `TextPositions.remapFraction` reopens at [progress] (the restored library
+     * progress) instead of at the stale (section, offset).
+     */
+    fun staleTextPosition(progress: Float): String =
+        STALE_TEXT_SIGNATURE + "|" + (if (progress.isNaN()) 0f else progress.coerceIn(0f, 1f))
 
     /** A backup entry's prefs; null when nothing usable is in it. `txtOverride` may be an object or its JSON text. */
     fun prefsFromJson(o: JSONObject): BackupPrefs? {

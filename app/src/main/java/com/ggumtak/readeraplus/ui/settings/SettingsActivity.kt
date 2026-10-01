@@ -83,6 +83,10 @@ class SettingsActivity : Activity() {
     private lateinit var content: FrameLayout
     private lateinit var titleView: TextView
 
+    /** True between onResume and onPause (a page that serves the network runs only then: Wi-Fi 전송). */
+    internal var isResumedNow = false
+        private set
+
     /** Last key seen anywhere in settings (for the "키 테스트" row); -1 = none yet. */
     internal var lastKeyCode = -1
         private set
@@ -114,11 +118,15 @@ class SettingsActivity : Activity() {
         PAGE_BACKUP -> BackupPage(this)
         PAGE_LOOKUP -> LookupPage(this)
         PAGE_ABOUT -> AboutPage(this)
+        PAGE_WIFI -> WifiTransferPage(this)
+        PAGE_STATS -> StatsPage(this)
+        PAGE_TXT_DEFAULTS -> TxtDefaultsPage(this)
         else -> MainPage(this)
     }
 
     /** Opens a sub-page on top of the current one. */
     internal fun push(id: String) {
+        stack.lastOrNull()?.onHidden()
         stack += createPage(id)
         showTop()
     }
@@ -152,7 +160,14 @@ class SettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        isResumedNow = true
         stack.lastOrNull()?.onResume()
+    }
+
+    override fun onPause() {
+        isResumedNow = false
+        stack.lastOrNull()?.onPause()
+        super.onPause()
     }
 
     @Deprecated("Deprecated in Java")

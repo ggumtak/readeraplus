@@ -287,7 +287,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var epMax = 0
     private var episodesAsked = false
     private val askEpisodes = Runnable { if (!isDestroyed) loadEpisodes() }
-    private lateinit var endPanel: EndPanel
+    /** Built the first time a book ends in this reader, not on the way to the first page. */
+    private var endPanel: EndPanel? = null
     /** The end panel's data is being loaded (it shows when it arrives). */
     private var endLoading = false
     /** The window lost the focus to a panel (TOC, search, the settings popup, a menu) while a book was shown. */
@@ -299,6 +300,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /** The page on screen when the reader paused (-1 = none): TTS may turn pages with the screen off (T1-11). */
     private var pausedSection = -1
     private var pausedPageIdx = -1
+    /** TTS (the only caller of [nextPage] / [prevPage] / [goTo] while paused) moved the page since the pause. */
+    private var turnedInBackground = false
 
     // ================================================================== lifecycle
 
@@ -338,9 +341,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         handler.post(syncReaderSettings)
     }
 
-    /** Applies the saved reading settings when they differ from what the open book has or is getting. */
+    /**
+     * Applies the saved reading settings when they differ from what the open book has or is getting; only in front
+     * (the popup, TTS settings): changes made in 설정 apply once, in [onResume], not as a relayout / re-parse each.
+     */
     private val syncReaderSettings = Runnable {
-        if (!isDestroyed && session != null && Settings.reader.withTxt(bookOverride) != readerTarget) applyToSession(Settings.reader)
+        if (!isDestroyed && inFront && session != null && Settings.reader.withTxt(bookOverride) != readerTarget) {
+            applyToSession(Settings.reader)
+        }
     }
 
     /** Re-applies the app settings the window and views cache when one of them changed (input reads [app] live). */
@@ -384,7 +392,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         ReaderPresence.inFront = true
         inFront = true
         applyAppSettings()
-        tracker.resume(SystemClock.elapsedRealtime())
+        tracker.resume(SystemClock.elapsedRealtime(), dayClock.day(System.currentTimeMillis()))
         safely { tts?.onReaderResumed() }
         // Per-view refresh modes may be reset by the firmware while another app was in front.
         prepareEink()
@@ -394,10 +402,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             if (r.withTxt(bookOverride) != readerTarget) applyToSession(r) else refreshDecor(onlyIfChanged = true)
         }
         // T1-11: TTS turned pages while the reader was in the background: one full refresh for the page now shown
-        // (never on a wake that finds the same page).
-        if (pausedSection >= 0 && curLayout != null && (curSection != pausedSection || curPageIdx != pausedPageIdx)) {
+        // (never on a wake that finds the same page, nor for a relayout of the page the reader left).
+        if (turnedInBackground && pausedSection >= 0 && curLayout != null &&
+            (curSection != pausedSection || curPageIdx != pausedPageIdx)
+        ) {
             refreshAfterDraw(0L)
         }
+        turnedInBackground = false
         pausedSection = -1
         keeper.poke()
     }
@@ -533,8 +544,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         errorPanel.addView(errorEncoding, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(8) })
         errorPanel.addView(errorButton("닫기") { finish() }, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(8) })
         root.addView(errorPanel, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
-        endPanel = EndPanel(this, endActions)
-        endPanel.attach(root)
 
         root.setOnApplyWindowInsetsListener { _, wi ->
             applyInsets(ReaderWindow.insetsOf(wi, app.fullscreen))
@@ -574,7 +583,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private fun isOwnView(v: View): Boolean =
         v === page || v === statusText || v === brightnessOverlay || v === chip || v === errorPanel || chrome.owns(v) ||
-            (::endPanel.isInitialized && endPanel.owns(v))
+            endPanel?.owns(v) == true
 
     private fun onBarsResized() {
         applyPinnedArea()
@@ -897,7 +906,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         safely { ReaderPanels.dismissAll(this) }
         savePositionNow(persistText = true)
         bookRef?.let { b -> tracker.flush(SystemClock.elapsedRealtime())?.let { writeReading(b.id, it) } }
-        tracker.forgetPage()
         stopAutoTurn(showToast = false)
         safely { tts?.release() }
         tts = null
@@ -917,8 +925,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         episodesAsked = false
         epShown = null
         endLoading = false
-        endPanel.hide()
+        endPanel?.hide()
         pausedSection = -1
+        turnedInBackground = false
         curLayout = null
         curSection = 0
         curPageIdx = 0
@@ -1003,7 +1012,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun onViewSizeChanged(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
         viewReady.complete(Unit)
-        if (endPanel.isShowing) endPanel.fit(root.width)
+        endPanel?.let { if (it.isShowing) it.fit(root.width) }
         val s = session ?: return
         if (!s.setViewport(w, h)) return
         relayout()
@@ -1269,9 +1278,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
     }
 
-    override fun nextPage(): Boolean = turn(true)
+    override fun nextPage(): Boolean = turn(true).also { if (it && !inFront) turnedInBackground = true }
 
-    override fun prevPage(): Boolean = turn(false)
+    override fun prevPage(): Boolean = turn(false).also { if (it && !inFront) turnedInBackground = true }
 
     /**
      * One page forward / back. Inside the section (and into a laid-out neighbour) the page shows synchronously, so
@@ -1339,6 +1348,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     override fun goTo(pos: DocPosition, remember: Boolean) {
         if (session == null) return
+        if (!inFront) turnedInBackground = true
         // A "jump" to the page already shown (e.g. the current chapter in the TOC) is not worth a return chip.
         if (remember && curLayout != null && !isOnCurrentPage(pos)) pushReturn(currentPosition())
         jumpTo(pos.section, pos.offset, -1)
@@ -2155,7 +2165,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (chromeVisible && !assigned && KeyMap.isFocusKey(code)) return super.dispatchKeyEvent(event)
         // While listening to TTS the (unassigned) volume keys control the speech volume.
         if (!assigned && KeyMap.isVolumeKey(code) && ttsSpeaking()) return super.dispatchKeyEvent(event)
-        if (endPanel.isShowing || endLoading) return endPanelKey(event, action, assigned)
+        if (endPanel?.isShowing == true || endLoading) return endPanelKey(event, action, assigned)
         if (event.action == KeyEvent.ACTION_UP) {
             heldKey.up(code)
             return true
@@ -2207,7 +2217,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /** The hold action ([KeyHold.CHAPTER] / [KeyHold.TEN]) relative to where the key went down. */
     private fun holdAction(hold: KeyHold, next: Boolean) {
-        if (session == null || curLayout == null || endPanel.isShowing || endLoading) return
+        if (session == null || curLayout == null || endPanel?.isShowing == true || endLoading) return
         when (hold) {
             KeyHold.CHAPTER -> {
                 val target = chapterTarget(holdSection, holdPageIdx, holdStart, holdEnd, next) ?: return
@@ -2239,14 +2249,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             return true
         }
         heldKey.cancel()
-        if (action == TapAction.PREV && endPanel.isShowing) endPanel.hide()
+        if (action == TapAction.PREV) closeEndPanel()
         return true
     }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
-            endPanel.isShowing -> endPanel.hide()
+            endPanel?.isShowing == true -> closeEndPanel()
             safely { selection?.isActive } == true -> safely { selection?.clear() }
             ttsSpeaking() -> safely { tts?.stop() }
             // The search-results bar goes first; the next BACK leaves the book.
@@ -2527,27 +2537,19 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /**
      * Characters from the current page's start to the end of the episode (the next TOC entry after the page; the
-     * book's end in the last one) or of the book; null without a page, or without a TOC for the episode. O(1) for
-     * the book (PageCounts' suffix sums); the episode adds the sections before the next entry the same way.
+     * book's end in the last one) or of the book; null without a page, or without a TOC for the episode. O(1) on a
+     * turn: the book through PageCounts' suffix sums, the episode through [BookSession.charsLeftInChapter] (the TOC
+     * is scanned once per chapter, not per page).
      */
     private fun charsLeft(bookScope: Boolean): Long? {
         val s = session ?: return null
         val l = curLayout ?: return null
         if (layoutStale()) return null
         val p = l.pages.getOrNull(curPageIdx) ?: return null
-        val c = s.counts
         val sec = curSection
-        val here = (l.content.length - p.start).coerceAtLeast(0).toLong()
-        if (bookScope) return here + c.charsAfter(sec)
-        val ch = s.chapters
-        if (ch.size == 0) return null
-        val next = ch.nextAfter(sec, p.start)
-        if (next < 0) return here + c.charsAfter(sec)
-        val ns = ch.section(next)
-        val no = ch.offset(next).toLong()
-        if (ns <= sec) return (no - p.start).coerceAtLeast(0L)
-        // Sections strictly between this one and the next entry's: charsAfter(sec) - charsAfter(ns - 1).
-        return here + (c.charsAfter(sec) - c.charsAfter(ns - 1)).coerceAtLeast(0L) + no
+        if (bookScope) return (l.content.length - p.start).coerceAtLeast(0).toLong() + s.counts.charsAfter(sec)
+        if (s.chapters.size == 0) return null
+        return s.charsLeftInChapter(sec, p.start)
     }
 
     // ================================================================== TxtOverrideHost (T1-9)
@@ -2581,12 +2583,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     override fun showBookEnd() {
         val s = session ?: return
         val b = bookRef ?: return
-        if (curLayout == null || endPanel.isShowing || endLoading) return
+        if (curLayout == null || endPanel?.isShowing == true || endLoading) return
         endLoading = true
         stopAutoTurn(showToast = false)
         // Pinned bars stay (the panel covers them); open ones close.
         if (!app.pinChrome) setChromeVisible(false)
-        // Progress 1.0 (the last page) and the reading so far, before the book's total time is read back.
+        // Progress 1.0 (the last page) and the reading so far, before the book's total time is read back. The panel
+        // covers the page from here: it counts again only when the panel closes on it ([closeEndPanel]).
         savePositionNow()
         val delta = tracker.flush(SystemClock.elapsedRealtime())
         val mark = app.autoMarkFinished
@@ -2594,8 +2597,22 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             val info = withContext(Dispatchers.IO) { loadEnd(b, delta, mark) }
             endLoading = false
             if (session !== s || bookRef?.id != b.id || isFinishing) return@launch
-            endPanel.show(info, root.width)
+            endPanel().show(info, root.width)
         }
+    }
+
+    /** The end panel, built and attached on first use (assigned before attaching: [isOwnView] must know it). */
+    private fun endPanel(): EndPanel = endPanel ?: EndPanel(this, endActions).also {
+        endPanel = it
+        it.attach(root)
+    }
+
+    /** The end panel closes and leaves the reader on the last page (BACK, "previous", a tap beside its box). */
+    private fun closeEndPanel() {
+        val panel = endPanel ?: return
+        if (!panel.isShowing) return
+        panel.hide()
+        trackPage(currentPage)
     }
 
     /** Blocking (IO): stores [delta], marks [b] finished when [mark], finds its next part; never throws. */
@@ -2642,7 +2659,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     toast("다음 권을 열지 못했습니다")
                     return@launch
                 }
-                endPanel.hide()
+                endPanel?.hide()
                 openBook(next.id)
             }
         }
@@ -2656,7 +2673,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
 
         override fun onEndLibrary() {
-            endPanel.hide()
+            endPanel?.hide()
             // The library below this reader when it was opened from there, else a new one (never the open-last start:
             // the intent has no MAIN action).
             startActivity(
@@ -2668,7 +2685,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
 
         override fun onEndRestart() {
-            endPanel.hide()
+            endPanel?.hide()
             goTo(DocPosition.START, remember = false)
         }
 
@@ -2677,7 +2694,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
 
         override fun onEndClose() {
-            endPanel.hide()
+            closeEndPanel()
         }
     }
 

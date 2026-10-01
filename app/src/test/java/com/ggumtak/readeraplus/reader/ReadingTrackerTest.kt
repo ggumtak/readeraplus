@@ -13,7 +13,7 @@ class ReadingTrackerTest {
     /** A resumed tracker with page 0 ([chars] long) shown at [t]. */
     private fun started(t: Long = 0L, chars: Int = 500): ReadingTracker =
         ReadingTracker().apply {
-            resume(t)
+            resume(t, day)
             assertNull(onPageShown(t, day, chars))
         }
 
@@ -48,7 +48,7 @@ class ReadingTrackerTest {
         assertNull(tr.onPageShown(140_000, day, 300))
         assertNull(tr.pause(150_000))
         // Back in front: the page on screen counts from the resume.
-        tr.resume(1_000_000)
+        tr.resume(1_000_000, day)
         val d = tr.pause(1_010_000)!!
         assertEquals(10L, d.seconds)
         assertEquals(1, d.pages)
@@ -77,24 +77,50 @@ class ReadingTrackerTest {
     }
 
     @Test
-    fun flushClosesThePageAndKeepsCounting() {
+    fun aWakeOnTheNextDayCountsForThatDay() {
+        val tr = started()
+        // Screen off at night: the evening is flushed …
+        assertEquals(day, tr.pause(60_000)!!.day)
+        // … the device wakes the next morning on the same page, read for 3 minutes.
+        tr.resume(30_000_000, day + 1)
+        val stay = tr.pause(30_180_000)!!
+        assertEquals(day + 1, stay.day)
+        assertEquals(180L, stay.seconds)
+        assertEquals(1, stay.pages)
+        // A turn after such a wake is that day's too, and flushes nothing of the day before.
+        tr.resume(40_000_000, day + 2)
+        assertNull(tr.onPageShown(40_120_000, day + 2, 300))
+        val turned = tr.pause(40_130_000)!!
+        assertEquals(day + 2, turned.day)
+        assertEquals(130L, turned.seconds)
+        assertEquals(2, turned.pages)
+    }
+
+    @Test
+    fun flushClosesThePageAndStopsCountingIt() {
         val tr = started(chars = 250)
         val d = tr.flush(20_000)!!
         assertEquals(20L, d.seconds)
         assertEquals(1, d.pages)
-        // The same page keeps counting from the flush (the end panel stays on the last page).
-        val later = tr.pause(26_000)!!
-        assertEquals(6L, later.seconds)
+        assertEquals(250L, d.chars)
+        // The end panel covers the page: neither its time nor the page again counts, across a pause and resume too.
+        assertNull(tr.pause(60_000))
+        tr.resume(70_000, day)
+        assertNull(tr.flush(90_000))
+        // The panel closed on the last page: it counts again from there.
+        assertNull(tr.onPageShown(100_000, day, 250))
+        val later = tr.pause(103_000)!!
+        assertEquals(3L, later.seconds)
         assertEquals(1, later.pages)
+        assertEquals(250L, later.chars)
     }
 
     @Test
-    fun forgetPageStopsCountingUntilTheNextBookShows() {
+    fun aFlushedBookCountsNothingUntilTheNextBookShows() {
         val tr = started()
         tr.flush(5_000)
-        tr.forgetPage()
         assertNull(tr.pause(60_000))
-        tr.resume(70_000)
+        tr.resume(70_000, day)
         assertNull(tr.onPageShown(70_000, day, 120))
         assertEquals(3L, tr.pause(73_000)!!.seconds)
     }
@@ -104,6 +130,7 @@ class ReadingTrackerTest {
         val tr = started()
         tr.onPageShown(2_600, day, 100)
         assertEquals(5L, tr.flush(5_200)!!.seconds) // 2.6 s + 2.6 s = 5.2 s: 5 s now …
+        tr.onPageShown(5_200, day, 100)
         assertEquals(3L, tr.pause(5_200 + 2_900)!!.seconds) // … and the 0.2 s rest joins the next 2.9 s
     }
 

@@ -1,0 +1,263 @@
+--- a/engine/Layout.kt	2026-09-29 10:09:03.240246010 +0000
++++ b/engine/Layout.kt	2026-09-30 22:59:18.767595398 +0000
+@@ -32,6 +32,14 @@
+ 
+ data class IntSize(val width: Int, val height: Int)
+ 
++/** How pages break (U4, "페이지 나눔"). Stored by name: never rename. */
++enum class PageBreakMode {
++    /** 줄 단위: fill every page line by line; paragraphs split across pages (widow/orphan control applies). */
++    LINE,
++    /** 문단 단위: a paragraph (block) that fits on one page is never split; the page before it ends early. */
++    PARAGRAPH,
++}
++
+ enum class LineBreakMode {
+     /** Break between any two Hangul syllables / CJK chars (typical Korean book typesetting). */
+     CHAR,
+@@ -59,6 +67,8 @@
+     val maxImageHeightFraction: Float = 1f,
+     /** Avoid leaving a single line of a paragraph alone at the bottom/top of a page. */
+     val widowOrphanControl: Boolean = true,
++    /** U4: LINE (default, today's pagination) or PARAGRAPH (never split a block that fits on one page). */
++    val pageBreak: PageBreakMode = PageBreakMode.LINE,
+ )
+ 
+ /**
+@@ -103,6 +113,12 @@
+     val config: LayoutConfig,
+     val pages: List<PageInfo>,
+     val advances: FloatArray,
++    /** U6: the offset whose item was forced to open a page ([Typesetter.layout]'s anchorBreak), -1 = none. */
++    val anchorBreak: Int = -1,
++    /** U6: index of the page that item opened, -1 = no anchor break. */
++    val anchorPage: Int = -1,
++    /** U6: the forced break is not where the un-anchored layout breaks (its pages from the anchor on differ). */
++    val anchorShifted: Boolean = false,
+ ) {
+     val pageCount: Int get() = pages.size
+ 
+@@ -118,3 +134,6 @@
+         return lo
+     }
+ }
++
++/** Result of [Typesetter.count]: the page count and where an anchor break landed (U6). */
++class PageTally(@JvmField val pages: Int, @JvmField val anchorPage: Int, @JvmField val anchorShifted: Boolean)
+--- a/engine/Typesetter.kt	2026-09-30 14:10:35.638239896 +0000
++++ b/engine/Typesetter.kt	2026-09-30 22:59:18.768188628 +0000
+@@ -15,18 +15,25 @@
+     private val busy = AtomicBoolean(false)
+ 
+     /** Lays out a whole section into pages. Deterministic for the same (content, config, measurer font state). */
+-    fun layout(content: SectionContent): SectionLayout {
+-        val pass = runPass(content, retain = true)
+-        return SectionLayout(content, config, pass.pages!!, pass.advances)
++    fun layout(content: SectionContent, anchorBreak: Int = -1): SectionLayout {
++        val pass = runPass(content, retain = true, anchorBreak)
++        val a = if (pass.anchorPage >= 0) anchorBreak else -1
++        return SectionLayout(content, config, pass.pages!!, pass.advances, a, pass.anchorPage, pass.anchorShifted)
+     }
+ 
+     /** Same page count as layout(content).pageCount but without retaining lines (background page counting). */
+-    fun countPages(content: SectionContent): Int = runPass(content, retain = false).pageCount
++    fun countPages(content: SectionContent): Int = runPass(content, retain = false, -1).pageCount
+ 
+-    private fun runPass(content: SectionContent, retain: Boolean): TypesetPass {
++    /** [countPages] of layout(content, anchorBreak), plus where the anchor landed (U6). */
++    fun count(content: SectionContent, anchorBreak: Int): PageTally {
++        val p = runPass(content, retain = false, anchorBreak)
++        return PageTally(p.pageCount, p.anchorPage, p.anchorShifted)
++    }
++
++    private fun runPass(content: SectionContent, retain: Boolean, anchorBreak: Int): TypesetPass {
+         val own = busy.compareAndSet(false, true)
+         try {
+-            val pass = TypesetPass(measurer, config, content, retain, if (own) buffers else TypesetBuffers())
++            val pass = TypesetPass(measurer, config, content, retain, if (own) buffers else TypesetBuffers(), anchorBreak)
+             pass.run()
+             return pass
+         } finally {
+--- a/engine/TypesetPass.kt	2026-09-29 13:47:21.428315557 +0000
++++ b/engine/TypesetPass.kt	2026-09-30 23:05:34.948829216 +0000
+@@ -123,6 +123,7 @@
+     private val content: SectionContent,
+     private val retain: Boolean,
+     private val buf: TypesetBuffers,
++    anchorBreak: Int = -1,
+ ) {
+     private val text: String = content.text
+     private val len: Int = text.length
+@@ -137,6 +138,25 @@
+     private val widowOrphan: Boolean = cfg.widowOrphanControl
+     private val imageFraction: Float =
+         cfg.maxImageHeightFraction.let { if (it.isFinite() && it > 0f) minOf(it, 1f) else 1f }
++    /** U4 PARAGRAPH mode: a block that fits on one page is never split. */
++    private val keepParas: Boolean = cfg.pageBreak == PageBreakMode.PARAGRAPH
++    /** PARAGRAPH mode: height of the block being staged (its lines, no space-before) and whether it fits a page. */
++    private var blockH = 0f
++    private var blockFits = false
++
++    /** U6: pending forced page break: the first item with end > it (or start >= it) opens a page; -1 once placed. */
++    private var anchorLeft: Int = if (anchorBreak in 1 until len) anchorBreak else -1
++
++    /** U6: index of the page the anchor's item opened, -1 = none. */
++    var anchorPage = -1
++        private set
++
++    /**
++     * U6: the anchor forced a page break the un-anchored pass would not make at that point (conservative: false
++     * guarantees pages identical to the un-anchored layout; true means they may differ from the anchor on).
++     */
++    var anchorShifted = false
++        private set
+ 
+     /** Advances: full array (retain) or the scratch holding the current block (count). adv[i - advBase]. */
+     private var adv: FloatArray = if (retain) FloatArray(len) else buf.scratch
+@@ -386,6 +406,21 @@
+         val ls = buf.lnStart
+         val le = buf.lnEnd
+         val lw = buf.lnWidth
++        if (keepParas && nl > 1) {
++            // PARAGRAPH mode: the block's own height (line boxes only; its space-before is swallowed at a page top).
++            val mc = metricCursor
++            var h = 0f
++            for (j in 0 until nl) {
++                lineBox(ls[j], le[j])
++                h += mLineH
++            }
++            metricCursor = mc
++            blockH = h
++            blockFits = h <= pageH + EPS
++        } else {
++            blockH = 0f
++            blockFits = false
++        }
+         for (j in 0 until nl) {
+             val s = ls[j]
+             val e = le[j]
+@@ -754,6 +789,18 @@
+ 
+     /** Places the staged item (index n) on the current page, breaking pages as needed. */
+     private fun commit() {
++        val a = anchorLeft
++        if (a >= 0 && (buf.pStart[n] >= a || buf.pEnd[n] > a)) {
++            // U6: this item holds (or is the first after) the anchor: it opens a page (a blank one is dropped there).
++            anchorLeft = -1
++            place(anchored = true)
++            anchorPage = pageCount
++        } else {
++            place(anchored = false)
++        }
++    }
++
++    private fun place(anchored: Boolean) {
+         val b = buf
+         if (b.pKind[n] == K_EMPTY && n == 0) return // an empty paragraph at the top of a page is dropped
+         if ((b.pFlags[n] and F_PBB) != 0 && n > 0) {
+@@ -775,6 +822,15 @@
+                 sb = 0f
+             }
+         }
++        if (anchored && s > 0) {
++            // U6: the un-anchored pass would put the anchor's item after other items: end the page before it (the
++            // page may be short). Everything so far is exactly what the un-anchored pass does.
++            anchorShifted = true
++            emitPage(s, b.pStart[s], true)
++            s = 0
++            if (b.pKind[0] == K_EMPTY) return
++            sb = 0f
++        }
+         val top = y + sb
+         b.pTop[s] = top
+         y = top + b.pH[s]
+@@ -786,22 +842,36 @@
+         val b = buf
+         var cut = k
+         val kind = b.pKind[k]
+-        if (kind == K_TEXT && (b.pFlags[k] and F_HEADING) != 0 && b.pLine[k] > 0) {
+-            // Don't split a heading: move all of its lines if it started on this page after other content.
++        // U4 PARAGRAPH: a block that fits on one page never splits. When one of its lines overflows, the whole block
++        // goes to the next page (cut before its first line when that line is on this page after other content).
++        var whole = false
++        if (keepParas && blockFits && kind == K_TEXT) {
+             val p = k - b.pLine[k]
+-            if (p > 0 && b.pBlock[p] == b.pBlock[k] && b.pLine[p] == 0 && movable(p)) cut = p
+-        } else if (widowOrphan && kind == K_TEXT && (b.pFlags[k] and F_WO) != 0 && b.pCount[k] >= 3 &&
+-            b.pBlock[k - 1] == b.pBlock[k]
+-        ) {
+-            val ln = b.pLine[k]
+-            if (ln == 1) {
+-                // Orphan: the paragraph's first line would sit alone at the page bottom.
+-                if (k - 1 >= 2) cut = k - 1
+-            } else if (ln == b.pCount[k] - 1) {
+-                // Widow: its last line would start the next page alone -> move one more line.
+-                var nc = k - 1
+-                if (nc >= 1 && b.pBlock[nc - 1] == b.pBlock[k] && b.pLine[nc - 1] == 0) nc--
+-                if (nc >= 2) cut = nc
++            if (b.pLine[k] == 0) {
++                whole = true
++            } else if (p > 0 && b.pBlock[p] == b.pBlock[k] && b.pLine[p] == 0) {
++                cut = p
++                whole = true
++            }
++        }
++        if (!whole) {
++            if (kind == K_TEXT && (b.pFlags[k] and F_HEADING) != 0 && b.pLine[k] > 0) {
++                // Don't split a heading: move all of its lines if it started on this page after other content.
++                val p = k - b.pLine[k]
++                if (p > 0 && b.pBlock[p] == b.pBlock[k] && b.pLine[p] == 0 && movable(p)) cut = p
++            } else if (widowOrphan && kind == K_TEXT && (b.pFlags[k] and F_WO) != 0 && b.pCount[k] >= 3 &&
++                b.pBlock[k - 1] == b.pBlock[k]
++            ) {
++                val ln = b.pLine[k]
++                if (ln == 1) {
++                    // Orphan: the paragraph's first line would sit alone at the page bottom.
++                    if (k - 1 >= 2) cut = k - 1
++                } else if (ln == b.pCount[k] - 1) {
++                    // Widow: its last line would start the next page alone -> move one more line.
++                    var nc = k - 1
++                    if (nc >= 1 && b.pBlock[nc - 1] == b.pBlock[k] && b.pLine[nc - 1] == 0) nc--
++                    if (nc >= 2) cut = nc
++                }
+             }
+         }
+         // Keep-with-next chain (headings) ending the page moves with the following content.
+@@ -814,11 +884,23 @@
+             chain = f
+             j = f - 1
+         }
+-        if (chain > 0 && movable(chain)) cut = chain
++        if (chain > 0 && (if (whole) chainFits(chain, cut, k) else movable(chain))) cut = chain
+         return if (cut < 1) 1 else cut
+     }
+ 
+     /**
++     * PARAGRAPH mode: the keep-with-next chain [chain, cut) goes along with the block moving whole from [cut] ([k] =
++     * the staged item) only when the chain alone takes at most [KEEP_MAX_MOVE] of a page and chain + block fit on the
++     * next page together; otherwise the next page would have to split the block or hold the chain alone.
++     */
++    private fun chainFits(chain: Int, cut: Int, k: Int): Boolean {
++        val b = buf
++        val cutTop = if (cut == k) y + b.pSb[k] else b.pTop[cut]
++        val before = cutTop - b.pTop[chain]
++        return before - b.pSb[cut] <= pageH * KEEP_MAX_MOVE && before + blockH <= pageH + EPS
++    }
++
++    /**
+      * Break avoidance (unsplit headings, keep-with-next chains) may carry items [from, n) to the next page
+      * only while they take at most [KEEP_MAX_MOVE] of the page height. Long "headings" (EPUBs that style body
+      * text with h-tags) or long chains of them would otherwise leave pages nearly empty.
+@@ -898,6 +980,12 @@
+     }
+ 
+     private fun finish() {
++        finishPages()
++        // U6: an anchor on trailing blank paragraphs opened no page of its own.
++        if (anchorPage >= pageCount) anchorPage = pageCount - 1
++    }
++
++    private fun finishPages() {
+         if (n > 0) {
+             emitPage(n, len, false)
+             return

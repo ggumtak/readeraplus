@@ -4,6 +4,7 @@ import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.format.DocumentException
 import com.ggumtak.readeraplus.format.ParseOptions
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -173,6 +174,63 @@ class TxtIndexCacheTest {
             val o = ParseOptions(txtEncoding = listOf("", "UTF-8", "MS949", "UTF-16LE", "UTF-16BE")[k % 5])
             checkEquivalence(b, o, "garbage $k")
         }
+    }
+
+    @Test
+    fun equivalenceWithAuthorNotes() {
+        // A5: recurring notes stay inside their episodes on the byte-range path as in the whole-file parse
+        val r = Random(40)
+        val sb = StringBuilder()
+        for (k in 1..6) {
+            sb.append("${k}화\n\n").append(TxtTestUtil.body(r, 2000, "\n\n")).append("\n\n")
+            sb.append(if (k % 2 == 0) "[작가의 말]\n\n" else "작가의 말\n\n").append("감사합니다.\n\n")
+        }
+        sb.append("완결 후기\n\n").append(TxtTestUtil.body(r, 500, "\n\n")).append("\n")
+        val bytes = sb.toString().toByteArray()
+        checkEquivalence(bytes, ParseOptions(), "notes")
+        val p = TxtParser.parse(bytes, bytes.size, ParseOptions())
+        val toc = (0 until p.sectionCount).filter { p.flags[it] and TxtIndex.CHAPTER != 0 }.map { p.titles[it] }
+        assertEquals((1..6).map { "${it}화" } + "완결 후기", toc)
+    }
+
+    @Test
+    fun buildingIndexOnlyWhileParsingInFull() {
+        val bytes = text(Random(41)).repeat(40).toByteArray()
+        val f = TxtTestUtil.writeTemp(dir, "building.txt", bytes)
+        val o = ParseOptions()
+        TxtTestUtil.withCacheDir(cacheDir) {
+            TxtIndexStore.fileFor(TxtIndexStore.key(f, o))!!.delete()
+            assertFalse(TxtDocuments.isBuildingIndex(f.path))
+            val pool = Executors.newSingleThreadExecutor()
+            try {
+                val open = pool.submit<Int> { TxtDocuments.open(f, o).use { it.sections.size } }
+                var seen = false
+                while (!open.isDone) {
+                    if (!TxtDocuments.isBuildingIndex(f.path)) continue
+                    seen = true
+                    // the same file under another spelling of its path (unless the parse ended in between)
+                    val other = TxtDocuments.isBuildingIndex(f.parent + "//" + f.name)
+                    assertTrue("other spelling", other || !TxtDocuments.isBuildingIndex(f.path))
+                    break
+                }
+                assertTrue(open.get(30, TimeUnit.SECONDS) > 1)
+                assertTrue("seen while parsing", seen)
+            } finally {
+                pool.shutdown()
+            }
+            assertFalse(TxtDocuments.isBuildingIndex(f.path))
+            assertFalse(TxtDocuments.isBuildingIndex(File(dir, "other.txt").path))
+            // an indexed open never builds
+            TxtDocuments.open(f, o).close()
+            assertFalse(TxtDocuments.isBuildingIndex(f.path))
+        }
+        // a missing file is never marked
+        val missing = File(dir, "missing.txt")
+        try {
+            TxtDocuments.open(missing, o)
+        } catch (_: DocumentException) {
+        }
+        assertFalse(TxtDocuments.isBuildingIndex(missing.path))
     }
 
     @Test

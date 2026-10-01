@@ -53,7 +53,6 @@ import com.ggumtak.readeraplus.ui.kit.MenuItem
 import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.dp
-import com.ggumtak.readeraplus.ui.kit.einkListView
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.icon
@@ -450,7 +449,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         groupAdapter = GroupAdapter(this, ::enterGroup, ::onGroupLongPress)
         gridAdapter = BookGridAdapter(this, actions)
 
-        listView = einkListView().apply {
+        // Library subclasses: the always-visible fast scroller takes only the right edge, not the ⋮ next to it.
+        listView = LibraryListView(this).apply {
             clipToPadding = false
             setPadding(0, dp(4), 0, dp(8))
             isFastScrollEnabled = true
@@ -467,7 +467,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val pad = dp(8)
         val spacing = dp(6)
         gridAdapter.cellWidth = (widthPx - 2 * pad - (cols - 1) * spacing) / cols
-        gridView = GridView(this).apply {
+        gridView = LibraryGridView(this).apply {
             numColumns = cols
             stretchMode = GridView.STRETCH_COLUMN_WIDTH
             horizontalSpacing = spacing
@@ -1604,11 +1604,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         }
     }
 
-    /** [더보기] with one book checked: the single-book menu (grid cells have no ⋮); picking an item ends selection. */
+    /**
+     * [더보기] with one book checked: the single-book menu (grid cells have no ⋮), with the flags (the card buttons
+     * are hidden while selecting); picking an item ends selection.
+     */
     private fun showSelectedBookMenu(anchor: View) {
         val id = selection.single() ?: return
         val row = shownRows.firstOrNull { it.book.id == id } ?: return
-        bookMenu(row, anchor) { endSelection() }
+        bookMenu(row, anchor, flags = true) { endSelection() }
     }
 
     /** [다 읽음으로] / [읽을 책으로]: one transaction for all checked books (the same rules as the card flags). */

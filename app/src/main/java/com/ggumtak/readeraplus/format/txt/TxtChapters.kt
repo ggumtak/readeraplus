@@ -9,7 +9,8 @@ import java.util.regex.Pattern
  *    char is a digit / 제 / a keyword initial / a separator, or the line ends with 화).
  * 2. Every built-in rule (K1..K6, see ARCHITECTURE.md) is tried on the candidate; the user regex first.
  * 3. Scoring: per rule, count matches spaced more than 1000 chars apart; the best rule wins (K4 "1. title" only
- *    under stricter conditions); specials (K3: 프롤로그, 외전, 후기, …) are always included.
+ *    under stricter conditions); specials (K3: 프롤로그, 외전, 후기, …) are always included, except author notes
+ *    that recur after the episodes (작가의 말 / 작가 후기 / 후기 / 완결 후기, see [authorNotes]).
  * 4. Cleanup: an immediately repeated heading is a duplicated title (second one dropped); runs of 3+ headings
  *    with no body between them are a table-of-contents listing and are pruned.
  */
@@ -106,11 +107,12 @@ internal object TxtChapters {
         val chosen = chooseRule(t, cIdx, cMask, nc, user != null)
         if (chosen == 0) return EMPTY
         val selMask = chosen or R_K3
+        val notes = if (chosen != R_K3) authorNotes(cMask, cTitle, nc, chosen) else null
         var sel = IntArray(nc)
         var selTitle = arrayOfNulls<String>(nc)
         var ns = 0
         for (k in 0 until nc) {
-            if (cMask[k] and selMask != 0) {
+            if (cMask[k] and selMask != 0 && (notes == null || !notes[k])) {
                 sel[ns] = cIdx[k]
                 selTitle[ns] = cTitle[k]
                 ns++
@@ -287,6 +289,54 @@ internal object TxtChapters {
         var specials = 0
         for (k in 0 until n) if (mask[k] and R_K3 != 0) specials++
         return if (specials >= 2) R_K3 else 0
+    }
+
+    /**
+     * A5: web-novel dumps put an author note ("작가의 말", "작가 후기", "후기", "완결 후기") after many episodes. Such a
+     * note belongs to its episode: it must not become a TOC entry or start a new page. With 3 or more note
+     * candidates, every note before the last heading of the [chosen] rule is dropped; a note after it is dropped
+     * too when its kind already recurred (the last episode's own note), while a different kind there stays (a
+     * closing "완결 후기" after per-episode "작가의 말"s). Notes the user regex matches stay; 프롤로그, 에필로그,
+     * 서장, 종장, 서문, 외전, 번외, 후일담 and 막간 are not notes. Returns the candidates to drop, or null for none.
+     */
+    private fun authorNotes(mask: IntArray, titles: Array<String?>, n: Int, chosen: Int): BooleanArray? {
+        val kind = IntArray(n)
+        var notes = 0
+        var lastChosen = -1
+        for (k in 0 until n) {
+            val m = mask[k]
+            if (m and R_K3 != 0 && !(chosen == R_USER && m and R_USER != 0)) {
+                kind[k] = noteKind(titles[k])
+                if (kind[k] != 0) notes++
+            }
+            if (kind[k] == 0 && m and chosen != 0) lastChosen = k
+        }
+        if (notes < 3 || lastChosen < 0) return null
+        val drop = BooleanArray(n)
+        var recurring = 0 // bit per note kind seen before the last chosen heading
+        for (k in 0 until n) {
+            if (kind[k] == 0) continue
+            val bit = 1 shl kind[k]
+            if (k < lastChosen) {
+                drop[k] = true
+                recurring = recurring or bit
+            } else if (recurring and bit != 0) {
+                drop[k] = true
+            }
+        }
+        return drop
+    }
+
+    /** 1..4 for the author-note kinds (by title prefix, ignoring spaces and brackets), else 0. */
+    internal fun noteKind(title: String?): Int {
+        val k = normKey(title)
+        return when {
+            k.startsWith("작가의말") -> 1
+            k.startsWith("작가후기") -> 2
+            k.startsWith("완결후기") -> 3
+            k.startsWith("후기") -> 4
+            else -> 0
+        }
     }
 
     private fun spacedCount(t: LineTable, idx: IntArray, mask: IntArray, n: Int, rule: Int): Int {

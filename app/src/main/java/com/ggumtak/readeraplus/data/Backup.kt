@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.database.sqlite.SQLiteDatabase
 import android.util.Log
+import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.settings.Settings
 import java.io.File
 import java.io.InputStream
@@ -18,6 +19,12 @@ object Backup {
     private const val TAG = "Backup"
     /** Backups larger than this are rejected (a real one is a few MB at most). */
     private const val MAX_BYTES = 64L * 1024 * 1024
+
+    /**
+     * The reader's per-book parse records ("b<id>" → `TextPositions.encode`), which ReaderActivity keeps in the
+     * SharedPreferences of this name. A restore marks positions of another TXT parse there ([markTextPositions]).
+     */
+    internal const val TEXT_POSITIONS_PREFS = "reader_text_positions"
 
     /** Writes a backup JSON to [out]. */
     fun export(context: Context, out: OutputStream) {
@@ -67,6 +74,7 @@ object Backup {
             },
             collections = collectionNames,
             settings = settings,
+            txtParseVersion = TxtDocuments.PARSE_VERSION,
         )
         val w = OutputStreamWriter(out, Charsets.UTF_8)
         w.write(BackupJson.toJson(data).toString(1))
@@ -80,7 +88,8 @@ object Backup {
         val bytes = readLimited(input)
         val data = BackupJson.parse(String(bytes, Charsets.UTF_8))
         val matches = resolveBooks(data.books)
-        applyLibrary(data, matches)
+        val remap = applyLibrary(data, matches)
+        markTextPositions(context, remap)
         data.settings?.let { applySettings(it) }
         return matches.size
     }
@@ -147,9 +156,11 @@ object Backup {
 
     private fun nameSizeKey(fileName: String, size: Long): String = "$fileName\u0000$size"
 
-    private fun applyLibrary(data: BackupData, matches: List<Match>) {
+    /** Restores [matches]; returns (book id, progress) of the restored positions to find again by fraction. */
+    private fun applyLibrary(data: BackupData, matches: List<Match>): List<Pair<Long, Float>> {
         val db = Library.db()
         val now = System.currentTimeMillis()
+        val remap = ArrayList<Pair<Long, Float>>()
         db.inTransaction {
             val collectionIds = HashMap<String, Long>()
             fun collection(name: String): Long {
@@ -178,6 +189,7 @@ object Backup {
                 // A backup entry that was never read doesn't wipe progress made on this device.
                 if (b.lastReadAt > 0 || m.currentLastReadAt == 0L) {
                     exec(LibrarySql.UPDATE_POSITION, b.posSection, b.posOffset, b.progress, b.lastReadAt, id)
+                    if (BackupJson.remapsTextPosition(data.txtParseVersion, b)) remap += id to b.progress
                 }
                 for (name in b.collections) {
                     val cid = collection(name)
@@ -230,6 +242,23 @@ object Backup {
                     }
                 }
             }
+        }
+        return remap
+    }
+
+    /**
+     * Restored TXT positions of another parse ([BackupJson.remapsTextPosition]) get a parse record no open matches,
+     * so the next open finds each place by its fraction instead of at (section, offset) of the old split. Written
+     * after the library's transaction has committed, with `commit()` so an app restart right after keeps them.
+     */
+    private fun markTextPositions(context: Context, remap: List<Pair<Long, Float>>) {
+        if (remap.isEmpty()) return
+        try {
+            val e = context.getSharedPreferences(TEXT_POSITIONS_PREFS, Context.MODE_PRIVATE).edit()
+            for ((id, progress) in remap) e.putString("b$id", BackupJson.staleTextPosition(progress))
+            e.commit()
+        } catch (t: Throwable) {
+            Log.w(TAG, "text position marks failed", t)
         }
     }
 

@@ -248,6 +248,11 @@ saves every 25 sections and on close; counting order; `pagesPerChar` ignores kno
 one is known. R2 already made `LayoutKeys.layoutPart` normalise `footerEpisode` / `footerTimeLeft` (repaint, not
 relayout; not in the page-count key).
 
+READER_B also provides (T1-7; main thread; O(1) per turn): `PageCounts.charsFrom(section, offset)`,
+`charsBetween(fromSection, fromOffset, toSection, toOffset)`, `totalChars()`; `BookSession.charsLeftInBook(section,
+offset)` and `charsLeftInChapter(section, offset)` (to the next TOC entry, else the end of the book; the chapter lookup
+is cached while the position stays inside it).
+
 ### EXTRAS_NAV
 
 **`reader/extras/Episodes.kt`** — users READER_B (builds), READER_A (footer/chrome), EXTRAS_NAV (TOC, go-to):

@@ -176,7 +176,7 @@ class PopupStateTest {
 
     @Test
     fun sleepTimerChoices() {
-        assertEquals(listOf("끔", "15분", "30분", "45분", "60분", "90분", "이 화 끝까지", "2화 끝까지"), SleepChoice.OPTIONS.map { it.label })
+        assertEquals(listOf("끔", "15분", "30분", "45분", "1시간", "1시간 30분", "이 화 끝까지", "2화 끝까지"), SleepChoice.OPTIONS.map { it.label })
         assertEquals(0, SleepChoice.indexOf(0, 0))
         assertEquals(2, SleepChoice.indexOf(30, 0))
         // Episodes win over minutes.

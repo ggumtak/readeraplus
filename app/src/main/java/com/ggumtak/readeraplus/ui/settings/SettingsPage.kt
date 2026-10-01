@@ -31,7 +31,8 @@ import com.ggumtak.readeraplus.ui.kit.vertical
 /**
  * One screen of the in-activity settings stack. [build] is called once when the page is first shown; the view is
  * kept while the page stays in the stack so going back preserves scroll position. [onShown] runs every time the
- * page becomes the top page (refresh summaries there).
+ * page becomes the top page (refresh summaries there); [onHidden] when another page is pushed over it. While it is
+ * the top page, [onResume] / [onPause] follow the activity's. [onDestroy] runs when it leaves the stack.
  */
 internal abstract class SettingsPage(val activity: SettingsActivity, val id: String, val title: String) {
     var view: View? = null
@@ -39,7 +40,9 @@ internal abstract class SettingsPage(val activity: SettingsActivity, val id: Str
     abstract fun build(): View
 
     open fun onShown() {}
+    open fun onHidden() {}
     open fun onResume() {}
+    open fun onPause() {}
     open fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean = false
     open fun onKeyPressed(keyCode: Int, scanCode: Int) {}
     open fun onDestroy() {}
@@ -60,15 +63,25 @@ internal inline fun editReader(f: (ReaderSettings) -> ReaderSettings) {
 
 // ---------------------------------------------------------------- view helpers
 
-/** White scroll container for a page body; e-ink friendly (no fading edges, no overscroll). */
-internal fun Context.pageScroll(body: LinearLayout): ScrollView = ScrollView(this).apply {
-    isVerticalFadingEdgeEnabled = false
-    overScrollMode = View.OVER_SCROLL_NEVER
-    isScrollbarFadingEnabled = false
-    isSmoothScrollingEnabled = false
-    isFillViewport = true
-    setBackgroundColor(Ink.WHITE)
-    addView(body, android.widget.FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+/**
+ * White scroll container for a page body; e-ink friendly (no fading edges, no overscroll). [fling] = false makes the
+ * page static: a drag scrolls, a flick stops with the finger (no coasting frames), for pages that are read rather
+ * than scanned (읽기 기록).
+ */
+internal fun Context.pageScroll(body: LinearLayout, fling: Boolean = true): ScrollView =
+    (if (fling) ScrollView(this) else StaticScrollView(this)).apply {
+        isVerticalFadingEdgeEnabled = false
+        overScrollMode = View.OVER_SCROLL_NEVER
+        isScrollbarFadingEnabled = false
+        isSmoothScrollingEnabled = false
+        isFillViewport = true
+        setBackgroundColor(Ink.WHITE)
+        addView(body, android.widget.FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+    }
+
+/** A ScrollView without fling: every frame it draws follows the finger. */
+private class StaticScrollView(context: Context) : ScrollView(context) {
+    override fun fling(velocityY: Int) {}
 }
 
 internal fun Context.pageBody(): LinearLayout = vertical {

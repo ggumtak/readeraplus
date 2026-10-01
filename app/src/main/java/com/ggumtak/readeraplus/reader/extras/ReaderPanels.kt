@@ -58,8 +58,9 @@ object ReaderPanels {
     }
 
     /**
-     * Go-to-page dialog (page number or percent). When [host] also implements [PageJumpHost] the chosen page is
-     * shown exactly and drawn once; otherwise the page is estimated first and corrected when its section is laid out.
+     * Go-to dialog: page number, percent, or episode number ([화], when the TOC is numbered). When [host] also
+     * implements [PageJumpHost] the chosen page is shown exactly and drawn once; otherwise the page is estimated first
+     * and corrected when its section is laid out.
      */
     fun showGoTo(host: ReaderHost) {
         InfoDialogs.goTo(host)

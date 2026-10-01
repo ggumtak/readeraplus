@@ -1,0 +1,200 @@
+[
+ {
+  "title": "Reading after a cross-midnight wake is logged to the previous day",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/ReadingTracker.kt",
+  "line": 50,
+  "severity": "low",
+  "evidence": "pause() calls take() but leaves `day` at the last day it saw. resume(now) has no day parameter, and ReaderActivity.kt:387 calls tracker.resume(elapsedRealtime) only. Typical e-reader use: the user reads at night, turns the screen off at 23:50 (onPause flushes day D), then wakes the device the next morning and reads the same page for 3 min before turning. onPageShown(now, D+1, …) runs closePage first (+180 s, +1 page, +chars) and only then sees `today != day`, so take() returns ReadingDelta(day = D). If the user pauses again without turning, pause() also returns day D. So up to 300 s, 1 page and that page's characters per morning wake land on yesterday, which skews 오늘, the heatmap and the streak (a 3-minute 'yesterday' can cross the 5-minute streak threshold). TTS turning pages in the background happens to re-sync `day`; a plain screen-off does not. No test covers resume across a day change; theNextPageAfterMidnightFlushesTheDayBefore only covers an uninterrupted session.",
+  "fix": "Give the tracker the day on resume: `fun resume(now: Long, today: Int) { counting = true; if (seconds == 0L && pages == 0 && chars == 0L) day = today; shownAt = if (hasPage) now else -1L }`. After pause() nothing is pending except the sub-second remainder. ReaderActivity.onResume calls `tracker.resume(SystemClock.elapsedRealtime(), dayClock.day(System.currentTimeMillis()))`. Add a ReadingTrackerTest case: started on D, pause, resume on D+1, pause, and assert delta.day == D+1.",
+  "lens": ""
+ },
+ {
+  "title": "End panel counts the last page twice and logs time on the panel as reading",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderActivity.kt",
+  "line": 2591,
+  "severity": "low",
+  "evidence": "showBookEnd() calls tracker.flush(). flush() closes the last page (pages+1, chars+pageChars) and then restarts it (`shownAt = now`). The panel then covers the page, and every way out closes that same page again:\n- 서재로 / home goes through onPause → pause();\n- 다음 권 읽기 goes through openBook → closeCurrentBook → flush;\n- 처음부터 goes through goTo → onPageShown.\nEach adds another page, the page's characters again, and every second the panel was up (≥ 2 s) as reading time. Closing the panel with BACK and pressing next again adds one more page per round. ReadingTrackerTest.flushClosesThePageAndKeepsCounting pins this: the flush reports pages=1, and the later pause reports pages=1 again for the same page. Every finished book therefore inflates 쪽 / 자 in the statistics and the cpm used for 남은 시간.",
+  "fix": "Stop counting while the panel covers the page:\n- In showBookEnd, call `tracker.forgetPage()` right after the flush.\n- When the panel closes and leaves the reader on the last page (onEndClose, onBackPressed's endPanel branch, endPanelKey's PREV), re-arm with `tracker.onPageShown(SystemClock.elapsedRealtime(), dayClock.day(System.currentTimeMillis()), currentPage?.let { it.end - it.start } ?: 0)`.\n- Update the tracker test to match: no second page for the same screen.",
+  "lens": ""
+ },
+ {
+  "title": "Restoring a pre-update backup reopens TXT books A5 re-split in the wrong episode",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/data/Backup.kt",
+  "line": 180,
+  "severity": "low",
+  "evidence": "The restore writes pos_section / pos_offset from the backup (UPDATE_POSITION). A backup made before this release holds coordinates of the TxtIndexStore v3 parse. The reader_text_positions record, which the remap relies on, is not part of the backup: nothing in data/ touches it. On the next open, TextPositions.remapFraction (ReaderMath.kt:361) returns null in two cases:\n- (a) no record exists (new device or reinstall): decode(null) gives null;\n- (b) the device already has a record from this build with the current \"t1|v4|…\" signature: the signatures are equal.\nIn both cases ReaderActivity.kt:781 uses the restored (section, offset) as is in the v4 parse. In books A5 split differently (3 or more author notes), the reader opens in another episode, and writeTextPosition (:792) then stores that wrong place as current. The integrator's claim that every TXT position is looked up again by its fraction once holds only for positions saved on the device itself.",
+  "fix": "Carry the parse identity with backed-up positions.\n- BackupJson writes a top-level `\"txtParseVersion\": TxtDocuments.PARSE_VERSION`.\n- When restoring a TXT entry from a backup without it, or with an older value, write a text-position record that can never match, for example a READER_A helper `TextPositions.markStale(context, bookId, progress)` that stores `TextPositions.encode(\"restored\", b.progress)` under \"b<id>\". The next open then remaps once by fraction (remapFraction takes the record's fraction, or the library progress).\n- With a matching version, keep today's behaviour.\n- Add a BackupR2Test case for the missing-version path.",
+  "lens": ""
+ },
+ {
+  "title": "Page-count key no longer covers parser changes (A2 dropped VERSION_CODE without adding the parse version)",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/BookSession.kt",
+  "line": 612,
+  "severity": "low",
+  "evidence": "computeKey hashes VERSION, ALGO_VERSION, font identity, book file size and mtime, font scale, layout settings and parse options. It does not include TxtDocuments.PARSE_VERSION or any EPUB split version. Before A2, VERSION_CODE invalidated every count on any update, parser changes included. A future PARSE_VERSION bump (allowed once per release by rule 6) that changes section text but keeps the section count would leave the old complete or partial arrays under the same key:\n- PageCounts.setKnown only checks the length;\n- countAll skips known sections;\n- so the totals stay wrong until the user changes a layout setting.\nThis release is safe only because LayoutKeys.VERSION also went 2 → 3. The A2 rule and rule 6 in ARCHITECTURE.md say nothing about the count key on a parse bump.",
+  "fix": "Append the format's parse version to the key's identity string in computeKey, for example `\"$fontIdentity|file=$bookFile|fs=$fontScale|pv=\" + (if (document.format == BookFormat.TXT) TxtDocuments.PARSE_VERSION else EpubPlanCache.VERSION)`. EpubPlanCache.VERSION is bumped whenever the EPUB split changes. Doing it in this release costs nothing extra, because VERSION 3 already invalidates every key once. Add one sentence to the ARCHITECTURE A2 rule (docs contract request), and a LayoutKeysTest/BookSession helper test that a different parse version gives a different key.",
+  "lens": ""
+ },
+ {
+  "title": "Reader re-lays out and re-parses in the background for every reading-setting change made in 설정 (new listener path); TXT re-parses pile up because they can't be cancelled",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderActivity.kt",
+  "line": 342,
+  "severity": "medium",
+  "evidence": "This release adds `handler.post(syncReaderSettings)` to `settingsListener` (:335-344), which is registered in onCreate (:320) and runs while the reader is stopped. Before the release (b3dbc72) the listener only re-applied app settings, and reading settings were applied once, in onResume. Scenario: a 14.8 MB TXT that uses the global TXT defaults is open. The user goes to ⋮ 설정 → 메인 → 'TXT 기본 정리 설정' (MainPage.kt:74) and flips '원본 들여쓰기 제거', '챕터 자동 인식' and '빈 줄 처리' (TxtDefaultsPage.kt:39-60, one editReader per tap, no debounce). Each save runs syncReaderSettings → applyToSession. `readerTarget` was already set to the previous change, so `LayoutKeys.parseChanged` is true every time and each tap calls reopenDocument (:1745). reopenDocument cancels the old openJob, but `Documents.open` → TxtParser runs blocking inside withContext(IO) and has no cancellation points (format/txt has no isActive/interrupt checks). So every tap starts another full parse that runs to the end: about 1–1.5 s of A53 CPU each (spec E's first-open figure) and roughly 45 MB of byte+char buffers each, all running at once while 설정 is on screen. Each one also writes an index file for an option combination nobody will open. The page's own note promises otherwise: '여기서 바꾸면 TXT 책을 다음에 열 때 한 번 다시 정리'. FontsPage (:182) and PageTurningPage (:169-190) do the same on a smaller scale: a relayout plus a counting restart for every pick. The reading-settings popup debounces re-parses (PARSE_DEBOUNCE_MS = 600) for exactly this reason. The new path skips that.",
+  "fix": "Apply reading settings from the listener only while the reader is in front. onResume already compares and applies the final value once (:391-392). `private val syncReaderSettings = Runnable { if (!isDestroyed && inFront && session != null && Settings.reader.withTxt(bookOverride) != readerTarget) applyToSession(Settings.reader) }`. Dialogs and popups inside the reader keep inFront = true, so the popup's '모든 TXT 기본값으로 저장' still applies right away.",
+  "lens": ""
+ },
+ {
+  "title": "T1-11 resume refresh flashes after any page change while paused, e.g. coming back from 설정 after changing font or margins (unrequested app flash, rule 5)",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderActivity.kt",
+  "line": 398,
+  "severity": "medium",
+  "evidence": "onPause records the page on every pause (:412-415). onResume runs `refreshAfterDraw(0L)` → Eink.fullRefresh whenever `curSection != pausedSection || curPageIdx != pausedPageIdx` (:398-400). It never checks whether TTS moved the page. Scenario, with the default einkRefreshEvery = 0: reader on page 57 → ⋮ 설정 → 페이지 넘김 → '페이지 여백' off (or 글꼴 → another font, or any TXT 기본 정리 option). While the reader is stopped, syncReaderSettings (finding above) runs applyToSession → relayout(), a MainScope coroutine that runs while stopped (:1236-1265). Its showPage(Nav.RELAYOUT) sets curPageIdx to the new index (e.g. 49); a TXT re-parse shows through Nav.JUMP and can change curSection too. Back press → onResume sees a different page → a full GC16 refresh or a black flash. At b3dbc72 the same return did no refresh. Spec T1-11 asks for this refresh only for pages that TTS turned with the screen off. Rule 5 / decision 3 say any other app-started flash must be opt-in. A re-parse the popup started that finishes after a pause triggers it too.",
+  "fix": "Arm the refresh only when navigation came through the ReaderHost entry points that TTS's follow() uses while the reader was not in front. Add `private var turnedInBackground = false`. Then: `override fun nextPage() = turn(true).also { if (it && !inFront) turnedInBackground = true }` (same for prevPage). In `goTo(...)`, `if (!inFront) turnedInBackground = true`. In onResume: `if (turnedInBackground && pausedSection >= 0 && curLayout != null && (curSection != pausedSection || curPageIdx != pausedPageIdx)) refreshAfterDraw(0L); turnedInBackground = false; pausedSection = -1`. Clear the flag in closeCurrentBook too. Do not key it on ttsSpeaking() at pause: play can be started from the notification after the pause.",
+  "lens": ""
+ },
+ {
+  "title": "End panel's views (about 16 views plus a vector icon) are built on every reader start, before startOpen",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderActivity.kt",
+  "line": 536,
+  "severity": "low",
+  "evidence": "buildViews() now runs `endPanel = EndPanel(this, endActions); endPanel.attach(root)` (:536-537). EndPanel's init (EndPanel.kt:65-121) builds a FrameLayout, about 12 TextViews with borderBox backgrounds, an ImageView with ic_check_box_outline_blank (a VectorDrawable inflate) and several LinearLayouts, all on the main thread in onCreate. onCreate calls startOpen(intent) only afterwards (:321), so this delays the launch of the open IO block on every book open, including cold opens from a file manager. On the A53 that is likely 1–3 ms (an estimate; it isn't in the 'first page' log, which starts at startOpen). The panel is only needed when 'next' is pressed on the book's last page.",
+  "fix": "Build it lazily. Make it `private var endPanel: EndPanel? = null` with `private fun endPanel(): EndPanel = endPanel ?: EndPanel(this, endActions).also { it.attach(root); endPanel = it }`, used only in showBookEnd. Change the other uses to null-safe reads: `endPanel?.isShowing == true` in dispatchKeyEvent/holdAction/onBackPressed/endPanelKey, `endPanel?.owns(v) == true` in isOwnView, `endPanel?.fit(...)` in onViewSizeChanged, `endPanel?.hide()` in closeCurrentBook.",
+  "lens": ""
+ },
+ {
+  "title": "'이 화' time-left footer item does a linear TOC scan on every turn; the cached O(1) BookSession.charsLeftInChapter is unused",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderActivity.kt",
+  "line": 2533,
+  "severity": "low",
+  "evidence": "With footerTimeLeft = TIME_LEFT_EPISODE, every buildDecor() on a turn calls timeLeftLabel → minutesLeft(false) → charsLeft(false), which runs `ch.nextAfter(sec, p.start)`. ChapterIndex.nextAfter is a full linear scan (ChapterIndex.kt:62-74; 1,729 entries in the perf book). The spec says per-turn work is O(1), and T1-7 describes the episode remainder as '1–3 sections of arithmetic'. READER_B's `BookSession.charsLeftInChapter` (BookSession.kt:691) caches the chapter span, so a turn inside the chapter is O(1), but nothing calls it (the integrator lists this as remaining gap 3). The setting is off by default.",
+  "fix": "In charsLeft(false), keep the 'no TOC → null' rule and use the cached span: `if (s.chapters.size == 0) return null; return s.charsLeftInChapter(curSection, p.start)`. The book scope is already O(1) through counts.charsAfter.",
+  "lens": ""
+ },
+ {
+  "title": "A pause from a long audio interruption (over 10 min) leaves the TTS service stopped, and the resume after it runs without the service or wake lock",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/extras/TtsController.kt",
+  "line": 725,
+  "severity": "low",
+  "evidence": "focusListener on AUDIOFOCUS_LOSS_TRANSIENT calls pauseInternal(abandonFocus=false) (TtsController.kt:726). That calls pushService() (:691) with playing=false, and only afterwards sets pausedByFocus=true (:727). TtsService.apply then treats it like a user pause: it releases the wake lock and starts the 10-minute idle stop (TtsService.kt:191-196). Scenario: the user listens with the screen off and a phone call (or an alarm that rings until its 10-minute auto-silence) takes transient focus for more than 10 min. The device is awake during the call, so the idle timer fires and finish() removes the foreground service. When focus comes back, AUDIOFOCUS_GAIN -> start() -> play() -> pushService() -> TtsService.update(): instance is null, so it calls startForegroundService from the background. Android 12+ refuses that (ForegroundServiceStartNotAllowedException), and the catch at TtsService.kt:322-325 swallows it. Speech then resumes with no foreground service and no PARTIAL_WAKE_LOCK, and with the screen off the Android 14 cached-app freezer or suspend stops it after a few sentences, with no notification left to restart it.",
+  "fix": "Don't run the paused-idle stop for a focus pause. Set pausedByFocus before calling pauseInternal in the LOSS_TRANSIENT branch. Then either push a state flag (e.g. TtsState.holdForeground = pausedByFocus) and skip restartIdleTimer in TtsService.apply when it is set (the wake lock can still be released), or keep reporting the transient pause as active to the service but without a wake lock. Clear the flag on AUDIOFOCUS_LOSS, stop() and a user pause, so the normal 10-minute stop still applies.",
+  "lens": ""
+ },
+ {
+  "title": "The paused-service 10-minute stop runs on uptime, so with the screen off it never fires overnight; the comment says the opposite",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/extras/TtsService.kt",
+  "line": 75,
+  "severity": "low",
+  "evidence": "idleStop is posted with Handler.postDelayed (TtsService.kt:200-203), which runs on uptimeMillis. Uptime stops in deep sleep, and a paused service holds no wake lock (TtsService.kt:192), so with the screen off the CPU suspends and the runnable runs only after 10 minutes of awake time. The re-check `left > 1000L` (:78) can only catch a wake-up that comes early, which can't happen: the comment at :76 says \"a wake-up may come early\", but it always comes late. Typical case: listening in bed, the sleep timer pauses TTS (sleepNow -> pause -> pushService(paused)) and the screen is off. The foreground service, its notification and the active MediaSession then stay up all night, and the 10-minute stop only fires 10 awake minutes after the user next turns the device on. Spec T1-11 says \"After 10 minutes paused, the service stops itself.\" No battery or e-ink cost (no wake lock is held), but the behaviour and the comment don't match the spec.",
+  "fix": "Either document it as 10 minutes of awake time (fix the comment at :76 and the class doc at :62-63), or schedule the stop on real time without waking the device: a non-wakeup AlarmManager.set(ELAPSED_REALTIME, pausedSince + IDLE_STOP_MS, PendingIntent.getService(... ACTION_IDLE_STOP ...)) that is delivered at the next natural wake, cancelled in apply(playing) and release(). Also check `elapsedRealtime - pausedSince >= IDLE_STOP_MS` in onStartCommand / update and finish at once when the time is up.",
+  "lens": ""
+ },
+ {
+  "title": "Several new one-line controls get cut off at large font scales (selection bar, end panel, rules dialog, popup style row)",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/ui/library/LibraryActivity.kt",
+  "line": 1595,
+  "severity": "medium",
+  "evidence": "I measured the labels with Noto Sans KR (the same Hangul glyphs as Android's default CJK font) against the real cell widths on the 360 dp screen. (1) Selection bar: actionCell uses label(text, 13f, maxLines = 1), and each cell is (360-8)/4 = 88 dp. '컬렉션에 추가' needs 75 dp at 1.0x, 97 dp at 1.3x and 112 dp at 1.5x. '다 읽음으로' and '읽을 책으로' need 94 dp at 1.5x. All of them ellipsize. (2) EndPanel.kt:113: button(..16f, bold, maxLines = 1) plus 16 dp padding, in cells of (328-40-16)/3 = 90.7 dp. '리뷰 쓰기' needs 97 dp and '처음부터' 93 dp at 1.3x, so they become '리뷰…' and '처음…'. (3) RulesDialog.kt:353: bottomButton (14sp bold, maxLines 1) in 112 dp cells. '텍스트로 편집' needs 113 dp at 1.3x and 129 dp at 1.5x; '정리 규칙 팩…' needs 118 / 135 dp. (4) ReadingSettingsPopup.kt:285-310: the new fixed 96 dp [내 스타일 ▾] leaves the '스타일' label 70 dp at 1.0x, 38 dp at 1.3x and 17 dp at 1.5x, against a need of 39 / 50 / 58 dp. The label wraps into 2 lines inside the 36 dp row, and at 1.5x the row overflows and clips the right edge of [내 스타일 ▾]. Before this release the row had about 118 dp for the label.",
+  "fix": "Let these labels shrink instead of being cut, as SelectionController already does for '문구 지우기'. On actionCell's label, EndPanel.button and RulesDialog.bottomButton, call setAutoSizeTextTypeUniformWithConfiguration(9, <current sp>, 1, TypedValue.COMPLEX_UNIT_SP); these TextViews need a fixed or match_parent width for autosize, so give them lp(MATCH_PARENT, ...) inside their cell. In the popup style row, autosize the '스타일' label the same way and give it maxLines = 1. Alternatively, give the [내 스타일] button lp(0, WRAP_CONTENT, 1f) with a max of 96 dp instead of a fixed 96 dp.",
+  "lens": ""
+ },
+ {
+  "title": "Library view-toggle long-press keeps announcing the mode it was created with",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/ui/library/LibraryActivity.kt",
+  "line": 1330,
+  "severity": "low",
+  "evidence": "viewBtn = iconButton(modeIcon(listMode), modeDescription(listMode)) at :546. Ui.iconButton installs setOnLongClickListener { toast(description); true }, which captures that first String. showModeButton() at :1330-1334, called after every cycleListMode and after a backup restore at :307, updates only contentDescription and the icon. Scenario: the user taps the toggle from 목록 to 간단히, then long-presses it, and the toast says '보기: 목록 (눌러서 바꾸기)'. The code comment at :1342 promises the long-press says the current view.",
+  "fix": "In showModeButton() add: viewBtn.setOnLongClickListener { toast(modeDescription(listMode)); true }. Or set that listener once after creating the button, since it reads listMode when pressed. Ui.kt is frozen, so make the fix here.",
+  "lens": ""
+ },
+ {
+  "title": "Wrong subject particle after the Wi-Fi access code",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/ui/settings/WifiTransferPage.kt",
+  "line": 127,
+  "severity": "low",
+  "evidence": "statusText = \"주소 끝의 '${result.code}'가 접속 코드입니다…\" always uses 가. Codes come from LanCode.ALPHABET = \"23456789abcdefghjkmnpqrstuvwxyz\". A code ending in 3/6/7/8 (삼/육/칠/팔) or m/n/r (엠/엔/알) needs 이. The spec's own example 'k7m3' gives \"'k7m3'가 접속 코드입니다\", which is wrong Korean. This happens for about 7 of the 31 possible last characters.",
+  "fix": "Rephrase so no particle is needed: \"접속 코드는 주소 끝의 '${result.code}'입니다. 받은 파일은 바로 서재에 추가됩니다.\" (Josa.iGa would give the clumsy '이(가)' after a letter).",
+  "lens": ""
+ },
+ {
+  "title": "About page and browser upload page call the screen 'Wi-Fi 전송', but its title is 'Wi-Fi로 책 받기'",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/ui/settings/AboutPage.kt",
+  "line": 46,
+  "severity": "low",
+  "evidence": "The screen's title, drawer row and main-list row all say 'Wi-Fi로 책 받기' (WifiTransferPage.kt:30, LibraryActivity.kt:689, MainPage.kt:47). AboutPage.kt:46 says 'Wi-Fi 전송 화면이 열려 있을 때만…', and the page the browser shows (LanUpload.kt:1125) says '다 받을 때까지 기기의 Wi-Fi 전송 화면을 열어 두세요'. A user who looks for a screen called 'Wi-Fi 전송' finds no such name anywhere in the app.",
+  "fix": "Use the real screen name in both texts: AboutPage: \"‘Wi-Fi로 책 받기’ 화면이 열려 있을 때만 같은 Wi-Fi 안에서 파일을 받습니다. 외부 서버와 통신하지 않습니다.\" LanUpload.HTML: \"다 받을 때까지 기기에서 ‘Wi-Fi로 책 받기’ 화면을 열어 두세요.\"",
+  "lens": ""
+ },
+ {
+  "title": "TOC '빠진 화 · 중복' line is a 26 dp tap target, and the header buttons are 28 dp",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/extras/ContentsDialog.kt",
+  "line": 289,
+  "severity": "low",
+  "evidence": "gapsLine is the clickable, underlined line that opens the 빠진 화 dialog. It is added with lp(MATCH_PARENT, ctx.dp(INFO_DP)), where INFO_DP = 26 (:763). A tap a little low lands on the hairline and the first TOC row, which jumps the book. The header buttons [지금] [화 번호] [검색] [전체 보기] are added with lp(WRAP_CONTENT, ctx.dp(28)) (:284) inside the 36 dp header. Both are under the 40 dp minimum for the e-ink screen. The spec fixes the header at 36 dp but sets no height for the gaps line.",
+  "fix": "Give gapsLine its own height of at least 40 dp, e.g. lp(MATCH_PARENT, ctx.dp(40)) with the text centred vertically; timeLine can stay 26 dp. For the header buttons, keep the 28 dp border but stretch the click area to the full header: lp(WRAP_CONTENT, MATCH_PARENT) with an inset background, or raise HEADER_DP to 40.",
+  "lens": ""
+ },
+ {
+  "title": "The same setting or action is labelled differently in its two places (TTS rate/pitch values, 다음 화 vs 다음 챕터)",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/extras/TtsController.kt",
+  "line": 973,
+  "severity": "low",
+  "evidence": "TTS rate shows '1.0배' on the settings page (SettingsFormat.rate, SettingsLogic.kt:280) but '1.0x' in the reader's TTS 설정 (Fmt.rate, :973). Pitch shows '1.0' on the settings page (:282) but '1.0x' in the reader (:977, which also uses Fmt::rate). The status text size shows '12sp' on the settings page and '12' in the popup. On the one page '넘김·화면 설정', the key chooser names TapAction.NEXT_CHAPTER '다음 화' (KeyActions.label), while the tap-zone cell chooser (PageTurningPage.kt:357-359, actions.map { it.label }) names the same action '다음 챕터'. A8 asks for the same labels in both places.",
+  "fix": "Use one formatter in both places. In TtsController, rate: { String.format(Locale.US, \"%.1f배\", it) }, pitch: { String.format(Locale.US, \"%.1f\", it) } (or move SettingsFormat.rate/pitch to a shared object). In PageTurningPage.pickCellAction, use the key wording: actions.map { if (it == TapAction.NEXT_CHAPTER || it == TapAction.PREV_CHAPTER || it == TapAction.NONE) KeyActions.label(it) else it.label } (or a contract request to relabel TapAction.NEXT_CHAPTER/PREV_CHAPTER as 다음 화/이전 화).",
+  "lens": ""
+ },
+ {
+  "title": "Book-menu '읽은 기록 초기화' looks like it clears the new '읽기 기록', but it does not",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/ui/library/LibraryDialogs.kt",
+  "line": 107,
+  "severity": "low",
+  "evidence": "This release adds the statistics screen '읽기 기록' with drawer icon ic_history (LibraryActivity.kt:683). The book menu already has '읽은 기록 초기화', with the same ic_history icon, and confirm(\"읽은 기록 초기화\", …) at :178. That action only runs Library.resetProgress (position, progress, finished date). The book's reading_log time, which 읽기 기록 shows, stays. The near-identical names and the shared icon tell the user it resets that book's statistics.",
+  "fix": "Rename the item and its dialog after what it does, e.g. '읽은 위치 초기화' or '진행률 초기화' (the message already reads \"‘…’의 읽은 위치와 진행률을 지웁니다\"), and give it another icon (e.g. ic_restore / ic_autorenew).",
+  "lens": ""
+ },
+ {
+  "title": "Back with a TOC title filter on closes the whole TOC instead of clearing the filter",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/extras/ContentsDialog.kt",
+  "line": 154,
+  "severity": "low",
+  "evidence": "The TOC is a plain fullScreenDialog. Its only key listener is inkPagerKeys, which returns false for BACK because ListKeys.direction(BACK) = 0. So after [검색] '외전', Back dismisses the dialog, and the filter and list position are lost. The library uses the opposite order: LibraryText.backStep closes the search before leaving the shelf or group. Leaving the filtered state is only possible through the small 28 dp [전체 보기] button.",
+  "fix": "After inkPagerKeys, wrap the listener. For keyCode == BACK on ACTION_UP with tab == 0 and tocTab filtering (rows != null), call clearFilter() and consume the key; otherwise fall through to the pager's handling and return false for BACK. Expose a small fun TocTab.clearFilterIfAny(): Boolean.",
+  "lens": ""
+ },
+ {
+  "title": "읽기 기록 lists and opens trashed books; the library refuses to open them",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/ui/settings/StatsPage.kt",
+  "line": 215,
+  "severity": "low",
+  "evidence": "query() takes Library.book(id) for the top-10 list (:96-100) and for 올해 다 읽은 책 (:102). SELECT_BOOK_BY_ID has no trashed filter, and SELECT_LOG_PER_BOOK only joins books. openBook (:215-217) calls ReaderActivity.open for any id. The library's openBook shows '휴지통에 있는 책입니다. 먼저 복원하세요.' for the same book. Scenario: read a book this month, move it to the trash, then open 읽기 기록 and tap it in '이번 달 많이 읽은 책'. It opens in the reader.",
+  "fix": "Pass the Book to openBook and refuse a trashed one: if (b.trashed) { ctx.toast(\"휴지통에 있는 책입니다. 먼저 복원하세요.\"); return }. Or leave the time in the totals but drop trashed books from the tappable rows in query().",
+  "lens": ""
+ },
+ {
+  "title": "'이 문구 지우기' message says the line will be deleted, then offers to delete only the phrase",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/reader/extras/SelectionController.kt",
+  "line": 538,
+  "severity": "low",
+  "evidence": "setMessage(\"‘$shown’${Josa.iGa(phrase)} 들어간 줄을 이 책에서 지웁니다.\\n\\n줄 전체를 지우거나 이 문구만 지울 수 있습니다. …\"). The first sentence says flatly that the line is deleted, yet the buttons are [줄 전체 지우기] [이 문구만] [취소]. A user who picks '이 문구만' has just been told the line goes. This is unclear Korean in a destructive dialog.",
+  "fix": "Ask, don't announce: \"‘$shown’${Josa.eulReul(phrase)} 이 책에서 지웁니다. 이 문구가 든 줄 전체를 지우거나 이 문구만 지울 수 있습니다. '치환 규칙'에서 되돌릴 수 있습니다.\"",
+  "lens": ""
+ },
+ {
+  "title": "A restored backup with a huge reading-log 'chars' value permanently breaks the statistics page and the time-left speed",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/data/BackupJson.kt",
+  "line": 337,
+  "severity": "medium",
+  "evidence": "BackupJson.logFromJson caps seconds at 86 400 (line 335) but only floors pages and chars: `pages = int(...).coerceAtLeast(0)` (336) and `chars = long(o, \"chars\", 0L).coerceAtLeast(0L)` (337). Backup.applyLibrary then writes them unchanged through LOG_RESTORE / LOG_INSERT (Backup.kt ~205-209). A hand-edited or corrupt backup with `\"chars\": 1e19` reaches the DB as Long.MAX_VALUE, because BackupJson.long turns a finite double into a saturated toLong. Every log read uses SUM(chars) (LibrarySql SELECT_LOG_TOTALS / SELECT_LOG_DAYS / SELECT_LOG_PER_BOOK / SELECT_LOG_BOOK_TOTALS). SQLite's SUM throws 'integer overflow' when all inputs are integers. I checked this with real SQLite 3.45 on the exact reading_log schema: one Long.MAX row plus one row with chars=500 on 20260102 gives `ERR integer overflow` for SELECT_LOG_TOTALS. StatsPage.query runs all its queries inside one runCatching (StatsPage.kt:73-77), so the whole 읽기 기록 page shows only \"기록을 읽지 못했습니다\". That covers any period containing the row, so it lasts the rest of the year for 올해, and any later reading adds another row. With only that one row in the 14-day window there is no overflow, but ReadingLog.speed does `Math.round(chars * 60.0 / seconds).toInt()` (ReadingLog.kt:163). That truncates a ~1e17 long to arbitrary low 32 bits, so the footer's 남은 시간 gets a garbage cpm. The UI has no recovery: 읽은 기록 초기화 keeps log rows (Library.resetProgress), and only removing the book from the library (losing its bookmarks and quotes) deletes them. In-app writes can't produce such rows because ReadingLog.add clamps each add to 100 M chars and 100 000 pages; only restore bypasses that.",
+  "fix": "Clamp restored rows like ReadingLog.add does. In logFromJson: `pages = int(o, \"pages\", 0).coerceIn(0, MAX_DAY_PAGES)` and `chars = long(o, \"chars\", 0L).coerceIn(0L, MAX_DAY_CHARS)`, for example 100_000 and 100_000_000L, matching ReadingLog.MAX_ADD_PAGES / MAX_ADD_CHARS (make those internal and reuse them). Make ReadingLog.speed saturate: `Math.round(chars * 60.0 / seconds).coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()`. Optional hardening against rows already in a DB: read `CAST(TOTAL(chars) AS INTEGER)` instead of `IFNULL(SUM(chars),0)` in the SELECT_LOG_* constants (TOTAL never throws). Add a BackupR2Test case with `chars: 1e19`.",
+  "lens": ""
+ },
+ {
+  "title": "Wi-Fi upload server: any device on the same Wi-Fi can hold the only handler thread indefinitely (no overall deadline on the request head)",
+  "file": "app/src/main/java/com/ggumtak/readeraplus/data/LanUpload.kt",
+  "line": 214,
+  "severity": "low",
+  "evidence": "Server.handle (LanUpload.kt:208-216) waits for the first byte in awaitRequest, then sets `s.soTimeout = TIMEOUT_MS` (30 s, per read) and calls exchange.handle, which reads the head with LanHttp.readHead (768-785). readHead's only bound is a 16 KB byte budget; nothing checks elapsed time, and LanExchange's `now` is used only by LanGuard. A peer that never needs the access code can send `G`, then one more byte every ~29 s. No single read times out, so the single handler thread stays inside readHead for up to 16 384 × 29 s (about 5.5 days). Reconnecting repeats it. While that runs, the legitimate browser's connection sits in the 8-slot queue and further connections are closed by acceptLoop (`!queue.offer(s)`). Uploads stall with no on-device message. awaitRequest's 'drop when another connection waits' rule stops applying once a byte has arrived. (Related and by spec: LanGuard's lockout is global, so a peer sending 10 wrong paths every 30 s also keeps everyone, including the owner, locked out.) The impact is limited to while the page is open and to the local network, hence low.",
+  "fix": "Bound the unauthenticated part of the exchange. For example, record `val headDeadline = now() + HEAD_MS` (about 10 s) in LanExchange.handle and pass a check into LanHttp.readHead, so readLine returns null once `now() > deadline`. Alternatively, keep soTimeout at POLL_MS during the head and, as awaitRequest does, give up when `queue.isNotEmpty()` or the deadline passes. Switch to the 30 s per-read timeout only after the route is UPLOAD (the code is known). A JVM test can feed LanExchange a stream that returns one byte per call with an advancing fake clock and assert that a 400 is returned after HEAD_MS.",
+  "lens": ""
+ }
+]

@@ -58,6 +58,9 @@ class FormatTest {
         assertEquals("1.3x", Fmt.rate(1.3f))
         assertEquals("끔", Fmt.minutes(0))
         assertEquals("30분", Fmt.minutes(30))
+        // The settings page's wording (SettingsFormat.sleep).
+        assertEquals("1시간", Fmt.minutes(60))
+        assertEquals("1시간 30분", Fmt.minutes(90))
     }
 
     @Test

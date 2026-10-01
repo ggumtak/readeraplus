@@ -50,8 +50,11 @@ internal class TxtIndex(
 
 /** Persists [TxtIndex] under `Documents.cacheDir/txtindex/<hash>.idx`. All failures are silent (cache only). */
 internal object TxtIndexStore {
-    /** Bump whenever parsing output could change for the same input. */
-    const val VERSION = 3
+    /**
+     * Bump whenever parsing output could change for the same input. At most once per release (every large TXT then
+     * parses in full once): 4 = release 2, author-note pruning (A5).
+     */
+    const val VERSION = 4
     private const val MAGIC = 0x52505458 // "RPTX"
     /** Fixed bytes per section record: byteStart, byteEnd, flags, chars, headLine, headChar, title marker. */
     private const val SECTION_BYTES = 6 * 4 + 1
