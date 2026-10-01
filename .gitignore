@@ -9,3 +9,4 @@ build/
 /tools/out/
 *.keystore
 *.jks
+*.apk
