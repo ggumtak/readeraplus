@@ -124,7 +124,7 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             } else {
                 urlText.text = result.url
                 urlText.setTextColor(Ink.BLACK)
-                statusText.text = "주소 끝의 '${result.code}'가 접속 코드입니다. 받은 파일은 바로 서재에 추가됩니다."
+                statusText.text = "접속 코드는 주소 끝의 '${result.code}'입니다. 받은 파일은 바로 서재에 추가됩니다."
                 statusText.visibility = View.VISIBLE
                 retryBar.visibility = View.GONE
             }

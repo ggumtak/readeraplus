@@ -351,6 +351,7 @@ private class RulesScreen(
     }
 
     private fun bottomButton(label: String, onClick: (View) -> Unit): TextView = ctx.label(label, 14f, bold = true, maxLines = 1).apply {
+        setAutoSizeTextTypeUniformWithConfiguration(9, 14, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         gravity = Gravity.CENTER
         minHeight = ctx.dp(44)
         setPadding(ctx.dp(4), 0, ctx.dp(4), 0)

@@ -44,7 +44,9 @@ else
   SRC=("$OUT/src")
 fi
 CP="$TC/android-all-15.jar:$TC/kotlinx-coroutines-core-jvm-1.9.0.jar"
+status=0
 "$TC/kotlinc/bin/kotlinc" -nowarn -jvm-target 17 -Xjdk-release=17 -no-reflect \
-  -cp "$CP" -d "$OUT/classes" "${SRC[@]}" "$OUT/gen" 2>&1 \
-  | grep -v "^warning:" | grep -v "Picked up JAVA_TOOL_OPTIONS" \
-  | sed "s#$OUT/src/#app/src/main/java/#g" || true
+  -cp "$CP" -d "$OUT/classes" "${SRC[@]}" "$OUT/gen" > "$OUT/compile.log" 2>&1 || status=$?
+sed -e '/^warning:/d' -e '/Picked up JAVA_TOOL_OPTIONS/d' \
+  -e "s#$OUT/src/#app/src/main/java/#g" "$OUT/compile.log"
+exit "$status"

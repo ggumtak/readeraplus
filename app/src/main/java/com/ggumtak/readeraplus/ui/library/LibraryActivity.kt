@@ -45,6 +45,7 @@ import com.ggumtak.readeraplus.data.ReaderPresence
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
 import com.ggumtak.readeraplus.reader.ReaderActivity
+import com.ggumtak.readeraplus.reader.ResumeState
 import com.ggumtak.readeraplus.settings.LibraryListMode
 import com.ggumtak.readeraplus.settings.LibrarySort
 import com.ggumtak.readeraplus.settings.Settings
@@ -243,10 +244,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         }
         hasAccess = hasStorageAccess()
         val i = intent
-        if (LibraryText.shouldOpenLast(app.openLastOnStart, savedInstanceState != null, i?.action, i?.flags ?: 0)) {
-            startOpenLast()
-        } else {
-            ensureUi()
+        val first = ResumeState.activitiesCreated == 1
+        val pending = if (first) ResumeState.pending() else null
+        when (LibraryText.startMode(app.openLastOnStart, savedInstanceState != null, i?.action, i?.flags ?: 0,
+            first, pending?.bookId ?: -1L, pending?.tries ?: 0, ResumeState.MAX_TRIES)
+        ) {
+            LibraryText.StartMode.RESUME -> startOpenLast(resumeId = pending!!.bookId)
+            LibraryText.StartMode.OPEN_LAST -> startOpenLast()
+            LibraryText.StartMode.LIBRARY -> ensureUi()
         }
     }
 
@@ -1332,6 +1337,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         viewBtnMode = listMode
         viewBtn.setImageResource(modeIcon(listMode))
         viewBtn.contentDescription = modeDescription(listMode)
+        viewBtn.setOnLongClickListener { toast(modeDescription(listMode)); true }
     }
 
     private fun modeIcon(m: LibraryListMode): Int = when (m) {
@@ -1358,7 +1364,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
      * goes splash → page with no library frame (one e-ink update less), and the library's build, list query and cover
      * jobs only run if the user comes back to it.
      */
-    private fun startOpenLast() {
+    private fun startOpenLast(resumeId: Long = -1L) {
         decidingOpenLast = true
         holdDraw = true
         window.decorView.viewTreeObserver.addOnPreDrawListener(drawHold)
@@ -1366,7 +1372,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         // Undispatched: the query starts now instead of after the whole launch transaction.
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             val book = withContext(Dispatchers.IO) {
-                runCatching { Library.lastOpened()?.takeIf { !it.trashed && File(it.path).isFile } }.getOrNull()
+                runCatching {
+                    if (resumeId > 0) {
+                        val b = Library.book(resumeId)?.takeIf { !it.trashed && File(it.path).isFile }
+                        if (b == null) ResumeState.clear()
+                        else ResumeState.noteAttempt()
+                        b
+                    } else Library.lastOpened()?.takeIf { !it.trashed && File(it.path).isFile }
+                }.getOrNull()
             }
             onLastBookLoaded(book)
         }
@@ -1592,7 +1605,11 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         background = pressableBackground()
         contentDescription = text
         addView(icon(iconRes, 24))
-        addView(label(text, 13f, maxLines = 1).apply { setPadding(0, dp(4), 0, 0) }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        addView(label(text, 13f, maxLines = 1).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, 0)
+            setAutoSizeTextTypeUniformWithConfiguration(9, 13, 1, TypedValue.COMPLEX_UNIT_SP)
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         setOnClickListener { if (selection.size > 0) onClick() }
     }
 

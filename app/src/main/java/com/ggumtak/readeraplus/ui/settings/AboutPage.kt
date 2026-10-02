@@ -1,6 +1,8 @@
 package com.ggumtak.readeraplus.ui.settings
 
 import android.app.Dialog
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -22,6 +24,9 @@ import com.ggumtak.readeraplus.ui.kit.vertical
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** "정보": version, font / icon licenses (assets/fonts/licenses/…), device info for troubleshooting. */
 internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_ABOUT, "정보") {
@@ -43,7 +48,7 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         body.addView(head)
 
         body.section("네트워크")
-        body.addView(ctx.note("Wi-Fi 전송 화면이 열려 있을 때만 같은 Wi-Fi 안에서 파일을 받습니다. 외부 서버와 통신하지 않습니다."))
+        body.addView(ctx.note("‘Wi-Fi로 책 받기’ 화면이 열려 있을 때만 같은 Wi-Fi 안에서 파일을 받습니다. 외부 서버와 통신하지 않습니다."))
 
         body.section("라이선스")
         licensesBox = ctx.vertical().also(body::addView)
@@ -63,8 +68,10 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
             ctx.toast("복사했습니다")
         }))
         activity.scope.launch {
-            val vendor = withContext(Dispatchers.IO) { runCatching { Eink.vendorName() }.getOrNull() }
-            info = deviceInfo(vendor)
+            val (vendor, exits) = withContext(Dispatchers.IO) {
+                runCatching { Eink.vendorName() }.getOrNull() to recentExits()
+            }
+            info = deviceInfo(vendor) + if (exits != null) listOf("최근 종료" to exits) else emptyList()
             infoBox.removeAllViews()
             for ((k, v) in info) infoBox.addView(ctx.infoRow(k, v))
         }
@@ -117,6 +124,27 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
             }
             text.text = content
         }
+    }
+
+    /** Only queried while the information page is open; never part of app or book startup. */
+    private fun recentExits(): String? {
+        if (Build.VERSION.SDK_INT < 30) return null
+        return runCatching {
+            val am = ctx.getSystemService(ActivityManager::class.java)
+            val exits = am?.getHistoricalProcessExitReasons(ctx.packageName, 0, 3).orEmpty()
+            val format = SimpleDateFormat("MM-dd HH:mm", Locale.KOREA)
+            exits.joinToString("\n") { exit ->
+                val reason = when (exit.reason) {
+                    ApplicationExitInfo.REASON_LOW_MEMORY -> "메모리 부족"
+                    ApplicationExitInfo.REASON_USER_REQUESTED, ApplicationExitInfo.REASON_USER_STOPPED -> "사용자/시스템 강제 종료"
+                    ApplicationExitInfo.REASON_PACKAGE_UPDATED -> "앱 업데이트"
+                    ApplicationExitInfo.REASON_CRASH, ApplicationExitInfo.REASON_CRASH_NATIVE, ApplicationExitInfo.REASON_ANR -> "오류"
+                    ApplicationExitInfo.REASON_SIGNALED -> "신호"
+                    else -> "기타" + exit.description?.let { " · $it" }.orEmpty()
+                }
+                "${format.format(Date(exit.timestamp))} $reason (${exit.importance})"
+            }.ifEmpty { "기록 없음" }
+        }.getOrDefault("기록을 읽지 못했습니다")
     }
 
     private fun deviceInfo(einkVendor: String?): List<Pair<String, String>> {

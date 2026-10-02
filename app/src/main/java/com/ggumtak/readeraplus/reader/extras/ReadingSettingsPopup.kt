@@ -282,17 +282,22 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
     private fun styleRow(): LinearLayout {
         val row = ctx.compactRow(topLine = false)
-        row.addView(ctx.compactLabelBlock("스타일"), lp(0, WRAP_CONTENT, 1f))
+        row.addView(ctx.label("스타일", Compact.LABEL_SP, maxLines = 1).apply {
+            setAutoSizeTextTypeUniformWithConfiguration(9, Compact.LABEL_SP.toInt(), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+        }, lp(0, WRAP_CONTENT, 1f))
         val sel = StyleChoice.selected(cur)
         for (p in StylePreset.entries) {
             val b = ctx.compactToggle(p.label, p == sel) { applyPreset(p) }
+            b.minWidth = ctx.dp(40)
+            b.setAutoSizeTextTypeUniformWithConfiguration(9, Compact.TOGGLE_SP.toInt(), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
             b.contentDescription = "${p.label}: ${p.description}"
             b.setOnLongClickListener { ctx.toast(p.description); true }
             presetButtons += p to b
-            row.addView(b, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = ctx.dp(4) })
+            row.addView(b, LinearLayout.LayoutParams(ctx.dp(52), WRAP_CONTENT).apply { leftMargin = ctx.dp(4) })
         }
         // The saved styles are read (parsed) here, on the popup's first use: never on the reader's cold start.
         val mine = ctx.label(StyleChoice.USER_LABEL, Compact.TOGGLE_SP, maxLines = 1).apply {
+            setAutoSizeTextTypeUniformWithConfiguration(9, Compact.TOGGLE_SP.toInt(), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
             gravity = Gravity.CENTER
             minHeight = ctx.dp(28)
             setPadding(ctx.dp(6), 0, ctx.dp(2), 0)

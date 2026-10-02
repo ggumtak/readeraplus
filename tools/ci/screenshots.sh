@@ -305,6 +305,70 @@ step 51_stats stats_page
 step 52_wifi wifi_page
 step 53_eink_settings eink_settings
 
+# ---- U1: back from recents must show the same book and page ------------------------------------------------------
+top_is() { # top_is <Activity> <step>: the resumed activity, from dumpsys
+  local t; t=$(adb shell dumpsys activity activities | grep -m1 -E "topResumedActivity=|mResumedActivity" | tr -d '\r')
+  case "$t" in *"$1"*) log "PASS $2: $1 on top";; *) log "FAIL $2: expected $1, got: $t";; esac
+}
+same() { python3 tools/ci/same_page.py "shots/$1.png" "shots/$2.png" "$2" | tee -a shots/steps.txt; }
+overview_back() { # recents, then the centred (most recent) card
+  adb shell input keyevent KEYCODE_APP_SWITCH; sleep 3
+  adb shell input tap 360 620; sleep 6
+}
+launcher_intent="-a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $PKG/.ui.library.LibraryActivity"
+
+log "U1 setup: a launcher-rooted task, a book opened from the library, page 5"
+# A previous reader test left an open marker. Close that book explicitly before testing a fresh launcher root.
+adb shell am start -W -a android.intent.action.VIEW -t application/epub+zip -d file:///sdcard/Download/sample.epub \
+  -n $PKG/.reader.ReaderActivity | tee -a shots/steps.txt
+sleep 3; back
+adb shell am force-stop $PKG
+adb shell am start -W $launcher_intent | tee -a shots/steps.txt; sleep 4
+tap_label "샘플 EPUB" contains; sleep 5
+for i in 1 2 3 4; do adb shell input keyevent KEYCODE_PAGE_DOWN; sleep 1; done
+shot 70_before 2; top_is ReaderActivity 70_before
+
+log "U1-A: killed in the background, records kept (LMK)"
+adb shell input keyevent KEYCODE_HOME; sleep 2
+adb shell am kill $PKG; sleep 1
+log "pid after am kill: '$(adb shell pidof $PKG | tr -d '\r')' (expected empty)"
+overview_back; shot 71_after_kill 0; top_is ReaderActivity 71_after_kill; same 70_before 71_after_kill
+
+log "U1-B: activities removed (force-stop = One UI cleaner / sleeping apps)"
+adb shell input keyevent KEYCODE_HOME; sleep 2
+adb shell am force-stop $PKG
+adb shell dumpsys activity recents | grep -E "realActivity|baseIntent" | grep $PKG | head -2 | tee -a shots/steps.txt
+overview_back; shot 72_after_force_stop 0; top_is ReaderActivity 72_after_force_stop; same 70_before 72_after_force_stop
+
+log "U1-C: the exact intent recents sends for a task without activities (deterministic)"
+adb shell am force-stop $PKG
+adb shell am start -W -f 0x10100000 $launcher_intent | tee -a shots/steps.txt   # NEW_TASK | LAUNCHED_FROM_HISTORY
+sleep 5; shot 73_history_intent 0; top_is ReaderActivity 73_history_intent; same 70_before 73_history_intent
+
+log "U1-D: app updated in place while in the background"
+adb shell input keyevent KEYCODE_HOME; sleep 2
+adb install -r -g "$APK" | tee -a shots/steps.txt
+overview_back; shot 74_after_update 0; top_is ReaderActivity 74_after_update; same 70_before 74_after_update
+
+log "U1-E: a second book via onNewIntent, then killed: the SECOND book comes back"
+adb shell am start -W -a android.intent.action.VIEW -t text/plain -d file:///sdcard/Download/sample-utf8.txt \
+  -n $PKG/.reader.ReaderActivity | tee -a shots/steps.txt
+sleep 4; adb shell input keyevent KEYCODE_PAGE_DOWN; shot 75_second_book 2
+adb shell input keyevent KEYCODE_HOME; sleep 2; adb shell am kill $PKG; sleep 1
+overview_back; shot 76_second_after_kill 0; top_is ReaderActivity 76_second_after_kill; same 75_second_book 76_second_after_kill
+
+log "U1-F: 'Don't keep activities' (One UI developer option): destroyed and recreated in process"
+adb shell settings put global always_finish_activities 1
+adb shell input keyevent KEYCODE_HOME; sleep 2
+overview_back; shot 77_dont_keep 0; top_is ReaderActivity 77_dont_keep; same 75_second_book 77_dont_keep
+adb shell settings put global always_finish_activities 0
+
+log "U1-G (control): the user closed the book with BACK: the library must come back"
+back; sleep 2; top_is LibraryActivity 78_closed
+adb shell input keyevent KEYCODE_HOME; sleep 1; adb shell am force-stop $PKG
+adb shell am start -W -f 0x10100000 $launcher_intent | tee -a shots/steps.txt
+sleep 5; shot 78_closed_then_recents 0; top_is LibraryActivity 78_closed_then_recents
+
 adb logcat -d > shots/logcat.txt
 adb logcat -d -b crash > shots/crash.txt
 adb logcat -d -s ReaderaPlus:* > shots/perf.txt

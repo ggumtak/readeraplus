@@ -104,7 +104,7 @@ internal fun LibraryActivity.bookMenu(
         item("컬렉션에 추가", R.drawable.ic_library_books) { collectionsDialog(b) }
         item("책 정보 편집", R.drawable.ic_edit) { editBookInfo(b) }
         if (b.format == BookFormat.TXT) item("인코딩 변경", R.drawable.ic_text_fields) { chooseEncoding(b) }
-        item("읽은 기록 초기화", R.drawable.ic_history) { confirmReset(b) }
+        item("읽은 위치 초기화", R.drawable.ic_autorenew) { confirmReset(b) }
         item("휴지통으로 이동", R.drawable.ic_delete) { setTrashed(b, true) }
     }
     popupMenu(anchor, items, 240)
@@ -175,7 +175,7 @@ private fun LibraryActivity.chooseEncoding(b: Book) {
 }
 
 private fun LibraryActivity.confirmReset(b: Book) {
-    confirm("읽은 기록 초기화", "‘${b.title}’의 읽은 위치와 진행률을 지웁니다.", "초기화") {
+    confirm("읽은 위치 초기화", "‘${b.title}’의 읽은 위치와 진행률을 지웁니다.", "초기화") {
         io("초기화하지 못했습니다", { Library.resetProgress(b.id) }) { changed() }
     }
 }

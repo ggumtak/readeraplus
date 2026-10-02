@@ -535,7 +535,7 @@ class SelectionController(private val host: ReaderHost) {
         if (phrase.isEmpty()) return
         val shown = if (phrase.length > PHRASE_SHOWN) phrase.take(PHRASE_SHOWN) + "…" else phrase
         val d = ctx.alert().setTitle("이 문구 지우기")
-            .setMessage("‘$shown’${Josa.iGa(phrase)} 들어간 줄을 이 책에서 지웁니다.\n\n줄 전체를 지우거나 이 문구만 지울 수 있습니다. '치환 규칙'에서 되돌릴 수 있습니다.")
+            .setMessage("‘$shown’${Josa.eulReul(phrase)} 이 책에서 지웁니다.\n\n이 문구가 든 줄 전체를 지우거나 이 문구만 지울 수 있습니다. '치환 규칙'에서 되돌릴 수 있습니다.")
             .setPositiveButton("줄 전체 지우기") { _, _ -> addPhraseRule(h, bookId, phrase, wholeLine = true) }
             .setNeutralButton("이 문구만") { _, _ -> addPhraseRule(h, bookId, phrase, wholeLine = false) }
             .setNegativeButton("취소", null)

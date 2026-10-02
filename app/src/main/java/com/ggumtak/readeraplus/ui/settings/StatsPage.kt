@@ -22,6 +22,7 @@ import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.row
+import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -141,7 +142,7 @@ internal class StatsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         } else {
             for ((b, t) in d.top) {
                 val sub = ReaderFormat.durationOfSeconds(t.seconds) + " · " + ReadingStats.progress(b.progress, b.haveRead)
-                content.addView(ctx.row(b.title, sub) { openBook(b.id) })
+                content.addView(ctx.row(b.title, sub) { openBook(b) })
             }
         }
 
@@ -184,7 +185,7 @@ internal class StatsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
             val open = items.visibility != View.VISIBLE
             if (open && items.childCount == 0) {
                 for ((b, at) in list) {
-                    items.addView(ctx.row(b.title, ReadingStats.dayLabel(ReadingLog.day(at)) + " 완독") { openBook(b.id) })
+                    items.addView(ctx.row(b.title, ReadingStats.dayLabel(ReadingLog.day(at)) + " 완독") { openBook(b) })
                 }
             }
             items.visibility = if (open) View.VISIBLE else View.GONE
@@ -212,9 +213,13 @@ internal class StatsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         }
     }
 
-    private fun openBook(id: Long) {
+    private fun openBook(book: Book) {
+        if (book.trashed) {
+            ctx.toast("휴지통에 있는 책입니다. 먼저 복원하세요.")
+            return
+        }
         reloadOnResume = true
-        ReaderActivity.open(activity, id)
+        ReaderActivity.open(activity, book.id)
     }
 
     override fun onDestroy() {

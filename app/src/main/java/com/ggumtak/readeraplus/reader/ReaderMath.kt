@@ -1,5 +1,23 @@
 package com.ggumtak.readeraplus.reader
 
+import com.ggumtak.readeraplus.format.DocPosition
+
+/** The book and place saved when Android recreates a reader (pure). */
+object ReaderRestore {
+    class Place private constructor(val bookId: Long, val section: Int, val offset: Int, val savedAt: Long) {
+        companion object {
+            /** A book id is sufficient to reopen; section -1 leaves the position to the database. */
+            fun from(bookId: Long, section: Int, offset: Int, savedAt: Long): Place? =
+                if (bookId <= 0) null else Place(bookId, section, offset.coerceAtLeast(0), savedAt)
+        }
+    }
+
+    /** Newer TTS writes and a changed TXT parse take precedence over saved activity coordinates. */
+    fun start(p: Place, bookId: Long, rowWrittenAt: Long, remapped: Boolean): DocPosition? =
+        if (p.bookId == bookId && p.section >= 0 && p.savedAt > 0 && !remapped && rowWrittenAt <= p.savedAt)
+            DocPosition(p.section, p.offset) else null
+}
+
 /**
  * Counts page turns and decides when to flash a full e-ink refresh (pure, unit-tested).
  * [every] = 0 disables the periodic refresh; [onChapter] refreshes when a new chapter is shown. Every trigger is

@@ -112,6 +112,7 @@ internal class EndPanel(private val ctx: Context, private val actions: Actions) 
     }
 
     private fun button(text: String, onClick: () -> Unit): TextView = ctx.label(text, 16f, bold = true, maxLines = 1).apply {
+        setAutoSizeTextTypeUniformWithConfiguration(9, 16, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         gravity = Gravity.CENTER
         minHeight = ctx.dp(48)
         setPadding(ctx.dp(8), 0, ctx.dp(8), 0)

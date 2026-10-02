@@ -356,7 +356,9 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     private fun pickCellAction(cell: Int) {
         val actions = TapAction.entries
         val current = Settings.app.customTapZones.getOrNull(cell)
-        ctx.chooser("${TapZoneModel.cellName(cell)} 칸", actions.map { it.label }, actions.indexOf(current)) { i ->
+        ctx.chooser("${TapZoneModel.cellName(cell)} 칸", actions.map {
+            if (it == TapAction.NEXT_CHAPTER || it == TapAction.PREV_CHAPTER || it == TapAction.NONE) KeyActions.label(it) else it.label
+        }, actions.indexOf(current)) { i ->
             setCustom(TapZoneModel.withCell(Settings.app.customTapZones, cell, actions[i]))
         }
     }

@@ -101,6 +101,10 @@ import java.util.Calendar
 class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, TxtOverrideHost, ReaderEndHost {
     companion object {
         const val EXTRA_BOOK_ID = "book_id"
+        private const val STATE_BOOK = "rp.book"
+        private const val STATE_SECTION = "rp.section"
+        private const val STATE_OFFSET = "rp.offset"
+        private const val STATE_AT = "rp.at"
 
         fun open(context: Context, bookId: Long) {
             context.startActivity(
@@ -302,6 +306,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var pausedPageIdx = -1
     /** TTS (the only caller of [nextPage] / [prevPage] / [goTo] while paused) moved the page since the pause. */
     private var turnedInBackground = false
+    /** Exact saved place of a recreated reader; consumed by its first successful open. */
+    private var restoredPlace: ReaderRestore.Place? = null
 
     // ================================================================== lifecycle
 
@@ -321,11 +327,34 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         applyReaderColors(Settings.reader)
         applyAppSettings()
         unlistenSettings = Settings.addListener(settingsListener)
-        startOpen(intent)
+        val place = ReaderRestore.Place.from(
+            savedInstanceState?.getLong(STATE_BOOK, -1L) ?: -1L,
+            savedInstanceState?.getInt(STATE_SECTION, -1) ?: -1,
+            savedInstanceState?.getInt(STATE_OFFSET, 0) ?: 0,
+            savedInstanceState?.getLong(STATE_AT, 0L) ?: 0L,
+        )
+        val start = if (place != null) {
+            restoredPlace = place
+            // Android keeps the original launch intent: a by-id intent avoids an expired VIEW grant or old jump.
+            Intent(this, ReaderActivity::class.java).putExtra(EXTRA_BOOK_ID, place.bookId).also { setIntent(it) }
+        } else intent
+        startOpen(start)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        val b = bookRef ?: return
+        outState.putLong(STATE_BOOK, b.id)
+        if (curLayout != null) {
+            outState.putInt(STATE_SECTION, anchor.section)
+            outState.putInt(STATE_OFFSET, anchor.offset)
+            outState.putLong(STATE_AT, System.currentTimeMillis())
+        }
     }
 
     /** No close animation back to the library (the platform default would slide over several e-ink frames). */
     override fun finish() {
+        ResumeState.clear()
         super.finish()
         @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
@@ -420,6 +449,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         panelOpen = false
         stopAutoTurn(showToast = false)
         savePositionNow(persistText = true)
+        if (bookRef != null) ResumeState.paused()
         if (curLayout != null) {
             pausedSection = curSection
             pausedPageIdx = curPageIdx
@@ -431,6 +461,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     override fun onDestroy() {
+        if (isFinishing && !isChangingConfigurations) ResumeState.clear()
         // Panels first: their dismiss flushes a pending settings change into the still-open session, and cancels the
         // TOC / search work that would otherwise keep converting the closed book's sections.
         safely { ReaderPanels.dismissAll(this) }
@@ -472,7 +503,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) session?.trimMemory()
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND ||
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
+        ) session?.trimMemory()
     }
 
     // ================================================================== views
@@ -759,7 +793,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 val storedPos = opened.textPosition
                 val eff = opened.settings
                 if (intent.getLongExtra(EXTRA_BOOK_ID, -1L) != b.id && getIntent() === intent) {
-                    // A recreated activity reopens by id: a content:// grant may be gone by then.
+                    // Retry in this instance opens by id. Recreation uses onSaveInstanceState instead.
                     setIntent(Intent(intent).putExtra(EXTRA_BOOK_ID, b.id))
                 }
                 bookRef = b
@@ -787,7 +821,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     storedPos, LayoutKeys.textSignature(eff, d.format, b.encoding),
                     b.posSection, b.posOffset, b.progress,
                 )
-                val start = if (remap != null) s.counts.locateFraction(remap) else DocPosition(b.posSection, b.posOffset)
+                val place = restoredPlace
+                restoredPlace = null
+                val kept = place?.let { ReaderRestore.start(it, b.id, b.lastReadAt, remapped = remap != null) }
+                val start = kept ?: if (remap != null) s.counts.locateFraction(remap) else DocPosition(b.posSection, b.posOffset)
                 val sec = start.section.coerceIn(0, s.sectionCount - 1)
                 val l = s.layout(sec)
                 if (l == null) {
@@ -845,6 +882,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /** Everything the first page did not wait for (spec rule 2: after the first page, never before it). */
     private fun afterOpen() {
+        bookRef?.let { ResumeState.opened(it.id) }
         if (selection == null) selection = safely { SelectionController(this) }
         // Every long press selects the word of the glyph under the finger, also while a selection shows (a press on
         // blank paper or a space keeps that selection).

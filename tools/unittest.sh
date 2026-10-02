@@ -44,12 +44,16 @@ else
   done
 fi
 CP="$TC/android-all-15.jar:$TC/kotlinx-coroutines-core-jvm-1.9.0.jar:$TC/junit-4.13.2.jar:$TC/hamcrest-core-1.3.jar"
+status=0
 "$TC/kotlinc/bin/kotlinc" -nowarn -jvm-target 17 -Xjdk-release=17 -no-reflect -cp "$CP" -d "$OUT/classes" \
-  "$OUT/src" "$OUT/test" "$OUT/gen" 2>&1 | grep -v "^warning:" | grep -v "Picked up JAVA_TOOL_OPTIONS" \
-  | sed "s#$OUT/src/#app/src/main/java/#g; s#$OUT/test/#app/src/test/java/#g" || true
-javac -nowarn -d "$OUT/classes" "$OUT"/gen/com/ggumtak/readeraplus/*.java 2>&1 | grep -v "Picked up" || true
+  "$OUT/src" "$OUT/test" "$OUT/gen" > "$OUT/compile.log" 2>&1 || status=$?
+sed -e '/^warning:/d' -e '/Picked up JAVA_TOOL_OPTIONS/d' \
+  -e "s#$OUT/src/#app/src/main/java/#g; s#$OUT/test/#app/src/test/java/#g" "$OUT/compile.log"
+if [ "$status" -ne 0 ]; then exit "$status"; fi
+javac -nowarn -d "$OUT/classes" "$OUT"/gen/com/ggumtak/readeraplus/*.java
 if [ ${#CLASSES[@]} -eq 0 ]; then
-  mapfile -t CLASSES < <(cd "$OUT/test" && find . -name '*Test.kt' | sed 's#^\./##; s#\.kt$##; s#/#.#g')
+  find "$OUT/test" -name '*Test.kt' | sed "s#$OUT/test/##; s#\.kt\$##; s#/#.#g" > "$OUT/test-classes.txt"
+  mapfile -t CLASSES < "$OUT/test-classes.txt"
 fi
 if [ ${#CLASSES[@]} -eq 0 ]; then echo "no tests"; exit 0; fi
 java -Xmx2g -cp "$OUT/classes:$CP:$TC/kotlinc/lib/kotlin-stdlib.jar" org.junit.runner.JUnitCore "${CLASSES[@]}" 2>&1 | grep -v "Picked up JAVA_TOOL_OPTIONS"

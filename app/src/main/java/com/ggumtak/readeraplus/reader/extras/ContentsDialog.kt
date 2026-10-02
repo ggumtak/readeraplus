@@ -53,7 +53,6 @@ import com.ggumtak.readeraplus.ui.kit.einkListView
 import com.ggumtak.readeraplus.ui.kit.fullScreenDialog
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
-import com.ggumtak.readeraplus.ui.kit.inkPagerKeys
 import com.ggumtak.readeraplus.ui.kit.inkPaging
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
@@ -151,7 +150,18 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         root.addView(body, lp(MATCH_PARENT, 0, 1f))
         dialog = ctx.fullScreenDialog(root)
         dialog.setOnDismissListener { scope.cancel() }
-        dialog.inkPagerKeys({ pagers[tab] }, { code -> ListKeys.direction(code, Settings.app) })
+        dialog.setOnKeyListener { _, code, event ->
+            if (code == KeyEvent.KEYCODE_BACK && tab == 0 && tocTab?.isFiltering == true) {
+                if (event.action == KeyEvent.ACTION_UP) tocTab?.clearFilterIfAny()
+                true
+            } else {
+                val dir = ListKeys.direction(code, Settings.app)
+                if (dir == 0) false else {
+                    if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) pagers[tab]?.page(dir)
+                    true
+                }
+            }
+        }
         select(tab)
         dialog.show()
         PanelRegistry.dialog(ctx, dialog)
@@ -281,12 +291,12 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             val head = ctx.horizontal { setPadding(ctx.dp(16), 0, ctx.dp(10), 0) }
             head.addView(summary, lp(0, WRAP_CONTENT, 1f))
             for (b in listOf(nowBtn, numBtn, searchBtn, allBtn)) {
-                head.addView(b, lp(WRAP_CONTENT, ctx.dp(28)).apply { leftMargin = ctx.dp(6) })
+                head.addView(b, lp(WRAP_CONTENT, MATCH_PARENT).apply { leftMargin = ctx.dp(6) })
             }
             allBtn.visibility = View.GONE
             col.addView(head, lp(MATCH_PARENT, ctx.dp(HEADER_DP)))
             col.addView(timeLine, lp(MATCH_PARENT, ctx.dp(INFO_DP)))
-            col.addView(gapsLine, lp(MATCH_PARENT, ctx.dp(INFO_DP)))
+            col.addView(gapsLine, lp(MATCH_PARENT, ctx.dp(40)))
             col.addView(ctx.hairline())
             val frame = FrameLayout(ctx)
             frame.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
@@ -401,6 +411,14 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             renderHeader()
             adapter.notifyDataSetChanged()
             if (showCurrent) pager.showRow(current.coerceAtLeast(0), CURRENT_ROW)
+        }
+
+        val isFiltering: Boolean get() = rows != null
+
+        fun clearFilterIfAny(): Boolean {
+            if (rows == null) return false
+            clearFilter()
+            return true
         }
 
         /** Shows TOC entry [i] as the 4th row (a number of the gaps dialog). */
@@ -759,7 +777,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     companion object {
         /** [지금] and a jump show the entry as the 4th row: the three above give context. */
         const val CURRENT_ROW = 3
-        const val HEADER_DP = 36
+        const val HEADER_DP = 40
         const val INFO_DP = 26
         /** A message after a jump waits for the dialog to go (the reader's window gets the focus back). */
         const val NOTE_DELAY_MS = 300L

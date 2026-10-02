@@ -32,6 +32,7 @@ import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.ChapterIndex
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.reader.ReaderIo
+import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
 import com.ggumtak.readeraplus.settings.Settings
@@ -723,8 +724,8 @@ class TtsController(private val host: ReaderHost) {
         when (change) {
             AudioManager.AUDIOFOCUS_LOSS -> pause()
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> if (playing) {
-                pauseInternal(abandonFocus = false)
                 pausedByFocus = true
+                pauseInternal(abandonFocus = false)
             }
             AudioManager.AUDIOFOCUS_GAIN -> if (pausedByFocus && session) {
                 pausedByFocus = false
@@ -891,7 +892,7 @@ class TtsController(private val host: ReaderHost) {
         TtsBridge.controller = WeakReference(this)
         val active = playing || pendingPlay
         if (active) lastAwake = SystemClock.elapsedRealtime()
-        runCatching { TtsService.update(ctx, TtsState(b.id, b.title, chapterTitle, active, awakeMs())) }
+        runCatching { TtsService.update(ctx, TtsState(b.id, b.title, chapterTitle, active, awakeMs(), pausedByFocus)) }
     }
 
     /** Wake-lock timeout: to the sleep deadline (plus a minute), else [TtsService.MAX_AWAKE_MS]. */
@@ -970,11 +971,11 @@ class TtsController(private val host: ReaderHost) {
     private fun settingsDialog() {
         val app = Settings.app
         val box = ctx.vertical { setPadding(0, ctx.dp(4), 0, ctx.dp(4)) }
-        box.addView(ctx.stepperRow("속도", app.ttsRate, 0.5f, 3f, 0.1f, Fmt::rate) { v ->
+        box.addView(ctx.stepperRow("속도", app.ttsRate, 0.5f, 3f, 0.1f, ReaderFormat::ttsRate) { v ->
             Settings.saveApp(Settings.app.copy(ttsRate = v))
             paramsChanged()
         })
-        box.addView(ctx.stepperRow("음높이", app.ttsPitch, 0.5f, 2f, 0.1f, Fmt::rate) { v ->
+        box.addView(ctx.stepperRow("음높이", app.ttsPitch, 0.5f, 2f, 0.1f, ReaderFormat::ttsPitch) { v ->
             Settings.saveApp(Settings.app.copy(ttsPitch = v))
             paramsChanged()
         })

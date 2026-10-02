@@ -1142,7 +1142,7 @@ small{color:#555}
 <p>TXT·EPUB 파일을 고르거나 아래 상자에 끌어다 놓으세요.</p>
 <div id="drop">여기에 파일을 끌어다 놓기<br><br><input type="file" id="f" multiple accept=".txt,.epub"></div>
 <ul id="list"></ul>
-<p><small>파일 하나에 200MB까지 보낼 수 있습니다. 다 받을 때까지 기기의 Wi-Fi 전송 화면을 열어 두세요.</small></p>
+<p><small>파일 하나에 200MB까지 보낼 수 있습니다. 다 받을 때까지 기기에서 ‘Wi-Fi로 책 받기’ 화면을 열어 두세요.</small></p>
 <script>
 var q=[],busy=0,L=document.getElementById('list'),M=${LanUpload.MAX_FILE_BYTES},
 U=location.pathname.replace(/\/+${'$'}/,'')+'/upload';

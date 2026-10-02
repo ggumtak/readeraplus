@@ -16,6 +16,12 @@ import java.util.zip.ZipException
 object ReaderFormat {
     const val SEP = "  ·  "
 
+    /** Shared TTS rate label in the reader and settings. */
+    fun ttsRate(v: Float): String = String.format(Locale.US, "%.1f배", v)
+
+    /** Shared TTS pitch label (pitch is a ratio, without the speed suffix). */
+    fun ttsPitch(v: Float): String = String.format(Locale.US, "%.1f", v)
+
     /** The error panel's message when nothing in [openError]'s list matches. */
     const val OPEN_FAILED = "책을 열지 못했습니다"
 

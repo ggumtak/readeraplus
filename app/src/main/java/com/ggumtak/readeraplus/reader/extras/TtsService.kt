@@ -33,7 +33,12 @@ internal class TtsState(
     val chapter: String,
     val playing: Boolean,
     val keepAwakeMs: Long,
+    /** A transient audio-focus pause must stay available until focus returns, without holding a wake lock. */
+    val holdForeground: Boolean = false,
 ) {
+    /** Only an ordinary user pause starts the service's idle-stop wait. */
+    val idleStopAllowed: Boolean get() = !playing && !holdForeground
+
     /** Same notification content (a wake-lock renewal alone does not repost it). */
     fun sameShown(o: TtsState?): Boolean = o != null && o.bookId == bookId && o.title == title && o.chapter == chapter && o.playing == playing
 }
@@ -60,7 +65,9 @@ internal object TtsBridge {
  *   lock-screen buttons too).
  * - A PARTIAL_WAKE_LOCK "readeraplus:tts" only while speaking (timeout [TtsState.keepAwakeMs]), released on pause.
  *   Paused, the service stays in the foreground (play from the notification needs no background-start exemption)
- *   and stops itself after [IDLE_STOP_MS] of pause; swiping the paused notification away stops it too.
+ *   and stops itself after [IDLE_STOP_MS] of awake time during a user pause. Deep sleep delays that callback;
+ *   a transient audio-focus pause keeps the service until focus returns. Swiping the paused notification away
+ *   stops it too.
  *
  * Started, updated and stopped by TtsController only ([update] / [stop], main thread). Nothing runs while TTS is off.
  */
@@ -73,7 +80,7 @@ class TtsService : Service() {
     private var pausedSince = -1L
 
     private val idleStop = Runnable {
-        // Handler time stops in deep sleep: check the real time that passed (a wake-up may come early).
+        // This callback is scheduled on uptime, so deep sleep delays it. Re-check elapsed time when it runs.
         val left = IDLE_STOP_MS - (SystemClock.elapsedRealtime() - pausedSince)
         if (pausedSince >= 0 && left > 1000L) restartIdleTimer(left) else if (pausedSince >= 0) finish()
     }
@@ -190,7 +197,10 @@ class TtsService : Service() {
             keepAwake(s.keepAwakeMs)
         } else {
             releaseWakeLock()
-            if (pausedSince < 0) {
+            if (!s.idleStopAllowed) {
+                pausedSince = -1L
+                main.removeCallbacks(idleStop)
+            } else if (pausedSince < 0) {
                 pausedSince = SystemClock.elapsedRealtime()
                 restartIdleTimer(IDLE_STOP_MS)
             }
@@ -284,7 +294,7 @@ class TtsService : Service() {
         private const val CHANNEL = "tts"
         private const val NOTIFICATION_ID = 7301
         private const val WAKE_TAG = "readeraplus:tts"
-        /** A paused service stops itself after this long (its notification goes with it). */
+        /** A user-paused service stops after this much awake time (deep sleep delays the callback). */
         const val IDLE_STOP_MS = 10 * 60_000L
         /** Wake-lock timeout without a sleep timer (the controller renews it while speaking). */
         const val MAX_AWAKE_MS = 2 * 60 * 60_000L

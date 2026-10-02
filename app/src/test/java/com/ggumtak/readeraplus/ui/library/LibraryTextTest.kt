@@ -420,7 +420,7 @@ class LibraryTextTest {
         assertFalse(LibraryText.shouldOpenLast(enabled = false, restored = false, action = main, flags = newTask))
         // Recreation (rotation, process death) keeps the library.
         assertFalse(LibraryText.shouldOpenLast(enabled = true, restored = true, action = main, flags = 0))
-        // Relaunch from recents: the reader is still on top of the task.
+        // A recents root restart lost its activities: startMode, rather than this preference, restores the reader.
         assertFalse(LibraryText.shouldOpenLast(enabled = true, restored = false, action = main, flags = newTask or fromHistory))
         assertFalse(LibraryText.shouldOpenLast(enabled = true, restored = false, action = null, flags = 0))
         assertFalse(LibraryText.shouldOpenLast(enabled = true, restored = false, action = "android.intent.action.VIEW", flags = 0))

@@ -48,7 +48,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             activity.push(SettingsActivity.PAGE_WIFI)
         })
         body.addView(ctx.navRow("읽기 기록", "읽은 시간 · 연속 기록 · 잔디 · 올해 다 읽은 책") { activity.push(SettingsActivity.PAGE_STATS) })
-        body.addView(ctx.toggleRow("앱 시작 시 읽던 책 열기", "앱을 열면 마지막으로 읽던 책을 이어서 봅니다", app.openLastOnStart) { v ->
+        body.addView(ctx.toggleRow("앱 시작 시 읽던 책 열기", "앱을 열면 마지막으로 읽던 책을 이어서 봅니다. 꺼도 읽던 중 시스템이 앱을 닫았다면 그 책으로 돌아갑니다", app.openLastOnStart) { v ->
             editApp { it.copy(openLastOnStart = v) }
         })
         permRow = ctx.row("모든 파일 접근 권한", StorageAccess.summary(ctx)) { StorageAccess.request(activity) }.also(body::addView)

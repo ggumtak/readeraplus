@@ -47,6 +47,7 @@
              ReaderActivity, its TTS and dialogs) whenever the app is relaunched from its home-screen icon. -->
         <activity
             android:name=".ui.library.LibraryActivity"
+            android:alwaysRetainTaskState="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

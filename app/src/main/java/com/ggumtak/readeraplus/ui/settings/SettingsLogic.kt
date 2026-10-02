@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.ui.settings
 
 import com.ggumtak.readeraplus.reader.extras.VoiceChoice
+import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.render.DeviceCleanInfo
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_MODE_FAST
@@ -277,9 +278,9 @@ object SettingsFormat {
         else -> "${min}분"
     }
 
-    fun rate(v: Float): String = String.format(Locale.US, "%.1f배", v)
+    fun rate(v: Float): String = ReaderFormat.ttsRate(v)
 
-    fun pitch(v: Float): String = String.format(Locale.US, "%.1f", v)
+    fun pitch(v: Float): String = ReaderFormat.ttsPitch(v)
 
     fun sp(v: Float): String = if (v == Math.round(v).toFloat()) "${Math.round(v)}sp" else String.format(Locale.US, "%.1fsp", v)
 

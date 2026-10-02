@@ -302,12 +302,24 @@ internal object LibraryText {
 
     /**
      * Open the last book on start ([AppSettings.openLastOnStart]): go straight to the last-read book only on a fresh
-     * launcher start — not when the activity is recreated ([restored]) or brought back from recents (the reader is
-     * still on top of it there).
+     * launcher start. A task restarted from recents has lost its activities; [startMode] restores an open reader.
      */
     fun shouldOpenLast(enabled: Boolean, restored: Boolean, action: String?, flags: Int): Boolean =
         enabled && !restored && action == Intent.ACTION_MAIN &&
             flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0
+
+    enum class StartMode { LIBRARY, OPEN_LAST, RESUME }
+
+    /** Resume an unclosed reader only at the first activity of a new process, with a bounded crash streak. */
+    fun startMode(
+        openLastOnStart: Boolean, restored: Boolean, action: String?, flags: Int,
+        firstActivity: Boolean, resumeBookId: Long, resumeTries: Int, maxTries: Int = 2,
+    ): StartMode = when {
+        firstActivity && resumeBookId > 0 && resumeTries < maxTries && (restored || action == Intent.ACTION_MAIN) ->
+            StartMode.RESUME
+        shouldOpenLast(openLastOnStart, restored, action, flags) -> StartMode.OPEN_LAST
+        else -> StartMode.LIBRARY
+    }
 
     /** True when a background rescan is due ([lastScanAt] 0 = never scanned). */
     fun rescanDue(lastScanAt: Long, now: Long, maxAgeMs: Long = 30L * 60 * 1000): Boolean =
