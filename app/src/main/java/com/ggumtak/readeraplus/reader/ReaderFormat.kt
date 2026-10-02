@@ -22,6 +22,20 @@ object ReaderFormat {
     /** Shared TTS pitch label (pitch is a ratio, without the speed suffix). */
     fun ttsPitch(v: Float): String = String.format(Locale.US, "%.1f", v)
 
+    /** Shared chooser labels for volume page direction. */
+    fun volumeMode(mode: VolumeMode): String = when (mode) {
+        VolumeMode.OFF -> "넘기지 않음 (볼륨 조절)"
+        VolumeMode.DOWN_NEXT -> "아래 = 다음 페이지 (기본)"
+        VolumeMode.UP_NEXT -> "위 = 다음 페이지 (방향 반전)"
+    }
+
+    /** Short value beside the popup row. */
+    fun volumeModeShort(mode: VolumeMode): String = when (mode) {
+        VolumeMode.OFF -> "끔"
+        VolumeMode.DOWN_NEXT -> "아래 = 다음"
+        VolumeMode.UP_NEXT -> "위 = 다음"
+    }
+
     /** The error panel's message when nothing in [openError]'s list matches. */
     const val OPEN_FAILED = "책을 열지 못했습니다"
 

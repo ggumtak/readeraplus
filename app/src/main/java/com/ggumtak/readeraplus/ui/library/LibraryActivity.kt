@@ -50,6 +50,8 @@ import com.ggumtak.readeraplus.settings.LibraryListMode
 import com.ggumtak.readeraplus.settings.LibrarySort
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.InkListView
+import com.ggumtak.readeraplus.ui.kit.InkGridView
 import com.ggumtak.readeraplus.ui.kit.MenuItem
 import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.chooser
@@ -455,7 +457,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         gridAdapter = BookGridAdapter(this, actions)
 
         // Library subclasses: the always-visible fast scroller takes only the right edge, not the ⋮ next to it.
-        listView = LibraryListView(this).apply {
+        listView = InkListView(this).apply {
             clipToPadding = false
             setPadding(0, dp(4), 0, dp(8))
             isFastScrollEnabled = true
@@ -471,13 +473,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val cols = LibraryText.gridColumns(widthPx, resources.displayMetrics.density)
         val pad = dp(8)
         val spacing = dp(6)
-        gridAdapter.cellWidth = (widthPx - 2 * pad - (cols - 1) * spacing) / cols
-        gridView = LibraryGridView(this).apply {
+        gridAdapter.cellWidth = (widthPx - pad - dp(12) - (cols - 1) * spacing) / cols
+        gridView = InkGridView(this).apply {
             numColumns = cols
             stretchMode = GridView.STRETCH_COLUMN_WIDTH
             horizontalSpacing = spacing
             verticalSpacing = dp(10)
-            setPadding(pad, pad, pad, pad)
+            setPadding(pad, pad, dp(12), pad)
+            scrollBarStyle = View.SCROLLBARS_OUTSIDE_OVERLAY
             clipToPadding = false
             overScrollMode = View.OVER_SCROLL_NEVER
             isVerticalFadingEdgeEnabled = false

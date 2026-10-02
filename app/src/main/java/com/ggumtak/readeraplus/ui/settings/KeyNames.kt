@@ -2,6 +2,8 @@ package com.ggumtak.readeraplus.ui.settings
 
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.TapAction
+import com.ggumtak.readeraplus.reader.KeyMap
+import com.ggumtak.readeraplus.reader.VolumeMode
 
 /**
  * Human-readable names for Android key codes and a description of what the reader does with a key
@@ -129,26 +131,14 @@ object KeyNames {
         return if (bound == TapAction.NONE) "시스템에 맡김" else KeyActions.label(bound)
     }
 
-    /** Learned page keys first, then volume keys per settings, then the built-in page / menu keys (no bindings). */
+    /** Uses the same binding and built-in resolution as the reader. */
     fun readerEffect(code: Int, shift: Boolean, app: AppSettings): Effect {
-        if (code in app.nextPageKeys) return Effect.NEXT
-        if (code in app.prevPageKeys) return Effect.PREV
-        return when (code) {
-            VOLUME_DOWN -> when {
-                !app.volumeKeysTurn -> Effect.VOLUME
-                app.invertVolumeKeys -> Effect.PREV
-                else -> Effect.NEXT
-            }
-            VOLUME_UP -> when {
-                !app.volumeKeysTurn -> Effect.VOLUME
-                app.invertVolumeKeys -> Effect.NEXT
-                else -> Effect.PREV
-            }
-            PAGE_DOWN, DPAD_RIGHT, DPAD_DOWN, MEDIA_NEXT, MEDIA_FAST_FORWARD -> Effect.NEXT
-            SPACE -> if (shift) Effect.PREV else Effect.NEXT
-            PAGE_UP, DPAD_LEFT, DPAD_UP, MEDIA_PREVIOUS, MEDIA_REWIND -> Effect.PREV
-            MENU, ENTER, DPAD_CENTER, NUMPAD_ENTER -> Effect.MENU
-            else -> Effect.NONE
+        return when (KeyMap.action(code, shift, app)) {
+            TapAction.NEXT -> Effect.NEXT
+            TapAction.PREV -> Effect.PREV
+            TapAction.MENU -> Effect.MENU
+            TapAction.NONE -> if (KeyMap.isVolumeKey(code)) Effect.VOLUME else Effect.NONE
+            else -> Effect.NONE // The exact non-page action is shown by readerEffectLabel.
         }
     }
 }
@@ -170,6 +160,14 @@ object KeyActions {
         TapAction.NONE -> "없음(시스템에 맡김)"
         else -> a.label
     }
+
+    /** A page assignment on a volume key changes both directions, rather than learning just one key. */
+    fun labelFor(code: Int, action: TapAction): String {
+        if (!KeyMap.isVolumeKey(code) || (action != TapAction.NEXT && action != TapAction.PREV)) return label(action)
+        val other = if (code == KeyNames.VOLUME_UP) KeyNames.VOLUME_DOWN else KeyNames.VOLUME_UP
+        val opposite = if (action == TapAction.NEXT) TapAction.PREV else TapAction.NEXT
+        return "${KeyNames.name(code)} → ${label(action)} (${KeyNames.name(other)}는 ${label(opposite)})"
+    }
 }
 
 /**
@@ -179,12 +177,20 @@ object KeyActions {
  */
 object KeyAssign {
     /** Gives [code] the action [action] (a binding wins over the learned sets in the reader; kept in one place). */
-    fun bind(app: AppSettings, code: Int, action: TapAction): AppSettings =
-        app.copy(
+    fun bind(app: AppSettings, code: Int, action: TapAction): AppSettings {
+        if (KeyMap.isVolumeKey(code) && (action == TapAction.NEXT || action == TapAction.PREV)) {
+            val mode = if ((code == KeyNames.VOLUME_UP) == (action == TapAction.NEXT)) VolumeMode.UP_NEXT else VolumeMode.DOWN_NEXT
+            return KeyMap.withVolumeMode(remove(app, code), mode)
+        }
+        return app.copy(
             keyBindings = LinkedHashMap(app.keyBindings).apply { put(code, action) },
             nextPageKeys = app.nextPageKeys - code,
             prevPageKeys = app.prevPageKeys - code,
         )
+    }
+
+    /** Removes legacy volume page assignments when a direction control is used. */
+    fun normalizeVolume(app: AppSettings): AppSettings = KeyMap.normalizeVolume(app)
 
     /** The action the user gave [code] (binding or learned page key), or null. */
     fun actionOf(app: AppSettings, code: Int): TapAction? = app.keyBindings[code] ?: when (code) {

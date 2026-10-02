@@ -9,6 +9,25 @@ APK=$(ls dist/*.apk | head -1)
 mkdir -p shots samples
 log() { echo "== $*" | tee -a shots/steps.txt; }
 shot() { sleep "${2:-2}"; adb exec-out screencap -p > "shots/$1.png"; log "shot $1"; }
+rawshot() { adb exec-out screencap > "shots/$1.raw"; }
+perf_mark() {
+  adb logcat -d -v monotonic -s RAPerf:D '*:S' > "shots/perf_$1.txt"
+  log "PERF $1 $(grep 'show ' "shots/perf_$1.txt" | tail -1)"
+}
+no_relayout() {
+  local result
+  result=$(python3 - "$1" "$2" <<'PY'
+import pathlib, sys
+before=pathlib.Path('shots/perf_'+sys.argv[1]+'.txt').read_text().splitlines()
+after=pathlib.Path('shots/perf_'+sys.argv[2]+'.txt').read_text().splitlines()
+# The prefix also verifies that logcat did not wrap between the two marks.
+ok=bool(before) and after[:len(before)]==before and not any('show RELAYOUT ' in x for x in after[len(before):])
+print('PASS' if ok else 'FAIL')
+PY
+  )
+  log "CHECK $1->$2 no_relayout $result"
+  [ "$result" = PASS ]
+}
 dump() { # the active window's UI tree into /tmp/ui.xml; a failed dump leaves no file (never a stale tree)
   rm -f /tmp/ui.xml
   local i
@@ -91,6 +110,43 @@ scroll_find() { # scroll_find "label" [exact|contains]: swipes a settings page u
   log "NOT FOUND '$1' after scrolling"; XY=""; return 1
 }
 
+first_title_stamp() {
+  python3 - <<'PY'
+import re, xml.etree.ElementTree as ET
+rows=[]
+for n in ET.parse('/tmp/ui.xml').getroot().iter('node'):
+  text=n.get('text',''); b=n.get('bounds','')
+  m=re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',b)
+  if text and n.get('class')=='android.widget.TextView' and m and int(m[2])>=160:
+    rows.append((int(m[2]),int(m[1]),text,b))
+if rows:
+  r=min(rows); print(r[2]+' '+r[3])
+PY
+}
+library_more_guard() {
+  local before after xy x y opened
+  set_list_mode "목록" || return 1
+  dump || return 1
+  before=$(first_title_stamp); xy=$(xy_of "책 메뉴")
+  [ -n "$xy" ] || { log "CHECK 41 FAIL: book menu missing"; return 1; }
+  tap_xy "$xy"; sleep 1; dump
+  opened=0; has "책 정보" && opened=1
+  shot 41_library_more 0; back; dump
+  after=$(first_title_stamp)
+  if [ "$opened" -eq 1 ] && [ -n "$before" ] && [ "$before" = "$after" ]; then
+    log "CHECK 41 PASS: menu opened and title stayed at $after"
+  else log "CHECK 41 FAIL: menu=$opened before='$before' after='$after'"; fi
+  xy=$(xy_of "책 메뉴"); [ -n "$xy" ] || return 1
+  x=${xy% *}; y=${xy#* }
+  adb shell input swipe "$x" "$y" "$((x+2))" "$((y+6))" 150
+  sleep 1; dump; opened=0; has "책 정보" && opened=1
+  back; dump; after=$(first_title_stamp)
+  if [ "$opened" -eq 1 ] && [ "$before" = "$after" ]; then log "CHECK 41b PASS: jitter opens menu without seeking"
+  else log "CHECK 41b FAIL: menu=$opened before='$before' after='$after'"; fi
+  adb shell input swipe 700 1200 700 1190 300
+  log "CHECK 41 strip drag completed"
+}
+
 # ------------------------------------------------------------------ reader steps
 
 settings_more() { # 14b: the reading-settings popup (already open) with 더보기 expanded, scrolled to the extra rows
@@ -139,6 +195,59 @@ goto_numpad() { # 15c: 페이지 이동 with its number pad ([페이지] [%] [�
   numpad_type 12
   shot 15c_goto_numpad 2
   back # 취소: the reader stays where it was
+}
+dialog_no_reflow() {
+  fresh_reader sample-cp949.txt text/plain
+  # Keep chrome visible in both captures; the dialog alone takes and returns focus.
+  adb shell input tap 360 720; sleep 2
+  rawshot 57_before
+  perf_mark 57_before
+  tap_label "페이지 이동" || return 1
+  sleep 2
+  shot 57_dialog_no_reflow 0
+  back; sleep 2
+  rawshot 57_after
+  perf_mark 57_after
+  local result
+  result=$(python3 tools/ci/raw_equal.py shots/57_before.raw shots/57_after.raw 360 1100)
+  log "CHECK 57 pixels $result"
+  no_relayout 57_before 57_after || return 1
+  [ "$result" = EQUAL ]
+}
+choose_volume_mode() {
+  adb shell input tap 360 720; sleep 1
+  tap_label "읽기 설정" contains || return 1
+  scroll_find "더보기" || return 1
+  tap_xy "$XY"; sleep 1
+  scroll_find "볼륨 키" || return 1
+  tap_xy "$XY"; sleep 1
+  dump || return 1
+  has "아래 = 다음 페이지 (기본)" && has "위 = 다음 페이지 (방향 반전)" && has "넘기지 않음 (볼륨 조절)" || return 1
+  if [ "$1" = "위 = 다음 페이지 (방향 반전)" ]; then shot 14d_volume_mode 0; fi
+  tap_label "$1" || return 1
+  back; sleep 2
+}
+volume_mode() {
+  fresh_reader sample-cp949.txt text/plain
+  perf_mark 14d_before
+  choose_volume_mode "위 = 다음 페이지 (방향 반전)" || return 1
+  perf_mark 14d_changed
+  no_relayout 14d_before 14d_changed || return 1
+  adb shell input keyevent KEYCODE_VOLUME_UP; sleep 2
+  perf_mark 14d_turned
+  local result
+  result=$(python3 - <<'PY'
+import pathlib, re
+def page(mark):
+  rows=re.findall(r'show (\w+) s:(\d+) o:(\d+)',pathlib.Path('shots/perf_'+mark+'.txt').read_text())
+  return rows[-1] if rows else None
+a,b=page('14d_changed'),page('14d_turned')
+print('PASS' if a and b and b[0]=='TURN' and tuple(map(int,b[1:]))>tuple(map(int,a[1:])) else 'FAIL')
+PY
+  )
+  log "CHECK 14d volume-up-next $result"
+  choose_volume_mode "아래 = 다음 페이지 (기본)" || return 1
+  [ "$result" = PASS ]
 }
 end_of_book() { # 17b: a long-press on the blank part of a page selects nothing; 18: "next" on the last page = end panel
   fresh_reader sample-cp949.txt text/plain
@@ -248,10 +357,12 @@ adb shell mkdir -p /sdcard/Download
 adb push samples/sample-cp949.txt samples/sample-utf8.txt samples/sample.epub samples/big-cp949.txt /sdcard/Download/ >/dev/null
 adb shell appops set --uid $PKG MANAGE_EXTERNAL_STORAGE allow
 adb logcat -c
+adb shell setprop log.tag.RAPerf DEBUG
 
 log "library"
 adb shell am start -W -n $PKG/.ui.library.LibraryActivity | tee -a shots/steps.txt
 shot 01_library 10
+step 41_library_more library_more_guard
 tap_label "메뉴" contains && shot 02_drawer && back
 
 log "reader txt"
@@ -272,6 +383,8 @@ if tap_label "검색" contains; then sleep 1; adb shell input text "English" ; a
 sleep 1; adb shell input swipe 300 700 300 700 900; shot 17_selection 2; back
 
 log "reader txt: go-to pad, long-press on blank space, end of book"
+step 14d_volume_mode volume_mode
+step 57_dialog_no_reflow dialog_no_reflow
 step 15c_goto_numpad goto_numpad
 step 17b_18_end_of_book end_of_book
 fresh_reader sample-cp949.txt text/plain # the TXT book in front again, as the EPUB part below always found it
@@ -371,6 +484,6 @@ sleep 5; shot 78_closed_then_recents 0; top_is LibraryActivity 78_closed_then_re
 
 adb logcat -d > shots/logcat.txt
 adb logcat -d -b crash > shots/crash.txt
-adb logcat -d -s ReaderaPlus:* > shots/perf.txt
+adb logcat -d -s ReaderaPlus:* RAPerf:* > shots/perf.txt
 log "done"
 exit 0

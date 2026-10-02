@@ -2,6 +2,7 @@ package com.ggumtak.readeraplus.ui.settings
 
 import com.ggumtak.readeraplus.reader.extras.VoiceChoice
 import com.ggumtak.readeraplus.reader.ReaderFormat
+import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.render.DeviceCleanInfo
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_MODE_FAST
@@ -281,6 +282,14 @@ object SettingsFormat {
     fun rate(v: Float): String = ReaderFormat.ttsRate(v)
 
     fun pitch(v: Float): String = ReaderFormat.ttsPitch(v)
+
+    /** Live volume-row summary, including precedence of a custom key action. */
+    fun volumeSummary(app: AppSettings): String = when {
+        KeyMap.volumeBound(app) -> "키 지정에서 볼륨 키 동작을 정했습니다"
+        !app.volumeKeysTurn -> "끄면 볼륨 키는 소리 크기를 조절합니다"
+        app.invertVolumeKeys -> "볼륨 위 = 다음, 볼륨 아래 = 이전"
+        else -> "볼륨 아래 = 다음, 볼륨 위 = 이전"
+    }
 
     fun sp(v: Float): String = if (v == Math.round(v).toFloat()) "${Math.round(v)}sp" else String.format(Locale.US, "%.1fsp", v)
 

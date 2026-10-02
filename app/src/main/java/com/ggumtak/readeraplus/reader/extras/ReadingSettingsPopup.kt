@@ -23,6 +23,8 @@ import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.ReaderHost
+import com.ggumtak.readeraplus.reader.VolumeMode
+import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.reader.withTxt
 import com.ggumtak.readeraplus.render.Covers
 import com.ggumtak.readeraplus.render.FontManager
@@ -494,8 +496,19 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                 }
             })
         })
-        root.addView(switchRow("볼륨 키로 페이지 넘김", app.volumeKeysTurn) { v ->
-            Settings.saveApp(Settings.app.copy(volumeKeysTurn = v))
+        root.addView(dropdownRow("볼륨 키", if (KeyMap.volumeBound(app)) "키 지정" else
+            ReaderFormat.volumeModeShort(KeyMap.volumeMode(app))) { row, value ->
+            if (KeyMap.volumeBound(Settings.app)) {
+                ctx.toast("키 지정에서 볼륨 키 동작을 정했습니다")
+                return@dropdownRow
+            }
+            val current = KeyMap.volumeMode(Settings.app)
+            list(row, listOf(VolumeMode.DOWN_NEXT, VolumeMode.UP_NEXT, VolumeMode.OFF).map { mode ->
+                ListEntry(ReaderFormat.volumeMode(mode), checked = mode == current) {
+                    Settings.saveApp(KeyMap.withVolumeMode(Settings.app, mode))
+                    value.text = ReaderFormat.volumeModeShort(mode)
+                }
+            })
         })
     }
 

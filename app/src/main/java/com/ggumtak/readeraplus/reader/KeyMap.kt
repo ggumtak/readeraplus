@@ -9,8 +9,36 @@ import com.ggumtak.readeraplus.settings.TapAction
 /** What a hardware key does in the reader. */
 enum class KeyAction { NONE, NEXT, PREV, MENU }
 
+/** The volume keys' shared page direction, or ordinary volume control. */
+enum class VolumeMode { OFF, DOWN_NEXT, UP_NEXT }
+
 /** Pure key → action mapping (unit-tested; only KeyEvent constants are used). */
 object KeyMap {
+    fun volumeMode(app: AppSettings): VolumeMode =
+        if (!app.volumeKeysTurn) VolumeMode.OFF else if (app.invertVolumeKeys) VolumeMode.UP_NEXT else VolumeMode.DOWN_NEXT
+
+    /** Explicitly changing direction removes old volume page assignments that would override it. */
+    fun withVolumeMode(app: AppSettings, mode: VolumeMode): AppSettings {
+        val clean = normalizeVolume(app)
+        return when (mode) {
+            VolumeMode.OFF -> clean.copy(volumeKeysTurn = false)
+            VolumeMode.DOWN_NEXT -> clean.copy(volumeKeysTurn = true, invertVolumeKeys = false)
+            VolumeMode.UP_NEXT -> clean.copy(volumeKeysTurn = true, invertVolumeKeys = true)
+        }
+    }
+
+    /** Custom actions on a volume key keep precedence over the direction controls. */
+    fun volumeBound(app: AppSettings): Boolean = app.keyBindings.keys.any { isVolumeKey(it) }
+
+    /** Remove legacy page assignments on volume keys, retaining custom actions and every other key. */
+    fun normalizeVolume(app: AppSettings): AppSettings = app.copy(
+        nextPageKeys = app.nextPageKeys.filterNot { isVolumeKey(it) }.toSet(),
+        prevPageKeys = app.prevPageKeys.filterNot { isVolumeKey(it) }.toSet(),
+        keyBindings = app.keyBindings.filterNot { (code, action) ->
+            isVolumeKey(code) && (action == TapAction.NEXT || action == TapAction.PREV)
+        },
+    )
+
     /**
      * Learned keys ([AppSettings.nextPageKeys] / [AppSettings.prevPageKeys]) win over the built-in map, so a
      * remote or the device's own page key can be re-assigned even when it reports e.g. VOLUME_UP.

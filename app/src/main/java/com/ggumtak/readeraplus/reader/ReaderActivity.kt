@@ -277,6 +277,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var keyInputAt = 0L
     /** Input event time of a user turn whose page is not shown yet (0 = none; only with [ReaderPerf.turns]). */
     private var perfTurnFrom = 0L
+    private var perfRequestAt = 0L
+    private val insetsGate = InsetsGate()
+    private var focusSince = 0L
+    private var insetsFullscreen: Boolean? = null
+    private var configChanged = false
+    private val settleInsets = Runnable {
+        val wi = if (isDestroyed) null else root.rootWindowInsets
+        if (wi != null) insetsGate.settle(ReaderWindow.insetsOf(wi, app.fullscreen))?.let(::applyInsets)
+    }
     /** Real reading time, pages and characters (T1-6), flushed to ReadingLog on pause, close and day change. */
     private val tracker = ReadingTracker()
     private val dayClock = DayClock()
@@ -482,11 +491,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus) {
+            focusSince = 0L
+            handler.removeCallbacks(settleInsets)
             // A panel window (TOC, search, the reading-settings popup, a menu) took the focus over the page.
             if (curLayout != null && inFront) panelOpen = true
             return
         }
+        focusSince = SystemClock.uptimeMillis()
         ReaderWindow.applyFullscreen(this, app.fullscreen)
+        handler.removeCallbacks(settleInsets)
+        handler.postDelayed(settleInsets, InsetsGate.SETTLE_MS)
         // Dialogs of the extras (contents, search) may have changed bookmarks/quotes.
         if (session != null && SystemClock.uptimeMillis() - annotationsLoadedAt > 1000) reloadAnnotations()
         if (panelOpen) {
@@ -497,6 +511,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        configChanged = true
         // The page view's new size arrives through onSizeChanged → relayout.
         root.requestApplyInsets()
     }
@@ -580,7 +595,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         root.addView(errorPanel, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
 
         root.setOnApplyWindowInsetsListener { _, wi ->
-            applyInsets(ReaderWindow.insetsOf(wi, app.fullscreen))
+            val settled = focusSince > 0L && SystemClock.uptimeMillis() - focusSince >= InsetsGate.SETTLE_MS
+            val forced = curLayout == null || configChanged || insetsFullscreen != app.fullscreen
+            configChanged = false
+            insetsFullscreen = app.fullscreen
+            insetsGate.offer(ReaderWindow.insetsOf(wi, app.fullscreen), settled, forced)?.let(::applyInsets)
             wi
         }
         // Bar heights change with the title, the brightness row, insets and rotation: keep the pinned page area and
@@ -1088,6 +1107,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         )
         page.invalidate()
         if (kind == Nav.OPEN) page.traceOpen(bookRef?.id ?: -1L, openStartedAt)
+        if (ReaderPerf.turns) {
+            val started = when (kind) {
+                Nav.OPEN -> openStartedAt
+                Nav.TURN -> perfTurnFrom.takeIf { it != 0L } ?: perfRequestAt
+                else -> perfRequestAt
+            }
+            val elapsed = if (started > 0L) SystemClock.uptimeMillis() - started else 0L
+            Log.d(ReaderPerf.TAG, "show $kind s:$section o:${p?.start ?: 0} a:${anchor.offset} g:${gen.id} ${elapsed}ms")
+        }
         if (perfTurnFrom != 0L) {
             if (kind == Nav.TURN) page.traceTurn(perfTurnFrom)
             perfTurnFrom = 0L
@@ -1122,6 +1150,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     private fun navigateTo(section: Int, offset: Int, pageIndex: Int, kind: Nav, fraction: Float = Float.NaN) {
         val s = session ?: return
+        if (ReaderPerf.turns) perfRequestAt = SystemClock.uptimeMillis()
         val sec = section.coerceIn(0, s.sectionCount - 1)
         navJob?.cancel()
         navJob = null
@@ -1282,6 +1311,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private fun relayout() {
         val s = session ?: return
+        if (ReaderPerf.turns) perfRequestAt = SystemClock.uptimeMillis()
         // Still opening: the pending first layout retries with the new generation by itself.
         if (curLayout == null) {
             s.startCounting(COUNT_DELAY_MS)

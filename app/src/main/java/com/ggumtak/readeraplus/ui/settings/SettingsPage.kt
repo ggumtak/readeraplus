@@ -6,6 +6,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.ImageView
@@ -17,6 +18,7 @@ import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.InkToggle
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
@@ -112,6 +114,14 @@ internal fun Context.valueRow(title: String, value: String, onClick: (View) -> U
 /** Updates the summary line of a row made with [row] (only when the row was created with a summary). */
 internal fun View.setSummary(text: CharSequence) {
     findViewWithTag<TextView>("summary")?.text = text
+}
+
+/** Disables the row and its accessibility controls, with an explanatory summary kept by the caller. */
+internal fun View.setRowEnabled(enabled: Boolean) {
+    isEnabled = enabled
+    if (this is TextView) setTextColor(if (!enabled) Ink.DISABLED else if (tag == "summary") Ink.GRAY else Ink.BLACK)
+    if (this is InkToggle) alpha = if (enabled) 1f else 0.4f
+    if (this is ViewGroup) for (i in 0 until childCount) getChildAt(i).setRowEnabled(enabled)
 }
 
 /** Radio-style row: radio icon on the left, title + optional summary. */

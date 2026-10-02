@@ -15,6 +15,8 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.render.DeviceCleanInfo
 import com.ggumtak.readeraplus.render.Eink
+import com.ggumtak.readeraplus.reader.KeyMap
+import com.ggumtak.readeraplus.reader.VolumeMode
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.KeyHold
 import com.ggumtak.readeraplus.settings.ReaderSettings
@@ -22,6 +24,7 @@ import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.settings.TapZoneMode
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.InkToggle
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.confirm
@@ -52,6 +55,8 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     private lateinit var customNote: TextView
     private lateinit var keysBox: LinearLayout
     private var keyTestRow: View? = null
+    private var volumeRow: LinearLayout? = null
+    private var volumeInvertRow: LinearLayout? = null
     private var liveDialog: AlertDialog? = null
     /** The "키 지정" dialog while open (dismissed with the page). */
     private var keyDialog: AlertDialog? = null
@@ -128,8 +133,15 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
 
         // ---- keys
         body.section("버튼 · 키")
-        body.addView(ctx.toggleRow("볼륨 키로 페이지 넘김", "볼륨 아래 = 다음, 볼륨 위 = 이전 (끄면 볼륨 조절)", app.volumeKeysTurn) { v -> editApp { it.copy(volumeKeysTurn = v) } })
-        body.addView(ctx.toggleRow("볼륨 키 반대로", "볼륨 위 = 다음, 볼륨 아래 = 이전", app.invertVolumeKeys) { v -> editApp { it.copy(invertVolumeKeys = v) } })
+        volumeRow = ctx.toggleRow("볼륨 키로 넘김", SettingsFormat.volumeSummary(app), app.volumeKeysTurn) { on ->
+            editApp { a -> KeyMap.withVolumeMode(a, if (!on) VolumeMode.OFF else if (a.invertVolumeKeys) VolumeMode.UP_NEXT else VolumeMode.DOWN_NEXT) }
+            updateVolumeUi()
+        }.also(body::addView)
+        volumeInvertRow = ctx.toggleRow("볼륨 키 방향 반전", "볼륨 위 키로 다음 페이지를 넘깁니다", app.invertVolumeKeys) { inverted ->
+            editApp { KeyMap.withVolumeMode(it, if (inverted) VolumeMode.UP_NEXT else VolumeMode.DOWN_NEXT) }
+            updateVolumeUi()
+        }.also(body::addView)
+        updateVolumeUi()
         body.addView(ctx.row("키 지정", "기기 버튼 · 리모컨 · 키보드의 키를 누른 뒤 그 키로 할 동작을 고릅니다", ctx.icon(R.drawable.ic_add, 24)) { learnKey() })
         keysBox = ctx.vertical().also(body::addView)
         fillKeys()
@@ -192,6 +204,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     }
 
     override fun onShown() {
+        updateVolumeUi()
         // Corner switches live on the main page; reflect them when coming back here.
         val app = Settings.app
         preview.bookmarkCorner = app.bookmarkByTouch
@@ -367,6 +380,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
 
     /** The assigned keys, each with its action and [삭제]. */
     private fun fillKeys() {
+        updateVolumeUi()
         keysBox.removeAllViews()
         val list = KeyAssign.entries(Settings.app)
         if (list.isEmpty()) {
@@ -441,12 +455,41 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     private fun chooseKeyAction(code: Int) {
         val actions = KeyActions.CHOICES
         val current = KeyAssign.actionOf(Settings.app, code)
-        ctx.chooser("이 키로 할 동작 · ${KeyNames.name(code)}", actions.map { KeyActions.label(it) }, actions.indexOf(current)) { i ->
+        ctx.chooser("이 키로 할 동작 · ${KeyNames.name(code)}", actions.map { KeyActions.labelFor(code, it) }, actions.indexOf(current)) { i ->
             editApp { KeyAssign.bind(it, code, actions[i]) }
             fillKeys()
             keyTestRow?.setSummary(keyTestSummary())
             ctx.toast("${KeyNames.label(code)} → ${KeyActions.label(actions[i])}")
         }
+    }
+
+    /** Both rows reflect the latest settings, also after editing or removing a custom key action. */
+    private fun updateVolumeUi() {
+        val app = Settings.app
+        val bound = KeyMap.volumeBound(app)
+        volumeRow?.let { row ->
+            row.setRowEnabled(!bound)
+            row.setSummary(SettingsFormat.volumeSummary(app))
+            setVolumeChecked(row, app.volumeKeysTurn)
+        }
+        volumeInvertRow?.let { row ->
+            row.setRowEnabled(!bound && app.volumeKeysTurn)
+            row.setSummary(when {
+                bound -> "키 지정에서 볼륨 키 동작을 정했습니다"
+                !app.volumeKeysTurn -> "‘볼륨 키로 넘김’을 켜면 쓸 수 있습니다"
+                else -> SettingsFormat.volumeSummary(app)
+            })
+            setVolumeChecked(row, app.invertVolumeKeys)
+        }
+    }
+
+    private fun setVolumeChecked(row: LinearLayout, checked: Boolean) {
+        val toggle = row.getChildAt(1) as? InkToggle ?: return
+        if (toggle.isChecked == checked) return
+        val change = toggle.onChange
+        toggle.onChange = null
+        toggle.isChecked = checked
+        toggle.onChange = change
     }
 
     /** Live key tester: shows each key's code and what the reader does with it (consumes all keys but Back). */
