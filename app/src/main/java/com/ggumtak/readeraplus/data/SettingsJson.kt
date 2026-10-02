@@ -1,5 +1,8 @@
 package com.ggumtak.readeraplus.data
 
+import com.ggumtak.readeraplus.settings.StatusMigration
+import com.ggumtak.readeraplus.settings.SideMargin
+import com.ggumtak.readeraplus.settings.VerticalMargin
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_MODE_SYSTEM
 import com.ggumtak.readeraplus.settings.EINK_REFRESH_AUTO
@@ -46,7 +49,8 @@ internal object SettingsJson {
      * Raw pref keys that are device/session state and must not travel with a backup (matched as lower-case
      * substrings). The permission ones would hide the "모든 파일 접근" panel on a device that lacks the permission.
      */
-    private val TRANSIENT = listOf("lastscan", "lastbackup", "cacheepoch", "permpanelhidden", "legacypermasked")
+    private val TRANSIENT = listOf("lastscan", "lastbackup", "cacheepoch", "permpanelhidden", "legacypermasked", "installid", "restoreoffer", "backupauto", "deviceclass")
+    val DROPPED_KEYS = StatusMigration.LEGACY_KEYS + listOf("a.pinChrome", "reader.brightnessCollapsed", "a.brightnessDevice")
 
     fun isTransient(key: String): Boolean {
         val k = key.lowercase()
@@ -71,15 +75,16 @@ internal object SettingsJson {
         .put("r.marginBottomDp", s.marginBottomDp)
         .put("r.pageMargins", s.pageMargins)
         .put("r.invert", s.invert)
-        .put("r.showHeader", s.showHeader)
-        .put("r.showFooter", s.showFooter)
-        .put("r.footerPage", s.footerPage)
-        .put("r.footerChapterLeft", s.footerChapterLeft)
-        .put("r.footerEpisode", s.footerEpisode)
-        .put("r.footerTimeLeft", s.footerTimeLeft)
-        .put("r.footerPercent", s.footerPercent)
-        .put("r.footerClock", s.footerClock)
-        .put("r.footerBattery", s.footerBattery)
+        .put("r.headerLeft", s.headerLeft.name)
+        .put("r.headerCenter", s.headerCenter.name)
+        .put("r.headerRight", s.headerRight.name)
+        .put("r.footerLeft", s.footerLeft.name)
+        .put("r.footerCenter", s.footerCenter.name)
+        .put("r.footerRight", s.footerRight.name)
+        .put("r.progressBar", s.progressBar)
+        .put("r.pageBreak", s.pageBreak.name)
+        .put(SideMargin.KEY, SideMargin.ZERO_DP)
+        .put(VerticalMargin.KEY, VerticalMargin.ZERO_DP)
         .put("r.statusFontSizeSp", s.statusFontSizeSp.toDouble())
         .put("r.widowOrphanControl", s.widowOrphanControl)
         .put("r.txtBlankLines", s.txtBlankLines)
@@ -109,16 +114,14 @@ internal object SettingsJson {
         marginBottomDp = BackupJson.int(o, "r.marginBottomDp", base.marginBottomDp).coerceIn(0, 300),
         pageMargins = BackupJson.bool(o, "r.pageMargins", base.pageMargins),
         invert = BackupJson.bool(o, "r.invert", base.invert),
-        showHeader = BackupJson.bool(o, "r.showHeader", base.showHeader),
-        showFooter = BackupJson.bool(o, "r.showFooter", base.showFooter),
-        footerPage = BackupJson.bool(o, "r.footerPage", base.footerPage),
-        footerChapterLeft = BackupJson.bool(o, "r.footerChapterLeft", base.footerChapterLeft),
-        footerEpisode = BackupJson.bool(o, "r.footerEpisode", base.footerEpisode),
-        footerTimeLeft = BackupJson.int(o, "r.footerTimeLeft", base.footerTimeLeft)
-            .coerceIn(ReaderSettings.TIME_LEFT_OFF, ReaderSettings.TIME_LEFT_BOOK),
-        footerPercent = BackupJson.bool(o, "r.footerPercent", base.footerPercent),
-        footerClock = BackupJson.bool(o, "r.footerClock", base.footerClock),
-        footerBattery = BackupJson.bool(o, "r.footerBattery", base.footerBattery),
+        headerLeft = enumOf(BackupJson.strOrNull(o, "r.headerLeft"), base.headerLeft),
+        headerCenter = enumOf(BackupJson.strOrNull(o, "r.headerCenter"), base.headerCenter),
+        headerRight = enumOf(BackupJson.strOrNull(o, "r.headerRight"), base.headerRight),
+        footerLeft = enumOf(BackupJson.strOrNull(o, "r.footerLeft"), base.footerLeft),
+        footerCenter = enumOf(BackupJson.strOrNull(o, "r.footerCenter"), base.footerCenter),
+        footerRight = enumOf(BackupJson.strOrNull(o, "r.footerRight"), base.footerRight),
+        progressBar = BackupJson.bool(o, "r.progressBar", base.progressBar),
+        pageBreak = enumOf(BackupJson.strOrNull(o, "r.pageBreak"), base.pageBreak),
         statusFontSizeSp = BackupJson.float(o, "r.statusFontSizeSp", base.statusFontSizeSp).coerceIn(6f, 40f),
         widowOrphanControl = BackupJson.bool(o, "r.widowOrphanControl", base.widowOrphanControl),
         txtBlankLines = BackupJson.int(o, "r.txtBlankLines", base.txtBlankLines).coerceIn(0, 3),
@@ -129,7 +132,19 @@ internal object SettingsJson {
         txtEmphasizeHeadings = BackupJson.bool(o, "r.txtEmphasizeHeadings", base.txtEmphasizeHeadings),
         txtReplaceRules = BackupJson.str(o, "r.txtReplaceRules", base.txtReplaceRules),
         epubPublisherStyles = BackupJson.bool(o, "r.epubPublisherStyles", base.epubPublisherStyles),
-    )
+    ).let { loaded ->
+        val hasSlots = listOf("r.headerLeft", "r.headerCenter", "r.headerRight", "r.footerLeft", "r.footerCenter", "r.footerRight").any(o::has)
+        val migrated = if (!hasSlots && StatusMigration.LEGACY_KEYS.any(o::has))
+            StatusMigration.migrate(StatusMigration.Legacy.from(o)).applyTo(loaded) else loaded
+        val side = o.has("r.marginLeftDp") && o.has("r.marginRightDp") &&
+            SideMargin.isLegacyDefault(o.has(SideMargin.KEY), migrated.marginLeftDp, migrated.marginRightDp)
+        val vertical = o.has("r.marginTopDp") && o.has("r.marginBottomDp") &&
+            VerticalMargin.isLegacyDefault(o.has(VerticalMargin.KEY), migrated.marginTopDp, migrated.marginBottomDp)
+        migrated.copy(marginLeftDp = if (side) 40 else migrated.marginLeftDp,
+            marginRightDp = if (side) 40 else migrated.marginRightDp,
+            marginTopDp = if (vertical) 40 else migrated.marginTopDp,
+            marginBottomDp = if (vertical) 40 else migrated.marginBottomDp)
+    }
 
     // ---- app ----
 
@@ -137,7 +152,13 @@ internal object SettingsJson {
         .put("a.tapZoneMode", s.tapZoneMode.name)
         .put("a.customTapZones", s.customTapZones.joinToString(",") { it.name })
         .put("a.invertTaps", s.invertTaps)
-        .put("a.pinChrome", s.pinChrome)
+        .put("a.readMode", s.readMode.name)
+        .put("a.scrollStyle", s.scrollStyle.name)
+        .put("a.autoBackup", s.autoBackup)
+        .put("a.brightnessRestore", s.brightnessRestore)
+        .put("a.highlightLook", s.highlightLook)
+        .put("a.listPaging", s.listPaging)
+        .put("a.recordLookups", s.recordLookups)
         .put("a.swipeToTurn", s.swipeToTurn)
         .put("a.verticalSwipe", s.verticalSwipe)
         .put("a.volumeKeysTurn", s.volumeKeysTurn)
@@ -188,7 +209,13 @@ internal object SettingsJson {
             tapZoneMode = enumOf(BackupJson.strOrNull(o, "a.tapZoneMode"), base.tapZoneMode),
             customTapZones = tapZones(o.opt("a.customTapZones")) ?: base.customTapZones,
             invertTaps = BackupJson.bool(o, "a.invertTaps", base.invertTaps),
-            pinChrome = BackupJson.bool(o, "a.pinChrome", base.pinChrome),
+            readMode = enumOf(BackupJson.strOrNull(o, "a.readMode"), base.readMode),
+            scrollStyle = enumOf(BackupJson.strOrNull(o, "a.scrollStyle"), base.scrollStyle),
+            autoBackup = BackupJson.bool(o, "a.autoBackup", base.autoBackup),
+            brightnessRestore = BackupJson.bool(o, "a.brightnessRestore", base.brightnessRestore),
+            highlightLook = BackupJson.int(o, "a.highlightLook", base.highlightLook).takeIf { it in 0..2 } ?: 0,
+            listPaging = BackupJson.int(o, "a.listPaging", base.listPaging).takeIf { it in 0..2 } ?: 0,
+            recordLookups = BackupJson.bool(o, "a.recordLookups", base.recordLookups),
             swipeToTurn = BackupJson.bool(o, "a.swipeToTurn", base.swipeToTurn),
             verticalSwipe = BackupJson.bool(o, "a.verticalSwipe", base.verticalSwipe),
             volumeKeysTurn = BackupJson.bool(o, "a.volumeKeysTurn", base.volumeKeysTurn),
@@ -339,7 +366,7 @@ internal object SettingsJson {
      */
     fun addUnmapped(target: JSONObject, prefix: String, raw: Map<String, *>): JSONObject {
         for ((k, v) in raw.entries.sortedBy { it.key }) {
-            if (!k.startsWith(prefix) || k.length == prefix.length || target.has(k) || v == null || k in TYPED_ELSEWHERE) continue
+            if (!k.startsWith(prefix) || k.length == prefix.length || target.has(k) || v == null || k in TYPED_ELSEWHERE || k in DROPPED_KEYS) continue
             when (v) {
                 is String, is Boolean, is Int, is Long -> target.put(k, v)
                 is Float -> if (v.isFinite()) target.put(k, v.toDouble())
@@ -372,7 +399,7 @@ internal object SettingsJson {
         val keys = o.keys()
         while (keys.hasNext()) {
             val k = keys.next()
-            if (!k.startsWith(prefix) || k in MAPPED_KEYS || k in TYPED_ELSEWHERE || o.isNull(k)) continue
+            if (!k.startsWith(prefix) || k in MAPPED_KEYS || k in TYPED_ELSEWHERE || k in DROPPED_KEYS || o.isNull(k)) continue
             val like = current[k] ?: continue
             val v = o.opt(k)
             val p: RawPref? = when (like) {

@@ -14,6 +14,9 @@ import com.ggumtak.readeraplus.settings.ReaderSettings
  * What ReaderActivity exposes to reader components (settings panel, TOC, search, selection, TTS, dialogs).
  * Implemented by ReaderActivity (reader core owner). All methods are main-thread only.
  */
+/** Scroll mode exposes the current virtual viewport as currentPage. Never retain a PageInfo across calls.
+ * Navigation and selection suppress motion before reading positions; frame updates do not save or rebuild decor.
+ * goTo(pos, remember=true) creates a return point. Main thread unless explicitly documented. */
 interface ReaderHost {
     val activity: Activity
     val book: Book

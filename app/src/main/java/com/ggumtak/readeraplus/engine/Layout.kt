@@ -32,6 +32,14 @@ interface TextMeasurer {
 
 data class IntSize(val width: Int, val height: Int)
 
+/** How pages break (U4, "페이지 나눔"). Stored by name: never rename. */
+enum class PageBreakMode {
+    /** 줄 단위: fill every page line by line; paragraphs split across pages (widow/orphan control applies). */
+    LINE,
+    /** 문단 단위: a paragraph (block) that fits on one page is never split; the page before it ends early. */
+    PARAGRAPH,
+}
+
 enum class LineBreakMode {
     /** Break between any two Hangul syllables / CJK chars (typical Korean book typesetting). */
     CHAR,
@@ -59,6 +67,8 @@ data class LayoutConfig(
     val maxImageHeightFraction: Float = 1f,
     /** Avoid leaving a single line of a paragraph alone at the bottom/top of a page. */
     val widowOrphanControl: Boolean = true,
+    /** U4: LINE (default, today's pagination) or PARAGRAPH (never split a block that fits on one page). */
+    val pageBreak: PageBreakMode = PageBreakMode.LINE,
 )
 
 /**
@@ -92,7 +102,10 @@ class LineInfo(
 }
 
 /** A page: lines whose text covers [start, end) of the section. */
-class PageInfo(@JvmField val start: Int, @JvmField val end: Int, @JvmField val lines: List<LineInfo>)
+class PageInfo(
+    @JvmField val start: Int, @JvmField val end: Int, @JvmField val lines: List<LineInfo>,
+    @JvmField val lead: Float = 0f,
+) { companion object { const val BREAK_GAP_EM = 2f } }
 
 /**
  * Full layout of a section. [advances] holds the measured advance of every char of content.text
@@ -103,6 +116,12 @@ class SectionLayout(
     val config: LayoutConfig,
     val pages: List<PageInfo>,
     val advances: FloatArray,
+    /** U6: the offset whose item was forced to open a page ([Typesetter.layout]'s anchorBreak), -1 = none. */
+    val anchorBreak: Int = -1,
+    /** U6: index of the page that item opened, -1 = no anchor break. */
+    val anchorPage: Int = -1,
+    /** U6: the forced break is not where the un-anchored layout breaks (its pages from the anchor on differ). */
+    val anchorShifted: Boolean = false,
 ) {
     val pageCount: Int get() = pages.size
 
@@ -118,3 +137,6 @@ class SectionLayout(
         return lo
     }
 }
+
+/** Result of [Typesetter.count]: the page count and where an anchor break landed (U6). */
+class PageTally(@JvmField val pages: Int, @JvmField val anchorPage: Int, @JvmField val anchorShifted: Boolean)

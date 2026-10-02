@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.data
 
+import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_REFRESH_AUTO
@@ -14,6 +15,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -25,7 +27,7 @@ class SettingsJsonR2Test {
         einkFlashImages = true, autoMarkFinished = false, ttsSleepChapters = 1, ttsHighlight = false,
         ttsVoice = "ko-KR-voice", libraryListMode = LibraryListMode.COMPACT,
     )
-    private val reader = ReaderSettings(footerEpisode = true, footerTimeLeft = ReaderSettings.TIME_LEFT_BOOK)
+    private val reader = ReaderSettings(footerLeft = StatusItem.EPISODE, footerCenter = StatusItem.TIME_LEFT_BOOK)
 
     @Test
     fun newFieldsRoundTrip() {
@@ -43,7 +45,7 @@ class SettingsJsonR2Test {
             "a.einkRefreshEveryNight", "a.einkFlashImages", "a.autoMarkFinished", "a.ttsSleepChapters",
             "a.ttsHighlight", "a.ttsVoice")) old.remove(k)
         assertEquals(app.copy(libraryListMode = LibraryListMode.LIST), SettingsJson.appFromJson(old, app))
-        val oldReader = SettingsJson.readerToJson(ReaderSettings()).apply { remove("r.footerEpisode"); remove("r.footerTimeLeft") }
+        val oldReader = SettingsJson.readerToJson(ReaderSettings()).apply { for (k in listOf("r.footerLeft","r.footerCenter")) remove(k) }
         assertEquals(reader, SettingsJson.readerFromJson(oldReader, reader))
     }
 
@@ -71,7 +73,7 @@ class SettingsJsonR2Test {
         val obj = JSONObject().put("a.keyBindings", JSONObject().put("24", "TOC").put("x", "NEXT").put("25", 3))
         assertEquals(mapOf(24 to TapAction.TOC), SettingsJson.appFromJson(obj, AppSettings()).keyBindings)
         assertEquals(app.keyBindings, SettingsJson.appFromJson(JSONObject().put("a.keyBindings", 5), app).keyBindings)
-        assertEquals(ReaderSettings.TIME_LEFT_BOOK, SettingsJson.readerFromJson(JSONObject().put("r.footerTimeLeft", 7), ReaderSettings()).footerTimeLeft)
+        assertTrue(SettingsJson.readerFromJson(JSONObject().put("r.footerTimeLeft", 7), ReaderSettings()).shows(StatusItem.TIME_LEFT_BOOK))
     }
 
     @Test

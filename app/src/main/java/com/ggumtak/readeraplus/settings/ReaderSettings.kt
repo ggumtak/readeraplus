@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.settings
 
+import com.ggumtak.readeraplus.engine.PageBreakMode
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.engine.LineBreakMode
 import com.ggumtak.readeraplus.format.ParseOptions
@@ -25,31 +26,27 @@ data class ReaderSettings(
     val align: Align = Align.LEFT,
     /** CHAR = 글자 단위 like ReadEra (tight justified lines); WORD = 어절 단위 (keep-all). */
     val lineBreak: LineBreakMode = LineBreakMode.WORD,
-    val marginLeftDp: Int = 18,
-    val marginRightDp: Int = 18,
-    val marginTopDp: Int = 16,
-    val marginBottomDp: Int = 16,
+    val marginLeftDp: Int = 40,
+    val marginRightDp: Int = 40,
+    val marginTopDp: Int = 40,
+    val marginBottomDp: Int = 40,
     /** ReadEra's "페이지 여백" switch: false = use tiny margins. */
     val pageMargins: Boolean = true,
     /** White-on-black (only other color scheme; default black on white). */
     val invert: Boolean = false,
-    /** Status line at the top: chapter title. */
-    val showHeader: Boolean = true,
-    /** Status line at the bottom: page / progress / clock / battery. */
-    val showFooter: Boolean = true,
-    /** Book page "12 / 3259". */
-    val footerPage: Boolean = true,
-    /** Pages left in the current chapter. */
-    val footerChapterLeft: Boolean = false,
-    /** Episode counter after the page label ("123/540화", or "87/612" when titles carry no numbers). */
-    val footerEpisode: Boolean = false,
-    /** Reading time left: [TIME_LEFT_OFF], [TIME_LEFT_EPISODE] ("이 화 3분") or [TIME_LEFT_BOOK] ("책 7시간 20분"). */
-    val footerTimeLeft: Int = TIME_LEFT_OFF,
-    val footerPercent: Boolean = true,
-    val footerClock: Boolean = true,
-    val footerBattery: Boolean = true,
-    val statusFontSizeSp: Float = 11f,
+    /** Status line at the top: left / centre / right. All NONE = no header band. Default: chapter title centred. */
+    val headerLeft: StatusItem = StatusItem.NONE,
+    val headerCenter: StatusItem = StatusItem.CHAPTER,
+    val headerRight: StatusItem = StatusItem.NONE,
+    /** Status line at the bottom. All NONE = no footer band. That is the default (user request). */
+    val footerLeft: StatusItem = StatusItem.NONE,
+    val footerCenter: StatusItem = StatusItem.NONE,
+    val footerRight: StatusItem = StatusItem.NONE,
+    /** ReadEra-style reading-progress line along the bottom edge, drawn in the bottom margin ("진행 막대"). */
+    val progressBar: Boolean = true,
+    val statusFontSizeSp: Float = 11f,            // unchanged
     val widowOrphanControl: Boolean = true,
+    val pageBreak: PageBreakMode = PageBreakMode.LINE,
     // --- parsing options (TXT / EPUB) ---
     val txtBlankLines: Int = ParseOptions.BLANK_AUTO,
     val txtStripIndent: Boolean = true,
@@ -60,6 +57,17 @@ data class ReaderSettings(
     val txtReplaceRules: String = "",
     val epubPublisherStyles: Boolean = true,
 ) {
+    val hasHeader: Boolean get() = headerLeft != StatusItem.NONE || headerCenter != StatusItem.NONE || headerRight != StatusItem.NONE
+    val hasFooterText: Boolean get() = footerLeft != StatusItem.NONE || footerCenter != StatusItem.NONE || footerRight != StatusItem.NONE
+    fun shows(item: StatusItem): Boolean = headerLeft == item || headerCenter == item || headerRight == item ||
+        footerLeft == item || footerCenter == item || footerRight == item
+    /** [band] 0 = header, 1 = footer; [pos] 0 = left, 1 = centre, 2 = right. */
+    fun slot(band: Int, pos: Int): StatusItem = when (band * 3 + pos) {
+        0 -> headerLeft; 1 -> headerCenter; 2 -> headerRight; 3 -> footerLeft; 4 -> footerCenter; else -> footerRight }
+    fun withSlot(band: Int, pos: Int, item: StatusItem): ReaderSettings = when (band * 3 + pos) {
+        0 -> copy(headerLeft = item); 1 -> copy(headerCenter = item); 2 -> copy(headerRight = item)
+        3 -> copy(footerLeft = item); 4 -> copy(footerCenter = item); else -> copy(footerRight = item) }
+
     fun parseOptions(txtEncoding: String = ""): ParseOptions = ParseOptions(
         txtBlankLines = txtBlankLines,
         txtStripIndent = txtStripIndent,
@@ -76,10 +84,7 @@ data class ReaderSettings(
         const val MIN_FONT_SP = 8f
         const val MAX_FONT_SP = 60f
 
-        /** [footerTimeLeft] values. */
-        const val TIME_LEFT_OFF = 0
-        const val TIME_LEFT_EPISODE = 1
-        const val TIME_LEFT_BOOK = 2
+        const val PROGRESS_LANE_DP = 12
     }
 }
 
@@ -173,8 +178,6 @@ data class AppSettings(
     ),
     /** Swap next/previous for tap zones (keys are unaffected). */
     val invertTaps: Boolean = false,
-    /** ReadEra's pin: keep the reader menu bars visible while page taps still turn pages. */
-    val pinChrome: Boolean = false,
     val swipeToTurn: Boolean = true,
     /** Swipe also vertically (up = next). */
     val verticalSwipe: Boolean = false,
@@ -244,7 +247,16 @@ data class AppSettings(
     val scanFolders: Set<String> = emptySet(),
     val excludedFolders: Set<String> = emptySet(),
     val orientationLock: Int = -1,
-    /** Window brightness 0..1, or -1 = system. */
+    val readMode: ReadMode = ReadMode.PAGED,
+    val scrollStyle: ScrollStyle = ScrollStyle.AUTO,
+    val autoBackup: Boolean = true,
+    /** Device-local opt-in; never travels in a backup. */
+    val brightnessDevice: Boolean = false,
+    val brightnessRestore: Boolean = true,
+    val highlightLook: Int = HL_LOOK_AUTO,
+    val listPaging: Int = LIST_PAGING_AUTO,
+    val recordLookups: Boolean = true,
+    /** Slider position 0..1, or -1 = system; the device path applies LightCurve. */
     val brightness: Float = -1f,
 )
 
@@ -270,4 +282,39 @@ enum class LibrarySort(val label: String) {
 }
 
 /** Library views, in the order the toolbar toggle cycles through them (stored by name). */
-enum class LibraryListMode(val label: String) { LIST("목록"), COMPACT("간단히"), GRID("표지") }
+enum class LibraryListMode(val label: String) { LIST("전체"), COMPACT("요약"), GRID("썸네일"), COVERS("그리드") }
+
+/**
+ * What one slot of the page's status lines shows. The header and the footer each have three slots
+ * (left / centre / right). Stored by name ("r.footerLeft" = "CLOCK"): never rename an entry, only append.
+ * The declaration order is the chooser order. [short] labels the popup's slot buttons (≤ 6 Hangul).
+ * [example] is shown in choosers that have no live value.
+ */
+enum class StatusItem(val label: String, val short: String, val example: String?) {
+    NONE("없음", "없음", null),
+    CHAPTER("챕터 제목", "챕터 제목", "제3화 비밀"),
+    BOOK_TITLE("책 제목", "책 제목", "책 제목"),
+    PAGE("쪽 번호", "쪽 번호", "12 / 3259"),
+    PERCENT("진행률", "진행률", "34%"),
+    CHAPTER_PAGES_LEFT("챕터 남은 쪽", "남은 쪽", "챕터 5쪽 남음"),
+    EPISODE("회차", "회차", "123/540화"),
+    TIME_LEFT_EPISODE("이 화 남은 시간", "화 남은 시간", "이 화 3분"),
+    TIME_LEFT_BOOK("책 남은 시간", "책 남은 시간", "책 7시간 20분"),
+    CLOCK("시계", "시계", "14:05"),
+    BATTERY("배터리", "배터리", "80"),                       // [Δ] no "▭": U+25AD is missing from some firmware fonts
+    CLOCK_BATTERY("시계 · 배터리", "시계·배터리", "14:05 · 80");
+
+    /** Titles are the only items shortened with "…" when their slot is narrow. Numbers never are. */
+    val elastic: Boolean get() = this == CHAPTER || this == BOOK_TITLE
+}
+
+/** Reading modes; changing mode does not change pagination. */
+enum class ReadMode(val label: String) { PAGED("페이지 넘김"), SCROLL("스크롤") }
+/** Direct drag policy only. Page commands always move instantly, including SMOOTH. */
+enum class ScrollStyle(val label: String) { AUTO("기기에 맞춤"), SMOOTH("손가락을 따라 이동"), STEP("손을 떼면 이동") }
+const val HL_LOOK_AUTO = 0
+const val HL_LOOK_COLOR = 1
+const val HL_LOOK_INK = 2
+const val LIST_PAGING_AUTO = 0
+const val LIST_PAGING_PAGED = 1
+const val LIST_PAGING_SCROLL = 2

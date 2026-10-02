@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.data
 
+import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.engine.LineBreakMode
 import com.ggumtak.readeraplus.settings.AppSettings
@@ -20,9 +21,8 @@ class SettingsJsonTest {
     private val reader = ReaderSettings(
         fontId = "user:MyFont.ttf", fontSizeSp = 23.5f, fontWeight = 550, lineHeightPct = 185, paragraphSpacingPct = 80,
         indentPct = 150, letterSpacingPm = -20, align = Align.LEFT, lineBreak = LineBreakMode.CHAR, marginLeftDp = 10,
-        marginRightDp = 12, marginTopDp = 20, marginBottomDp = 22, pageMargins = false, invert = true, showHeader = false,
-        showFooter = true, footerPage = false, footerChapterLeft = true, footerPercent = false, footerClock = false,
-        footerBattery = false, statusFontSizeSp = 12.5f, widowOrphanControl = false, txtBlankLines = 2,
+        marginRightDp = 12, marginTopDp = 20, marginBottomDp = 22, pageMargins = false, invert = true, headerCenter = StatusItem.NONE,
+        footerCenter = StatusItem.CHAPTER_PAGES_LEFT, statusFontSizeSp = 12.5f, widowOrphanControl = false, txtBlankLines = 2,
         txtStripIndent = false, txtJoinWrappedLines = 0, txtDetectChapters = false, txtChapterRegex = "^제\\d+장$",
         txtEmphasizeHeadings = false, txtReplaceRules = "a => b\n# c", epubPublisherStyles = false,
     )

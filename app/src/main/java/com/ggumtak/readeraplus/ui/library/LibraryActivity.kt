@@ -1347,6 +1347,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         LibraryListMode.LIST -> R.drawable.ic_view_list
         LibraryListMode.COMPACT -> R.drawable.ic_format_list_bulleted
         LibraryListMode.GRID -> R.drawable.ic_grid_view
+            LibraryListMode.COVERS -> R.drawable.ic_grid_view
     }
 
     /** The toggle shows the current view; its long-press label says so and what a tap does. */

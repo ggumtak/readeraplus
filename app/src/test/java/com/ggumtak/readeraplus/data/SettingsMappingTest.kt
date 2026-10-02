@@ -19,7 +19,8 @@ class SettingsMappingTest {
     @Test
     fun everyAppFieldIsMapped() {
         val keys = SettingsJson.appToJson(AppSettings()).keys().asSequence().toSet()
-        val missing = fieldNames(AppSettings::class.java).map { "a.$it" }.filter { it !in keys }
+        val missing = fieldNames(AppSettings::class.java).map { "a.$it" }
+            .filter { it !in keys && it !in SettingsJson.DROPPED_KEYS }
         assertTrue("unmapped app settings: $missing", missing.isEmpty())
     }
 
@@ -31,15 +32,15 @@ class SettingsMappingTest {
     }
 
     @Test
-    fun invertTapsAndPinChromeRoundTrip() {
+    fun invertTapsAndBookmarkByTouchRoundTrip() {
         // Regression: both were missing from appToJson/appFromJson and were lost after a restore.
-        val s = AppSettings(invertTaps = true, pinChrome = true)
+        val s = AppSettings(invertTaps = true, bookmarkByTouch = true)
         val json = SettingsJson.appToJson(s)
         assertEquals(true, json.getBoolean("a.invertTaps"))
-        assertEquals(true, json.getBoolean("a.pinChrome"))
+        assertEquals(true, json.getBoolean("a.bookmarkByTouch"))
         assertEquals(s, SettingsJson.appFromJson(json, AppSettings()))
         val back = SettingsJson.appFromJson(JSONObject().put("a.invertTaps", false), s)
         assertEquals(false, back.invertTaps)
-        assertEquals(true, back.pinChrome)
+        assertEquals(true, back.bookmarkByTouch)
     }
 }

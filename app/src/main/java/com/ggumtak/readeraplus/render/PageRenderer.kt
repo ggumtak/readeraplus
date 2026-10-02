@@ -187,6 +187,14 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     // Status lines
 
     /** [ribbonH]: height of the bookmark ribbon drawn on this page (0 = none); the header keeps clear of it. */
+    // R3 stub (owner: E2): scroll rendering has no callers until RC-S lands.
+    fun drawChrome(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float,
+                   contentHeight: Float, viewWidth: Int, viewHeight: Int) {}
+    fun drawBody(canvas: Canvas, layout: SectionLayout, pageIndex: Int, left: Float, top: Float,
+                 clipTop: Float, clipBottom: Float, highlights: List<Highlight>): Boolean = false
+    fun drawOverlay(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float, viewWidth: Int) {}
+    fun prefetchPages(layouts: Array<SectionLayout?>, pages: IntArray, count: Int, done: Runnable?) {}
+
     private fun drawStatus(
         canvas: Canvas,
         decor: PageDecor,
@@ -198,39 +206,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         viewHeight: Int,
         ribbonH: Float,
     ) {
-        val header = decor.header
-        if (!header.isNullOrEmpty()) {
-            val baseline = centredBaseline(0f, top)
-            // Narrowed on both sides so the title stays centred on the text column.
-            val inset = RibbonMath.headerInset(density, left + cw, viewWidth, ribbonH, baseline - statusAscent)
-            val text = ellipsizedHeader(header, (cw - 2f * inset).coerceAtLeast(0f))
-            val w = statusPaint.measureText(text, 0, text.length)
-            canvas.drawText(text, 0, text.length, left + (cw - w) / 2f, baseline, statusPaint)
-        }
-        val fl = decor.footerLeft
-        val fr = decor.footerRight
-        val battery = decor.battery
-        if (fl.isNullOrEmpty() && fr.isNullOrEmpty() && battery < 0) return
-        val bandTop = top + ch
-        val baseline = centredBaseline(bandTop, maxOf(bandTop, viewHeight.toFloat()))
-        // Right part, from the right edge leftwards: battery icon + digits, separator, the footer's right text.
-        var x = left + cw
-        if (battery >= 0) {
-            x = drawBattery(canvas, battery, x, baseline)
-            if (!fr.isNullOrEmpty()) {
-                x -= footerSepWidth
-                canvas.drawText(FOOTER_SEP, x, baseline, statusPaint)
-            }
-        }
-        if (!fr.isNullOrEmpty()) {
-            x -= statusPaint.measureText(fr)
-            canvas.drawText(fr, x, baseline, statusPaint)
-        }
-        val rightW = left + cw - x
-        if (!fl.isNullOrEmpty()) {
-            val avail = cw - rightW - (if (rightW > 0f) statusPaint.textSize else 0f)
-            if (avail > 0f) drawFooterLeft(canvas, fl, avail, left, baseline)
-        }
+        val status = decor.status ?: return
+        // R3 stub (owner: E2): status is drawn in the existing margins after the renderer lane lands.
     }
 
     /**

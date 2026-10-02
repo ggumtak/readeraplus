@@ -1,5 +1,11 @@
 # R3 spec: scroll reading mode, side margins "40 dp = 0", auto-backup + restore on reinstall
 
+> **사용자 변경 지시 (2026-10-02): 페이지 넘김 애니메이션 없음.**
+> 탭·볼륨 키·기기 버튼·자동 넘김은 PAGED/SCROLL, STEP/SMOOTH, 휴대폰/e-ink 모두 즉시 이동한다.
+> 이 문서의 180 ms step/startScroll 애니메이션과 관련 예외·성능 기준은 이 지시로 대체한다.
+> SMOOTH의 직접 손가락 드래그와 페이지 넘김 명령은 별개이며, 페이지 넘김 명령은 보간 프레임을 만들지 않는다.
+
+
 Status: the buildable spec chosen from designs A (tall section), B (stitched pages) and C (parity / e-ink). Nothing in
 the repo was edited. It was checked against the working tree of 2026-09-30 while R2 was still in progress.
 [Δ] Revised after an adversarial review against the code (`TypesetPass`, `PageRenderer`, `PageView`, `BookSession`,

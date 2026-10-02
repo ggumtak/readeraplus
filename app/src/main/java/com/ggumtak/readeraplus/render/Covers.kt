@@ -204,8 +204,8 @@ object Covers {
             align = Align.LEFT,
             lineBreak = LineBreakMode.CHAR,
             invert = false,
-            showHeader = false,
-            showFooter = false,
+            headerCenter = com.ggumtak.readeraplus.settings.StatusItem.NONE,
+            progressBar = false,
             widowOrphanControl = false,
         )
         val m = AndroidTextMeasurer(context, s) { null }

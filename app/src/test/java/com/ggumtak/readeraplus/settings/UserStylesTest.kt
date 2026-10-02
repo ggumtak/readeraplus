@@ -22,15 +22,15 @@ class UserStylesTest {
     fun fromThenApplyRestoresTheLookOnly() {
         val u = UserStyle.from("밤", look)
         // Another state: different look AND different non-style fields.
-        val other = ReaderSettings(invert = true, showFooter = false, footerEpisode = true, txtBlankLines = ParseOptions.BLANK_KEEP)
+        val other = ReaderSettings(invert = true, footerCenter = StatusItem.NONE, footerLeft = StatusItem.EPISODE, txtBlankLines = ParseOptions.BLANK_KEEP)
         val applied = u.applyTo(other)
         assertTrue(u.matches(applied))
         // Status bar, invert and TXT options are not part of a style.
         assertEquals(true, applied.invert)
-        assertEquals(false, applied.showFooter)
-        assertEquals(true, applied.footerEpisode)
+        assertEquals(StatusItem.NONE, applied.footerCenter)
+        assertEquals(StatusItem.EPISODE, applied.footerLeft)
         assertEquals(ParseOptions.BLANK_KEEP, applied.txtBlankLines)
-        assertEquals(look.copy(invert = true, showFooter = false, footerEpisode = true, txtBlankLines = ParseOptions.BLANK_KEEP), applied)
+        assertEquals(look.copy(invert = true, footerCenter = StatusItem.NONE, footerLeft = StatusItem.EPISODE, txtBlankLines = ParseOptions.BLANK_KEEP), applied)
         assertFalse(u.matches(other))
         assertFalse(u.matches(applied.copy(marginTopDp = 21)))
         assertTrue(u.matches(applied.copy(statusFontSizeSp = 13f)))
@@ -97,4 +97,13 @@ class UserStylesTest {
         assertEquals("가".repeat(11), UserStyles.cleanName(emoji))
         assertNull(UserStyles.fromJson(JSONObject().put("name", "\n")))
     }
+
+    @Test fun oldAndDeliberateMarginMarkers() {
+        val old=JSONObject().put("name","old").put("marginLeftDp",18).put("marginRightDp",18).put("marginTopDp",16).put("marginBottomDp",16)
+        val moved=UserStyles.fromJson(old)!!;assertEquals(40,moved.marginLeftDp);assertEquals(40,moved.marginTopDp)
+        old.put("marginBase",40).put("marginBaseV",40)
+        val deliberate=UserStyles.fromJson(old)!!;assertEquals(18,deliberate.marginLeftDp);assertEquals(16,deliberate.marginTopDp)
+        assertEquals(40,UserStyles.toJson(deliberate).getInt("marginBaseV"))
+    }
+
 }

@@ -28,20 +28,15 @@ class FontInfo(
 /** Range highlight kinds drawn under/over text. */
 enum class HighlightKind { QUOTE, SELECTION, TTS, SEARCH }
 
-class Highlight(val start: Int, val end: Int, val kind: HighlightKind)
+class Highlight(val start: Int, val end: Int, val kind: HighlightKind, val style: Int = 0)
 
 /** Everything drawn on a page besides the text itself. */
 class PageDecor(
     val highlights: List<Highlight> = emptyList(),
-    /** Draw the bookmark ribbon in the top-right corner. */
     val bookmarked: Boolean = false,
-    /** Header text (chapter title) or null. */
-    val header: String? = null,
-    /** Footer left/right strings or null. */
-    val footerLeft: String? = null,
-    val footerRight: String? = null,
-    /** Battery percent 0..100 drawn as a small battery icon + digits at the footer's right end; -1 = none. */
-    val battery: Int = -1,
+    /** UI-thread status of the visible page; covers and thumbnails pass null. */
+    val status: StatusDecor? = null,
+    val statusVersion: Int = 0,
 )
 
 /** Application context captured by [FontManager.init] (used by Eink/Covers helpers that have no context). */

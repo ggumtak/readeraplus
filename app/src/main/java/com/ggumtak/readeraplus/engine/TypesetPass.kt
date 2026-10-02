@@ -123,6 +123,7 @@ internal class TypesetPass(
     private val content: SectionContent,
     private val retain: Boolean,
     private val buf: TypesetBuffers,
+    anchorBreak: Int = -1,
 ) {
     private val text: String = content.text
     private val len: Int = text.length
@@ -137,6 +138,25 @@ internal class TypesetPass(
     private val widowOrphan: Boolean = cfg.widowOrphanControl
     private val imageFraction: Float =
         cfg.maxImageHeightFraction.let { if (it.isFinite() && it > 0f) minOf(it, 1f) else 1f }
+    /** R3 stub (owner: E1). U4 PARAGRAPH mode: a block that fits on one page is never split. */
+    private val keepParas: Boolean = cfg.pageBreak == PageBreakMode.PARAGRAPH
+    /** PARAGRAPH mode: height of the block being staged (its lines, no space-before) and whether it fits a page. */
+    private var blockH = 0f
+    private var blockFits = false
+
+    /** U6: pending forced page break: the first item with end > it (or start >= it) opens a page; -1 once placed. */
+    private var anchorLeft: Int = if (anchorBreak in 1 until len) anchorBreak else -1
+
+    /** U6: index of the page the anchor's item opened, -1 = none. */
+    var anchorPage = -1
+        private set
+
+    /**
+     * U6: the anchor forced a page break the un-anchored pass would not make at that point (conservative: false
+     * guarantees pages identical to the un-anchored layout; true means they may differ from the anchor on).
+     */
+    var anchorShifted = false
+        private set
 
     /** Advances: full array (retain) or the scratch holding the current block (count). adv[i - advBase]. */
     private var adv: FloatArray = if (retain) FloatArray(len) else buf.scratch
@@ -934,3 +954,4 @@ internal class TypesetPass(
         fun nonNeg(v: Float): Float = if (v > 0f && v.isFinite()) v else 0f
     }
 }
+

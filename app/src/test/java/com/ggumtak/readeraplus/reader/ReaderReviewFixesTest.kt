@@ -14,7 +14,7 @@ import org.junit.Test
 class ReaderReviewFixesTest {
     private val s = ReaderSettings()
     private val density = 2f
-    private val g = LayoutKeys.geometry(s, 720, 1440, density, 22f)
+    private val g = LayoutKeys.geometry(s, 720, 1440, density)
     private val font = "BUNDLED:fonts/RIDIBatang.otf"
 
     // ---------------------------------------------------------------- per-format parse / layout identity
@@ -58,7 +58,7 @@ class ReaderReviewFixesTest {
         assertNotEquals(key(s, BookFormat.EPUB), key(pubChange, BookFormat.EPUB))
         assertNotEquals(key(s, BookFormat.TXT), key(s, BookFormat.TXT, "MS949"))
         // Colours / footer items never count.
-        assertEquals(key(s, BookFormat.TXT), key(s.copy(invert = true, footerClock = false), BookFormat.TXT))
+        assertEquals(key(s, BookFormat.TXT), key(s.copy(invert = true), BookFormat.TXT))
         assertTrue(LayoutKeys.VERSION >= 2)
     }
 

@@ -282,8 +282,7 @@ class SelectionController(private val host: ReaderHost) {
         }
         val s = Settings.reader
         originX = if (!dx.isNaN()) dx else v.paddingLeft + if (s.pageMargins) ctx.dpF(s.marginLeftDp.toFloat()) else ctx.dpF(4f)
-        originY = if (!dy.isNaN()) dy else v.paddingTop + (if (s.pageMargins) ctx.dpF(s.marginTopDp.toFloat()) else ctx.dpF(4f)) +
-            if (s.showHeader) ctx.sp(s.statusFontSizeSp) * 2.2f else 0f
+        originY = if (!dy.isNaN()) dy else v.paddingTop + (if (s.pageMargins) ctx.dpF(s.marginTopDp.toFloat()) else ctx.dpF(4f))
         originKey = if (!dx.isNaN() && !dy.isNaN()) key else null
     }
 

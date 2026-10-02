@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.reader
 
+import com.ggumtak.readeraplus.engine.PageBreakMode
 import com.ggumtak.readeraplus.engine.LayoutConfig
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.ParseOptions
@@ -42,20 +43,17 @@ object LayoutKeys {
 
     /** Hash of `LayoutGoldenTest`'s layouts at [ALGO_VERSION]; see there. */
     const val GOLDEN_HASH = "071717a86d158ac8"
-    /** Header/footer band height as a multiple of the status font size. */
-    const val STATUS_BAND = 2.2f
+    const val GOLDEN_HASH_PARAGRAPH = "TBD"
+    private val DEFAULTS = ReaderSettings()
     /** Margin used when the "페이지 여백" switch is off. */
     const val TINY_MARGIN_DP = 4
 
-    fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, statusPx: Float): PageGeometry {
+    fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float): PageGeometry {
         fun px(dp: Int): Int = Math.round((if (s.pageMargins) dp else TINY_MARGIN_DP) * density)
         val ml = px(s.marginLeftDp.coerceAtLeast(0))
         val mr = px(s.marginRightDp.coerceAtLeast(0))
         val mt = px(s.marginTopDp.coerceAtLeast(0))
         val mb = px(s.marginBottomDp.coerceAtLeast(0))
-        val band = Math.round(statusPx * STATUS_BAND)
-        val header = if (s.showHeader) band else 0
-        val footer = if (s.showFooter) band else 0
         val minBox = Math.round(48 * density).coerceAtLeast(16)
         var w = viewW - ml - mr
         var left = ml
@@ -63,8 +61,8 @@ object LayoutKeys {
             w = minOf(minBox, viewW).coerceAtLeast(1)
             left = ((viewW - w) / 2).coerceAtLeast(0)
         }
-        var h = viewH - mt - mb - header - footer
-        var top = mt + header
+        var h = viewH - mt - mb
+        var top = mt
         if (h < minBox) {
             h = minOf(minBox, viewH).coerceAtLeast(1)
             top = ((viewH - h) / 2).coerceAtLeast(0)
@@ -84,6 +82,7 @@ object LayoutKeys {
         publisherStyles = txt || s.epubPublisherStyles,
         maxImageHeightFraction = 1f,
         widowOrphanControl = s.widowOrphanControl,
+        pageBreak = s.pageBreak,
     )
 
     /**
@@ -101,13 +100,9 @@ object LayoutKeys {
     /** Settings with every field that does NOT change the layout normalised away. */
     private fun layoutPart(s: ReaderSettings): ReaderSettings = s.copy(
         invert = false,
-        footerPage = true,
-        footerChapterLeft = false,
-        footerPercent = true,
-        footerClock = true,
-        footerBattery = true,
-        footerEpisode = false,
-        footerTimeLeft = ReaderSettings.TIME_LEFT_OFF,
+        headerLeft = DEFAULTS.headerLeft, headerCenter = DEFAULTS.headerCenter, headerRight = DEFAULTS.headerRight,
+        footerLeft = DEFAULTS.footerLeft, footerCenter = DEFAULTS.footerCenter, footerRight = DEFAULTS.footerRight,
+        progressBar = DEFAULTS.progressBar, statusFontSizeSp = DEFAULTS.statusFontSizeSp,
     )
 
     /**
@@ -246,6 +241,7 @@ object LayoutKeys {
         sb.append("|al=").append(s.align.name)
         sb.append("|lb=").append(s.lineBreak.name)
         sb.append("|wo=").append(s.widowOrphanControl)
+        if (s.pageBreak != PageBreakMode.LINE) sb.append("|pb=").append(s.pageBreak.name)
         sb.append("|pub=").append(s.epubPublisherStyles)
         sb.append("|box=").append(g.contentWidth).append('x').append(g.contentHeight)
         sb.append("|d=").append(density)

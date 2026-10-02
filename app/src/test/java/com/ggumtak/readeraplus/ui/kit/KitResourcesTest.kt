@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.ui.kit
 
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -98,4 +99,7 @@ class KitResourcesTest {
         assertEquals("#FFFFFFFF", color("res/values-v27/colors.xml", "nav_bar"))
         assertEquals("true", bool("res/values-v27/colors.xml", "light_nav_bar"))
     }
+
+ @Test fun koreanSummaryKeepsSyllableWordsTogether() { assertEquals("한\u2060글 test",keepAll("한글 test"));val ascii="ABC 123";assertSame(ascii,keepAll(ascii));val mixed="가A나";assertSame(mixed,keepAll(mixed));assertEquals("가\u2060나 A",keepAll("가나 A")) }
+
 }

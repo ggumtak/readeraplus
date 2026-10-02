@@ -13,6 +13,7 @@ class App : Application() {
         super.onCreate()
         Settings.init(this)
         ResumeState.init(this)
+        if (BuildConfig.DEBUG) com.ggumtak.readeraplus.data.DebugSeed.register(this)
         Documents.cacheDir = cacheDir
         Library.init(this)
         FontManager.init(this)

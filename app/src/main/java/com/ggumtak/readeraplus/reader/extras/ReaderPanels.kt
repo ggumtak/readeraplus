@@ -258,3 +258,17 @@ internal object PanelRegistry {
         return null
     }
 }
+
+/** Optional main-thread status samples; never parses or allocates during a page turn. */
+interface StatusSampleHost { fun statusSample(item: com.ggumtak.readeraplus.settings.StatusItem): String? }
+/** Optional reader-only place capture. The notes hub never opens a book file. */
+interface NotePlaceHost { fun notePlace(pos: com.ggumtak.readeraplus.format.DocPosition): com.ggumtak.readeraplus.data.NotePlace }
+interface PageThumbsHost {
+    fun thumbTotal(): Int; fun thumbCurrent(): Int; fun thumbAspect(): Float
+    fun requestThumbs(first: Int, count: Int, widthPx: Int, heightPx: Int, progressive: Boolean, onBatch: (ThumbBatch)->Unit)
+    fun cancelThumbs()
+}
+class ThumbCell(val page: Int, val section: Int, val pageIndex: Int, val bitmap: android.graphics.Bitmap?, val marks: Int) {
+    companion object { const val MARK_BOOKMARK=1; const val MARK_QUOTE=2; const val MARK_NOTE=4; const val MARK_SEARCH=8 }
+}
+class ThumbBatch(val first: Int, val cells: List<ThumbCell>, val total: Int, val current: Int, val complete: Boolean)

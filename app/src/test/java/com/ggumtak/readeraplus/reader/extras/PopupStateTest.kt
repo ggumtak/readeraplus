@@ -29,7 +29,7 @@ class PopupStateTest {
         assertEquals("밤", StyleChoice.selectedUser(night, list)?.name)
         assertEquals("밤", StyleChoice.userLabel(StyleChoice.selectedUser(night, list)))
         // Not the typography: status bar / invert / TXT options don't matter.
-        assertEquals("밤", StyleChoice.selectedUser(night.copy(invert = true, footerClock = false, txtStripIndent = false), list)?.name)
+        assertEquals("밤", StyleChoice.selectedUser(night.copy(invert = true, txtStripIndent = false), list)?.name)
         // One step away from every style: the button reads "내 스타일".
         val off = night.copy(fontSizeSp = 26.5f)
         assertNull(StyleChoice.selectedUser(off, list))

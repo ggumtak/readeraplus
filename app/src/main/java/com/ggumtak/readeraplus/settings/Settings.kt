@@ -2,6 +2,7 @@ package com.ggumtak.readeraplus.settings
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.ggumtak.readeraplus.engine.PageBreakMode
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.engine.LineBreakMode
 
@@ -84,15 +85,17 @@ object Settings {
             putInt("r.marginBottomDp", s.marginBottomDp)
             putBoolean("r.pageMargins", s.pageMargins)
             putBoolean("r.invert", s.invert)
-            putBoolean("r.showHeader", s.showHeader)
-            putBoolean("r.showFooter", s.showFooter)
-            putBoolean("r.footerPage", s.footerPage)
-            putBoolean("r.footerChapterLeft", s.footerChapterLeft)
-            putBoolean("r.footerEpisode", s.footerEpisode)
-            putInt("r.footerTimeLeft", s.footerTimeLeft)
-            putBoolean("r.footerPercent", s.footerPercent)
-            putBoolean("r.footerClock", s.footerClock)
-            putBoolean("r.footerBattery", s.footerBattery)
+            putString("r.headerLeft", s.headerLeft.name)
+            putString("r.headerCenter", s.headerCenter.name)
+            putString("r.headerRight", s.headerRight.name)
+            putString("r.footerLeft", s.footerLeft.name)
+            putString("r.footerCenter", s.footerCenter.name)
+            putString("r.footerRight", s.footerRight.name)
+            putBoolean("r.progressBar", s.progressBar)
+            putString("r.pageBreak", s.pageBreak.name)
+            putInt(SideMargin.KEY, SideMargin.ZERO_DP)
+            putInt(VerticalMargin.KEY, VerticalMargin.ZERO_DP)
+            for (key in StatusMigration.LEGACY_KEYS) remove(key)
             putFloat("r.statusFontSizeSp", s.statusFontSizeSp)
             putBoolean("r.widowOrphanControl", s.widowOrphanControl)
             putInt("r.txtBlankLines", s.txtBlankLines)
@@ -113,7 +116,16 @@ object Settings {
             putString("a.tapZoneMode", s.tapZoneMode.name)
             putString("a.customTapZones", s.customTapZones.joinToString(",") { it.name })
             putBoolean("a.invertTaps", s.invertTaps)
-            putBoolean("a.pinChrome", s.pinChrome)
+            remove("a.pinChrome")
+            remove("reader.brightnessCollapsed")
+            putString("a.readMode", s.readMode.name)
+            putString("a.scrollStyle", s.scrollStyle.name)
+            putBoolean("a.autoBackup", s.autoBackup)
+            putBoolean("a.brightnessDevice", s.brightnessDevice)
+            putBoolean("a.brightnessRestore", s.brightnessRestore)
+            putInt("a.highlightLook", s.highlightLook)
+            putInt("a.listPaging", s.listPaging)
+            putBoolean("a.recordLookups", s.recordLookups)
             putBoolean("a.swipeToTurn", s.swipeToTurn)
             putBoolean("a.verticalSwipe", s.verticalSwipe)
             putBoolean("a.volumeKeysTurn", s.volumeKeysTurn)
@@ -173,6 +185,9 @@ object Settings {
     private fun loadReader(): ReaderSettings {
         val d = ReaderSettings()
         val p = prefs
+        val mig = if (p.contains(StatusMigration.MARKER_KEY)) null else StatusMigration.migrate(StatusMigration.Legacy.from(p))
+        val sideLegacy = SideMargin.isLegacyDefault(p.contains(SideMargin.KEY), p.getInt("r.marginLeftDp", d.marginLeftDp), p.getInt("r.marginRightDp", d.marginRightDp))
+        val verticalLegacy = VerticalMargin.isLegacyDefault(p.contains(VerticalMargin.KEY), p.getInt("r.marginTopDp", d.marginTopDp), p.getInt("r.marginBottomDp", d.marginBottomDp))
         return ReaderSettings(
             fontId = p.getString("r.fontId", d.fontId) ?: d.fontId,
             fontSizeSp = p.getFloat("r.fontSizeSp", d.fontSizeSp),
@@ -183,21 +198,20 @@ object Settings {
             letterSpacingPm = p.getInt("r.letterSpacingPm", d.letterSpacingPm),
             align = enumOr(p.getString("r.align", null), d.align),
             lineBreak = enumOr(p.getString("r.lineBreak", null), d.lineBreak),
-            marginLeftDp = p.getInt("r.marginLeftDp", d.marginLeftDp),
-            marginRightDp = p.getInt("r.marginRightDp", d.marginRightDp),
-            marginTopDp = p.getInt("r.marginTopDp", d.marginTopDp),
-            marginBottomDp = p.getInt("r.marginBottomDp", d.marginBottomDp),
+            marginLeftDp = if (sideLegacy) SideMargin.ZERO_DP else p.getInt("r.marginLeftDp", d.marginLeftDp),
+            marginRightDp = if (sideLegacy) SideMargin.ZERO_DP else p.getInt("r.marginRightDp", d.marginRightDp),
+            marginTopDp = if (verticalLegacy) VerticalMargin.ZERO_DP else p.getInt("r.marginTopDp", d.marginTopDp),
+            marginBottomDp = if (verticalLegacy) VerticalMargin.ZERO_DP else p.getInt("r.marginBottomDp", d.marginBottomDp),
             pageMargins = p.getBoolean("r.pageMargins", d.pageMargins),
             invert = p.getBoolean("r.invert", d.invert),
-            showHeader = p.getBoolean("r.showHeader", d.showHeader),
-            showFooter = p.getBoolean("r.showFooter", d.showFooter),
-            footerPage = p.getBoolean("r.footerPage", d.footerPage),
-            footerChapterLeft = p.getBoolean("r.footerChapterLeft", d.footerChapterLeft),
-            footerEpisode = p.getBoolean("r.footerEpisode", d.footerEpisode),
-            footerTimeLeft = p.getInt("r.footerTimeLeft", d.footerTimeLeft),
-            footerPercent = p.getBoolean("r.footerPercent", d.footerPercent),
-            footerClock = p.getBoolean("r.footerClock", d.footerClock),
-            footerBattery = p.getBoolean("r.footerBattery", d.footerBattery),
+            headerLeft = mig?.headerLeft ?: enumOr(p.getString("r.headerLeft", null), d.headerLeft),
+            headerCenter = mig?.headerCenter ?: enumOr(p.getString("r.headerCenter", null), d.headerCenter),
+            headerRight = mig?.headerRight ?: enumOr(p.getString("r.headerRight", null), d.headerRight),
+            footerLeft = mig?.footerLeft ?: enumOr(p.getString("r.footerLeft", null), d.footerLeft),
+            footerCenter = mig?.footerCenter ?: enumOr(p.getString("r.footerCenter", null), d.footerCenter),
+            footerRight = mig?.footerRight ?: enumOr(p.getString("r.footerRight", null), d.footerRight),
+            progressBar = p.getBoolean("r.progressBar", d.progressBar),
+            pageBreak = enumOr(p.getString("r.pageBreak", null), d.pageBreak),
             statusFontSizeSp = p.getFloat("r.statusFontSizeSp", d.statusFontSizeSp),
             widowOrphanControl = p.getBoolean("r.widowOrphanControl", d.widowOrphanControl),
             txtBlankLines = p.getInt("r.txtBlankLines", d.txtBlankLines),
@@ -221,7 +235,14 @@ object Settings {
             tapZoneMode = enumOr(p.getString("a.tapZoneMode", null), d.tapZoneMode),
             customTapZones = zones,
             invertTaps = p.getBoolean("a.invertTaps", d.invertTaps),
-            pinChrome = p.getBoolean("a.pinChrome", d.pinChrome),
+            readMode = enumOr(p.getString("a.readMode", null), d.readMode),
+            scrollStyle = enumOr(p.getString("a.scrollStyle", null), d.scrollStyle),
+            autoBackup = p.getBoolean("a.autoBackup", d.autoBackup),
+            brightnessDevice = p.getBoolean("a.brightnessDevice", d.brightnessDevice),
+            brightnessRestore = p.getBoolean("a.brightnessRestore", d.brightnessRestore),
+            highlightLook = p.getInt("a.highlightLook", d.highlightLook).takeIf { it in 0..2 } ?: 0,
+            listPaging = p.getInt("a.listPaging", d.listPaging).takeIf { it in 0..2 } ?: 0,
+            recordLookups = p.getBoolean("a.recordLookups", d.recordLookups),
             swipeToTurn = p.getBoolean("a.swipeToTurn", d.swipeToTurn),
             verticalSwipe = p.getBoolean("a.verticalSwipe", d.verticalSwipe),
             volumeKeysTurn = p.getBoolean("a.volumeKeysTurn", d.volumeKeysTurn),

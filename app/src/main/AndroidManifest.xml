@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Library scanning of .txt/.epub anywhere on storage (Android 11+: "모든 파일 접근"). -->
     <uses-permission
@@ -17,6 +17,9 @@
     <!-- TTS keeps reading with the screen off: a media-playback foreground service while TTS is active. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- 기기 밝기 직접 조절 only (opt-in). -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />
 
     <queries>
         <intent>
@@ -88,6 +91,8 @@
         <activity
             android:name=".ui.settings.SettingsActivity"
             android:exported="false" />
+
+        <activity android:name=".ui.notes.NotesActivity" android:exported="false" />
 
         <!-- Keep-alive and controls (notification, media session) for TTS; the engine stays in TtsController. -->
         <service

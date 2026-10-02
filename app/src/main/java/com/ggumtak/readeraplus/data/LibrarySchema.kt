@@ -9,6 +9,7 @@ package com.ggumtak.readeraplus.data
  * Versions (one bump per release at most):
  * - v1: books, bookmarks, quotes, collections, book_collections, page_counts, ignored.
  * - v2 (R2): `reading_log` (T1-6), `book_prefs` (T1-9 / T1-2) and the `quotes.style` column (T2-3).
+ * - v3 (R3): note places, lookups, missing/review times and the return mark.
  *
  * A fresh database runs [CREATE_ALL] (which already has every column). An upgrade runs [CREATE_ALL] too
  * (`IF NOT EXISTS`: only the missing tables / indexes are made; `CREATE_ALL` never adds a column to an existing
@@ -16,7 +17,7 @@ package com.ggumtak.readeraplus.data
  */
 internal object LibrarySchema {
     const val DB_NAME = "library.db"
-    const val DB_VERSION = 2
+    const val DB_VERSION = 3
 
     const val CREATE_BOOKS = "CREATE TABLE IF NOT EXISTS books(" +
         "id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -44,7 +45,8 @@ internal object LibrarySchema {
         "language TEXT," +
         "reading_seconds INTEGER NOT NULL DEFAULT 0," +
         // 1 once the user edited title/author/series: file refreshes then keep them.
-        "meta_locked INTEGER NOT NULL DEFAULT 0)"
+        "meta_locked INTEGER NOT NULL DEFAULT 0," +
+        "review_at INTEGER NOT NULL DEFAULT 0,missing_at INTEGER NOT NULL DEFAULT 0)"
 
     const val CREATE_BOOKMARKS = "CREATE TABLE IF NOT EXISTS bookmarks(" +
         "id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -53,7 +55,7 @@ internal object LibrarySchema {
         "char_offset INTEGER NOT NULL DEFAULT 0," +
         "snippet TEXT NOT NULL DEFAULT ''," +
         "note TEXT NOT NULL DEFAULT ''," +
-        "created_at INTEGER NOT NULL DEFAULT 0)"
+        "created_at INTEGER NOT NULL DEFAULT 0,chapter TEXT NOT NULL DEFAULT '',frac REAL NOT NULL DEFAULT -1,sig TEXT NOT NULL DEFAULT '')"
 
     const val CREATE_QUOTES = "CREATE TABLE IF NOT EXISTS quotes(" +
         "id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -65,7 +67,7 @@ internal object LibrarySchema {
         "note TEXT NOT NULL DEFAULT ''," +
         "created_at INTEGER NOT NULL DEFAULT 0," +
         // v2: highlight look (0 = the default grey fill; T2-3 adds the others). Added to v1 files by ADD_QUOTE_STYLE.
-        "style INTEGER NOT NULL DEFAULT 0)"
+        "style INTEGER NOT NULL DEFAULT 0,chapter TEXT NOT NULL DEFAULT '',frac REAL NOT NULL DEFAULT -1,sig TEXT NOT NULL DEFAULT '')"
 
     const val CREATE_COLLECTIONS = "CREATE TABLE IF NOT EXISTS collections(" +
         "id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -112,16 +114,35 @@ internal object LibrarySchema {
         "book_id INTEGER PRIMARY KEY," +
         "txt_override TEXT," +
         "finished_at INTEGER NOT NULL DEFAULT 0," +
-        "episode_label TEXT)"
+        "episode_label TEXT,return_mark TEXT)"
 
     /** v2 column for databases created by v1 (a fresh v2 file has it from [CREATE_QUOTES]). */
     const val ADD_QUOTE_STYLE = "ALTER TABLE quotes ADD COLUMN style INTEGER NOT NULL DEFAULT 0"
+
+    const val ADD_RETURN_MARK = "ALTER TABLE book_prefs ADD COLUMN return_mark TEXT"
+    const val CREATE_LOOKUPS = "CREATE TABLE IF NOT EXISTS lookups(" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,book_id INTEGER NOT NULL," +
+        "word TEXT NOT NULL DEFAULT '',word_key TEXT NOT NULL DEFAULT ''," +
+        "section INTEGER NOT NULL DEFAULT 0,start_offset INTEGER NOT NULL DEFAULT 0,end_offset INTEGER NOT NULL DEFAULT 0," +
+        "context TEXT NOT NULL DEFAULT '',chapter TEXT NOT NULL DEFAULT '',frac REAL NOT NULL DEFAULT -1," +
+        "sig TEXT NOT NULL DEFAULT '',via INTEGER NOT NULL DEFAULT 0,app TEXT NOT NULL DEFAULT ''," +
+        "note TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL DEFAULT 0)"
 
     /** Columns added after v1: (table, column, version that added it, ALTER statement). */
     private class AddedColumn(val table: String, val column: String, val version: Int, val sql: String)
 
     private val ADDED_COLUMNS = listOf(
         AddedColumn("quotes", "style", 2, ADD_QUOTE_STYLE),
+        AddedColumn("quotes", "chapter", 3, "ALTER TABLE quotes ADD COLUMN chapter TEXT NOT NULL DEFAULT ''"),
+        AddedColumn("quotes", "frac", 3, "ALTER TABLE quotes ADD COLUMN frac REAL NOT NULL DEFAULT -1"),
+        AddedColumn("quotes", "sig", 3, "ALTER TABLE quotes ADD COLUMN sig TEXT NOT NULL DEFAULT ''"),
+        AddedColumn("bookmarks", "chapter", 3, "ALTER TABLE bookmarks ADD COLUMN chapter TEXT NOT NULL DEFAULT ''"),
+        AddedColumn("bookmarks", "frac", 3, "ALTER TABLE bookmarks ADD COLUMN frac REAL NOT NULL DEFAULT -1"),
+        AddedColumn("bookmarks", "sig", 3, "ALTER TABLE bookmarks ADD COLUMN sig TEXT NOT NULL DEFAULT ''"),
+        AddedColumn("books", "review_at", 3, "ALTER TABLE books ADD COLUMN review_at INTEGER NOT NULL DEFAULT 0"),
+        AddedColumn("books", "missing_at", 3, "ALTER TABLE books ADD COLUMN missing_at INTEGER NOT NULL DEFAULT 0"),
+        AddedColumn("book_prefs", "return_mark", 3, ADD_RETURN_MARK),
+
     )
 
     /** Tables whose columns [upgradeStatements] needs ([columnsOf] is asked only for these). */
@@ -156,11 +177,26 @@ internal object LibrarySchema {
         "CREATE INDEX IF NOT EXISTS book_collections_coll ON book_collections(collection_id)",
         // v2: a book's log rows (removal, per-book speed); the primary key already serves day ranges.
         "CREATE INDEX IF NOT EXISTS reading_log_book ON reading_log(book_id)",
+        "CREATE INDEX IF NOT EXISTS quotes_created ON quotes(created_at)",
+        "CREATE INDEX IF NOT EXISTS bookmarks_created ON bookmarks(created_at)",
+        "CREATE INDEX IF NOT EXISTS lookups_created ON lookups(created_at)",
+        "CREATE INDEX IF NOT EXISTS lookups_book ON lookups(book_id)",
+        "CREATE INDEX IF NOT EXISTS lookups_word ON lookups(word_key)",
+        "CREATE INDEX IF NOT EXISTS quotes_memo ON quotes(created_at) WHERE note <> ''",
+        "CREATE INDEX IF NOT EXISTS bookmarks_memo ON bookmarks(created_at) WHERE note <> ''",
+
+    )
+
+    /** Clean rows left by a downgraded build that did not know the new tables. */
+    val UPGRADE_SWEEP = listOf(
+        "DELETE FROM lookups WHERE book_id NOT IN (SELECT id FROM books)",
+        "DELETE FROM book_prefs WHERE book_id NOT IN (SELECT id FROM books)",
+        "DELETE FROM reading_log WHERE book_id NOT IN (SELECT id FROM books)",
     )
 
     /** Every statement needed to create a fresh database of [DB_VERSION], in order (all `IF NOT EXISTS`). */
     val CREATE_ALL: List<String> = listOf(
         CREATE_BOOKS, CREATE_BOOKMARKS, CREATE_QUOTES, CREATE_COLLECTIONS, CREATE_BOOK_COLLECTIONS,
-        CREATE_PAGE_COUNTS, CREATE_IGNORED, CREATE_READING_LOG, CREATE_BOOK_PREFS,
+        CREATE_PAGE_COUNTS, CREATE_IGNORED, CREATE_READING_LOG, CREATE_BOOK_PREFS, CREATE_LOOKUPS,
     ) + CREATE_INDEXES
 }

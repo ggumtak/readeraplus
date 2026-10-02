@@ -258,7 +258,8 @@ class LibraryTextTest {
     fun nextListMode_cyclesListCompactGrid() {
         assertEquals(LibraryListMode.COMPACT, LibraryText.nextListMode(LibraryListMode.LIST))
         assertEquals(LibraryListMode.GRID, LibraryText.nextListMode(LibraryListMode.COMPACT))
-        assertEquals(LibraryListMode.LIST, LibraryText.nextListMode(LibraryListMode.GRID))
+        assertEquals(LibraryListMode.COVERS, LibraryText.nextListMode(LibraryListMode.GRID))
+        assertEquals(LibraryListMode.LIST, LibraryText.nextListMode(LibraryListMode.COVERS))
     }
 
     @Test

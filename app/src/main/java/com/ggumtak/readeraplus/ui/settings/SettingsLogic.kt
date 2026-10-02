@@ -212,15 +212,6 @@ object SettingsFormat {
 
     fun longPressChoice(ms: Int): String = longPress(ms) + if (ms == AppSettings().longPressMs) " (기본)" else ""
 
-    /** "남은 시간" footer item ([ReaderSettings.footerTimeLeft]), the popup's [끔] [이 화] [책]. */
-    val TIME_LEFT: List<Pair<String, Int>> = listOf(
-        "끔" to ReaderSettings.TIME_LEFT_OFF,
-        "이 화" to ReaderSettings.TIME_LEFT_EPISODE,
-        "책" to ReaderSettings.TIME_LEFT_BOOK,
-    )
-
-    fun timeLeft(value: Int): String = TIME_LEFT.firstOrNull { it.second == value }?.first ?: TIME_LEFT[0].first
-
     /** A received book's second line on the Wi-Fi page: "12.3 MB · 서재에 추가됨". */
     fun received(bytes: Long, added: Boolean): String =
         bytes(bytes) + if (added) " · 서재에 추가됨" else " · 서재에 추가하지 못함"

@@ -53,4 +53,8 @@ class InkTouchTest {
             assertTrue("width=$dpWidth", lastLeft < width - 57 * density)
         }
     }
+
+ @Test fun pageDragOnlyDecidesOnceAndRespectsAxis() { val d=PageDrag(20f);d.down(0f,0f);assertEquals(0,d.up(2f,3f));d.down(0f,100f);assertEquals(1,d.up(0f,50f));d.down(0f,0f);assertEquals(-1,d.up(0f,50f));d.down(0f,0f);assertFalse(d.move(60f,45f));assertEquals(0,d.up(60f,45f));d.down(0f,0f);d.move(0f,50f);d.cancel();assertEquals(0,d.up(0f,50f));val g=PageDrag(20f,true);g.down(100f,0f);assertEquals(1,g.up(0f,0f)) }
+ @Test fun fittedRowsAndPagingChoices() { assertEquals(4 to 298,PageFit.fit(1192,298));assertEquals(1 to 100,PageFit.fit(100,149));for(e in listOf(null,false,true)) { assertEquals(e==true,ListPaging.paged(0,e));assertTrue(ListPaging.paged(1,e));assertFalse(ListPaging.paged(2,e)) } }
+
 }

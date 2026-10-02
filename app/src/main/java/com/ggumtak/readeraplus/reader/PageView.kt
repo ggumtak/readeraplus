@@ -39,7 +39,17 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         var maxDist = 0f
     }
 
+    /** Non-null only while the reader displays a scroll viewport. */
+    var scroll: ScrollInput? = null
+    interface ScrollInput {
+        val live: Boolean
+        fun isMoving(): Boolean; fun stopMotion(): Boolean; fun dragBy(dy: Float)
+        fun release(totalDy: Float, velocityY: Float); fun cancelDrag()
+        fun a11yStep(next: Boolean): Boolean; fun computeScroll(); fun draw(canvas: Canvas, width: Int, height: Int)
+    }
+
     interface Callbacks {
+        fun onScrollStart() {}
         /** Any touch started (stops auto page turn, keeps the screen on). */
         fun onTouchStarted()
         fun isSelectionActive(): Boolean
@@ -55,6 +65,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         fun onWheel(next: Boolean)
     }
 
+    /** The next page replaces the frame at once: no fade, slide, curl or timed interpolation. */
     var frame: PageFrame? = null
     /** Colour shown before the first page is ready. */
     var blankColor: Int = Color.WHITE
@@ -118,6 +129,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     }
 
     init {
+        stateListAnimator = null
         isHapticFeedbackEnabled = false
         isSoundEffectsEnabled = false
         isFocusable = false

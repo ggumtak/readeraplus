@@ -45,6 +45,7 @@ object Ink {
     /** Secondary text. Dark enough to stay legible on e-ink. */
     const val GRAY = 0xFF555555.toInt()
     /** Hairlines / dividers. */
+    const val LINE_LIGHT = 0xFFCCCCCC.toInt()
     const val LINE = 0xFF000000.toInt()
     const val PRESSED = 0xFFCCCCCC.toInt()
     const val DISABLED = 0xFF999999.toInt()
@@ -160,7 +161,6 @@ private object InkMessage {
 /** Background with a flat gray pressed state and no ripple. */
 fun pressableBackground(base: Int = Color.TRANSPARENT): Drawable = StateListDrawable().apply {
     addState(intArrayOf(android.R.attr.state_pressed), ColorDrawable(Ink.PRESSED))
-    addState(intArrayOf(android.R.attr.state_selected), ColorDrawable(Ink.PRESSED))
     addState(intArrayOf(), ColorDrawable(base))
 }
 
@@ -197,6 +197,19 @@ fun Context.label(
         ellipsize = TextUtils.TruncateAt.END
     }
     includeFontPadding = false
+    if (Build.VERSION.SDK_INT >= 33) {
+        textLocale = java.util.Locale.KOREAN
+        lineBreakStyle = android.graphics.text.LineBreakConfig.LINE_BREAK_STYLE_NONE
+        lineBreakWordStyle = android.graphics.text.LineBreakConfig.LINE_BREAK_WORD_STYLE_PHRASE
+    }
+}
+
+/** Korean summaries wrap between words on API 33+; earlier devices keep the platform break policy. */
+fun TextView.keepAll(): TextView = apply {
+    if (Build.VERSION.SDK_INT >= 33) {
+        textLocale = java.util.Locale.KOREAN
+        lineBreakWordStyle = android.graphics.text.LineBreakConfig.LINE_BREAK_WORD_STYLE_PHRASE
+    }
 }
 
 /** 48dp square icon button tinted black. */
@@ -256,14 +269,14 @@ fun Context.toolbar(
 // ---------------------------------------------------------------- settings-style rows
 
 fun Context.sectionHeader(text: String): TextView = label(text, 14f, bold = true).apply {
-    setPadding(dp(16), dp(20), dp(16), dp(6))
+    setPadding(dp(16), dp(24), dp(16), dp(8))
 }
 
 /** Title + optional summary on the left, [trailing] view on the right. */
 fun Context.row(title: String, summary: String? = null, trailing: View? = null, onClick: ((View) -> Unit)? = null): LinearLayout {
     val r = horizontal {
         minimumHeight = dp(56)
-        setPadding(dp(16), dp(10), dp(12), dp(10))
+        setPadding(dp(16), dp(10), dp(16), dp(10))
         if (onClick != null) {
             background = pressableBackground()
             setOnClickListener(onClick)
@@ -271,7 +284,7 @@ fun Context.row(title: String, summary: String? = null, trailing: View? = null, 
     }
     val texts = vertical()
     texts.addView(label(title, 17f))
-    if (summary != null) texts.addView(label(summary, 14f, color = Ink.GRAY).apply { tag = "summary"; setPadding(0, dp(3), 0, 0) })
+    if (summary != null) texts.addView(label(keepAll(summary), 14f, color = Ink.GRAY).apply { tag = "summary"; setPadding(0, dp(3), 0, 0) })
     r.addView(texts, lp(0, WRAP_CONTENT, 1f))
     if (trailing != null) r.addView(trailing)
     return r
@@ -378,7 +391,13 @@ fun Context.alert(): AlertDialog.Builder = AlertDialog.Builder(this, R.style.Ink
 fun Dialog.noAnimation(): Dialog = apply { window?.setWindowAnimations(0) }
 
 /** Shows an alert built with [alert] without animation. */
-fun AlertDialog.Builder.showNoAnim(): AlertDialog = create().also { it.window?.setWindowAnimations(0); it.show() }
+fun AlertDialog.Builder.showNoAnim(): AlertDialog = create().also { d ->
+    d.window?.setWindowAnimations(0)
+    val owner = d.context.activityOrNull()?.window
+    if (owner != null) d.window?.let { matchSystemBars(it, owner) }
+    d.show()
+    if (owner != null) d.window?.let { matchSystemBars(it, owner) }
+}
 
 /**
  * A full-screen white dialog hosting [content] (used for TOC, search, settings sub-screens inside the reader).
@@ -503,3 +522,14 @@ fun View.frameLp(w: Int = MATCH_PARENT, h: Int = WRAP_CONTENT, gravity: Int = Gr
     FrameLayout.LayoutParams(w, h, gravity)
 
 fun ViewGroup.clear() = removeAllViews()
+
+/** Only for non-selectable Korean summaries; tap labels and book text retain their original indices. */
+fun keepAll(text: CharSequence): CharSequence {
+    fun hangul(c: Char): Boolean = c in '가'..'힣'
+    var needed=false
+    for (i in 1 until text.length) if (hangul(text[i-1]) && hangul(text[i])) { needed=true;break }
+    if (!needed) return text
+    val out=StringBuilder(text.length*2)
+    for (i in text.indices) { if (i>0 && hangul(text[i-1]) && hangul(text[i])) out.append('⁠');out.append(text[i]) }
+    return out.toString()
+}

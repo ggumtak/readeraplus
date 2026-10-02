@@ -5,6 +5,7 @@ import com.ggumtak.readeraplus.format.DocMeta
 
 /** Stored-length caps shared by the library API and the backup restore (defensive; the UI passes far less). */
 internal object DataLimits {
+    const val CHAPTER=200; const val WORD=200; const val CONTEXT=300; const val APP=100; const val QUOTE_STYLE_MAX=15
     const val TITLE = 500
     const val AUTHOR = 300
     const val SNIPPET = 500

@@ -18,6 +18,14 @@ import java.io.IOException
  * serialises writers; WAL lets readers run alongside), multi-statement changes run in transactions.
  */
 object Library {
+    @Volatile var notesGen: Long = 0; private set
+    fun updateQuoteStyle(id: Long, style: Int) {} // R3 stub (owner: DA-C)
+    fun setQuoteStyles(ids: Collection<Long>, style: Int) {} // R3 stub (owner: DA-C)
+    fun deleteQuotes(ids: Collection<Long>) { ids.forEach { deleteQuote(it) } } // R3 stub (owner: DA-C)
+    fun deleteBookmarks(ids: Collection<Long>) { ids.forEach { deleteBookmark(it) } } // R3 stub (owner: DA-C)
+    fun clearReviews(bookIds: Collection<Long>) { bookIds.forEach { setReview(it, "") } } // R3 stub (owner: DA-C)
+    fun fillNotePlaces(bookId: Long, quotes: Map<Long, NotePlace>, bookmarks: Map<Long, NotePlace>) {} // R3 stub (owner: DA-C)
+
     private const val TAG = "Library"
 
     /** Max stored lengths (defensive caps; UI passes much shorter strings). */
@@ -411,6 +419,7 @@ object Library {
     internal fun deleteBookRows(db: SQLiteDatabase, bookId: Long) {
         db.exec(LibrarySql.DELETE_BOOKMARKS_OF_BOOK, bookId)
         db.exec(LibrarySql.DELETE_QUOTES_OF_BOOK, bookId)
+        db.exec(LibrarySql.DELETE_LOOKUPS_OF_BOOK, bookId)
         db.exec(LibrarySql.DELETE_MEMBERSHIPS_OF_BOOK, bookId)
         db.exec(LibrarySql.DELETE_PAGE_COUNTS_OF_BOOK, bookId)
         db.exec(LibrarySql.DELETE_LOG_OF_BOOK, bookId)
@@ -441,7 +450,7 @@ object Library {
     fun bookmarks(bookId: Long): List<Bookmark> =
         db().queryList(LibrarySql.SELECT_BOOKMARKS, args(bookId), BookRows::bookmark)
 
-    fun addBookmark(bookId: Long, section: Int, offset: Int, snippet: String): Bookmark {
+    fun addBookmark(bookId: Long, section: Int, offset: Int, snippet: String, place: NotePlace? = null): Bookmark {
         val now = System.currentTimeMillis()
         val s = cap(snippet.trim(), MAX_SNIPPET)
         val sec = section.coerceAtLeast(0)
@@ -460,7 +469,7 @@ object Library {
 
     fun quotes(bookId: Long): List<Quote> = db().queryList(LibrarySql.SELECT_QUOTES, args(bookId), BookRows::quote)
 
-    fun addQuote(bookId: Long, section: Int, start: Int, end: Int, text: String, note: String = ""): Quote {
+    fun addQuote(bookId: Long, section: Int, start: Int, end: Int, text: String, note: String = "", style: Int = 0, place: NotePlace? = null): Quote {
         val now = System.currentTimeMillis()
         val s = minOf(start, end).coerceAtLeast(0)
         val e = maxOf(start, end).coerceAtLeast(0)

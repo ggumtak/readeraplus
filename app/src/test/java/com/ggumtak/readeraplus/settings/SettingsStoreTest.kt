@@ -76,8 +76,8 @@ class SettingsStoreTest {
         assertEquals("", a.ttsVoice)
         val r = Settings.reader
         assertEquals(ReaderSettings(fontSizeSp = 24f), r)
-        assertFalse(r.footerEpisode)
-        assertEquals(ReaderSettings.TIME_LEFT_OFF, r.footerTimeLeft)
+        assertFalse(r.shows(StatusItem.EPISODE))
+        assertFalse(r.shows(StatusItem.TIME_LEFT_EPISODE) || r.shows(StatusItem.TIME_LEFT_BOOK))
     }
 
     @Test
@@ -98,7 +98,7 @@ class SettingsStoreTest {
             ttsHighlight = false, ttsVoice = "ko-kr-x-kod-local", libraryListMode = LibraryListMode.COMPACT,
             customTapZones = List(9) { if (it == 4) TapAction.AUTO_TURN else TapAction.NEXT },
         )
-        val r = ReaderSettings(footerEpisode = true, footerTimeLeft = ReaderSettings.TIME_LEFT_EPISODE)
+        val r = ReaderSettings(footerLeft = StatusItem.EPISODE, footerCenter = StatusItem.TIME_LEFT_EPISODE)
         Settings.saveApp(a)
         Settings.saveReader(r)
         assertEquals("24:NEXT_CHAPTER,25:NONE,131:GOTO", p.map["a.keyBindings"])
@@ -169,4 +169,34 @@ class SettingsStoreTest {
         val all = TapAction.entries.withIndex().associate { (i, a) -> (100 + i) to a }
         assertEquals(all, Settings.decodeKeyBindings(Settings.encodeKeyBindings(all)))
     }
+
+    @Test fun r3DefaultsRoundTripAndUnknowns() {
+        val p=fresh(); assertEquals(ReadMode.PAGED,Settings.app.readMode);assertEquals(ScrollStyle.AUTO,Settings.app.scrollStyle);assertTrue(Settings.app.autoBackup)
+        val a=AppSettings(readMode=ReadMode.SCROLL,scrollStyle=ScrollStyle.STEP,autoBackup=false,brightnessDevice=true,brightnessRestore=false,highlightLook=2,listPaging=1,recordLookups=false,libraryListMode=LibraryListMode.COVERS)
+        Settings.saveApp(a);Settings.initForTest(p);assertEquals(a,Settings.app)
+        fresh(hashMapOf("a.readMode" to "X","a.scrollStyle" to "X","a.highlightLook" to 7,"a.listPaging" to -1))
+        assertEquals(ReadMode.PAGED,Settings.app.readMode);assertEquals(ScrollStyle.AUTO,Settings.app.scrollStyle);assertEquals(0,Settings.app.highlightLook);assertEquals(0,Settings.app.listPaging)
+    }
+    @Test fun everyStatusItemInEverySlotRoundTrips() {
+        val p=fresh()
+        for (band in 0..1) for (pos in 0..2) for (item in StatusItem.entries) {
+            val r=ReaderSettings().withSlot(band,pos,item)
+            assertEquals(item,r.slot(band,pos));Settings.saveReader(r);Settings.initForTest(p);assertEquals(r,Settings.reader)
+        }
+    }
+    @Test fun legacyMigrationReadsWithoutWritingThenCleansOnSave() {
+        val raw=hashMapOf<String,Any?>("r.marginLeftDp" to 18,"r.marginRightDp" to 18,"r.marginTopDp" to 16,"r.marginBottomDp" to 16,
+            "r.showFooter" to true,"r.footerPage" to false,"r.footerPercent" to true,"r.footerClock" to true,"r.footerBattery" to true,"a.pinChrome" to true,"reader.brightnessCollapsed" to true)
+        val before=HashMap(raw);val p=fresh(raw);val r=Settings.reader
+        assertEquals(40,r.marginLeftDp);assertEquals(40,r.marginTopDp);assertEquals(StatusItem.PERCENT,r.footerLeft);assertEquals(StatusItem.CLOCK_BATTERY,r.footerRight);assertEquals(before,raw)
+        Settings.saveReader(r);Settings.saveApp(Settings.app)
+        for (k in StatusMigration.LEGACY_KEYS) assertFalse(p.contains(k))
+        assertTrue(p.contains(StatusMigration.MARKER_KEY));assertFalse(p.contains("a.pinChrome"));assertFalse(p.contains("reader.brightnessCollapsed"))
+    }
+    @Test fun deliberateMarginsAndPageBreakRoundTrip() {
+        val p=fresh();val r=ReaderSettings(marginLeftDp=18,marginRightDp=18,marginTopDp=16,marginBottomDp=16,pageBreak=com.ggumtak.readeraplus.engine.PageBreakMode.PARAGRAPH)
+        Settings.saveReader(r);Settings.initForTest(p);assertEquals(r,Settings.reader)
+        fresh(hashMapOf("r.pageBreak" to "X"));assertEquals(com.ggumtak.readeraplus.engine.PageBreakMode.LINE,Settings.reader.pageBreak)
+    }
+
 }

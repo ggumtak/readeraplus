@@ -114,7 +114,6 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
             editApp { it.copy(invertTaps = v) }
             preview.inverted = v
         })
-        body.addView(ctx.toggleRow("메뉴 고정", "읽는 동안 위아래 메뉴를 계속 표시합니다 (터치로 페이지는 넘어감)", app.pinChrome) { v -> editApp { it.copy(pinChrome = v) } })
         updateModeUi()
 
         // ---- gestures
@@ -178,23 +177,6 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         // ---- page display (reader settings; the popup's labels and ranges)
         val r = Settings.reader
         body.section("페이지 표시")
-        body.addView(ctx.toggleRow("상단 챕터 제목", "페이지 위에 현재 챕터 제목 표시", r.showHeader) { v -> editReader { it.copy(showHeader = v) } })
-        body.addView(ctx.toggleRow("하단 정보 표시", "페이지 아래에 아래 항목을 표시합니다", r.showFooter) { v -> editReader { it.copy(showFooter = v) } })
-        body.addView(ctx.toggleRow("쪽수", "12 / 3259", r.footerPage) { v -> editReader { it.copy(footerPage = v) } })
-        body.addView(ctx.toggleRow("회차", "123/540화 (목차의 화 번호로, 책을 연 뒤 곧 표시)", r.footerEpisode) { v -> editReader { it.copy(footerEpisode = v) } })
-        body.addView(ctx.toggleRow("챕터 남은 쪽수", "챕터 끝까지 남은 쪽 수", r.footerChapterLeft) { v -> editReader { it.copy(footerChapterLeft = v) } })
-        var timeRow: View? = null
-        timeRow = ctx.valueRow("남은 시간", SettingsFormat.timeLeft(r.footerTimeLeft)) {
-            val opts = SettingsFormat.TIME_LEFT
-            val labels = opts.map { (label, v) -> label + (TIME_LEFT_EXAMPLES[v]?.let { " ($it)" } ?: "") }
-            ctx.chooser("남은 시간", labels, opts.indexOfFirst { it.second == Settings.reader.footerTimeLeft }) { i ->
-                editReader { it.copy(footerTimeLeft = opts[i].second) }
-                timeRow?.setSummary(opts[i].first)
-            }
-        }.also(body::addView)
-        body.addView(ctx.toggleRow("진행률", "34%", r.footerPercent) { v -> editReader { it.copy(footerPercent = v) } })
-        body.addView(ctx.toggleRow("시계", "페이지를 넘길 때만 갱신 (e-ink 절약)", r.footerClock) { v -> editReader { it.copy(footerClock = v) } })
-        body.addView(ctx.toggleRow("배터리", "배터리 잔량", r.footerBattery) { v -> editReader { it.copy(footerBattery = v) } })
         body.addView(ctx.stepperRow("상태 표시 글자 크기", r.statusFontSizeSp, 8f, 16f, 0.5f, { SettingsFormat.sp(it) }) { v ->
             editReader { it.copy(statusFontSizeSp = v) }
         })
@@ -550,9 +532,5 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
 
     private companion object {
         /** The "남은 시간" chooser's examples (the footer's wording). */
-        val TIME_LEFT_EXAMPLES = mapOf(
-            ReaderSettings.TIME_LEFT_EPISODE to "이 화 3분",
-            ReaderSettings.TIME_LEFT_BOOK to "책 7시간 20분",
-        )
     }
 }

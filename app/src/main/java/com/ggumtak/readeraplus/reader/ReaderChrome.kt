@@ -32,7 +32,7 @@ import com.ggumtak.readeraplus.ui.kit.vertical
  * no animation. Both panels swallow touches so taps never fall through to the page. While the seek bar is dragged
  * a full-width preview box floats just above the bottom panel (outside the panels, so their heights never change).
  */
-internal class ReaderChrome(private val ctx: Context, private val actions: Actions) {
+internal class ReaderChrome(private val ctx: Context, private val actions: Actions, returnDock: View, private val light: LightController) {
 
     interface Actions {
         fun onBack()
@@ -41,17 +41,14 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         fun onToc()
         fun onSettings(anchor: View)
         fun onMore(anchor: View)
-        fun onBrightnessAuto()
-        fun onBrightness(value: Float, done: Boolean)
-        fun onBrightnessCollapsed(collapsed: Boolean)
         fun onPageLabel()
         /** [이전 화] / [다음 화] beside the seek bar (T1-5): the previous / next chapter start, no return chip. */
         fun onChapter(next: Boolean)
         fun onRotation()
         fun onRotationChooser()
         fun onBookmark()
-        /** "메뉴 고정" toggle (ReadEra's pin). */
-        fun onPin()
+        /** "이 쪽 고정" toggle (ReadEra's pin). */
+        fun onPinHere()
         fun onSeekStart()
         /** Preview text for a seek position while dragging. */
         fun onSeekPreview(progress: Int): String
@@ -120,31 +117,31 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         titleRow.addView(title, lp(0, WRAP_CONTENT, 1f))
         brightnessShow = ctx.iconButton(R.drawable.ic_brightness_medium, "밝기 조절 보이기") {
             setBrightnessCollapsed(false)
-            actions.onBrightnessCollapsed(false)
+            light.onOpenPanel()
         }
         titleRow.addView(brightnessShow)
         top.addView(titleRow, lp())
 
         brightnessRow = ctx.horizontal { setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
-        brightnessAuto = ctx.iconButton(R.drawable.ic_brightness_auto, "시스템 밝기") { actions.onBrightnessAuto() }
+        brightnessAuto = ctx.iconButton(R.drawable.ic_brightness_auto, "시스템 밝기") { light.onAuto() }
         brightnessRow.addView(brightnessAuto)
         brightnessBar = einkSeekBar().apply {
             max = 100
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
-                    if (fromUser && !bindingBrightness) actions.onBrightness(p / 100f, false)
+                    if (fromUser && !bindingBrightness) light.onDrag(p / 100f, false)
                 }
 
                 override fun onStartTrackingTouch(s: SeekBar) {}
                 override fun onStopTrackingTouch(s: SeekBar) {
-                    actions.onBrightness(s.progress / 100f, true)
+                    light.onDrag(s.progress / 100f, true)
                 }
             })
         }
         brightnessRow.addView(brightnessBar, lp(0, WRAP_CONTENT, 1f))
         brightnessRow.addView(ctx.iconButton(R.drawable.ic_expand_less, "밝기 조절 숨기기") {
             setBrightnessCollapsed(true)
-            actions.onBrightnessCollapsed(true)
+            light.onOpenPanel()
         })
         top.addView(brightnessRow, lp())
         top.addView(ctx.hairline())
@@ -154,6 +151,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             isClickable = true
         }
         bottom.addView(ctx.hairline())
+        bottom.addView(returnDock, lp())
         val row = ctx.horizontal {
             minimumHeight = ctx.dp(56)
             setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
@@ -176,7 +174,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         row.addView(rotation)
         bookmark = ctx.iconButton(R.drawable.ic_bookmark, "북마크") { actions.onBookmark() }
         row.addView(bookmark)
-        pin = ctx.iconButton(R.drawable.ic_push_pin, "메뉴 고정") { actions.onPin() }
+        pin = ctx.iconButton(R.drawable.ic_push_pin, "이 쪽 고정") { actions.onPinHere() }
         row.addView(pin)
         bottom.addView(row, lp())
         seekInfo = ctx.label("", 16f, bold = true, maxLines = 2).apply {
@@ -326,11 +324,11 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         bookmark.contentDescription = if (on) "북마크 삭제" else "북마크 추가"
     }
 
-    fun setPinned(on: Boolean) {
+    fun setPinned(on: Boolean, onMarkPage: Boolean) {
         if (boundPinned == on) return
         boundPinned = on
         pin.setImageResource(if (on) R.drawable.ic_push_pin_fill else R.drawable.ic_push_pin)
-        pin.contentDescription = if (on) "메뉴 고정 해제" else "메뉴 고정"
+        pin.contentDescription = if (on) "이 쪽 고정 해제" else "이 쪽 고정"
         pin.isSelected = on
     }
 
@@ -342,10 +340,10 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     }
 
     /** [value] < 0 = system brightness ([systemValue] positions the bar). */
-    fun setBrightness(value: Float, systemValue: Float) {
+    fun setBrightness(value: Float, auto: Boolean) {
         bindingBrightness = true
-        brightnessAuto.isSelected = value < 0f
-        val p = Math.round((if (value < 0f) systemValue else value).coerceIn(0f, 1f) * 100f)
+        brightnessAuto.isSelected = auto
+        val p = Math.round(value.coerceIn(0f, 1f) * 100f)
         if (brightnessBar.progress != p) brightnessBar.progress = p
         bindingBrightness = false
     }
@@ -354,6 +352,13 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         brightnessRow.visibility = if (collapsed) View.GONE else View.VISIBLE
         brightnessShow.visibility = if (collapsed) View.VISIBLE else View.GONE
     }
+
+    fun setBrightnessOptionsOpen(open: Boolean) {} // R3 stub (owner: RU)
+    fun setSwipeOption(on: Boolean, enabled: Boolean, subtitle: String) {} // R3 stub (owner: RU)
+    fun setLightAsk(kind: Int) {} // R3 stub (owner: RU)
+    fun setLightDevice(on: Boolean, subtitle: String, enabled: Boolean) {} // R3 stub (owner: RU)
+    fun setBrightnessUnavailable(unavailable: Boolean) {} // R3 stub (owner: RU)
+    fun setLightPanelRow(visible: Boolean, subtitle: String) {} // R3 stub (owner: RU)
 
     val bottomHeight: Int get() = bottom.height
 }

@@ -291,6 +291,7 @@ internal object Overlay {
 
 /** Text actions shared by the selection popup and the quotes list. */
 internal object TextActions {
+    const val SHARE_MAX_CHARS = 50_000
     private const val PREF_LAST_DICT = "extras.lastDictApp"
 
     /**

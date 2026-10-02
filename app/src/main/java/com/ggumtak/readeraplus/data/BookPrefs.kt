@@ -100,6 +100,9 @@ data class FinishedBook(val bookId: Long, val finishedAt: Long)
  * clears it (`Library.setHaveRead`), and the reads ignore a leftover one.
  */
 object BookPrefs {
+    fun returnMark(bookId: Long): String? = null // R3 stub (owner: DA-C)
+    fun setReturnMark(bookId: Long, value: String?) {} // R3 stub (owner: DA-C)
+
     private const val TAG = "BookPrefs"
 
     /** Longest stored override JSON (chars): the row must fit a 2 MB CursorWindow with room to spare. */

@@ -15,18 +15,25 @@ class Typesetter(private val measurer: TextMeasurer, private val config: LayoutC
     private val busy = AtomicBoolean(false)
 
     /** Lays out a whole section into pages. Deterministic for the same (content, config, measurer font state). */
-    fun layout(content: SectionContent): SectionLayout {
-        val pass = runPass(content, retain = true)
-        return SectionLayout(content, config, pass.pages!!, pass.advances)
+    fun layout(content: SectionContent, anchorBreak: Int = -1): SectionLayout {
+        val pass = runPass(content, retain = true, anchorBreak)
+        val a = if (pass.anchorPage >= 0) anchorBreak else -1
+        return SectionLayout(content, config, pass.pages!!, pass.advances, a, pass.anchorPage, pass.anchorShifted)
     }
 
     /** Same page count as layout(content).pageCount but without retaining lines (background page counting). */
-    fun countPages(content: SectionContent): Int = runPass(content, retain = false).pageCount
+    fun countPages(content: SectionContent): Int = runPass(content, retain = false, -1).pageCount
 
-    private fun runPass(content: SectionContent, retain: Boolean): TypesetPass {
+    /** [countPages] of layout(content, anchorBreak), plus where the anchor landed (U6). */
+    fun count(content: SectionContent, anchorBreak: Int): PageTally {
+        val p = runPass(content, retain = false, anchorBreak)
+        return PageTally(p.pageCount, p.anchorPage, p.anchorShifted)
+    }
+
+    private fun runPass(content: SectionContent, retain: Boolean, anchorBreak: Int): TypesetPass {
         val own = busy.compareAndSet(false, true)
         try {
-            val pass = TypesetPass(measurer, config, content, retain, if (own) buffers else TypesetBuffers())
+            val pass = TypesetPass(measurer, config, content, retain, if (own) buffers else TypesetBuffers(), anchorBreak)
             pass.run()
             return pass
         } finally {

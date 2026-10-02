@@ -36,6 +36,7 @@ internal class LibraryDb(context: Context) :
         // the columns newer versions added to existing tables (skipped when a column is already there).
         for (sql in LibrarySchema.CREATE_ALL) db.execSQL(sql)
         for (sql in LibrarySchema.upgradeStatements(oldVersion) { table -> columnsOf(db, table) }) db.execSQL(sql)
+        if (oldVersion < 3) for (sql in LibrarySchema.UPGRADE_SWEEP) db.execSQL(sql)
     }
 
     /** Column names of [table] (`PRAGMA table_info`); empty when the table doesn't exist. */

@@ -109,14 +109,6 @@ class SettingsFormatTest {
         assertTrue(AppSettings().longPressMs in SettingsFormat.LONG_PRESS_OPTIONS)
     }
 
-    @Test
-    fun timeLeftLabelsMatchThePopup() {
-        assertEquals(listOf("끔", "이 화", "책"), SettingsFormat.TIME_LEFT.map { it.first })
-        assertEquals("끔", SettingsFormat.timeLeft(ReaderSettings.TIME_LEFT_OFF))
-        assertEquals("이 화", SettingsFormat.timeLeft(ReaderSettings.TIME_LEFT_EPISODE))
-        assertEquals("책", SettingsFormat.timeLeft(ReaderSettings.TIME_LEFT_BOOK))
-        assertEquals("끔", SettingsFormat.timeLeft(99))
-    }
 
     @Test
     fun receivedLine() {

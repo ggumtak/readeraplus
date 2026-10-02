@@ -72,7 +72,7 @@ class ReadingLogSqlTest {
         val tables = LibrarySchema.CREATE_ALL.filter { it.startsWith("CREATE TABLE") && it.contains("book_id INTEGER") }
             .map { it.removePrefix("CREATE TABLE IF NOT EXISTS ").substringBefore('(') }
         assertEquals(
-            setOf("bookmarks", "quotes", "book_collections", "page_counts", "reading_log", "book_prefs"),
+            setOf("bookmarks", "quotes", "book_collections", "page_counts", "reading_log", "book_prefs", "lookups"),
             tables.toSet(),
         )
         for (t in tables) assertTrue(t, "DELETE FROM $t WHERE book_id = ?" in all)

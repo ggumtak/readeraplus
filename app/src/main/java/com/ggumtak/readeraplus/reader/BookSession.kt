@@ -177,7 +177,7 @@ class BookSession(
     val isClosed: Boolean get() = closed
 
     /** Sets the page view size. Returns true when the geometry changed (a new generation was created). */
-    fun setViewport(width: Int, height: Int): Boolean {
+    fun setViewport(width: Int, height: Int, anchor: AnchorSpec? = null): Boolean {
         if (width <= 0 || height <= 0) return false
         if (width == viewW && height == viewH && generation != null) return false
         viewW = width
@@ -187,7 +187,7 @@ class BookSession(
     }
 
     /** Applies new settings: RELAYOUT when layout-affecting fields changed, REPAINT for colours/footer only. */
-    fun updateSettings(new: ReaderSettings): Change {
+    fun updateSettings(new: ReaderSettings, anchor: AnchorSpec? = null): Change {
         if (new == settings) return Change.NONE
         // Only what can change this book's pages counts: the other format's options and weight steps that keep the
         // same font file (only the synthetic stroke changes) are a repaint.
@@ -202,7 +202,7 @@ class BookSession(
         if (closed || viewW <= 0 || viewH <= 0) return
         val dm = context.resources.displayMetrics
         val statusPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, settings.statusFontSizeSp, dm)
-        val g = LayoutKeys.geometry(settings, viewW, viewH, dm.density, statusPx)
+        val g = LayoutKeys.geometry(settings, viewW, viewH, dm.density)
         genCounter++
         liveGenId = genCounter
         generationBornAt = SystemClock.uptimeMillis()
@@ -241,7 +241,9 @@ class BookSession(
     fun peek(section: Int): SectionLayout? = cache[section]
 
     /** Marks [section] as displayed: most recently used and never evicted while displayed. */
-    fun touch(section: Int) {
+    fun startsUnit(section: Int): Boolean = false // R3 stub (owner: RC-P)
+
+    fun touch(section: Int, shownTo: Int = section) {
         protectedSection = section
         if (lru.remove(section)) lru.add(section)
     }

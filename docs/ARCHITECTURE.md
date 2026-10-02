@@ -48,7 +48,8 @@ Hard requirements from the user:
 3. Use other modules only through their contract API (the snapshot). Don't depend on their internals.
 4. Performance: no work on the main thread beyond view updates; no per-char object allocation in hot loops;
    primitive arrays; cache Typeface/Paint objects; avoid reflection except guarded vendor e-ink hooks.
-5. E-ink UI: black on white, no animations (no ripples, no smooth scroll, no fades, no indeterminate spinners
+5. Page turns on every device and mode replace the frame immediately: no fade, slide, curl or timed scroll step.
+   E-ink UI: black on white, no animations (no ripples, no smooth scroll, no fades, no indeterminate spinners
    — use static "불러오는 중…" text), 1px black lines, no elevation. Dialogs/popups: `noAnimation()` /
    `animationStyle = 0`. Never update UI on a timer more often than needed (clock updates only on page turn).
 6. Write original code. Do NOT copy code from GPL/AGPL projects (OpenReadEra, crengine, KOReader, Legado,
@@ -759,3 +760,31 @@ adb logcat -s RAPerf
 
 The release gates compare these numbers with the Wave 0 baseline recorded on the Comet: the cached reopen of the
 14.8 MB TXT within +10 ms, page-turn time unchanged, library cold start (`am start -W`) within +5 %.
+
+
+## Contract revision R3 (2026-10-02)
+
+- **Chrome / insets:** reader bars and the return chip overlay the page. Pinned chrome is removed; page view size
+  depends only on InsetsGate-approved system insets. Popups/dialogs preserve the underlying geometry.
+- **Status / margins:** six `StatusItem` slots and a progress lane draw inside existing margins. Text box = view
+  minus margins, with no header/footer subtraction. Defaults are 40 dp = UI `0`. Model/renderer reuse buffers;
+  redraw only for a changed visible value or changed dot pixel. `footerEpisode`/`footerTimeLeft` become typed slots.
+- **Pagination:** `PageBreakMode.LINE` preserves the golden output; PARAGRAPH keeps a whole paragraph when it fits.
+  Relayout opens an anchored generation so the first character stays; its changed section is masked from saved
+  counts. Scroll stitches `PageInfo.lead` and real line bodies; it never uses page-bottom blank space.
+- **Scroll:** STEP is the e-ink default, one release/command = one draw. SMOOTH is live finger movement on phones.
+  All page commands, including SMOOTH mode, are immediate with no page-turn animation. Frame updates render only;
+  the settle pipeline updates anchor, decor, position and cadence once per gesture.
+- **Notes:** schema v3 adds note places, styles, lookups, missing/review times and return marks. Indexes (including
+  partial predicates) never reference columns added by ALTER. Notes hub reads SQL only, never a book file.
+  Primitive one-shot jumps use `NoteSig` + fraction fallback and anchor matching; peek does not save progress until
+  a manual turn. `Library.notesGen` invalidates hub caches. Quote looks are colour or level-exact e-ink patterns;
+  library/hub lists use measured immediate paging. No synchronization service is introduced.
+- **Recents:** ResumeState marker plus exact Activity state restores the book. Intentional close clears it;
+  temporary UI_HIDDEN leaves image caches intact. A newer DB/TTS position takes precedence over old instance state.
+- **Brightness:** LightController selects window/device paths with a per-firmware verdict and explicit device
+  opt-in. DeviceLight owns a serial IO writer and original-value restore policy. Local decisions never travel in
+  JSON backups. Probes and writes start after the first page.
+
+Source API ownership and thread contracts are in `R3_INTERFACES.md`; the merged implementation order is
+`next/wave2/PLAN.md`. Phase 0 contains deliberately inert W1 stubs, not completed product features.

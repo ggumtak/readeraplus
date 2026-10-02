@@ -1,5 +1,11 @@
 # PLAN.md — wave 2 build plan: R3 = scroll + UI + NOTES + user addendum U1–U6
 
+> **사용자 변경 지시 (2026-10-02): 페이지 넘김 애니메이션 없음.**
+> 탭·볼륨 키·기기 버튼·자동 넘김은 PAGED/SCROLL, STEP/SMOOTH, 휴대폰/e-ink 모두 즉시 이동한다.
+> 이 문서의 180 ms step/startScroll 애니메이션과 관련 예외·성능 기준은 이 지시로 대체한다.
+> SMOOTH의 직접 손가락 드래그와 페이지 넘김 명령은 별개이며, 페이지 넘김 명령은 보간 프레임을 만들지 않는다.
+
+
 Status: build plan, read-only against the repo. It was written on 2026-09-30 against HEAD `92be04f` ("WIP checkpoint: R2
 contract + tier-1 feature lanes") plus the R2 working tree (39 changed or new files, still being edited by another
 workflow). Paths are relative to `app/src/main/java/com/ggumtak/readeraplus/`, and tests live under
@@ -637,6 +643,13 @@ The P0 exit ("existing behaviour tests unchanged") reads with these four named e
 
 **Exit:** typecheck green; the whole unit suite green (existing behaviour tests unchanged **[Δ] except the four named in
 §3.13**); `snapshot_contracts.sh`; `grep -rn 'R3 stub\|TODO("owner'` lists exactly the stubs named above.
+
+**Implementation reconciliation (2026-10-02):** two additional mechanical schema/mapping fallout cases were found
+by the full suite. `ReadingLogSqlTest.everyTableOfABookIsClearedWithIt` includes `lookups` and still checks a DELETE
+statement for every book-owned table; P0 adds that DELETE and upgrade orphan sweep with the table.
+`SettingsMappingTest.everyAppFieldIsMapped` exempts `DROPPED_KEYS`, since `a.brightnessDevice` is deliberately local.
+`SettingsJsonStatusTest` separately proves that the choice is neither exported nor restored. No legacy data path
+is excluded from testing. These extend §3.13's four exceptions; behaviour assertions unrelated to R3 remain intact.
 
 ---
 

@@ -95,8 +95,8 @@ step() { # step name function: one best-effort UI step in its own shell (5 minut
   fi
   return 0
 }
-scroll_find() { # scroll_find "label" [exact|contains]: swipes a settings page up until the label is on screen; sets XY
-  local i y
+scroll_find() { # scroll_find "label" [exact|contains]: scroll INSIDE the active scroll container (including popups)
+  local i y gesture
   XY=""
   for i in $(seq 1 14); do
     dump || return 1
@@ -105,7 +105,22 @@ scroll_find() { # scroll_find "label" [exact|contains]: swipes a settings page u
       y=${XY#* }
       [ "$y" -ge 150 ] && [ "$y" -le 1250 ] && return 0
     fi
-    adb shell input swipe 100 1150 100 450 1000; sleep 1 # slow: the coast after it never skips a whole screen
+    gesture=$(python3 - <<'PY'
+import re, xml.etree.ElementTree as ET
+boxes=[]
+for n in ET.parse('/tmp/ui.xml').getroot().iter('node'):
+    if n.get('scrollable')!='true': continue
+    m=re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',n.get('bounds',''))
+    if not m: continue
+    x0,y0,x1,y1=map(int,m.groups())
+    if y1-y0>100: boxes.append(((x1-x0)*(y1-y0),x0,y0,x1,y1))
+if boxes:
+    _,x0,y0,x1,y1=max(boxes); x=x0+min(80,(x1-x0)//2);h=y1-y0
+    print(x,y0+int(h*.85),x,y0+int(h*.25))
+else: print('100 1150 100 450')
+PY
+    )
+    adb shell input swipe $gesture 1000; sleep 1
   done
   log "NOT FOUND '$1' after scrolling"; XY=""; return 1
 }
@@ -217,8 +232,13 @@ dialog_no_reflow() {
 choose_volume_mode() {
   adb shell input tap 360 720; sleep 1
   tap_label "읽기 설정" contains || return 1
-  scroll_find "더보기" || return 1
-  tap_xy "$XY"; sleep 1
+  dump || return 1
+  # The process remembers expanded state; a second chooser must not collapse it.
+  if ! has "접기"; then
+    scroll_find "더보기" || return 1
+    XY=$(xy_of "더보기" exact -1)
+    tap_xy "$XY"; sleep 1
+  fi
   scroll_find "볼륨 키" || return 1
   tap_xy "$XY"; sleep 1
   dump || return 1

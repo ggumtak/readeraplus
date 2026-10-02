@@ -119,6 +119,7 @@ internal object LibrarySql {
     const val DELETE_QUOTE = "DELETE FROM quotes WHERE id = ?"
     const val UPDATE_QUOTE_NOTE = "UPDATE quotes SET note = ? WHERE id = ?"
     const val DELETE_QUOTES_OF_BOOK = "DELETE FROM quotes WHERE book_id = ?"
+    const val DELETE_LOOKUPS_OF_BOOK = "DELETE FROM lookups WHERE book_id = ?"
 
     // ---- collections ----
     /** id, name, created_at, number of (non-trashed) books. */

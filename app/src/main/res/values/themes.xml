@@ -24,6 +24,8 @@
         <!-- Static scrollbars: the platform ones fade in and out around every scroll (e-ink ghosting). No theme-wide
              fast scroller either: it slides in/out on every scroll; lists that want one enable it always-visible. -->
         <item name="android:fadeScrollbars">false</item>
+        <item name="android:fastScrollThumbDrawable">@drawable/fast_scroll_thumb</item>
+        <item name="android:fastScrollTrackDrawable">@drawable/fast_scroll_track</item>
     </style>
 
     <style name="AppTheme" parent="Base.AppTheme" />

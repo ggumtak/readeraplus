@@ -12,7 +12,7 @@ import android.widget.LinearLayout
 
 /**
  * On/off switch that changes state instantly (no thumb animation, no ripple) for e-ink.
- * Checked = black track with a white knob on the right; unchecked = white track, outlined knob on the left.
+ * Checked = black track with a white knob on the right; unchecked = white track, black knob on the left.
  * Not clickable itself: the surrounding row toggles it.
  */
 class InkToggle(context: Context) : View(context), Checkable {
@@ -65,8 +65,8 @@ class InkToggle(context: Context) : View(context), Checkable {
         val kr = r - context.dpF(4f)
         val cx = if (checkedState) track.right - r else track.left + r
         val cy = track.centerY()
+        knob.color = if (checkedState) Ink.WHITE else Ink.BLACK
         canvas.drawCircle(cx, cy, kr, knob)
-        if (!checkedState) canvas.drawCircle(cx, cy, kr, outline)
     }
 
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {

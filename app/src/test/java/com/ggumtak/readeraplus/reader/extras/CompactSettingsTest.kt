@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.reader.extras
 
+import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.engine.LineBreakMode
 import com.ggumtak.readeraplus.reader.ReaderFormat
@@ -162,7 +163,7 @@ class CompactSettingsTest {
             // Exactly one preset is marked.
             assertEquals(1, StylePreset.entries.count { it.matches(s) })
             // Font size, margins and status bar are not part of a style.
-            assertEquals(p, StyleChoice.selected(s.copy(fontSizeSp = 24f, marginLeftDp = 30, showFooter = false)))
+            assertEquals(p, StyleChoice.selected(s.copy(fontSizeSp = 24f, marginLeftDp = 30, footerLeft = StatusItem.NONE)))
         }
         // A typography tweak leaves every preset ("사용자 설정": nothing inverted).
         assertNull(StyleChoice.selected(d.copy(lineHeightPct = 205)))

@@ -66,10 +66,21 @@ class LayoutGoldenTest {
 
     // ------------------------------------------------------------------ hashing
 
-    private fun layoutAll(): List<SectionLayout> {
+    @Test
+    fun paragraphModeMatchesItsGoldenHash() {
+        val hash = digestOf(layoutAll(PARAGRAPH_CONFIGS))
+        println("GOLDEN_HASH_PARAGRAPH = $hash")
+        org.junit.Assume.assumeTrue(LayoutKeys.GOLDEN_HASH_PARAGRAPH != "TBD")
+        assertEquals(
+            "PARAGRAPH layout output changed: bump ALGO_VERSION and update GOLDEN_HASH_PARAGRAPH (LayoutKeys) to \"$hash\"",
+            LayoutKeys.GOLDEN_HASH_PARAGRAPH, hash,
+        )
+    }
+
+    private fun layoutAll(configs: List<LayoutConfig> = CONFIGS): List<SectionLayout> {
         val out = ArrayList<SectionLayout>()
         val sections = corpus()
-        for (cfg in CONFIGS) {
+        for (cfg in configs) {
             for (content in sections) {
                 val ts = Typesetter(GoldenMeasurer(), cfg)
                 val l = ts.layout(content)
@@ -277,6 +288,12 @@ class LayoutGoldenTest {
             config(340, 560, 1.7f, 0.5f, 1f, Align.JUSTIFY, LineBreakMode.WORD, publisher = true, imageMax = 1f, widows = true),
             config(300, 480, 1.4f, 0f, 0f, Align.LEFT, LineBreakMode.CHAR, publisher = false, imageMax = 0.5f, widows = false),
             config(200, 300, 2.0f, 1f, 2f, Align.JUSTIFY, LineBreakMode.WORD, publisher = true, imageMax = 1f, widows = true),
+        )
+
+        /** U4: the same corpus paginated by paragraph (LINE output is guarded by [CONFIGS] above, unchanged). */
+        val PARAGRAPH_CONFIGS = listOf(
+            CONFIGS[0].copy(pageBreak = PageBreakMode.PARAGRAPH),
+            CONFIGS[3].copy(pageBreak = PageBreakMode.PARAGRAPH),
         )
 
         fun config(

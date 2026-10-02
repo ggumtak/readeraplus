@@ -13,15 +13,15 @@ import java.io.File
  * JVM tests: with `DATA_SCHEMA_DUMP=<file>` the statements are written out so they can be executed against a real
  * SQLite (fresh create, v1 → v2 upgrade with data, downgrade-and-back).
  */
-class LibrarySchemaV2Test {
+class LibrarySchemaV3Test {
 
     private val v1Columns = mapOf(
         "quotes" to setOf("id", "book_id", "section", "start_offset", "end_offset", "quote_text", "note", "created_at"),
     )
 
     @Test
-    fun versionIsTwoAndEveryStatementIsIdempotent() {
-        assertEquals(2, LibrarySchema.DB_VERSION)
+    fun versionIsThreeAndEveryStatementIsIdempotent() {
+        assertEquals(3, LibrarySchema.DB_VERSION)
         for (sql in LibrarySchema.CREATE_ALL) {
             assertTrue(sql, sql.startsWith("CREATE TABLE IF NOT EXISTS ") || sql.startsWith("CREATE INDEX IF NOT EXISTS "))
         }
@@ -52,19 +52,22 @@ class LibrarySchemaV2Test {
     @Test
     fun upgradeFromV1AddsTheColumnOnce() {
         val plan = LibrarySchema.upgradeStatements(1) { v1Columns[it].orEmpty() }
-        assertEquals(listOf(LibrarySchema.ADD_QUOTE_STYLE), plan)
+        assertEquals(10, plan.size)
+        assertEquals(9, LibrarySchema.upgradeStatements(2) { emptySet() }.size)
+        assertEquals(10, plan.distinct().size)
+        assertTrue(LibrarySchema.ADD_QUOTE_STYLE in plan)
         assertEquals("ALTER TABLE quotes ADD COLUMN style INTEGER NOT NULL DEFAULT 0", LibrarySchema.ADD_QUOTE_STYLE)
-        assertEquals(listOf("quotes"), LibrarySchema.UPGRADE_TABLES)
+        assertEquals(setOf("quotes", "bookmarks", "books", "book_prefs"), LibrarySchema.UPGRADE_TABLES.toSet())
     }
 
     @Test
     fun upgradeSkipsAColumnThatAlreadyExists() {
         // v2 → an older build (onDowngrade keeps the data; SQLite records version 1) → v2 again.
         val withStyle = v1Columns.mapValues { it.value + "style" }
-        assertEquals(emptyList<String>(), LibrarySchema.upgradeStatements(1) { withStyle[it].orEmpty() })
-        assertEquals(emptyList<String>(), LibrarySchema.upgradeStatements(1) { setOf("STYLE") })
+        assertEquals(9, LibrarySchema.upgradeStatements(1) { withStyle[it].orEmpty() }.size)
+        assertEquals(9, LibrarySchema.upgradeStatements(1) { setOf("STYLE") }.size)
         // Already v2 (or newer): nothing, and the columns aren't even asked for.
-        assertEquals(emptyList<String>(), LibrarySchema.upgradeStatements(2) { error("not needed") })
+        assertEquals(emptyList<String>(), LibrarySchema.upgradeStatements(3) { error("not needed") })
         assertEquals(emptyList<String>(), LibrarySchema.upgradeStatements(3) { error("not needed") })
     }
 
@@ -96,4 +99,19 @@ class LibrarySchemaV2Test {
         }
         return depth == 0
     }
+
+    @Test fun v3ColumnsAndUpgradeIndexesAreSafe() {
+        assertTrue(LibrarySchema.CREATE_BOOK_PREFS.contains("return_mark TEXT"))
+        for (c in listOf("chapter","frac","sig")) { assertTrue(LibrarySchema.CREATE_QUOTES.contains(c)); assertTrue(LibrarySchema.CREATE_BOOKMARKS.contains(c)) }
+        assertTrue(LibrarySchema.CREATE_BOOKS.contains("review_at")); assertTrue(LibrarySchema.CREATE_BOOKS.contains("missing_at"))
+        val added=LibrarySchema.upgradeStatements(1) { emptySet() }.map { it.split(" ")[5] }.toSet()
+        for (sql in LibrarySchema.CREATE_INDEXES) {
+            val indexed=sql.substringAfter(" ON ").substringAfter('(').lowercase()
+            for (col in added) assertFalse(sql,Regex("\\b"+col+"\\b").containsMatchIn(indexed))
+        }
+        val i=LibrarySchema.CREATE_ALL.indexOf(LibrarySchema.CREATE_LOOKUPS)
+        assertTrue(i>=0); assertTrue(LibrarySchema.CREATE_ALL.drop(i+1).any { it.contains("ON lookups(") })
+        assertEquals(3,LibrarySchema.UPGRADE_SWEEP.size)
+    }
+
 }

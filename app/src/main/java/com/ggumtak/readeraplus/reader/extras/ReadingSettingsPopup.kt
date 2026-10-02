@@ -112,7 +112,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         // stay in view. Unless the bars are pinned (then the page is laid out between them and hiding them would
         // re-lay it out), the reader's bars are hidden and the popup takes the top bar's place, leaving the lower
         // half of the page visible instead of a strip between the popup and the bottom bar.
-        val hideBars = !Settings.app.pinChrome
+        val hideBars = true
         var anchorBottom = ctx.dp(56)
         if (hideBars) {
             anchorBottom = Overlay.topInset(root)
@@ -530,27 +530,9 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         root.addView(marginH)
         root.addView(marginV)
 
-        lateinit var statusSize: View
-        fun statusVisible() {
-            statusSize.visibility = if (cur.showHeader || cur.showFooter) View.VISIBLE else View.GONE
-        }
-        root.addView(switchRow("상단 챕터 제목", cur.showHeader) { v ->
-            update(cur.copy(showHeader = v))
-            statusVisible()
-        })
-        val footerItems = footerItems()
-        root.addView(switchRow("하단 정보 표시", cur.showFooter) { v ->
-            update(cur.copy(showFooter = v))
-            footerItems.visibility = if (v) View.VISIBLE else View.GONE
-            statusVisible()
-        })
-        footerItems.visibility = if (cur.showFooter) View.VISIBLE else View.GONE
-        root.addView(footerItems, lp())
-        statusSize = stepperRow("상태 표시 글자 크기", cur.statusFontSizeSp, 8f, 16f, 0.5f, Fmt::number) {
+        root.addView(stepperRow("상태 표시 글자 크기", cur.statusFontSizeSp, 8f, 16f, 0.5f, Fmt::number) {
             update(cur.copy(statusFontSizeSp = it), debounce = true)
-        }
-        statusVisible()
-        root.addView(statusSize)
+        })
         root.addView(switchRow("흑백 반전", cur.invert, "검은 바탕에 흰 글씨") { v -> update(cur.copy(invert = v)) })
         root.addView(switchRow("외톨이 줄 방지", cur.widowOrphanControl, "문단의 첫 줄/마지막 줄이 홀로 남지 않게") { v ->
             update(cur.copy(widowOrphanControl = v))
@@ -771,43 +753,10 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         return row
     }
 
-    private fun footerItems(): LinearLayout {
-        val c = ctx.vertical()
-        fun item(text: String, checked: Boolean, onChange: (Boolean) -> ReaderSettings) {
-            var on = checked
-            val box = ctx.icon(if (on) R.drawable.ic_check_box else R.drawable.ic_check_box_outline_blank, 20)
-            val r = ctx.compactRow {
-                on = !on
-                box.setImageResource(if (on) R.drawable.ic_check_box else R.drawable.ic_check_box_outline_blank)
-                update(onChange(on))
-            }
-            r.setPadding(ctx.dp(Compact.PAD_DP + 12), r.paddingTop, r.paddingRight, r.paddingBottom)
-            r.addView(box)
-            r.addView(ctx.label(text, Compact.LABEL_SP).apply { setPadding(ctx.dp(10), 0, 0, 0) }, lp(0, WRAP_CONTENT, 1f))
-            c.addView(r, lp())
-        }
-        item("쪽수 (12 / 3259)", cur.footerPage) { cur.copy(footerPage = it) }
-        item("회차 (123/540화)", cur.footerEpisode) { cur.copy(footerEpisode = it) }
-        item("챕터 남은 쪽수", cur.footerChapterLeft) { cur.copy(footerChapterLeft = it) }
-        c.addView(timeLeftRow(), lp())
-        item("진행률 (%)", cur.footerPercent) { cur.copy(footerPercent = it) }
-        item("시계", cur.footerClock) { cur.copy(footerClock = it) }
-        item("배터리", cur.footerBattery) { cur.copy(footerBattery = it) }
-        return c
-    }
+
 
     /** "남은 시간" (T1-7): [끔] [이 화] [책], indented like the status items above and below it. */
-    private fun timeLeftRow(): LinearLayout {
-        val options = listOf(
-            "끔" to ReaderSettings.TIME_LEFT_OFF,
-            "이 화" to ReaderSettings.TIME_LEFT_EPISODE,
-            "책" to ReaderSettings.TIME_LEFT_BOOK,
-        )
-        val row = segmentRow("남은 시간", options, cur.footerTimeLeft) { update(cur.copy(footerTimeLeft = it)) }
-        // Lines up with the check boxes' labels (12 dp indent + 20 dp box + 10 dp gap).
-        row.setPadding(ctx.dp(Compact.PAD_DP + 12 + 20 + 10), row.paddingTop, row.paddingRight, row.paddingBottom)
-        return row
-    }
+
 
     private fun footerButton(text: String, onClick: (View) -> Unit): TextView = ctx.label(text, Compact.LABEL_SP, bold = true).apply {
         gravity = Gravity.CENTER

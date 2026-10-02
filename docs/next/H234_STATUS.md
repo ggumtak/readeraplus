@@ -33,5 +33,7 @@
   원본 Git blob hash 일치를 확인한 뒤 검사했다.
 - `bash -n tools/ci/screenshots.sh`, `git diff --check`: 성공.
 - H1 Actions #17의 최근 앱 복귀: 전부 PASS, 본문 픽셀 차이 0%.
-- H2·H3·H4 에뮬레이터 검사와 실제 Comet 터치·회전 검사는 새 빌드 뒤 확인한다.
+- Actions #18: APK 빌드와 스크린샷 작업 성공. CHECK 41·41b PASS, CHECK 57 pixels EQUAL 및 no_relayout PASS.
+- 14d는 볼륨 키 항목을 못 찾아 중단됐다. 기존 scroll_find가 팝업 밖에서 스와이프하는 경로를 고쳤다.
+  재검증 전까지 H3 에뮬레이터 검사가 통과했다고 보지 않는다. 실제 Comet 터치·회전 검사는 기기에서 확인해야 한다.
 - 다음은 PLAN Phase 0 계약이다. 이후 레인 구현을 마친 뒤 성능·통합 검사를 진행한다.
