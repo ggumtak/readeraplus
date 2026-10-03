@@ -62,7 +62,14 @@ StatusModel·ChromeMath의 실제 본문은 RU 레인이 채운다. 이 브랜�
 
 - 모듈 모드 `tools/typecheck.sh`: 성공. `tools/unittest.sh`: **38개 통과** (ReaderFormatTest, ReaderR2FeaturesTest,
   ReaderReviewFixesTest, 새 StatusClockTest).
-- 전체 `tools/typecheck.sh`와 `tools/unittest.sh`: 결과는 아래 "최종 검사"에 적는다.
+- 전체 트리 `tools/typecheck.sh`: 성공. `tools/unittest.sh`: **1,196개 전부 통과**
+  (기준 1,195개에서 삭제한 footer 테스트 2개를 빼고 StatusClockTest 3개를 더함).
+- 독립 리뷰 2건(명세 완결성, 버그)을 반영했다:
+  - 넘김 경로의 박싱과 iterator를 없앴다(남은 시간은 primitive -1, 빈 맵 가드, 인덱스 루프).
+  - 다시 켠 시계·배터리 슬롯에 오래된 값이 그려지지 않게 했다.
+  - 재배치가 대기 중일 때는 `refreshDecor`/`repaint`가 공유 decor를 건드리지 않는다.
+  - `onResume`은 설정 반영 경로에서도 시계를 다시 읽는다.
+  - 회차 요청을 넘김마다 다시 예약하지 않는다.
 - 확인 grep `pinChrome|applyPinnedArea|returnStack|PREF_BRIGHTNESS_COLLAPSED`, `R3 stub|TODO("owner`: 레인 파일에서 출력 없음.
 
 RC-A 병합과 기기 확인이 남아 있다:

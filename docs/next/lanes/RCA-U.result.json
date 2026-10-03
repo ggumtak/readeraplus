@@ -1,0 +1,33 @@
+{
+  "lane": "RCA-U",
+  "files": [
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderActivity.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderFormat.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderMenus.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/StatusClock.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/ReaderFormatTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/ReaderR2FeaturesTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/StatusClockTest.kt",
+    "docs/next/RCA_U_STATUS.md",
+    "docs/next/lanes/RCA-U.result.json"
+  ],
+  "summary": "Wired RC-A part U in ReaderActivity: removed pinned chrome (applyPageInsets = gated insets only, unconditional chrome-close guards, no bar-size listeners), LightController hooks and private lightHost (sole writer of page.brightnessSwipe; setBrightness/PREF_* deleted; viewPart + a.brightnessDevice), ReturnNav wiring with a fully implemented private returnHost (onJump at goTo/goToPage/goToProgress, onManualTurn, chrome shown/hidden, bindChrome bind+setPinned, reopen markFraction/reparsed, close reset, chip overlay at insets+12dp+4dp), allocation-free status decor (buildDecor(sample) fills StatusInputs only for shown items, chapterStartsHere, Calendar-free clock via new pure StatusClock, cached battery IntentFilter, lazy highlight list, StatusModel.update with renderer-identical trackPx, StatusSampleHost, EPISODE-gated scheduleEpisodes), ReaderFormat footerLeft/footerRight/returnChip deleted and previewLabel '1234쪽 · …', narrow-screen ⋮ 북마크 item (C22) and markOwnLaunch before 설정.",
+  "checks": "Module mode (--own ReaderActivity/ReaderFormat/ReaderMenus/StatusClock + ReaderFormatTest/ReaderR2FeaturesTest/ReaderReviewFixesTest/StatusClockTest): typecheck green, unittest OK (38 tests). Full tree: tools/typecheck.sh green, tools/unittest.sh OK (1196 tests). Accept greps (pinChrome|applyPinnedArea|returnStack|PREF_BRIGHTNESS_COLLAPSED; R3 stub|TODO(\"owner) on lane files) print nothing. Two independent reviews; all real findings fixed.",
+  "contractRequests": [],
+  "rcaNotes": [
+    "RCA-N afterOpen (main, after the first page): light.afterFirstPage(); return-mark load: val id = b.id; val s = session; ReaderIo.launch { val t = BookPrefs.returnMark(id); handler.post { if (isDestroyed || bookRef?.id != id || session !== s) return@post; returnNav.restore(t) } }. The existing `if (shows(EPISODE)) scheduleEpisodes()` line stays (scheduleEpisodes is also self-gated).",
+    "RCA-N onPause: light.onPause() as the last line; onDestroy: light.onDestroy(isFinishing) after the ResumeState rule.",
+    "RCA-N applyAppSettings: keep light.onAppSettingsApplied() as the first line (already there) and applyPageInsets() at the end (replaces applyPinnedArea); never write page.brightnessSwipe there.",
+    "RCA-N startOpen: the old `if (false && !pinShown)` block is deleted here; for an open at a note call returnNav.onJump(saved) in the same main-thread message as showPage (U §3.5 / C23).",
+    "RCA-N DecorDiff: sameDecor must keep comparing statusVersion; buildDecor(sample) and refreshDecor(onlyIfChanged, sample) keep their stale-frame check (incl. layoutStale()) BEFORE buildDecor (shared StatusDecor mutation invariant).",
+    "RCA-S scroll settle: fill the status inputs from the anchor line (marked `// R3 merge(RCA-S)` in fillStatus: page/total of the real paged page holding it, bar = counts.charProgress(section, line start) or 1 at atBookEnd(), chapterStartsHere) and call status.update + install scroll.decor with buildDecor(sample = true) in the same main-thread task as the STEP invalidate.",
+    "RCA-S: ReaderHost.currentPosition()/isOnCurrentPage need scroll branches (returnHost delegates to them); call onManualTurn() once per step and once per ScreenCounter screen; onScrollStart closes the chrome unconditionally (pinned chrome no longer exists)."
+  ],
+  "deviations": [
+    "onResume always calls refreshDecor(onlyIfChanged = true, sample = true) after an applyToSession (not only in the else branch), so the clock/battery are re-sampled on resume even when settings changed; same main-thread step, one redraw.",
+    "The tz/24h refresh of U §5.3 is lazy: onResume clears the cached zone, and the next clock sample (first page shown or the resume refresh) re-reads TimeZone/DateFormat, so nothing is read before the first page.",
+    "Counts-complete binds the return strip through bindChrome() (which calls returnNav.bind()) instead of a separate returnNav.bind() line.",
+    "PageDecor highlight list uses emptyList() when no highlight overlaps; quotesBySection lookup still boxes Int section keys >= 128 when quotes exist (map type owned by RCA-N's reloadAnnotations)."
+  ],
+  "complete": true
+}
