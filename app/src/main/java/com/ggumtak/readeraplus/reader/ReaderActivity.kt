@@ -31,8 +31,11 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.BookPrefs
 import com.ggumtak.readeraplus.data.Bookmark
+import com.ggumtak.readeraplus.data.InstallState
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.NextPart
+import com.ggumtak.readeraplus.data.NotePlace
+import com.ggumtak.readeraplus.data.Quote
 import com.ggumtak.readeraplus.data.ReaderPresence
 import com.ggumtak.readeraplus.data.ReadingLog
 import com.ggumtak.readeraplus.data.TxtOverride
@@ -47,6 +50,7 @@ import com.ggumtak.readeraplus.format.Documents
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.reader.extras.BookInsightsHost
 import com.ggumtak.readeraplus.reader.extras.Episodes
+import com.ggumtak.readeraplus.reader.extras.NotePlaceHost
 import com.ggumtak.readeraplus.reader.extras.PageJumpHost
 import com.ggumtak.readeraplus.reader.extras.QuoteCache
 import com.ggumtak.readeraplus.reader.extras.ReaderEndHost
@@ -55,6 +59,7 @@ import com.ggumtak.readeraplus.reader.extras.SelectionController
 import com.ggumtak.readeraplus.reader.extras.TtsController
 import com.ggumtak.readeraplus.reader.extras.TxtOverrideHost
 import com.ggumtak.readeraplus.render.Covers
+import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.Eink
 import com.ggumtak.readeraplus.render.FontFiles
 import com.ggumtak.readeraplus.render.FontManager
@@ -62,10 +67,12 @@ import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
 import com.ggumtak.readeraplus.render.ImageCoverage
 import com.ggumtak.readeraplus.render.PageDecor
+import com.ggumtak.readeraplus.render.QuoteLook
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.KeyHold
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
+import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.ui.library.LibraryActivity
 import com.ggumtak.readeraplus.ui.kit.Ink
@@ -87,6 +94,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -98,13 +106,16 @@ import java.util.Calendar
  * brightness, orientation lock, position saving, reading time ([ReadingTracker]) and the end panel ([EndPanel]), and
  * hosts the reader extras through [ReaderHost] and its optional capabilities.
  */
-class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, TxtOverrideHost, ReaderEndHost {
+class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, TxtOverrideHost, ReaderEndHost,
+    NotePlaceHost, QuotePlaceHost {
     companion object {
         const val EXTRA_BOOK_ID = "book_id"
         private const val STATE_BOOK = "rp.book"
         private const val STATE_SECTION = "rp.section"
         private const val STATE_OFFSET = "rp.offset"
         private const val STATE_AT = "rp.at"
+        /** N §6.2 / PLAN C8: a recreated reader that was peeking at a note keeps not saving until a turn. */
+        private const val STATE_PEEK = "rp.peek"
 
         fun open(context: Context, bookId: Long, jump: ReaderJump? = null) {
             context.startActivity(
@@ -125,6 +136,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         private const val PREF_LAST_BRIGHTNESS = "reader.lastBrightness"
         private const val OWNER_QUOTES = "quotes"
         private const val OWNER_SEARCH = "search"
+        /** N §6.1: the note an open / a new intent jumped to, marked until the first manual turn. */
+        private const val OWNER_JUMP = "jump"
+        /** N §6.5: note places backfilled per main-thread message (interleaves with input). */
+        private const val BACKFILL_CHUNK = 64
+        /** N §6.5: at most this many places are backfilled per open. */
+        private const val BACKFILL_MAX = 500
         private const val REFRESH_SETTLE_MS = 16L
         private const val CHROME_COUNTS_MS = 2000L
         /** Manual page turns after a jump that hide the "돌아가기" chip (the reader has moved on). */
@@ -235,7 +252,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private val returnStack = ArrayList<DocPosition>()
     private var bookmarks: List<Bookmark> = emptyList()
-    private var quotesBySection: Map<Int, List<Highlight>> = emptyMap()
+    /** Per section (for [quoteCheckSession]): the quotes that hold on this text, as page highlights ([quotesFor]). */
+    private val quotesBySection = HashMap<Int, List<Highlight>>()
     private val ownerHighlights = HashMap<String, Pair<Int, List<Highlight>>>()
 
     private var selection: SelectionController? = null
@@ -319,6 +337,31 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var turnedInBackground = false
     /** Exact saved place of a recreated reader; consumed by its first successful open. */
     private var restoredPlace: ReaderRestore.Place? = null
+    /** N §6.2: the book shows a note's page without moving the reading position (no position writes). */
+    private val peek = PeekRule()
+    private val peekUntilTurn: Boolean get() = peek.active
+    /** The note jump consumed by the open, for [afterOpen]'s anchor check (N §6.4); null when none is due. */
+    private var openedJump: OpenedJump? = null
+    /** N §6.4: the running anchor search; cancelled by a manual turn, a user jump or closing. */
+    private var anchorJob: Job? = null
+    /** The session [sigNote] / [sigPlain] were computed for (they follow re-parses, which make a new session). */
+    private var sigSession: BookSession? = null
+    /** [NoteSig] of the session's text: what a quote's / jump's `sig` is compared with. */
+    private var sigNote: String? = null
+    /** The plain [LayoutKeys.textSignature] (null for EPUB). */
+    private var sigPlain: String? = null
+    /** The book's quotes by section as loaded, before the K2 check ([quotesFor]). */
+    private var quoteRows: Map<Int, List<Quote>> = emptyMap()
+    /** Per section: the (start, end) of quotes that do not hold (a TOC refresh of the section must not redraw them). */
+    private val quotesRejected = HashMap<Int, HashSet<Long>>()
+    /** Per quote id: whether its place moved, as the K2 check found it (the TOC's "· 위치 바뀜"). */
+    private val quoteMovedById = HashMap<Long, Boolean>()
+    private var quoteCheckSession: BookSession? = null
+    /** N §6.5: the book whose note places are being / were backfilled in this open (once per open). */
+    private var backfillBook = -1L
+
+    /** The jump an open consumed: the request, where it resolved to, and whether the stored coordinates held. */
+    private class OpenedJump(val jump: ReaderJump, val target: DocPosition, val exact: Boolean, val matched: Boolean)
 
     // ================================================================== lifecycle
 
@@ -346,6 +389,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         )
         val start = if (place != null) {
             restoredPlace = place
+            peek.restore(savedInstanceState?.getBoolean(STATE_PEEK, false) == true)
             // Android keeps the original launch intent: a by-id intent avoids an expired VIEW grant or old jump.
             Intent(this, ReaderActivity::class.java).putExtra(EXTRA_BOOK_ID, place.bookId).also { setIntent(it) }
         } else intent
@@ -361,6 +405,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             outState.putInt(STATE_OFFSET, anchor.offset)
             outState.putLong(STATE_AT, System.currentTimeMillis())
         }
+        outState.putBoolean(STATE_PEEK, peekUntilTurn)
     }
 
     /** No close animation back to the library (the platform default would slide over several e-ink frames). */
@@ -405,7 +450,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun viewPart(a: AppSettings): List<Any> = listOf(
         a.fullscreen, a.brightness, a.orientationLock, a.keepScreenOn, a.einkRefreshEvery, a.einkRefreshOnChapter,
         a.swipeToTurn, a.verticalSwipe, a.brightnessSwipe, a.longPressSelect, a.einkMode,
-        a.longPressMs, a.einkRefreshEveryNight, a.einkRefreshMethod, a.einkFlashMs,
+        a.longPressMs, a.einkRefreshEveryNight, a.einkRefreshMethod, a.einkFlashMs, a.highlightLook,
     )
 
     /**
@@ -420,10 +465,35 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         super.onNewIntent(intent)
         val id = intent.getLongExtra(EXTRA_BOOK_ID, -1L)
         if (id <= 0 && intent.data == null) return
-        if (id > 0 && id == bookRef?.id && session != null) return
+        if (id > 0 && id == bookRef?.id && session != null) {
+            // N §6.3: the book is already being read; a note's jump is a normal remembered jump (no reopen, no peek).
+            ReaderJump.from(intent)?.let(::jumpToNote)
+            return
+        }
         setIntent(intent)
         closeCurrentBook()
         startOpen(intent)
+    }
+
+    /**
+     * N §6.3: [jump] for the open book: `goTo(remember = true)`, then the mark and the anchor check once the target's
+     * layout is there ([checkJumpAnchor]).
+     */
+    private fun jumpToNote(jump: ReaderJump) {
+        val s = session ?: return
+        val target = ReaderJump.resolve(jump, noteSig(s), s.sectionCount) { f -> s.counts.locateFraction(f) }
+        if (target == null) {
+            toast("노트가 있던 곳을 찾지 못했습니다")
+            return
+        }
+        clearJumpMark()
+        val exact = target == DocPosition(jump.section, jump.offset)
+        // A laid-out target section: the mark goes in before the jump, so the page and the mark are one update.
+        val l = if (exact) s.peek(target.section) else null
+        val matched = l != null && JumpAnchor.matches(l.content.text, target.offset.coerceIn(0, l.content.length), jump.anchor)
+        if (matched) putJumpMark(target.section, target.offset.coerceIn(0, l!!.content.length), jump, l.content.length)
+        goTo(target, remember = true)
+        checkJumpAnchor(s, OpenedJump(jump, target, exact, matched))
     }
 
     override fun onResume() {
@@ -455,11 +525,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     override fun onPause() {
         super.onPause()
+        // R3 merge(RCA-S): scroll?.stopMotion()
         ReaderPresence.inFront = false
         inFront = false
         panelOpen = false
         stopAutoTurn(showToast = false)
-        savePositionNow(persistText = true)
+        // N §6.2: no save while peeking at a note (savePositionNow checks it too).
+        if (!peekUntilTurn) savePositionNow(persistText = true)
         if (bookRef != null) ResumeState.paused()
         if (curLayout != null) {
             pausedSection = curSection
@@ -469,10 +541,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // From here TTS (if speaking) counts its own time: the tracker counts nothing until onResume.
         safely { tts?.onReaderPaused() }
         keeper.release()
+        light.onPause()
     }
 
     override fun onDestroy() {
         if (isFinishing && !isChangingConfigurations) ResumeState.clear()
+        light.onDestroy(isFinishing)
+        // R3 merge(RCA-S): scroll?.detach()
+        anchorJob?.cancel()
+        anchorJob = null
         // Panels first: their dismiss flushes a pending settings change into the still-open session, and cancels the
         // TOC / search work that would otherwise keep converting the closed book's sections.
         safely { ReaderPanels.dismissAll(this) }
@@ -678,9 +755,24 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         page.longPressEnabled = app.longPressSelect
         page.longPressMs = app.longPressMs.coerceIn(MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS).toLong()
         appliedApp = app
+        // PLAN §1.6.2 order: brightness (U) → quote look (N) → read mode (S) → page insets (U).
+        light.onAppSettingsApplied()
+        updateQuoteLook(DeviceClass.cached(this))
+        // R3 merge(RCA-S): applyReadMode()
+        // R3 merge(RCA-U): applyPageInsets()
         chrome.setPinned(false, false)
         applyPinnedArea()
         root.requestApplyInsets()
+    }
+
+    /**
+     * N §6.6: the quote look (colour / ink) for the user's choice and the device class; one decor refresh when it
+     * changed (user-initiated, or the post-open probe).
+     */
+    private fun updateQuoteLook(eink: Boolean?) {
+        val before = QuoteLook.generation
+        QuoteLook.update(app.highlightLook, eink)
+        if (QuoteLook.generation != before) refreshDecor()
     }
 
     /** The refresh cadence for the page's colours: 밤 모드 (inverted) has its own (T1-3b). */
@@ -825,6 +917,28 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 readerTarget = eff
                 chrome.setTitle(b.title)
                 val s = BookSession(this@ReaderActivity, b, d, eff)
+                // PLAN §1.6.1: restored place > note jump > TXT fraction remap > DB row, all before the session is
+                // published (A §5.5: a resize during the open anchors at the same start).
+                val place = restoredPlace
+                restoredPlace = null
+                // N §6.1: six getExtra calls, no I/O (a restored reader's by-id intent has none).
+                val jump = if (place == null) ReaderJump.from(intent) else null
+                val sigText = LayoutKeys.textSignature(eff, d.format, b.encoding)
+                val noteSig = NoteSig.of(sigText, b.sizeBytes)
+                // A TXT position saved under other parse options (chapter detection, replace rules, encoding, ...)
+                // is found again by its char fraction instead of reading stale (section, offset) coordinates.
+                val remap = TextPositions.remapFraction(storedPos, sigText, b.posSection, b.posOffset, b.progress)
+                val saved = if (remap != null) s.counts.locateFraction(remap) else DocPosition(b.posSection, b.posOffset)
+                val kept = place?.let { ReaderRestore.start(it, b.id, b.lastReadAt, remapped = remap != null) }
+                val target = if (kept == null && jump != null) {
+                    ReaderJump.resolve(jump, noteSig, s.sectionCount) { f -> s.counts.locateFraction(f) }
+                } else null
+                val start = kept ?: target ?: saved
+                val sec = start.section.coerceIn(0, s.sectionCount - 1)
+                anchor = DocPosition(sec, start.offset.coerceAtLeast(0))
+                sigSession = s
+                sigPlain = sigText
+                sigNote = noteSig
                 s.listener = sessionListener
                 session = s
                 adopted = true
@@ -836,29 +950,40 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     applyPinnedArea()
                 }
                 val (vw, vh) = pageTargetSize()
-                s.setViewport(vw, vh)
+                // PLAN C16: a note opens with natural pagination; restored and normal opens are anchored at the start.
+                s.setViewport(vw, vh, if (target != null) null else AnchorSpec(sec, anchor.offset))
                 // Cached page counts load in parallel with the first layout.
                 s.startCounting(COUNT_DELAY_MS)
-                // A TXT position saved under other parse options (chapter detection, replace rules, encoding, ...)
-                // is found again by its char fraction instead of reading stale (section, offset) coordinates.
-                val remap = TextPositions.remapFraction(
-                    storedPos, LayoutKeys.textSignature(eff, d.format, b.encoding),
-                    b.posSection, b.posOffset, b.progress,
-                )
-                val place = restoredPlace
-                restoredPlace = null
-                val kept = place?.let { ReaderRestore.start(it, b.id, b.lastReadAt, remapped = remap != null) }
-                val start = kept ?: if (remap != null) s.counts.locateFraction(remap) else DocPosition(b.posSection, b.posOffset)
-                val sec = start.section.coerceIn(0, s.sectionCount - 1)
                 val l = s.layout(sec)
                 if (l == null) {
                     if (session === s && !s.isClosed) showError("페이지를 배치하지 못했습니다.")
                     return@launch
                 }
                 val off = start.offset.coerceIn(0, l.content.length)
-                preloadImages(s, l, l.pageForOffset(off))
+                val idx = if (target != null) l.pageForOffset(off) else AnchorMath.pageFor(l, off)
+                // N §6.1 2: the stored coordinates were used and the note's text is still there (O(anchor), in memory).
+                val exact = jump != null && target == DocPosition(jump.section, jump.offset)
+                val matched = exact && JumpAnchor.matches(l.content.text, off, jump!!.anchor)
+                if (matched && jump!!.end > jump.offset) {
+                    // Into the map buildDecor reads, with no redraw call: the first frame shows the mark.
+                    ownerHighlights[OWNER_JUMP] =
+                        sec to listOf(Highlight(off, minOf(jump.end, l.content.length), HighlightKind.SEARCH))
+                }
+                preloadImages(s, l, idx)
                 if (session !== s) return@launch
-                showPage(sec, l, l.pageForOffset(off), Nav.OPEN, anchorOffset = off)
+                // Paged: a note opens at its page start (A's JUMP rule).
+                // R3 merge(RCA-S): scroll gets the exact offset (anchorOffset = off when scroll != null, CONTEXT placement via openedAtNote)
+                showPage(sec, l, idx, Nav.OPEN, anchorOffset = if (target != null) -1 else off)
+                if (target != null) {
+                    // Same main-thread message as the page and the mark: one e-ink update (PLAN C23).
+                    if (!isOnCurrentPage(saved)) returnNav.onJump(saved)
+                    peek.start()
+                    // A recreation in this process opens at the saved place, not at the note again (the by-id
+                    // intent of a restored reader covers process death, PLAN C8).
+                    setIntent(ReaderJump.strip(getIntent()))
+                    openedJump = OpenedJump(jump!!, target, exact, matched)
+                }
+                if (jump != null && target == null) toast("노트가 있던 곳을 찾지 못했습니다")
                 writeTextPosition(b, s, anchor)
                 afterOpen()
             } catch (e: CancellationException) {
@@ -906,7 +1031,23 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /** Everything the first page did not wait for (spec rule 2: after the first page, never before it). */
     private fun afterOpen() {
-        bookRef?.let { ResumeState.opened(it.id) }
+        val t0 = if (ReaderPerf.turns) SystemClock.uptimeMillis() else 0L
+        val s = session ?: return
+        val id = bookRef?.id ?: return
+        val appCtx = applicationContext
+        // PLAN §1.6.2, in this order; every IO step is launched, never awaited.
+        ResumeState.opened(id)                                                          // 1 (R)
+        ReaderIo.launch { InstallState.ensure(appCtx) }                                 // 2 (S)
+        light.afterFirstPage()                                                          // 3 (U)
+        DeviceClass.probeAsync(appCtx) { eink ->                                        // 4 (S + N), on main
+            if (isDestroyed || session !== s) return@probeAsync
+            updateQuoteLook(eink)
+            // R3 merge(RCA-S): scroll?.onDeviceClass()
+        }
+        loadReturnMark(s, id)                                                           // 5 (U §3.3)
+        if (s.settings.shows(StatusItem.EPISODE)) scheduleEpisodes()                   // 6 (U)
+        openedJump?.let { openedJump = null; checkJumpAnchor(s, it) }                   // 7 (N §6.4)
+        // 8 (N §6.5): the note-place backfill runs when reloadAnnotations delivers (below).
         if (selection == null) selection = safely { SelectionController(this) }
         // Every long press selects the word of the glyph under the finger, also while a selection shows (a press on
         // blank paper or a space keeps that selection).
@@ -914,11 +1055,35 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // Created up front (cheap: the engine starts on start()) so the selection popup's "여기서 읽기" finds
         // this host's controller, and BACK / volume keys see the same TTS session whoever started it.
         if (tts == null) tts = safely { TtsController(this) }
+        // N §6.2: "여기서 읽기" reads from the selection and ends a peek.
+        selection?.onReadAloud = { p ->
+            endPeek(PeekRule.Event.READ_HERE)
+            (tts ?: safely { TtsController(this) }?.also { tts = it })?.let { t -> safely { t.startFrom(p) } }
+        }
         reloadAnnotations()
         // A12-1: cache files the open computed but left for later (the EPUB section plan).
         ReaderIo.launch { Documents.writeDeferredCaches() }
         loadSpeed()
-        if (session?.settings?.shows(com.ggumtak.readeraplus.settings.StatusItem.EPISODE) == true) scheduleEpisodes()
+        if (ReaderPerf.turns) Log.d(ReaderPerf.TAG, "afterOpen ${SystemClock.uptimeMillis() - t0}ms")
+    }
+
+    /**
+     * U §3.3: the pinned return point, read on IO after the first page; applied only to the book and session it was
+     * read for (C13: a book switched meanwhile must not get the previous one's pin).
+     */
+    private fun loadReturnMark(s: BookSession, id: Long) {
+        ReaderIo.launch {
+            val text = try {
+                BookPrefs.returnMark(id)
+            } catch (t: Throwable) {
+                Log.w(TAG, "return mark load failed", t)
+                null
+            }
+            handler.post {
+                if (isDestroyed || bookRef?.id != id || session !== s) return@post
+                safely { returnNav.restore(text) }
+            }
+        }
     }
 
     /** ReadingLog's reading speed for this book (T1-7), on IO; [ReadingLog.DEFAULT_CPM] until known. */
@@ -997,7 +1162,19 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         displayedGenId = -1
         lastChapterIdx = Int.MIN_VALUE
         bookmarks = emptyList()
-        quotesBySection = emptyMap()
+        quotesBySection.clear()
+        quoteRows = emptyMap()
+        quotesRejected.clear()
+        quoteMovedById.clear()
+        quoteCheckSession = null
+        sigSession = null
+        sigNote = null
+        sigPlain = null
+        backfillBook = -1L
+        peek.reset()
+        openedJump = null
+        anchorJob?.cancel()
+        anchorJob = null
         ownerHighlights.clear()
         dismissReturnChip()
         backlog.clear()
@@ -1026,17 +1203,214 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 }
             } ?: return@launch
             if (bookRef?.id != b.id) return@launch
+            val s = session ?: return@launch
             // Keep bookmarks added a moment ago that are still being saved.
             val unsaved = bookmarks.filter { it.id < 0 }
             bookmarks = loaded.first + unsaved
-            val map = HashMap<Int, List<Highlight>>()
-            for ((sec, qs) in loaded.second.groupBy { it.section }) {
-                map[sec] = qs.map { Highlight(it.start, it.end, HighlightKind.QUOTE) }
-            }
-            quotesBySection = map
+            quoteRows = loaded.second.groupBy { it.section }
+            // N §6.6 / PLAN K2: checked again lazily, per section, the first time the page decor needs it.
+            resetQuoteChecks(s)
             refreshDecor(onlyIfChanged = true)
             if (chromeVisible) bindChrome()
+            backfillPlaces(s, b.id, loaded.second, loaded.first)
         }
+    }
+
+    /** Drops the per-section quote checks (new rows, or another session's text). */
+    private fun resetQuoteChecks(s: BookSession) {
+        quoteCheckSession = s
+        quotesBySection.clear()
+        quotesRejected.clear()
+        quoteMovedById.clear()
+    }
+
+    /**
+     * The quotes drawn in [section] (PLAN K2 refinement of N §6.5): a quote made against this text (its sig is the
+     * session's [NoteSig]) is drawn; a legacy `''` or another sig is drawn only when its text is still at its start
+     * ([JumpAnchor.matches], ≤ 24 visible chars). Checked once per section of [text] (the section's laid-out text) and
+     * cached for the session; without [text] nothing is checked or cached. Highlights carry the quote colour.
+     */
+    private fun quotesFor(section: Int, text: CharSequence?): List<Highlight> {
+        val s = session ?: return emptyList()
+        if (quoteCheckSession !== s) resetQuoteChecks(s)
+        quotesBySection[section]?.let { return it }
+        val rows = quoteRows[section]
+        if (rows.isNullOrEmpty() || text == null) return emptyList()
+        val sig = noteSig(s)
+        val out = ArrayList<Highlight>(rows.size)
+        for (q in rows) {
+            val holds = JumpAnchor.quoteHolds(q.sig, sig, text, q.start, q.text)
+            quoteMovedById[q.id] = !holds
+            if (holds) {
+                out += Highlight(q.start, q.end, HighlightKind.QUOTE, q.style)
+            } else {
+                quotesRejected.getOrPut(section) { HashSet() } += spanKey(q.start, q.end)
+            }
+        }
+        quotesBySection[section] = out
+        return out
+    }
+
+    private fun spanKey(start: Int, end: Int): Long = (start.toLong() shl 32) or (end.toLong() and 0xffffffffL)
+
+    /** TOC "· 위치 바뀜" (PLAN K2): the page's result when the section was checked, else the sig. */
+    override fun quoteMoved(quote: Quote): Boolean {
+        val s = session ?: return false
+        if (quoteCheckSession === s) quoteMovedById[quote.id]?.let { return it }
+        return quote.sig.isNotEmpty() && quote.sig != noteSig(s)
+    }
+
+    /** The session's [NoteSig] (computed once per session: re-parses make a new one). */
+    private fun noteSig(s: BookSession): String {
+        if (sigSession !== s) {
+            val b = bookRef
+            sigPlain = if (b == null) null else LayoutKeys.textSignature(s.settings, s.document.format, b.encoding)
+            sigNote = NoteSig.of(sigPlain, b?.sizeBytes ?: 0L)
+            sigSession = s
+        }
+        return sigNote ?: ""
+    }
+
+    /**
+     * N §6.5 [NotePlaceHost]: where a note at [pos] sits: the chapter title (cleaned, ≤ 200; "" without a TOC entry),
+     * the char progress and the session's [NoteSig] ("" for EPUB). [NotePlace.UNKNOWN] without a session.
+     */
+    override fun notePlace(pos: DocPosition): NotePlace {
+        val s = session ?: return NotePlace.UNKNOWN
+        return try {
+            val sig = noteSig(s)
+            val ci = s.chapters.indexAt(pos.section, pos.offset)
+            NotePlace(
+                NotePlaceText.chapter(if (ci >= 0) s.chapters.title(ci) else null),
+                s.counts.charProgress(pos.section, pos.offset),
+                if (sigPlain == null) "" else sig,
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "note place failed", t)
+            NotePlace.UNKNOWN
+        }
+    }
+
+    /**
+     * N §6.5 backfill: quotes and bookmarks saved without a place (frac < 0) get one, at most [BACKFILL_MAX] per open,
+     * [BACKFILL_CHUNK] per main-thread message (interleaved with input), then one write on IO. Backfilled rows keep
+     * sig '' (the sig at creation time is not knowable later). Once per open; each row only ever once.
+     */
+    private fun backfillPlaces(s: BookSession, bookId: Long, quotes: List<Quote>, marks: List<Bookmark>) {
+        if (backfillBook == bookId) return
+        val todo = ArrayList<DocPosition>()
+        val ids = ArrayList<Long>()
+        var quoteCount = 0
+        for (q in quotes) {
+            if (todo.size >= BACKFILL_MAX) break
+            if (q.frac < 0f && q.id > 0) { todo += DocPosition(q.section, q.start); ids += q.id; quoteCount++ }
+        }
+        for (m in marks) {
+            if (todo.size >= BACKFILL_MAX) break
+            if (m.frac < 0f && m.id > 0) { todo += DocPosition(m.section, m.offset); ids += m.id }
+        }
+        if (todo.isEmpty()) return
+        backfillBook = bookId
+        val qPlaces = HashMap<Long, NotePlace>()
+        val bPlaces = HashMap<Long, NotePlace>()
+        var next = 0
+        val step = object : Runnable {
+            override fun run() {
+                if (isDestroyed || session !== s || backfillBook != bookId) return
+                val end = minOf(next + BACKFILL_CHUNK, todo.size)
+                while (next < end) {
+                    val place = notePlace(todo[next]).let { NotePlace(it.chapter, it.frac, "") }
+                    if (place.frac >= 0f) (if (next < quoteCount) qPlaces else bPlaces)[ids[next]] = place
+                    next++
+                }
+                if (next < todo.size) {
+                    handler.post(this)
+                    return
+                }
+                if (qPlaces.isEmpty() && bPlaces.isEmpty()) return
+                ReaderIo.launch { Library.fillNotePlaces(bookId, qPlaces, bPlaces) }
+            }
+        }
+        handler.post(step)
+    }
+
+    /**
+     * N §6.2: [e] may end a peek; then normal saving resumes with the page now shown (the turn / jump that ended it
+     * already passed its own save while the peek was on). Scroll mode calls it with SCROLL_SETTLE at the first user
+     * settle.
+     */
+    private fun endPeek(e: PeekRule.Event) {
+        if (peek.on(e) && curLayout != null) schedulePositionSave()
+    }
+
+    /** Removes the note mark (a manual turn, a new note jump). */
+    private fun clearJumpMark() {
+        ownerHighlights.remove(OWNER_JUMP)?.let { (section, _) ->
+            // R3 merge(RCA-S): scroll?.onHighlightsChanged(section)
+            section
+        }
+    }
+
+    /**
+     * N §6.4: the note's text is not where its coordinates point (a changed file, other TXT options) or the jump fell
+     * back to its fraction: search it outward from the target ([JumpAnchor.search], capped), off main and
+     * cancellable (a manual turn, a user jump, closing). Found → the page and the mark move there without a return
+     * point; not found → the page stays near the place. The found position is not written back to the note (v1).
+     */
+    private fun checkJumpAnchor(s: BookSession, oj: OpenedJump) {
+        val anchorText = oj.jump.anchor
+        if (oj.matched || !JumpAnchor.hasText(anchorText)) return
+        anchorJob?.cancel()
+        anchorJob = scope.launch {
+            val sec = oj.target.section.coerceIn(0, s.sectionCount - 1)
+            val here = if (oj.exact) s.layout(sec) else s.peek(sec)
+            if (session !== s) return@launch
+            if (oj.exact && here != null) {
+                val off = oj.target.offset.coerceIn(0, here.content.length)
+                if (JumpAnchor.matches(here.content.text, off, anchorText)) {
+                    // A new intent's jump whose section was not laid out yet: the mark arrives with its page.
+                    if (putJumpMark(sec, off, oj.jump, here.content.length)) refreshDecor(onlyIfChanged = true)
+                    return@launch
+                }
+            }
+            val center = here?.content?.text
+            var foundLength = 0
+            val found = withContext(Dispatchers.Default) {
+                JumpAnchor.search(sec, s.sectionCount, anchorText, load = { i ->
+                    val t = if (i == sec && center != null) center else try {
+                        s.document.loadSection(i).text
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (t: Throwable) {
+                        null
+                    }
+                    if (t != null) foundLength = t.length
+                    t
+                }, check = { ensureActive() })
+            }
+            if (session !== s) return@launch
+            if (found == null) {
+                toast("노트가 있던 곳을 찾지 못해 가까운 위치를 열었습니다")
+                return@launch
+            }
+            clearJumpMark()
+            putJumpMark(found.section, found.offset, oj.jump, foundLength)
+            // Not a user jump: no return point, the peek goes on (the page is still the note's).
+            peek.on(PeekRule.Event.ANCHOR_MOVE)
+            backlog.clear()
+            navigateTo(found.section, found.offset, -1, Nav.JUMP)
+            toast("노트 위치를 다시 찾았습니다")
+        }
+    }
+
+    /** Puts the note mark at [offset] of [section] (same length as the jump's range); false when it has none. */
+    private fun putJumpMark(section: Int, offset: Int, jump: ReaderJump, length: Int): Boolean {
+        if (jump.end <= jump.offset) return false
+        val end = minOf(offset + (jump.end - jump.offset), length)
+        if (end <= offset) return false
+        ownerHighlights[OWNER_JUMP] = section to listOf(Highlight(offset, end, HighlightKind.SEARCH))
+        // R3 merge(RCA-S): scroll?.onHighlightsChanged(section)
+        return true
     }
 
     // ================================================================== session callbacks
@@ -1429,6 +1803,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /** An explicit jump (TOC, link, 페이지 이동, seek bar, return chip): turns still pending belong to the page left. */
     private fun jumpTo(section: Int, offset: Int, pageIndex: Int, fraction: Float = Float.NaN) {
+        // N §6.2 / §6.4: the user went elsewhere (a remembered jump, the return point): reading resumes normally.
+        endPeek(PeekRule.Event.USER_JUMP)
+        anchorJob?.cancel()
         backlog.clear()
         navigateTo(section, offset, pageIndex, Nav.JUMP, fraction)
     }
@@ -1475,11 +1852,17 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /** Page turn requested by the user (tap, swipe, key, wheel). False when nothing turned (the book's first / last page). */
     private fun userTurn(next: Boolean): Boolean {
         if (session == null || curLayout == null) return false
-        ownerHighlights.remove(OWNER_SEARCH)
+        ownerHighlights.remove(OWNER_SEARCH)?.let { (section, _) ->
+            // R3 merge(RCA-S): scroll?.onHighlightsChanged(section)
+            section
+        }
+        clearJumpMark()
+        anchorJob?.cancel()
         // "turn N ms" starts at the input event that asked for this turn (the latest one: all run on this thread).
         if (ReaderPerf.turns) perfTurnFrom = maxOf(page.lastInputAt, keyInputAt)
         val ok = turn(next)
         if (!ok) perfTurnFrom = 0L
+        if (ok) endPeek(PeekRule.Event.MANUAL_TURN)
         if (ok) onManualTurn()
         if (ttsSpeaking()) safely { tts?.onUserNavigated() }
         if (!ok && navJob?.isActive != true && !layoutStale()) edgeReached(next)
@@ -1576,7 +1959,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val p = l.pages.getOrNull(curPageIdx) ?: return PageDecor()
         val st = s.settings
         val hl = ArrayList<Highlight>()
-        quotesBySection[curSection]?.let { addOverlapping(hl, it, p) }
+        addOverlapping(hl, quotesFor(curSection, l.content.text), p)
         for ((sec, list) in ownerHighlights.values) if (sec == curSection) addOverlapping(hl, list, p)
         return PageDecor(hl, isBookmarked(l, p))
     }
@@ -1595,16 +1978,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         page.invalidate()
     }
 
-    private fun sameDecor(a: PageDecor, b: PageDecor): Boolean {
-        if (a.bookmarked != b.bookmarked || a.statusVersion != b.statusVersion || a.highlights.size != b.highlights.size
-        ) return false
-        for (i in a.highlights.indices) {
-            val x = a.highlights[i]
-            val y = b.highlights[i]
-            if (x.start != y.start || x.end != y.end || x.kind != y.kind) return false
-        }
-        return true
-    }
+    private fun sameDecor(a: PageDecor, b: PageDecor): Boolean = DecorDiff.same(a, b)
 
     private fun chapterTitle(section: Int, offset: Int): String? {
         val s = session ?: return null
@@ -1737,9 +2111,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     override fun setHighlights(owner: String, section: Int, highlights: List<Highlight>) {
         if (owner == OWNER_QUOTES) {
-            val m = HashMap(quotesBySection)
-            if (highlights.isEmpty()) m.remove(section) else m[section] = highlights
-            quotesBySection = m
+            // The section's quotes as the caller has them now (added / recoloured / deleted); the ones the K2 check
+            // found moved stay off the page.
+            val s = session
+            if (s != null && quoteCheckSession !== s) resetQuoteChecks(s)
+            val bad = quotesRejected[section]
+            quotesBySection[section] =
+                if (bad == null) highlights else highlights.filter { spanKey(it.start, it.end) !in bad }
         } else if (highlights.isEmpty()) {
             ownerHighlights.remove(owner)
         } else {
@@ -2032,12 +2410,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             val sec = curSection
             val off = p.start
             val snippet = ReaderFormat.snippet(l.content.text, p.start, p.end)
+            // N §6.5: the place is computed here on main, before the IO launch.
+            val place = notePlace(DocPosition(sec, off))
             val temp = Bookmark(-SystemClock.uptimeMillis(), b.id, sec, off, snippet, System.currentTimeMillis())
             bookmarks = bookmarks + temp
             scope.launch {
                 val saved = withContext(Dispatchers.IO) {
                     try {
-                        Library.addBookmark(b.id, sec, off, snippet)
+                        Library.addBookmark(b.id, sec, off, snippet, place)
                     } catch (t: Throwable) {
                         Log.w(TAG, "addBookmark failed", t)
                         null
@@ -2516,6 +2896,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         setChromeVisible(false)
         stopAutoTurn(showToast = false)
         val t = tts ?: safely { TtsController(this) }?.also { tts = it } ?: return
+        endPeek(PeekRule.Event.TTS_START)
         safely { t.start() }
     }
 
@@ -2850,6 +3231,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private fun startAutoTurn() {
         if (session == null) return
+        endPeek(PeekRule.Event.AUTO_TURN_START)
         autoTurnOn = true
         handler.removeCallbacks(autoTurnRunnable)
         handler.postDelayed(autoTurnRunnable, autoTurnPeriod())
@@ -2870,6 +3252,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private fun schedulePositionSave() {
         handler.removeCallbacks(saveRunnable)
+        if (!peek.savesPosition) return
         handler.postDelayed(saveRunnable, SAVE_DELAY_MS)
     }
 
@@ -2879,6 +3262,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     private fun savePositionNow(persistText: Boolean = false) {
         handler.removeCallbacks(saveRunnable)
+        // N §6.2: a note being peeked at leaves the saved position, progress and last-read time as they were.
+        if (!peek.savesPosition) return
         val b = bookRef ?: return
         val s = session ?: return
         if (curLayout == null) return
@@ -2897,6 +3282,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /** Records the parse signature of [s] and the char fraction of [pos] for [b] (TXT only; no identical writes). */
     private fun writeTextPosition(b: Book, s: BookSession, pos: DocPosition) {
+        if (!peek.savesPosition) return
         try {
             val sig = LayoutKeys.textSignature(s.settings, s.document.format, b.encoding) ?: return
             val key = "b${b.id}"

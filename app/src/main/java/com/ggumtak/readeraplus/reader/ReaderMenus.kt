@@ -8,6 +8,7 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.BookFileProvider
 import com.ggumtak.readeraplus.data.Library
+import com.ggumtak.readeraplus.data.NotesTab
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
@@ -19,6 +20,7 @@ import com.ggumtak.readeraplus.ui.kit.popupMenu
 import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
+import com.ggumtak.readeraplus.ui.notes.NotesActivity
 import com.ggumtak.readeraplus.ui.settings.SettingsActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -26,18 +28,25 @@ import kotlinx.coroutines.withContext
 
 private const val MENU_TAG = "ReaderMenus"
 
-/** The reader's ⋮ menu (ReadEra order, B/W). */
+/**
+ * The reader's ⋮ menu (ReadEra order, B/W). PLAN C22 final order: 목차 … 페이지 이동 · (W2) 페이지 썸네일 ·
+ * (narrow) 북마크 추가/삭제 · 스크롤로 보기/페이지로 보기 · 자동 넘김/자동 스크롤 · … 내 리뷰 · 독서 노트 · …;
+ * existing items keep their places.
+ */
 internal fun ReaderActivity.showOverflowMenu(anchor: View) {
     // Captured now: every action below works on this book even if another one is opened meanwhile.
     val bk = currentBookOrNull() ?: return
     val bookmarked = isCurrentPageBookmarked()
     val items = listOf(
         MenuItem("페이지 이동", R.drawable.ic_find_in_page) { guarded { ReaderPanels.showGoTo(this) } },
+        // W2: "페이지 썸네일" (ic_grid_view, hidden in scroll mode) goes here.
         MenuItem(if (bookmarked) "북마크 삭제" else "북마크 추가", R.drawable.ic_bookmark_add) { toggleBookmark() },
         MenuItem(if (autoTurnOn) "자동 넘김 끄기" else "자동 넘김 켜기", R.drawable.ic_timer) { toggleAutoTurn() },
         // After the popup has disappeared from the panel, or its outline stays as ghosting.
         MenuItem("화면 새로고침", R.drawable.ic_refresh) { refreshAfterDraw(POPUP_GONE_MS) },
         MenuItem("내 리뷰", R.drawable.ic_rate_review) { guarded { ReaderPanels.showReview(this) } },
+        // N §6.7: this book's notes in the hub; a note tapped there comes back through onNewIntent (N §6.3).
+        MenuItem("독서 노트", R.drawable.ic_format_quote) { guarded { NotesActivity.open(this, NotesTab.ALL, bk.id) } },
         MenuItem("컬렉션·목록에 추가", R.drawable.ic_playlist_add) { showAddMenu(anchor, bk) },
         MenuItem("책 정보", R.drawable.ic_info) { guarded { ReaderPanels.showDocumentInfo(this, bk, document) } },
         MenuItem("파일 공유", R.drawable.ic_share) { shareBookFile(bk) },
