@@ -132,7 +132,7 @@ class PageThumbs(
         stop()
         if (closed || session.isClosed || count <= 0 || widthPx <= 0 || heightPx <= 0) return
         val gen = session.generation ?: return
-        val cache = lru ?: LruCache<ThumbKey, Entry>(budget()).also { lru = it }
+        val cache = lru ?: newCache().also { lru = it }
         val paint = source.paintVersion()
         if (gen.id != lruGen || paint != lruPaint) {
             cache.evictAll()
@@ -194,6 +194,11 @@ class PageThumbs(
     private fun stop() {
         job?.cancel()
         job = null
+    }
+
+    /** Sized in bytes ([Bitmap.getAllocationByteCount]); evicted bitmaps are never recycled (the grid may show them). */
+    private fun newCache(): LruCache<ThumbKey, Entry> = object : LruCache<ThumbKey, Entry>(budget()) {
+        override fun sizeOf(key: ThumbKey, value: Entry): Int = value.bitmap.allocationByteCount.coerceAtLeast(1)
     }
 
     private fun budget(): Int {
