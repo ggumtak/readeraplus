@@ -54,6 +54,58 @@ internal object LibraryText {
     /** "TXT, 3.4MB". */
     fun metaLine(formatLabel: String, sizeBytes: Long): String = "$formatLabel, ${formatSize(sizeBytes)}"
 
+    /**
+     * The card's meta line (NOTES_SPEC §10.2, library.md §2.2): "TXT, 3.4MB · 3일 전", "TXT, 3.4MB · 시리즈명 3" for a
+     * book in a series, "TXT, 3.4MB" for one never opened, and "TXT, 3.4MB · 파일 없음" for a trashed book whose file
+     * is gone. Built on IO in `reload()`.
+     */
+    fun metaLine(formatLabel: String, sizeBytes: Long, series: String?, seriesIndex: Float?, lastRead: String, missing: Boolean): String {
+        val base = metaLine(formatLabel, sizeBytes)
+        val extra = when {
+            missing -> "파일 없음"
+            !series.isNullOrBlank() -> seriesLabel(series, seriesIndex)
+            else -> lastRead
+        }
+        return if (extra.isEmpty()) base else "$base · $extra"
+    }
+
+    /** "시리즈명 3" ("시리즈명 2.5" for a half step, the bare name without an index). */
+    fun seriesLabel(series: String, index: Float?): String {
+        val name = series.trim()
+        if (index == null || index <= 0f) return name
+        val whole = index.toLong()
+        val num = if (index == whole.toFloat()) whole.toString() else String.format(Locale.US, "%.1f", index)
+        return "$name $num"
+    }
+
+    /** When a book was last read ([ago]), or "" for one never opened. */
+    fun lastRead(now: Long, lastReadAt: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+        if (lastReadAt <= 0L) "" else ago(lastReadAt, now, zone)
+
+    /**
+     * The 요약 row's meta line: "★ 작가 · TXT 3.4MB · 다 읽음". A leading "★ " for a favourite, then the author (left out
+     * when blank), format and size, and one trailing state: "새 책" (never opened), "다 읽음", "읽을 책" or nothing.
+     */
+    fun compactMeta(
+        author: String, formatLabel: String, sizeBytes: Long,
+        favorite: Boolean, opened: Boolean, haveRead: Boolean, toRead: Boolean, missing: Boolean = false,
+    ): String {
+        val sb = StringBuilder(48)
+        if (favorite) sb.append("★ ")
+        val a = author.trim()
+        if (a.isNotEmpty()) sb.append(a).append(" · ")
+        sb.append(formatLabel).append(' ').append(formatSize(sizeBytes))
+        val state = when {
+            missing -> "파일 없음"
+            haveRead -> "다 읽음"
+            !opened -> "새 책"
+            toRead -> "읽을 책"
+            else -> null
+        }
+        if (state != null) sb.append(" · ").append(state)
+        return sb.toString()
+    }
+
     /** Integer percent label ("34%"), or "" for a book that was never opened. Floors so 99.7% isn't "100%". */
     fun percent(progress: Float, opened: Boolean): String {
         if (!opened) return ""
@@ -100,7 +152,15 @@ internal object LibraryText {
         }
     }
 
-    /** The toolbar view toggle's cycle: 목록 → 간단히 → 표지 → 목록 (the enum's order). */
+    /** The "보기" chooser: each view with a one-line description (NOTES_SPEC §10.2). */
+    fun modeChoice(mode: LibraryListMode): String = when (mode) {
+        LibraryListMode.LIST -> "전체 — 표지 · 정보 · 버튼"
+        LibraryListMode.COMPACT -> "요약 — 작은 표지와 한 줄 정보"
+        LibraryListMode.GRID -> "썸네일 — 표지 3열"
+        LibraryListMode.COVERS -> "그리드 — 작은 표지 4열"
+    }
+
+    /** The toolbar view toggle's cycle: 전체 → 요약 → 썸네일 → 그리드 → 전체 (the enum's order). */
     fun nextListMode(mode: LibraryListMode): LibraryListMode {
         val all = LibraryListMode.entries
         return all[(mode.ordinal + 1) % all.size]
@@ -125,6 +185,65 @@ internal object LibraryText {
 
     /** Question before a batch move to the trash (the trash has no batch restore, so several books ask first). */
     fun trashQuestion(count: Int): String = "고른 책 ${count}권을 휴지통으로 이동합니다. 휴지통에서는 한 권씩 복원할 수 있습니다."
+
+    // ---- deleting books that have notes (NOTES_SPEC §10.1)
+
+    /** Appended to a delete / empty-trash question when the books carry [notes] notes (nothing when 0). */
+    fun notesWarning(notes: Int): String =
+        if (notes <= 0) "" else "\n\n이 책의 인용문·메모·북마크·리뷰·단어 ${notes}개도 함께 지워집니다. 먼저 독서 노트에서 내보낼 수 있습니다."
+
+    /** "영구 삭제" question for one book. */
+    fun deleteMessage(title: String, notes: Int): String = "‘$title’을(를) 서재에서 삭제합니다." + notesWarning(notes)
+
+    /** "휴지통 비우기" question. */
+    fun emptyTrashMessage(notes: Int): String = "휴지통의 모든 책을 서재에서 삭제합니다." + notesWarning(notes)
+
+    // ---- auto backup and the restore offer (scroll SPEC §3.2, §3.4)
+
+    /** "2026-10-03 14:05". */
+    fun backupTime(millis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+        BACKUP_TIME.format(Instant.ofEpochMilli(millis).atZone(zone))
+
+    private val BACKUP_TIME = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT)
+
+    /**
+     * The offer's message. [location] names where the file is ("다운로드/ReaderaPlus/backup", "다운로드" or "문서");
+     * [lateAnswer]: this install already has reading history of its own (the offer is answered late).
+     */
+    fun restoreOfferMessage(
+        createdAt: Long, books: Int, read: Int, bookmarks: Int, quotes: Int, location: String, lateAnswer: Boolean,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): String {
+        val sb = StringBuilder(160)
+        sb.append("이전 설정과 읽기 기록을 복원할까요?\n\n")
+        sb.append(backupTime(createdAt, zone)).append(" 백업 · 책 ").append(books).append("권 (읽던 책 ").append(read)
+            .append("권) · 북마크 ").append(bookmarks).append("개 · 인용문 ").append(quotes).append("개\n")
+        sb.append("위치: ").append(location).append('\n')
+        sb.append("책 파일은 지금 있는 곳에서 다시 찾습니다.")
+        if (lateAnswer) sb.append('\n').append(RESTORE_LATE_LINE)
+        return sb.toString()
+    }
+
+    const val RESTORE_LATE_LINE = "지금 설정은 백업의 설정으로 바뀌고, 책마다 더 최근에 읽은 위치가 남습니다."
+
+    /** One row of "다른 백업 보기": "2026-10-03 14:05 · 책 120권 · 읽던 책 14권 · 북마크 3개 · 인용문 9개 · 자동". */
+    fun backupChoice(createdAt: Long, books: Int, read: Int, bookmarks: Int, quotes: Int, auto: Boolean,
+                     zone: ZoneId = ZoneId.systemDefault()): String =
+        "${backupTime(createdAt, zone)} · 책 ${books}권 · 읽던 책 ${read}권 · 북마크 ${bookmarks}개 · 인용문 ${quotes}개 · " +
+            if (auto) "자동" else "직접 내보냄"
+
+    /** Where a backup file lies, for the offer: the auto-backup folder, else the top-level folder it was found in. */
+    fun backupLocation(auto: Boolean, parentName: String?, autoLabel: String): String = when {
+        auto -> autoLabel
+        parentName.equals("Documents", ignoreCase = true) -> "문서"
+        else -> "다운로드"
+    }
+
+    /** Toast after a restore. */
+    fun restoredMessage(books: Int): String = "책 ${books}권의 기록을 복원했습니다"
+
+    /** The one-time status line after this install's first auto backup. */
+    fun autoBackupNotice(location: String): String = "자동 백업을 ${location}에 저장했습니다 · 설정 → 백업 및 복원에서 끌 수 있습니다"
 
     // ---- import / scan results
 

@@ -426,4 +426,85 @@ class LibraryTextTest {
         assertFalse(LibraryText.shouldOpenLast(enabled = true, restored = false, action = null, flags = 0))
         assertFalse(LibraryText.shouldOpenLast(enabled = true, restored = false, action = "android.intent.action.VIEW", flags = 0))
     }
+
+    // ---- LIB (R3): meta lines, view chooser, notes warnings, restore offer
+
+    @Test
+    fun metaLine_lastReadSeriesAndMissing() {
+        val mb = (3.4 * 1024 * 1024).toLong()
+        assertEquals("TXT, 3.4MB · 3일 전", LibraryText.metaLine("TXT", mb, null, null, "3일 전", missing = false))
+        assertEquals("TXT, 3.4MB", LibraryText.metaLine("TXT", mb, null, null, "", missing = false))
+        assertEquals("EPUB, 3.4MB · 삼국지 3", LibraryText.metaLine("EPUB", mb, "삼국지", 3f, "어제", missing = false))
+        assertEquals("EPUB, 3.4MB · 삼국지", LibraryText.metaLine("EPUB", mb, " 삼국지 ", null, "", missing = false))
+        assertEquals("TXT, 3.4MB · 파일 없음", LibraryText.metaLine("TXT", mb, "삼국지", 3f, "어제", missing = true))
+        assertEquals("TXT, 3.4MB · 3일 전", LibraryText.metaLine("TXT", mb, "  ", 2f, "3일 전", missing = false))
+        assertEquals("삼국지 2.5", LibraryText.seriesLabel("삼국지", 2.5f))
+    }
+
+    @Test
+    fun lastRead_emptyForUnopened() {
+        val zone = ZoneId.of("Asia/Seoul")
+        val now = LocalDateTime.of(2026, 10, 3, 12, 0).atZone(zone).toInstant().toEpochMilli()
+        assertEquals("", LibraryText.lastRead(now, 0L, zone))
+        assertEquals("오늘", LibraryText.lastRead(now, now - 60_000, zone))
+        assertEquals("3일 전", LibraryText.lastRead(now, now - 3L * 86_400_000, zone))
+    }
+
+    @Test
+    fun compactMeta_flagsAuthorSizeState() {
+        val mb = (3.4 * 1024 * 1024).toLong()
+        assertEquals("★ 김작가 · TXT 3.4MB · 다 읽음", LibraryText.compactMeta("김작가", "TXT", mb, true, true, true, false))
+        assertEquals("김작가 · TXT 3.4MB · 새 책", LibraryText.compactMeta(" 김작가 ", "TXT", mb, false, false, false, false))
+        assertEquals("EPUB 3.4MB · 읽을 책", LibraryText.compactMeta("", "EPUB", mb, false, true, false, true))
+        assertEquals("EPUB 3.4MB", LibraryText.compactMeta("", "EPUB", mb, false, true, false, false))
+        assertEquals("EPUB 3.4MB · 파일 없음", LibraryText.compactMeta("", "EPUB", mb, false, true, false, false, missing = true))
+    }
+
+    @Test
+    fun modeChoice_labelsInEnumOrder() {
+        assertEquals(
+            listOf("전체 — 표지 · 정보 · 버튼", "요약 — 작은 표지와 한 줄 정보", "썸네일 — 표지 3열", "그리드 — 작은 표지 4열"),
+            LibraryListMode.entries.map { LibraryText.modeChoice(it) },
+        )
+        assertEquals(listOf("전체", "요약", "썸네일", "그리드"), LibraryListMode.entries.map { it.label })
+    }
+
+    @Test
+    fun deleteMessages_mentionNotesOnlyWhenThereAreSome() {
+        assertEquals("‘책’을(를) 서재에서 삭제합니다.", LibraryText.deleteMessage("책", 0))
+        assertEquals(
+            "‘책’을(를) 서재에서 삭제합니다.\n\n이 책의 인용문·메모·북마크·리뷰·단어 5개도 함께 지워집니다. 먼저 독서 노트에서 내보낼 수 있습니다.",
+            LibraryText.deleteMessage("책", 5),
+        )
+        assertEquals("휴지통의 모든 책을 서재에서 삭제합니다.", LibraryText.emptyTrashMessage(0))
+        assertTrue(LibraryText.emptyTrashMessage(2).endsWith("단어 2개도 함께 지워집니다. 먼저 독서 노트에서 내보낼 수 있습니다."))
+    }
+
+    @Test
+    fun restoreOffer_messageAndLateLine() {
+        val zone = ZoneId.of("Asia/Seoul")
+        val at = LocalDateTime.of(2026, 9, 30, 21, 5).atZone(zone).toInstant().toEpochMilli()
+        val msg = LibraryText.restoreOfferMessage(at, 120, 14, 3, 9, "다운로드/ReaderaPlus/backup", false, zone)
+        assertEquals(
+            "이전 설정과 읽기 기록을 복원할까요?\n\n2026-09-30 21:05 백업 · 책 120권 (읽던 책 14권) · 북마크 3개 · 인용문 9개\n" +
+                "위치: 다운로드/ReaderaPlus/backup\n책 파일은 지금 있는 곳에서 다시 찾습니다.",
+            msg,
+        )
+        val late = LibraryText.restoreOfferMessage(at, 1, 1, 0, 0, "문서", true, zone)
+        assertTrue(late.endsWith("\n지금 설정은 백업의 설정으로 바뀌고, 책마다 더 최근에 읽은 위치가 남습니다."))
+        assertEquals(
+            "2026-09-30 21:05 · 책 120권 · 읽던 책 14권 · 북마크 3개 · 인용문 9개 · 자동",
+            LibraryText.backupChoice(at, 120, 14, 3, 9, true, zone),
+        )
+        assertTrue(LibraryText.backupChoice(at, 1, 0, 0, 0, false, zone).endsWith("· 직접 내보냄"))
+        assertEquals("다운로드/ReaderaPlus/backup", LibraryText.backupLocation(true, "backup", "다운로드/ReaderaPlus/backup"))
+        assertEquals("문서", LibraryText.backupLocation(false, "Documents", "x"))
+        assertEquals("다운로드", LibraryText.backupLocation(false, "Download", "x"))
+        assertEquals("다운로드", LibraryText.backupLocation(false, null, "x"))
+        assertEquals("책 3권의 기록을 복원했습니다", LibraryText.restoredMessage(3))
+        assertEquals(
+            "자동 백업을 다운로드/ReaderaPlus/backup에 저장했습니다 · 설정 → 백업 및 복원에서 끌 수 있습니다",
+            LibraryText.autoBackupNotice("다운로드/ReaderaPlus/backup"),
+        )
+    }
 }
