@@ -295,7 +295,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var epNumbered = false
     private var epMax = 0
     private var episodesAsked = false
-    private val askEpisodes = Runnable { if (!isDestroyed) loadEpisodes() }
+    /** [askEpisodes] is posted (not re-posted on every turn while it waits). */
+    private var episodesPending = false
+    private val askEpisodes = Runnable {
+        episodesPending = false
+        if (!isDestroyed) loadEpisodes()
+    }
     /** Built the first time a book ends in this reader, not on the way to the first page. */
     private var endPanel: EndPanel? = null
     /** The end panel's data is being loaded (it shows when it arrives). */
@@ -442,7 +447,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (session != null) {
             // The book's effective settings, as the open path built them (no relayout when only this merge differs).
             val r = Settings.reader
-            if (r.withTxt(bookOverride) != readerTarget) applyToSession(r) else refreshDecor(onlyIfChanged = true, sample = true)
+            if (r.withTxt(bookOverride) != readerTarget) applyToSession(r)
+            // Clock and battery: same main-thread step as any repaint above, so still one redraw.
+            refreshDecor(onlyIfChanged = true, sample = true)
         }
         // T1-11: TTS turned pages while the reader was in the background: one full refresh for the page now shown
         // (never on a wake that finds the same page, nor for a relayout of the page the reader left).
@@ -912,9 +919,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      * only while a slot shows [StatusItem.EPISODE] (U §5.3).
      */
     private fun scheduleEpisodes() {
-        if (episodesAsked || epShown != null) return
+        if (episodesAsked || episodesPending || epShown != null) return
         if (session?.settings?.shows(StatusItem.EPISODE) != true) return
-        handler.removeCallbacks(askEpisodes)
+        episodesPending = true
         handler.postDelayed(askEpisodes, EPISODES_DELAY_MS)
     }
 
@@ -965,6 +972,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         reopenDone.clear()
         cpm = ReadingLog.DEFAULT_CPM
         handler.removeCallbacks(askEpisodes)
+        episodesPending = false
         episodesAsked = false
         epShown = null
         endLoading = false
@@ -1557,8 +1565,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val l = curLayout ?: return PageDecor()
         val p = l.pages.getOrNull(curPageIdx) ?: return PageDecor()
         var hl: ArrayList<Highlight>? = null
-        quotesBySection[curSection]?.let { hl = addOverlapping(hl, it, p) }
-        for ((sec, list) in ownerHighlights.values) if (sec == curSection) hl = addOverlapping(hl, list, p)
+        // Guarded: an empty map costs no key boxing or iterator on a turn.
+        if (quotesBySection.isNotEmpty()) quotesBySection[curSection]?.let { hl = addOverlapping(hl, it, p) }
+        if (ownerHighlights.isNotEmpty()) {
+            for ((sec, list) in ownerHighlights.values) if (sec == curSection) hl = addOverlapping(hl, list, p)
+        }
         fillStatus(s, l, p, statusInputs, sample, all = false)
         status.update(s.settings, statusInputs, statusTrackPx(s, l))
         return PageDecor(hl ?: emptyList(), isBookmarked(l, p), status.decor, status.decor.version)
@@ -1566,7 +1577,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private fun addOverlapping(into: ArrayList<Highlight>?, list: List<Highlight>, p: PageInfo): ArrayList<Highlight>? {
         var out = into
-        for (h in list) {
+        for (i in list.indices) {
+            val h = list[i]
             if (h.end > h.start && h.end > p.start && h.start < p.end) (out ?: ArrayList<Highlight>().also { out = it }) += h
         }
         return out
@@ -1604,15 +1616,18 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         if (all || st.shows(StatusItem.BOOK_TITLE)) inp.bookTitle = bookRef?.title
         if (all || st.shows(StatusItem.CHAPTER_PAGES_LEFT)) inp.chapterPagesLeft = chapterPagesLeft(s, l, p)
-        if (all || st.shows(StatusItem.TIME_LEFT_EPISODE)) inp.minutesEpisode = minutesLeft(false) ?: -1
-        if (all || st.shows(StatusItem.TIME_LEFT_BOOK)) inp.minutesBook = minutesLeft(true) ?: -1
+        if (all || st.shows(StatusItem.TIME_LEFT_EPISODE)) inp.minutesEpisode = minutesLeftOrNone(false)
+        if (all || st.shows(StatusItem.TIME_LEFT_BOOK)) inp.minutesBook = minutesLeftOrNone(true)
         val clockShown = all || st.shows(StatusItem.CLOCK) || st.shows(StatusItem.CLOCK_BATTERY)
-        if (clockShown && (sample || inp.minuteOfDay < 0)) {
+        if (!clockShown) {
+            // Read again when a slot shows it next (never an old time drawn by a repaint).
+            inp.minuteOfDay = -1
+        } else if (sample || inp.minuteOfDay < 0) {
             inp.minuteOfDay = minuteOfDay()
             inp.is24 = clock24
         }
         val batteryShown = all || st.shows(StatusItem.BATTERY) || st.shows(StatusItem.CLOCK_BATTERY)
-        if (batteryShown && (sample || inp.battery < 0)) inp.battery = battery()
+        if (!batteryShown) inp.battery = -1 else if (sample || inp.battery < 0) inp.battery = battery()
     }
 
     /**
@@ -1668,8 +1683,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     private fun refreshDecor(onlyIfChanged: Boolean = false, sample: Boolean = false) {
         val f = page.frame ?: return
-        // Before buildDecor: a stale frame must not have the shared status decor changed under it.
-        if (f.layout !== curLayout || f.pageIndex != curPageIdx) return
+        // Before buildDecor: a stale frame (or one a pending relayout replaces) must not have the shared status decor
+        // changed under it.
+        if (f.layout !== curLayout || f.pageIndex != curPageIdx || layoutStale()) return
         val d = buildDecor(sample)
         if (onlyIfChanged && sameDecor(d, f.decor)) return
         page.frame = PageFrame(f.renderer, f.layout, f.pageIndex, f.left, f.top, d)
@@ -1700,7 +1716,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private fun isBookmarked(l: SectionLayout, p: PageInfo): Boolean {
         val last = curPageIdx == l.pageCount - 1
-        return bookmarks.any { it.section == curSection && onPage(it.offset, p, last) }
+        val list = bookmarks
+        for (i in list.indices) if (list[i].section == curSection && onPage(list[i].offset, p, last)) return true
+        return false
     }
 
     private fun onPage(offset: Int, p: PageInfo, lastPage: Boolean): Boolean =
@@ -1858,7 +1876,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun repaint() {
         val s = session ?: return
         val f = page.frame ?: return
-        if (layoutStale() || f.layout !== curLayout) return
+        if (layoutStale() || f.layout !== curLayout || f.pageIndex != curPageIdx) return
         page.frame = PageFrame(s.renderer(), f.layout, f.pageIndex, f.left, f.top, buildDecor())
         page.invalidate()
     }
@@ -1917,6 +1935,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 old.close()
                 // The new parse has its own TOC: the footer's episode numbers are parsed again.
                 handler.removeCallbacks(askEpisodes)
+                episodesPending = false
                 episodesAsked = false
                 epShown = null
                 safely { tts?.stop() }
@@ -2635,28 +2654,31 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         s.episodes(onReady)
     }
 
-    override fun minutesLeft(bookScope: Boolean): Int? {
-        val chars = charsLeft(bookScope) ?: return null
-        return ReaderFormat.minutesFor(chars, cpm)
+    override fun minutesLeft(bookScope: Boolean): Int? = minutesLeftOrNone(bookScope).takeIf { it >= 0 }
+
+    /** [minutesLeft] without boxing (the status slots ask on every turn): -1 = unknown. */
+    private fun minutesLeftOrNone(bookScope: Boolean): Int {
+        val chars = charsLeft(bookScope)
+        return if (chars < 0L) -1 else ReaderFormat.minutesFor(chars, cpm)
     }
 
     override fun charsPerMinute(): Int = cpm
 
     /**
      * Characters from the current page's start to the end of the episode (the next TOC entry after the page; the
-     * book's end in the last one) or of the book; null without a page, or without a TOC for the episode. O(1) on a
+     * book's end in the last one) or of the book; -1 without a page, or without a TOC for the episode. O(1) on a
      * turn: the book through PageCounts' suffix sums, the episode through [BookSession.charsLeftInChapter] (the TOC
-     * is scanned once per chapter, not per page).
+     * is scanned once per chapter, not per page). -1 when unknown (a primitive: no boxing on a turn).
      */
-    private fun charsLeft(bookScope: Boolean): Long? {
-        val s = session ?: return null
-        val l = curLayout ?: return null
-        if (layoutStale()) return null
-        val p = l.pages.getOrNull(curPageIdx) ?: return null
+    private fun charsLeft(bookScope: Boolean): Long {
+        val s = session ?: return -1L
+        val l = curLayout ?: return -1L
+        if (layoutStale()) return -1L
+        val p = l.pages.getOrNull(curPageIdx) ?: return -1L
         val sec = curSection
         if (bookScope) return (l.content.length - p.start).coerceAtLeast(0).toLong() + s.counts.charsAfter(sec)
-        if (s.chapters.size == 0) return null
-        return s.charsLeftInChapter(sec, p.start)
+        if (s.chapters.size == 0) return -1L
+        return s.charsLeftInChapter(sec, p.start).coerceAtLeast(0L)
     }
 
     // ================================================================== TxtOverrideHost (T1-9)
