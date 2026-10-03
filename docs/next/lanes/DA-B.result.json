@@ -27,7 +27,8 @@
   "ReaderActivity.onStop (main, not isChangingConfigurations): AutoBackup.schedule(applicationContext, 5_000) { ReaderPresence.inFront }.",
   "ReaderActivity.afterOpen step 2 (main, after first page): InstallState.ensure(this) (apply(), no binder call except on the one launch that creates the id).",
   "LIB: LibraryActivity.onCreate first thing: InstallState.ensure(this) (must run before any settings-prefs write, e.g. PREF_LEGACY_ASKED / shelf / DeviceClass, else decide() sees keys and the offer is settled as done). refreshVisible: when isDue(now, checkedAt) start 10 s idle wait → AutoBackup.schedule(ctx, 0) { ReaderPresence.inFront || LibraryJobs.scanning }; restore offer: if InstallState.offerPending(ctx) && access → IO AutoBackup.findCandidates(ctx) → pickDefault → dialog; 복원 = IO AutoBackup.restore(ctx, c) then main toast + recreate(); 새로 시작 / no candidate = IO InstallState.settleOffer(ctx). First WROTE notice: show once when AutoBackup.lastWrittenAt(ctx) > 0 (LIB keeps its own 'shown' flag, use a key containing 'backupauto' so it stays transient).",
-  "SET BackupPage: 지금 자동 백업하기 = IO AutoBackup.runNow(ctx, force = true) { false } → Outcome as status; 자동 백업에서 복원 = IO AutoBackup.findCandidates(ctx, includeOwn = true) → restore; 자동 백업 파일 지우기 = IO AutoBackup.deleteFiles(ctx, others = hasAllFilesAccess); summary uses AutoBackup.lastWrittenAt(ctx) and locationLabel(). Manual restore via Backup.import already settles the offer."
+  "SET BackupPage: 지금 자동 백업하기 = IO AutoBackup.runNow(ctx, force = true) { false } → Outcome as status; 자동 백업에서 복원 = IO AutoBackup.findCandidates(ctx, includeOwn = true) → restore; 자동 백업 파일 지우기 = IO AutoBackup.countFiles(ctx, others = hasAllFilesAccess) for the confirm's {n}, then IO AutoBackup.deleteFiles(ctx, others = same); summary uses AutoBackup.lastWrittenAt(ctx) and locationLabel(). Manual restore via Backup.import already settles the offer.",
+  "SET merge: BackupPage's own directory listing should switch to AutoBackup.findCandidates(ctx, includeOwn = true) (list incl. this install's own files, MediaStore rows without file access) and AutoBackup.countFiles(ctx, others) (new, IO; same set deleteFiles deletes)."
  ],
  "deviations": [
   "S §3.2 snapshotJson (JSONObject tree, toString(1)) replaced by Backup.snapshot (models) + BackupJson.write streaming compact JSON byte-identical to toJson().toString(); hash = SHA-1 of the streamed snapshot with createdAt=0 and no origin (K11 memory).",
@@ -37,7 +38,8 @@
   "returnMark merge: the device's own mark stays when the device read the book later than the backup.",
   "Added overload AutoBackup.findCandidates(context, includeOwn) for S §3.8 (frozen one = includeOwn false).",
   "InstallState.decide keeps the spec's isEmpty rule (no transient-key filtering); ensure must therefore run first (see rcaNotes).",
-  "Not tested here: resetProgress clears return_mark (DA-C's code)."
+  "Not tested here: resetProgress clears return_mark (DA-C's code).",
+  "Added AutoBackup.countFiles(context, others): Int (IO) for BackupPage's delete confirm (SET request)."
  ],
  "complete": true
 }

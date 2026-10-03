@@ -32,7 +32,7 @@
 - SKIPPED_EMPTY에서 wouldEmpty일 때만 checkedAt을 기록한다. isBlank(새 설치)는 다음 트리거에 다시 본다.
 - 같은 분에 MediaStore로 두 번 쓰면 이전 같은 이름 행을 지우고 새로 쓴다("(1)" 이름 방지).
 - 복귀 표시는 기기가 더 최근에 읽었고 자기 표시가 있으면 기기 것을 유지한다.
-- `findCandidates(context, includeOwn)` 오버로드를 추가했다(설정의 "자동 백업에서 복원"용, S §3.8).
+- `findCandidates(context, includeOwn)` 오버로드(설정의 "자동 백업에서 복원"용, S §3.8)와 지울 파일 수를 세는 `countFiles(context, others)`를 추가했다.
 
 검사:
 

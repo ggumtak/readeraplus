@@ -9,7 +9,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
-import android.provider.MediaStore
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -26,7 +25,6 @@ import com.ggumtak.readeraplus.ui.kit.toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
  * "백업 및 복원": JSON export via ACTION_CREATE_DOCUMENT and import via ACTION_OPEN_DOCUMENT, and the daily 자동 백업
@@ -141,7 +139,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         showAutoStatus("백업 파일을 찾는 중…")
         val appCtx = activity.applicationContext
         activity.scope.launch {
-            val cands = withContext(Dispatchers.IO) { runCatching { AutoBackup.findCandidates(appCtx) }.getOrDefault(emptyList()) }
+            val cands = withContext(Dispatchers.IO) { runCatching { AutoBackup.findCandidates(appCtx, includeOwn = true) }.getOrDefault(emptyList()) }
             busy = false
             if (destroyed) return@launch
             if (cands.isEmpty()) {
@@ -189,7 +187,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         val appCtx = activity.applicationContext
         val others = canDeleteOthers()
         activity.scope.launch {
-            val n = withContext(Dispatchers.IO) { runCatching { countAutoFiles(appCtx, others) }.getOrDefault(0) }
+            val n = withContext(Dispatchers.IO) { runCatching { AutoBackup.countFiles(appCtx, others) }.getOrDefault(0) }
             if (destroyed) return@launch
             if (n <= 0) {
                 showAutoStatus("지울 자동 백업 파일이 없습니다")
@@ -214,26 +212,6 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         } else {
             ctx.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
         }
-
-    /** Blocking (IO): the auto files [AutoBackup.deleteFiles] would delete (for the confirm's count). */
-    private fun countAutoFiles(context: Context, others: Boolean): Int {
-        if (others) {
-            val dir = File(StorageAccess.primaryRoot(), AutoBackup.RELATIVE_DIR)
-            return dir.listFiles()?.count { it.isFile && isAutoName(it.name) } ?: 0
-        }
-        if (Build.VERSION.SDK_INT < 29) return 0
-        val projection = arrayOf(MediaStore.MediaColumns.DISPLAY_NAME)
-        val where = "${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
-        context.contentResolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI, projection, where, arrayOf(AutoBackup.RELATIVE_DIR), null)
-            ?.use { c ->
-                var n = 0
-                while (c.moveToNext()) if (isAutoName(c.getString(0).orEmpty())) n++
-                return n
-            }
-        return 0
-    }
-
-    private fun isAutoName(name: String): Boolean = name.startsWith(AutoBackup.AUTO_PREFIX) && name.endsWith(".json")
 
     private fun createBackup() {
         if (busy) return
