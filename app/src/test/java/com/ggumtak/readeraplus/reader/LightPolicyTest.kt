@@ -20,12 +20,12 @@ class LightPolicyTest {
         assertEquals(DeviceLight.VERDICT_UNKNOWN, LightPolicy.nextVerdict(N, true))
     }
 
-    @Test fun firstDragAsksOnEinkOrTheDevicePathAtMostThreeSessions() {
+    @Test fun firstDragAsksOnTheDevicePathOrOnEinkAtMostThreeSessions() {
         assertEquals(W, LightPolicy.firstDragAsk(deviceOn = false, eink = true, asks = 0))
         assertEquals(W, LightPolicy.firstDragAsk(false, true, LightPolicy.MAX_ASKS - 1))
         assertEquals(N, LightPolicy.firstDragAsk(false, true, LightPolicy.MAX_ASKS))
         assertEquals(D, LightPolicy.firstDragAsk(true, false, 0))
-        assertEquals(N, LightPolicy.firstDragAsk(true, true, 5))
+        assertEquals(D, LightPolicy.firstDragAsk(true, true, 5))   // the device path is never capped
         assertEquals(N, LightPolicy.firstDragAsk(false, false, 0))
     }
 

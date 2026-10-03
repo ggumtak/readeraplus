@@ -99,6 +99,7 @@ internal class LightController(private val host: LightHost) {
         ReaderIo.launch {
             val v = DeviceLight.verdict(c)
             val warm = LightProbe.hasWarm(LightProbe.lightKeys(c))
+            DeviceLight.loadOrigAuto(c)
             host.handler.post {
                 if (destroyed) return@post
                 verdict = v
@@ -163,8 +164,9 @@ internal class LightController(private val host: LightHost) {
         resumed = false
         unregisterObserver()
         host.handler.removeCallbacks(confirmTask)
-        if (ready && deviceUsed && deviceOn() && !ownLaunch && isInteractive()) {
-            // Other apps and our library get the device's own value back (the level only with the switch on).
+        if (ready && deviceUsed && deviceOn() && !ownLaunch && !host.activity.isChangingConfigurations && isInteractive()) {
+            // Other apps and our library get the device's own value back (the level only with the switch on). Not on
+            // screen-off, our own settings page or a recreate (the light would jump twice).
             DeviceLight.restore(app.brightnessRestore)
         }
         if (ownLaunch) backFromOwn = true
@@ -190,10 +192,9 @@ internal class LightController(private val host: LightHost) {
     /** Slider and edge swipe. Main thread, any rate; [done] saves and may start the verdict question. */
     fun onDrag(pos: Float, done: Boolean) {
         val v = if (pos.isNaN()) 0f else pos.coerceIn(0f, 1f)
-        apply(v)
+        apply(v, moving = !done)
         if (!done) return
         setManual(v)
-        if (ready && deviceOn()) DeviceLight.settle()
         onDragDone()
     }
 
@@ -295,14 +296,24 @@ internal class LightController(private val host: LightHost) {
     private fun deviceOn(): Boolean =
         app.brightnessDevice && verdict != DeviceLight.VERDICT_NONE && !DeviceLight.noPermission
 
-    /** The reader's brightness [pos] (0..1; < 0 = the device's own) through the path in use. No allocation. */
-    private fun apply(pos: Float) {
+    /**
+     * The reader's brightness [pos] (0..1; < 0 = the device's own) through the path in use. No allocation. [moving]:
+     * a drag in progress (its level is persisted for fix 1 only when it settles).
+     */
+    private fun apply(pos: Float, moving: Boolean = false) {
         val a = host.activity
         if (deviceOn()) {
             ReaderWindow.applyBrightness(a, -1f)          // one source of truth: no window override on top
-            if (!ready) return                            // before the first page: afterFirstPage applies it
+            // Before the first page afterFirstPage applies it; while paused (a late IO result or touch cancel)
+            // nothing may land after the leave restore: onResume re-applies.
+            if (!ready || !resumed) return
             deviceUsed = true
-            if (pos < 0f) { DeviceLight.restore(); DeviceLight.refresh() } else DeviceLight.set(LightCurve.out(pos))
+            if (pos < 0f) {
+                DeviceLight.restore(); DeviceLight.refresh()
+            } else {
+                DeviceLight.set(LightCurve.out(pos))
+                if (!moving) DeviceLight.settle()
+            }
         } else {
             if (deviceUsed) { deviceUsed = false; DeviceLight.restore() }   // switch off, NONE, revoked
             ReaderWindow.applyBrightness(a, pos)
@@ -363,16 +374,18 @@ internal class LightController(private val host: LightHost) {
     private fun onDragDone() {
         if (!ready) return
         if (ask != ASK_NONE) { scheduleConfirm(); return }
-        if (verdict != DeviceLight.VERDICT_UNKNOWN || askChecked) return
+        if (verdict != DeviceLight.VERDICT_UNKNOWN) return
+        // The device path asks every time while UNKNOWN (not counted: the user chose it).
+        if (deviceOn()) { setAsk(ASK_DEVICE); return }
+        if (askChecked) return
         askChecked = true
         val c = appCtx
-        val dev = deviceOn()
         ReaderIo.launch {
-            val eink = dev || DeviceLight.looksEink(c)
-            val silent = LightPolicy.silentWindow(dev, eink)
+            val eink = DeviceLight.looksEink(c)
+            val silent = LightPolicy.silentWindow(false, eink)
             if (silent) DeviceLight.setVerdict(c, DeviceLight.VERDICT_WINDOW)
-            val k = if (silent) ASK_NONE else LightPolicy.firstDragAsk(dev, eink, DeviceLight.asks(c))
-            if (k != ASK_NONE) DeviceLight.countAsk(c)
+            val k = if (silent) ASK_NONE else LightPolicy.firstDragAsk(false, eink, DeviceLight.asks(c))
+            if (k == ASK_WINDOW) DeviceLight.countAsk(c)
             host.handler.post {
                 if (destroyed || verdict != DeviceLight.VERDICT_UNKNOWN) return@post
                 if (silent) verdict = DeviceLight.VERDICT_WINDOW

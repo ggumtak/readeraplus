@@ -114,7 +114,9 @@ internal object DeviceLight {
             val p = prefs(c)
             val level = LightCurve.level(out)
             if (!modeForced) {
-                if (LightPolicy.recordOriginal(p.getBoolean(K_PENDING, false))) {
+                // A pending record from another install (auto backup) is stale: captured afresh.
+                val pending = p.getBoolean(K_PENDING, false) && p.getLong(K_STAMP, 0L) == installStamp(c)
+                if (LightPolicy.recordOriginal(pending)) {
                     // What to put back, on disk BEFORE the first write (commit): a crash right after still restores.
                     val mode = SystemSettings.System.getInt(cr, KEY_MODE, MANUAL)
                     p.edit()
@@ -151,6 +153,19 @@ internal object DeviceLight {
         noPermission = true
         permChecked = false
         onNoPermission?.let { main.post(it) }
+    }
+
+    /**
+     * IO, after the first page: [origAuto] before the first write of this process (the pending original's mode, else
+     * the device's current one, which the first write would record).
+     */
+    fun loadOrigAuto(ctx: Context) {
+        try {
+            val p = prefs(ctx)
+            val mode = if (p.getBoolean(K_PENDING, false)) p.getInt(K_ORIG_MODE, MANUAL)
+            else SystemSettings.System.getInt(ctx.contentResolver, KEY_MODE, MANUAL)
+            origAuto = mode != MANUAL
+        } catch (t: Throwable) { /* unknown: the plain subtitle */ }
     }
 
     /**
@@ -193,6 +208,7 @@ internal object DeviceLight {
         val p = prefs(c)
         var out = -1f
         if (p.getBoolean(K_PENDING, false)) {
+            var done = true
             try {
                 val cr = c.contentResolver
                 val current = SystemSettings.System.getInt(cr, KEY, -1)
@@ -206,10 +222,13 @@ internal object DeviceLight {
                 if (act and LightPolicy.RESTORE_MODE != 0) SystemSettings.System.putInt(cr, KEY_MODE, mode)
                 val now = if (act and LightPolicy.RESTORE_LEVEL != 0) orig else current
                 if (now >= 0) out = LightCurve.fraction(now, LightCurve.LEVEL_MIN, maxOf(LightCurve.LEVEL_MAX, now))
+            } catch (e: SecurityException) {
+                // Revoked meanwhile: keep the record, so a later restore (after a re-grant) still puts it back.
+                done = false
             } catch (t: Throwable) {
-                Log.w(TAG, "restore failed", t) // revoked meanwhile: the device keeps the reader's value
+                Log.w(TAG, "restore failed", t)
             }
-            p.edit().putBoolean(K_PENDING, false).remove(K_LAST).commit()
+            if (done) p.edit().putBoolean(K_PENDING, false).remove(K_LAST).commit()
         }
         lastWritten = -1
         modeForced = false
@@ -243,9 +262,10 @@ internal object DeviceLight {
         val since = SystemClock.uptimeMillis() - lastWriteAt
         if (LightCurve.isExternal(v, lastWritten, since, queued.get(), ECHO_MS)) {
             // The user set the light in the device's own panel while reading: keep theirs, put nothing back on exit.
-            prefs(c).edit().putBoolean(K_PENDING, false).remove(K_LAST).apply()
+            // Their level becomes the one to put back; the original mode (fix 2) stays recorded.
+            val p = prefs(c)
+            if (p.getBoolean(K_PENDING, false)) p.edit().putInt(K_ORIG, v).putInt(K_LAST, v).apply()
             lastWritten = v
-            modeForced = false // a later write of ours records their value as the one to put back
             onExternal?.let { main.post(it) }
         }
     }

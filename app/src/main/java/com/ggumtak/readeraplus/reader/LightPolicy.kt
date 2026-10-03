@@ -37,13 +37,13 @@ internal object LightPolicy {
     }
 
     /**
-     * The question after the first finished drag of a session with verdict UNKNOWN: on the device path ASK_DEVICE;
-     * else ASK_WINDOW on e-ink only (phones get verdict WINDOW silently, [silentWindow]); never after [MAX_ASKS]
-     * unanswered sessions.
+     * The question after a finished drag with verdict UNKNOWN: on the device path always ASK_DEVICE (the user chose
+     * it; not counted); else ASK_WINDOW on e-ink only (phones get verdict WINDOW silently, [silentWindow]), never
+     * after [MAX_ASKS] unanswered sessions.
      */
     fun firstDragAsk(deviceOn: Boolean, eink: Boolean, asks: Int): Int = when {
-        asks >= MAX_ASKS -> LightController.ASK_NONE
         deviceOn -> LightController.ASK_DEVICE
+        asks >= MAX_ASKS -> LightController.ASK_NONE
         eink -> LightController.ASK_WINDOW
         else -> LightController.ASK_NONE
     }
