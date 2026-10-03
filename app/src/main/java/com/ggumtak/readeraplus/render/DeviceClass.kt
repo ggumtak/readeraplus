@@ -19,14 +19,50 @@ object DeviceClass {
     fun stamp(manufacturer: String, model: String, fingerprint: String): String = "$manufacturer/$model/${fingerprint.hashCode()}"
     fun cached(context: Context): Boolean? = try {
         val mark = stamp(Build.MANUFACTURER, Build.MODEL, Build.FINGERPRINT)
-        when (Settings.raw().getString(PREF_KEY, "")) {
-            "eink|$mark" -> true; "lcd|$mark" -> false
-            else -> if (einkByBuild(Build.MANUFACTURER, Build.BRAND, Build.MODEL)) true else null
-        }
+        fromCache(Settings.raw().getString(PREF_KEY, ""), mark,
+            einkByBuild(Build.MANUFACTURER, Build.BRAND, Build.MODEL))
     } catch (_: RuntimeException) { null }
-    fun probe(context: Context): Boolean = einkByBuild(Build.MANUFACTURER, Build.BRAND, Build.MODEL) // R3 stub (owner: E2)
-    fun probeAsync(context: Context, onDone: (Boolean) -> Unit) { // R3 stub (owner: E2)
-        val done = Runnable { onDone(cached(context) ?: false) }
-        if (Looper.myLooper() == Looper.getMainLooper()) done.run() else Handler(Looper.getMainLooper()).post(done)
+
+    internal fun fromCache(stored: String?, mark: String, heuristic: Boolean): Boolean? = when (stored) {
+        "eink|$mark" -> true
+        "lcd|$mark" -> false
+        else -> if (heuristic) true else null
+    }
+    internal fun detected(vendor: String?, manufacturer: String, brand: String, model: String): Boolean =
+        vendor != null || einkByBuild(manufacturer, brand, model)
+
+    /** Blocking vendor discovery belongs to IO, after the first page. */
+    fun probe(context: Context): Boolean {
+        val isInk = detected(Eink.vendorName(), Build.MANUFACTURER, Build.BRAND, Build.MODEL)
+        val mark = stamp(Build.MANUFACTURER, Build.MODEL, Build.FINGERPRINT)
+        try { Settings.raw().edit().putString(PREF_KEY, (if (isInk) "eink|" else "lcd|") + mark).apply() }
+        catch (_: RuntimeException) { /* A diagnostic must not prevent reading. */ }
+        return isInk
+    }
+
+    private val probeLock = Any()
+    private var running = false
+    private val callbacks = ArrayList<(Boolean) -> Unit>()
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+
+    /** Concurrent callers share one discovery; all callbacks are delivered on main. */
+    fun probeAsync(context: Context, onDone: (Boolean) -> Unit) {
+        val known = cached(context)
+        if (known != null) { main.post { onDone(known) }; return }
+        synchronized(probeLock) {
+            callbacks.add(onDone)
+            if (running) return
+            running = true
+        }
+        val app = context.applicationContext
+        Thread({
+            val value = try { probe(app) } catch (_: Throwable) { cached(app) ?: false }
+            val done = synchronized(probeLock) {
+                val batch = callbacks.toList()
+                callbacks.clear(); running = false
+                batch
+            }
+            main.post { for (callback in done) callback(value) }
+        }, "device-class-probe").apply { isDaemon = true }.start()
     }
 }

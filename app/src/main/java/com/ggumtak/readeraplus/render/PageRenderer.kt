@@ -10,6 +10,8 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.text.TextPaint
 import android.text.TextUtils
@@ -20,6 +22,7 @@ import com.ggumtak.readeraplus.engine.LineInfo
 import com.ggumtak.readeraplus.engine.RunStyle
 import com.ggumtak.readeraplus.engine.SectionLayout
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
 
@@ -54,15 +57,38 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         )
         color = fg
         textLocale = Locale.KOREAN
+        fontFeatureSettings = "tnum"
     }
     private val statusAscent: Float
     private val statusDescent: Float
     /** Vertical middle of the status digits relative to the baseline (negative = above it): the battery icon's centre. */
     private val digitMiddle: Float
-    private val footerSepWidth: Float
-    /** Battery digits last drawn (rebuilt only when the level changes, so a draw allocates nothing). */
-    private var batteryLevelShown = -1
-    private var batteryText = ""
+    private val glyphPerPx: Float
+    private val minStatusPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, StatusFit.MIN_SP, context.resources.displayMetrics)
+    private val bandPaint = arrayOf(TextPaint(statusPaint), TextPaint(statusPaint))
+    private val bandRoom = FloatArray(2) { Float.NaN }
+    private val bandTextSize = FloatArray(2)
+    private val bandCache = arrayOf(StatusDrawCache(), StatusDrawCache())
+    private val slotGeometry = FloatArray(12)
+    private val slotNatural = FloatArray(3)
+    private val slotWidths = FloatArray(3)
+    private val slotLabelWidth = FloatArray(6)
+    private val slotText = arrayOfNulls<CharSequence>(6)
+    private val slotSource = arrayOfNulls<String>(6)
+    private val slotAvail = FloatArray(6) { Float.NaN }
+    private val slotSize = FloatArray(6) { Float.NaN }
+    private val quoteFill = Array(QuoteStyles.COUNT) { Paint().apply { style = Paint.Style.FILL } }
+    private val quoteHasFill = BooleanArray(QuoteStyles.COUNT)
+    private val quoteLine = IntArray(QuoteStyles.COUNT)
+    private var lookGen = Int.MIN_VALUE
+    private var lookThumb = false
+    /** Dedicated thumbnail renderers suppress quote strokes that disappear at small scales. */
+    var thumbnail = false
+    private val t1 = maxOf(1f, Math.round(0.5f * density).toFloat())
+    private val t2 = maxOf(2f, Math.round(density).toFloat())
+    private val dashOn = maxOf(1f, Math.round(3f * density).toFloat())
+    private val dashPeriod = dashOn + maxOf(1f, Math.round(2f * density).toFloat())
+    private val main by lazy { Handler(Looper.getMainLooper()) }
 
     private val fill = Paint().apply { style = Paint.Style.FILL }
     private val line = Paint().apply { style = Paint.Style.FILL }
@@ -92,16 +118,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     /** Page whose neighbours were last handed to the image prefetcher (identity + index). */
     private var prefetchedLayout: SectionLayout? = null
     private var prefetchedPage = -1
-
-    private var headerSrc: String? = null
-    private var headerAvail = -1f
-    private var headerText: CharSequence = ""
-
-    /** Footer left text last fitted: chars of it drawn ([FooterFit]), or -1 = draw [footerCut] (redraws reuse them). */
-    private var footerSrc: String? = null
-    private var footerAvail = -1f
-    private var footerEnd = 0
-    private var footerCut: CharSequence = ""
+    /** Failed image lines are remembered without constructing cache-key Strings on scroll frames. */
+    private val failedImages = ConcurrentHashMap.newKeySet<LineInfo>()
 
     init {
         val fm = statusPaint.fontMetrics
@@ -110,7 +128,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val digit = Rect()
         statusPaint.getTextBounds("0", 0, 1, digit)
         digitMiddle = if (digit.height() > 0) (digit.top + digit.bottom) / 2f else -0.36f * statusPaint.textSize
-        footerSepWidth = statusPaint.measureText(FOOTER_SEP)
+        glyphPerPx = (statusAscent + statusDescent) / statusPaint.textSize
         outline.color = fg
         line.color = fg
         ribbonPaint.color = fg
@@ -152,7 +170,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val page = layout.pages.getOrNull(pageIndex) ?: return
         for (ln in page.lines) {
             val img = ln.imageBlock ?: continue
-            cache.get(img.src, imgW(ln), imgH(ln))
+            if (cache.get(img.src, imgW(ln), imgH(ln)) == null && cache.isKnownFailure(img.src, imgW(ln), imgH(ln)))
+                failedImages.add(ln)
         }
     }
 
@@ -163,7 +182,9 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         for (i in 0 until lines.size) {
             val ln = lines[i]
             val img = ln.imageBlock ?: continue
-            if (!cache.isKnownFailure(img.src, imgW(ln), imgH(ln)) && cache.peek(img.src, imgW(ln), imgH(ln)) == null) return true
+            if (failedImages.contains(ln)) continue
+            if (cache.isKnownFailure(img.src, imgW(ln), imgH(ln))) failedImages.add(ln)
+            else if (cache.peek(img.src, imgW(ln), imgH(ln)) == null) return true
         }
         return false
     }
@@ -186,113 +207,222 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     // ---------------------------------------------------------------------------------------------
     // Status lines
 
-    /** [ribbonH]: height of the bookmark ribbon drawn on this page (0 = none); the header keeps clear of it. */
-    // R3 stub (owner: E2): scroll rendering has no callers until RC-S lands.
+    /** Fixed chrome occupies only existing margins; it never changes the text viewport. */
     fun drawChrome(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float,
-                   contentHeight: Float, viewWidth: Int, viewHeight: Int) {}
+                   contentHeight: Float, viewWidth: Int, viewHeight: Int) {
+        canvas.drawColor(bg)
+        val h = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + contentWidth, viewWidth) else 0f
+        drawStatus(canvas, decor, contentLeft, contentTop, contentWidth, contentHeight, viewWidth, viewHeight, h)
+    }
+
+    /** Scroll frames only peek at decoded images; a background batch fills missing ones. */
     fun drawBody(canvas: Canvas, layout: SectionLayout, pageIndex: Int, left: Float, top: Float,
-                 clipTop: Float, clipBottom: Float, highlights: List<Highlight>): Boolean = false
-    fun drawOverlay(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float, viewWidth: Int) {}
-    fun prefetchPages(layouts: Array<SectionLayout?>, pages: IntArray, count: Int, done: Runnable?) {}
-
-    private fun drawStatus(
-        canvas: Canvas,
-        decor: PageDecor,
-        left: Float,
-        top: Float,
-        cw: Float,
-        ch: Float,
-        viewWidth: Int,
-        viewHeight: Int,
-        ribbonH: Float,
-    ) {
-        val status = decor.status ?: return
-        // R3 stub (owner: E2): status is drawn in the existing margins after the renderer lane lands.
+                 clipTop: Float, clipBottom: Float, highlights: List<Highlight>): Boolean {
+        val page = layout.pages.getOrNull(pageIndex) ?: return false
+        val lines = page.lines
+        var first = 0
+        while (first < lines.size && top + lines[first].bottom <= clipTop) first++
+        var end = first
+        while (end < lines.size && top + lines[end].top < clipBottom) end++
+        if (end <= first) return false
+        val save = canvas.save()
+        canvas.clipRect(0f, clipTop, canvas.width.toFloat(), clipBottom)
+        if (highlights.isNotEmpty()) drawHighlightRange(canvas, layout, lines, highlights, left, top, first, end)
+        var missing = false
+        for (i in first until end) {
+            val ln = lines[i]
+            if (ln.imageBlock != null) missing = drawImagePeek(canvas, ln, left, top) || missing
+            else drawLine(canvas, layout, ln, left, top, layout.config.width.toFloat())
+        }
+        canvas.restoreToCount(save)
+        return missing
     }
 
-    /**
-     * The footer's left text (page label, 회차, pages left, time left, joined by [FOOTER_SEP]) in [avail] px: whole
-     * items from the start while they fit — an item that doesn't fit is left out, not cut — and an ellipsized first
-     * item when even that one is too long. Fitted once per text and width: redraws of the same page (TTS highlight,
-     * selection) measure and allocate nothing.
-     */
-    private fun drawFooterLeft(canvas: Canvas, fl: String, avail: Float, x: Float, baseline: Float) {
-        if (avail != footerAvail || fl != footerSrc) {
-            footerSrc = fl
-            footerAvail = avail
-            footerEnd = FooterFit.end(fl, FOOTER_SEP, avail) { a, b -> statusPaint.measureText(fl, a, b) }
-            footerCut = if (footerEnd < 0) TextUtils.ellipsize(fl, statusPaint, avail, TextUtils.TruncateAt.END) else ""
+    private fun drawImagePeek(canvas: Canvas, ln: LineInfo, left: Float, top: Float): Boolean {
+        val img = ln.imageBlock ?: return false
+        rect.set(left + ln.x, top + ln.top, left + ln.x + ln.imageWidth, top + ln.bottom)
+        val bmp = images?.peek(img.src, imgW(ln), imgH(ln))
+        if (bmp != null) { canvas.drawBitmap(bmp, null, rect, bitmapPaint); return false }
+        rect.inset(0.5f, 0.5f)
+        canvas.drawRect(rect, outline)
+        return images != null && !failedImages.contains(ln)
+    }
+
+    fun drawOverlay(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float, viewWidth: Int) {
+        if (decor.bookmarked) drawRibbon(canvas, viewWidth, RibbonMath.height(density, contentTop, contentLeft + contentWidth, viewWidth))
+    }
+
+    /** One latest-pending batch; copy callers' reusable slot arrays before submitting. */
+    fun prefetchPages(layouts: Array<SectionLayout?>, pages: IntArray, count: Int, done: Runnable?) {
+        val cache = images ?: return
+        val n = minOf(count, layouts.size, pages.size).coerceAtLeast(0)
+        var any = false
+        for (i in 0 until n) {
+            val l = layouts[i] ?: continue
+            if (needsDecode(cache, l, pages[i])) { any = true; break }
         }
-        if (footerEnd >= 0) {
-            canvas.drawText(fl, 0, footerEnd, x, baseline, statusPaint)
-        } else {
-            canvas.drawText(footerCut, 0, footerCut.length, x, baseline, statusPaint)
+        if (!any) return
+        val ls = layouts.copyOf(n)
+        val ps = pages.copyOf(n)
+        imagePrefetcher.submit {
+            var decoded = false
+            for (i in 0 until n) {
+                val l = ls[i] ?: continue
+                if (!needsDecode(cache, l, ps[i])) continue
+                preload(l, ps[i]); decoded = true
+            }
+            if (decoded && done != null) main.post(done)
         }
     }
 
-    /**
-     * Battery level as a small outline icon followed by its digits (no "%", which read like reading progress next to
-     * the percent), ending at [right] on [baseline]: a 1 px outline 0.9 × 0.5 status text size with a nub, filled in
-     * proportion to [level], then the digits 0.25 text size after it. Pixel-aligned for crisp e-ink edges. Returns
-     * the icon's left edge.
-     */
-    private fun drawBattery(canvas: Canvas, level: Int, right: Float, baseline: Float): Float {
-        val ts = statusPaint.textSize
-        val lv = level.coerceIn(0, 100)
-        if (lv != batteryLevelShown) {
-            batteryLevelShown = lv
-            batteryText = lv.toString()
+    private fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Float, cw: Float, ch: Float,
+                           viewWidth: Int, viewHeight: Int, ribbonH: Float) {
+        val st = decor.status ?: return
+        val bottom = viewHeight - (top + ch)
+        val lane = if (st.lane) StatusFit.lane(bottom, density) else 0f
+        if (!st.header.isEmpty) {
+            val ts = bandSize(0, top)
+            if (ts > 0f) {
+                val baseline = centredBaseline(0f, top, ts)
+                val inset = RibbonMath.headerInset(density, left + cw, viewWidth, ribbonH,
+                    baseline - statusAscent * ts / statusPaint.textSize)
+                drawBand(canvas, st, st.header, left + inset, maxOf(0f, cw - 2f * inset), baseline, 0, ts, inset)
+            }
         }
-        val digitsX = right - statusPaint.measureText(batteryText)
-        canvas.drawText(batteryText, digitsX, baseline, statusPaint)
-        val nubW = BatteryMath.nubWidth(ts)
-        val bodyRight = Math.round(digitsX - BatteryMath.gap(ts) - nubW).toFloat()
-        val bodyLeft = bodyRight - BatteryMath.bodyWidth(ts)
+        if (!st.footer.isEmpty) {
+            val ts = bandSize(1, bottom - lane)
+            if (ts > 0f) drawBand(canvas, st, st.footer, left, cw,
+                centredBaseline(top + ch, viewHeight - lane, ts), 1, ts, 0f)
+        }
+        if (lane > 0f) drawProgress(canvas, st.progress, viewWidth, viewHeight, lane)
+    }
+
+    private fun bandSize(band: Int, room: Float): Float {
+        if (bandRoom[band] != room) {
+            bandRoom[band] = room
+            val ts = StatusFit.size(statusPaint.textSize, room, glyphPerPx, StatusFit.PAD_DP * density, minStatusPx)
+            bandTextSize[band] = ts
+            if (ts > 0f) bandPaint[band].textSize = ts
+        }
+        return bandTextSize[band]
+    }
+
+    private fun centredBaseline(top: Float, bottom: Float, ts: Float): Float =
+        (top + bottom) / 2f + (statusAscent - statusDescent) * ts / statusPaint.textSize / 2f
+
+    private fun slot(b: StatusBand, i: Int): StatusSlot = when (i) { 0 -> b.left; 1 -> b.center; else -> b.right }
+
+    private fun natural(s: StatusSlot, paint: TextPaint, index: Int): Float {
+        val text = s.text
+        val label = if (text != null) paint.measureText(text, 0, text.length)
+            else if (s.length > 0) paint.measureText(s.chars, 0, s.length) else 0f
+        slotLabelWidth[index] = label
+        val digits = if (s.battery >= 0) paint.measureText(s.batteryChars, 0, s.batteryLength) else 0f
+        return label + if (s.battery >= 0) BatteryMath.bodyWidth(paint.textSize) + BatteryMath.nubWidth(paint.textSize) +
+            BatteryMath.gap(paint.textSize) + digits + if (label > 0f) paint.textSize * 0.5f else 0f else 0f
+    }
+
+    private fun drawBand(canvas: Canvas, status: StatusDecor, band: StatusBand, x: Float, w: Float,
+                         baseline: Float, bi: Int, ts: Float, inset: Float) {
+        val paint = bandPaint[bi]
+        val start = bi * 3
+        if (bandCache[bi].changed(status, w, inset, ts)) {
+            for (i in 0..2) slotNatural[i] = natural(slot(band, i), paint, start + i)
+            StatusMath.allocate(w, maxOf(ts, 8f * density), slotNatural[0], slotNatural[1], slotNatural[2],
+                band.left.text != null, band.center.text != null, band.right.text != null, 3f * ts, slotWidths)
+            for (i in 0..2) {
+                val index = start + i
+                val width = slotWidths[i]
+                slotGeometry[index * 2] = when (i) { 0 -> 0f; 1 -> (w - width) / 2f; else -> w - width }
+                slotGeometry[index * 2 + 1] = width
+                val src = slot(band, i).text
+                if (slotSource[index] !== src || slotAvail[index] != width || slotSize[index] != ts) {
+                    slotSource[index] = src; slotAvail[index] = width; slotSize[index] = ts
+                    slotText[index] = if (src == null || width <= 0f) null
+                        else if (slotNatural[i] <= width) src
+                        else TextUtils.ellipsize(src, paint, width, TextUtils.TruncateAt.END)
+                }
+            }
+        }
+        for (i in 0..2) {
+            val index = start + i
+            if (slotGeometry[index * 2 + 1] <= 0f) continue
+            val s = slot(band, i)
+            val sx = x + slotGeometry[index * 2]
+            val text = slotText[index]
+            if (s.text != null && text != null) canvas.drawText(text, 0, text.length, sx, baseline, paint)
+            else if (s.length > 0) canvas.drawText(s.chars, 0, s.length, sx, baseline, paint)
+            if (s.battery >= 0) drawBattery(canvas, s, sx + slotLabelWidth[index] +
+                if (slotLabelWidth[index] > 0f) ts * 0.5f else 0f, baseline, paint)
+        }
+    }
+
+    /** Fixed char buffers supply battery digits: no String conversion on a frame. */
+    private fun drawBattery(canvas: Canvas, slot: StatusSlot, x: Float, baseline: Float, paint: TextPaint) {
+        val ts = paint.textSize
+        val bodyLeft = Math.round(x).toFloat()
+        val bodyRight = bodyLeft + BatteryMath.bodyWidth(ts)
         val bodyH = BatteryMath.bodyHeight(ts)
-        val bodyTop = Math.round(baseline + digitMiddle - bodyH / 2f).toFloat()
+        val bodyTop = Math.round(baseline + digitMiddle * ts / statusPaint.textSize - bodyH / 2f).toFloat()
         val bodyBottom = bodyTop + bodyH
         rect.set(bodyLeft + 0.5f, bodyTop + 0.5f, bodyRight - 0.5f, bodyBottom - 0.5f)
         canvas.drawRect(rect, outline)
         val nubH = BatteryMath.nubHeight(ts)
         val nubTop = bodyTop + Math.round((bodyH - nubH) / 2f)
-        canvas.drawRect(bodyRight, nubTop, bodyRight + nubW, nubTop + nubH, line)
-        // The level fills the inside of the outline, one px of paper away from it.
+        val nubRight = bodyRight + BatteryMath.nubWidth(ts)
+        canvas.drawRect(bodyRight, nubTop, nubRight, nubTop + nubH, line)
+        canvas.drawText(slot.batteryChars, 0, slot.batteryLength, nubRight + BatteryMath.gap(ts), baseline, paint)
         val inL = bodyLeft + 2f
-        val fillR = BatteryMath.fillRight(inL, bodyRight - 2f, lv)
+        val fillR = BatteryMath.fillRight(inL, bodyRight - 2f, slot.battery)
         if (fillR > inL) canvas.drawRect(inL, bodyTop + 2f, fillR, bodyBottom - 2f, line)
-        return bodyLeft
     }
 
-    private fun centredBaseline(top: Float, bottom: Float): Float {
-        val mid = (top + bottom) / 2f
-        return mid + (statusAscent - statusDescent) / 2f
-    }
-
-    private fun ellipsizedHeader(header: String, avail: Float): CharSequence {
-        if (avail == headerAvail && header == headerSrc) return headerText
-        val t: CharSequence = if (statusPaint.measureText(header) <= avail) {
-            header
-        } else {
-            TextUtils.ellipsize(header, statusPaint, avail.coerceAtLeast(0f), TextUtils.TruncateAt.END)
-        }
-        headerSrc = header
-        headerAvail = avail
-        headerText = t
-        return t
+    private fun drawProgress(canvas: Canvas, fraction: Float, viewW: Int, viewH: Int, lane: Float) {
+        val y = ProgressMath.yc(viewH, lane).toFloat()
+        val x0 = ProgressMath.x0(viewW, density).toFloat()
+        val x1 = ProgressMath.x1(viewW, density).toFloat()
+        val r = ProgressMath.rCap(lane, density)
+        canvas.drawRect(x0, y, x1, y + 1f, line)
+        canvas.drawCircle(x0, y + 0.5f, r, ribbonPaint)
+        canvas.drawCircle(x1, y + 0.5f, r, ribbonPaint)
+        if (fraction >= 0f && fraction.isFinite())
+            canvas.drawCircle(ProgressMath.dotX(fraction, viewW, lane, density), y + 0.5f,
+                ProgressMath.rDot(lane, density), ribbonPaint)
     }
 
     // ---------------------------------------------------------------------------------------------
     // Highlights (under the text)
 
-    private fun drawHighlights(
-        canvas: Canvas,
-        layout: SectionLayout,
-        lines: List<LineInfo>,
-        hs: List<Highlight>,
-        left: Float,
-        top: Float,
-    ) {
-        for (li in 0 until lines.size) {
+    private fun syncLook() {
+        val gen = QuoteLook.generation
+        if (gen == lookGen && lookThumb == thumbnail) return
+        lookGen = gen; lookThumb = thumbnail
+        val ink = QuoteLook.ink()
+        for (s in 0 until QuoteStyles.COUNT) {
+            if (ink) {
+                val value = if (thumbnail) QuoteStyles.thumbGrey(s) else QuoteStyles.inkGrey(s)
+                quoteHasFill[s] = value >= 0
+                if (value >= 0) quoteFill[s].color = grey(value)
+                quoteLine[s] = if (thumbnail) QuoteStyles.LINE_NONE else QuoteStyles.inkLine(s)
+            } else {
+                val color = QuoteStyles.colorFill(s, invert)
+                quoteHasFill[s] = color != 0
+                if (color != 0) quoteFill[s].color = color
+                quoteLine[s] = if (thumbnail) QuoteStyles.LINE_NONE else QuoteStyles.colorLine(s)
+            }
+        }
+    }
+
+    private fun drawHighlights(canvas: Canvas, layout: SectionLayout, lines: List<LineInfo>,
+                               hs: List<Highlight>, left: Float, top: Float) {
+        drawHighlightRange(canvas, layout, lines, hs, left, top, 0, lines.size)
+    }
+
+    /** Fill every overlapping range before drawing any stroke, so selection never hides a quote underline. */
+    private fun drawHighlightRange(canvas: Canvas, layout: SectionLayout, lines: List<LineInfo>,
+                                   hs: List<Highlight>, left: Float, top: Float, first: Int, end: Int) {
+        syncLook()
+        for (li in first until end) {
             val ln = lines[li]
             val img = ln.imageBlock
             if (img != null) {
@@ -315,36 +445,55 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             if (!any) continue
             val right = positions(layout, ln)
             val s = ln.start
-            // The glyph band, not the whole line box: at airy line heights the box is half blank leading.
             val t = top + LineGeometry.bandTop(layout, ln)
             val bt = top + LineGeometry.bandBottom(layout, ln)
-            for (k in 0 until hs.size) {
+            val uy = underlineY(top + ln.baseline, em)
+            for (pass in 0..1) for (k in 0 until hs.size) {
                 val h = hs[k]
                 val a = maxOf(h.start, s)
                 val b = minOf(h.end, ln.end)
                 if (a >= b) continue
-                val xa = xs[a - s]
-                val xb = if (b >= ln.end) right else xs[b - s]
-                val l = left + xa
-                val r = left + xb
-                when (h.kind) {
-                    HighlightKind.QUOTE -> {
-                        fillRect(canvas, l, t, r, bt, grey(0xD8))
-                        val y = underlineY(top + ln.baseline, em)
-                        canvas.drawRect(l, y, r, y + onePx, line)
+                val l = left + xs[a - s]
+                val r = left + if (b >= ln.end) right else xs[b - s]
+                if (pass == 0) {
+                    when (h.kind) {
+                        HighlightKind.QUOTE -> {
+                            val style = QuoteStyles.of(h.style)
+                            if (quoteHasFill[style]) canvas.drawRect(l, t, r, bt, quoteFill[style])
+                        }
+                        HighlightKind.SELECTION -> fillRect(canvas, l, t, r, bt, grey(0xAA))
+                        HighlightKind.SEARCH -> fillRect(canvas, l, t, r, bt, grey(0xBB))
+                        HighlightKind.TTS -> fillRect(canvas, l, t, r, bt, grey(0xEE))
                     }
-                    HighlightKind.SELECTION -> fillRect(canvas, l, t, r, bt, grey(0xA8))
+                } else when (h.kind) {
+                    HighlightKind.QUOTE -> drawQuoteLine(canvas, quoteLine[QuoteStyles.of(h.style)], l, t, r, bt, uy)
                     HighlightKind.SEARCH -> {
-                        fillRect(canvas, l, t, r, bt, grey(0xC0))
                         rect.set(l + 0.5f, t + 0.5f, r - 0.5f, bt - 0.5f)
                         canvas.drawRect(rect, outline)
                     }
-                    HighlightKind.TTS -> {
-                        fillRect(canvas, l, t, r, bt, grey(0xE0))
-                        val y = underlineY(top + ln.baseline, em)
-                        canvas.drawRect(l, y, r, y + 2f * onePx, line)
-                    }
+                    HighlightKind.TTS -> canvas.drawRect(l, uy, r, uy + 2f * onePx, line)
+                    HighlightKind.SELECTION -> {}
                 }
+            }
+        }
+    }
+
+    private fun drawQuoteLine(canvas: Canvas, kind: Int, l: Float, t: Float, r: Float, b: Float, uy: Float) {
+        when (kind) {
+            QuoteStyles.LINE_THIN -> canvas.drawRect(l, uy, r, uy + t1, line)
+            QuoteStyles.LINE_THICK -> canvas.drawRect(l, uy, r, uy + t2, line)
+            QuoteStyles.LINE_DASHED -> {
+                var x = DashMath.firstDash(l, dashPeriod)
+                while (x < r) {
+                    val a = maxOf(x, l)
+                    val end = minOf(x + dashOn, r)
+                    if (end > a) canvas.drawRect(a, uy, end, uy + t2, line)
+                    x += dashPeriod
+                }
+            }
+            QuoteStyles.LINE_BOX -> {
+                rect.set(l + 0.5f, t + 0.5f, r - 0.5f, b - 0.5f)
+                canvas.drawRect(rect, outline)
             }
         }
     }
@@ -552,9 +701,6 @@ internal object BatteryMath {
     }
 }
 
-/** Separator between the footer's right text and the battery (the same as the reader's footer strings use). */
-private const val FOOTER_SEP = "  ·  "
-
 /**
  * The night-mode picture filter (T1-3f): RGB inverted, alpha kept. One instance for every renderer; created on the
  * first inverted page (a native object: never at class load).
@@ -570,29 +716,6 @@ private val nightImageFilter: ColorMatrixColorFilter by lazy {
             ),
         ),
     )
-}
-
-/**
- * How much of the footer's left text fits (pure, unit-tested): the text is items joined by a separator, and the
- * footer shows whole items only.
- */
-internal object FooterFit {
-    /**
-     * Chars of [text] to draw in [avail] px: all of it when it fits, else the longest run of whole [sep]-separated
-     * items from the start (without the separator after it), else -1 when not even the first item fits (the caller
-     * ellipsizes). [width] measures text[start, end); inline, so the measuring lambda costs no allocation.
-     */
-    inline fun end(text: String, sep: String, avail: Float, width: (Int, Int) -> Float): Int {
-        if (width(0, text.length) <= avail) return text.length
-        var fit = -1
-        var cut = if (sep.isEmpty()) -1 else text.indexOf(sep)
-        while (cut > 0) {
-            if (width(0, cut) > avail) break
-            fit = cut
-            cut = text.indexOf(sep, cut + sep.length)
-        }
-        return fit
-    }
 }
 
 /** Background decoder for the images of neighbouring pages (one low-priority thread, latest request only). */
