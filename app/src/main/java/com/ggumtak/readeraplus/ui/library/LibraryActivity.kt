@@ -121,6 +121,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         /** The periodic rescan starts only after this long without a touch or key in the library. */
         private const val AUTO_SCAN_IDLE_MS = 3000L
         private const val STATUS_HEIGHT_DP = 36
+        /** The strip with a two-line text (the one-time auto-backup line). */
+        private const val STATUS_TALL_DP = 56
         /** The idle auto backup waits this long without a touch or key (scroll SPEC §3.2 trigger 1). */
         private const val BACKUP_IDLE_MS = 10_000L
         /** Raw pref (device-local: "backupauto" is transient): the one-time auto-backup status line was shown. */
@@ -392,7 +394,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             AutoBackup.isDue(System.currentTimeMillis(), Settings.raw().getLong(AutoBackup.PREF_CHECKED_AT, 0L))
         }.getOrDefault(false)
         restartAutoScanWait()
-        if (backupNotice == null) backupNotice = pendingBackupNotice()
+        backupNotice = pendingBackupNotice()
         updateStatus()
         invalidateCounts()
         reload()
@@ -415,26 +417,17 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     /**
      * Trigger 1 of the auto backup (scroll SPEC §3.2): after [BACKUP_IDLE_MS] in front without a touch or key, run it
-     * on IO. Its busy() reports a touch or key since the start, the screen being left, the reader in front or a scan,
+     * off main. Its busy() reports a touch or key since the start, the screen being left, the reader in front or a scan,
      * and the run then stops (BUSY leaves `checkedAt` as it was: the next visit retries).
      */
     private fun runIdleBackup() {
         backupPending = false
         if (!resumed || ReaderPresence.inFront || LibraryJobs.scanning || scanHeld) return
-        val app = applicationContext
         val startedAt = interactions
-        scope.launch {
-            val outcome = withContext(Dispatchers.IO) {
-                runCatching {
-                    AutoBackup.runNow(app, force = false) {
-                        interactions != startedAt || !resumedForBackup || ReaderPresence.inFront || LibraryJobs.scanning
-                    }
-                }.getOrNull()
-            }
-            if (outcome == AutoBackup.Outcome.WROTE && backupNotice == null) {
-                backupNotice = pendingBackupNotice()
-                if (resumed) updateStatus()
-            }
+        // AutoBackup's own background thread runs it (runNow, single-flight with the reader's trigger 2); a first
+        // write is announced by the next refreshVisible ([pendingBackupNotice]).
+        AutoBackup.schedule(applicationContext, 0) {
+            interactions != startedAt || !resumedForBackup || ReaderPresence.inFront || LibraryJobs.scanning
         }
     }
 
@@ -442,7 +435,6 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private fun pendingBackupNotice(): String? {
         val raw = Settings.raw()
         if (raw.getBoolean(PREF_BACKUP_NOTICE, false) || AutoBackup.lastWrittenAt(this) <= 0L) return null
-        raw.edit().putBoolean(PREF_BACKUP_NOTICE, true).apply()
         return LibraryText.autoBackupNotice(AutoBackup.locationLabel())
     }
 
@@ -488,10 +480,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         // Leaving the screen cancels the idle backup wait (the next visit checks again); the line was shown once.
         backupPending = false
         handler.removeCallbacks(backupRunnable)
-        if (backupNotice != null) {
-            backupNotice = null
-            if (uiBuilt) updateStatus()
-        }
+        // No view change here (a book may be opening): the next refreshVisible repaints the strip without it.
+        backupNotice = null
         super.onPause()
     }
 
@@ -621,7 +611,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             adapter = gridAdapter
             // Paged grids fit whole rows to the height; a new height (rotation, window size) refits them.
             addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
-                if (bottom - top != oldBottom - oldTop) post { fitGrid() }
+                // Refit now and drop the frame laid out with the old cells: one draw, not two.
+                if (bottom - top != oldBottom - oldTop && fitGrid()) skipOneDraw()
             }
         }
         content.addView(gridView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
@@ -753,6 +744,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         statusText = label("", 14f, maxLines = 2).apply {
             gravity = Gravity.CENTER_VERTICAL
             minHeight = dp(STATUS_HEIGHT_DP)
+            maxHeight = dp(STATUS_TALL_DP)
             setPadding(dp(16), dp(4), dp(16), dp(4))
         }
         statusRow.addView(statusText, lp(MATCH_PARENT, WRAP_CONTENT))
@@ -767,13 +759,16 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     /** Shows/hides the bottom status strip and reserves list space under it so the last card stays reachable. */
-    private fun setStatusVisible(visible: Boolean) {
-        if ((statusRow.visibility == View.VISIBLE) == visible) return
-        statusRow.visibility = if (visible) View.VISIBLE else View.GONE
-        // Paged lists keep their page: the strip only overlays it (no relayout, no new page split).
-        val extra = if (visible && !paged) dp(STATUS_HEIGHT_DP) + 1 else 0
+    private fun setStatusVisible(visible: Boolean, tall: Boolean = false) {
+        // In both modes: a paged list must not count a row under the strip as seen (the pager and the grid fit use
+        // the padding).
+        val extra = if (!visible) 0 else dp(if (tall) STATUS_TALL_DP else STATUS_HEIGHT_DP) + 1
+        val v = if (visible) View.VISIBLE else View.GONE
+        if (statusRow.visibility != v) statusRow.visibility = v
+        if (listView.paddingBottom == dp(8) + extra) return
         listView.setPadding(listView.paddingLeft, listView.paddingTop, listView.paddingRight, dp(8) + extra)
         gridView.setPadding(gridView.paddingLeft, gridView.paddingTop, gridView.paddingRight, dp(8) + extra)
+        fitGrid()
     }
 
     private fun buildPermissionPanel(): View {
@@ -1110,7 +1105,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private fun sameRows(a: List<BookRow>, b: List<BookRow>): Boolean {
         if (a.size != b.size) return false
         for (i in a.indices) {
-            if (a[i].book != b[i].book || a[i].inCollection != b[i].inCollection) return false
+            if (a[i].book != b[i].book || a[i].inCollection != b[i].inCollection || a[i].meta != b[i].meta) return false
         }
         return true
     }
@@ -1198,12 +1193,6 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         listView.paged = on
         gridView.paged = on
         pagerBar.visibility = if (on) View.VISIBLE else View.GONE
-        // The status strip's reserved space follows the mode (see setStatusVisible).
-        if (statusRow.visibility == View.VISIBLE) {
-            val extra = if (on) 0 else dp(STATUS_HEIGHT_DP) + 1
-            listView.setPadding(listView.paddingLeft, listView.paddingTop, listView.paddingRight, dp(8) + extra)
-            gridView.setPadding(gridView.paddingLeft, gridView.paddingTop, gridView.paddingRight, dp(8) + extra)
-        }
         // 요약 rows are 80 / 88 dp, the grid's cells fitted or natural: rebind what is on screen.
         configureGrid()
         compactAdapter.notifyDataSetChanged()
@@ -1214,40 +1203,57 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         if (!LibraryGridMath.isGrid(listMode)) return
         val dm = resources.displayMetrics
         val cols = LibraryGridMath.columns(listMode, dm.widthPixels / dm.density)
-        if (gridView.numColumns != cols) gridView.numColumns = cols
+        var changed = gridView.numColumns != cols
+        if (changed) gridView.numColumns = cols
         if (gridAdapter.mode != listMode) {
             gridAdapter.mode = listMode
             gridAdapter.cellHeight = 0
+            changed = true
         }
         if (gridPager == null || gridPagerCols != cols) {
             gridPager = ListPager(gridView, pagerBar, cols).apply { onPaged = { first, last -> prefetchAfter(gridView, first, last) } }
             gridPagerCols = cols
             gridView.pager = gridPager
         }
-        fitGrid(notify = false)
+        // Recycled active cells would be reused unmeasured: a new recipe or height rebinds them (no query).
+        if (fitGrid(notify = false) || changed) {
+            if (gridAdapter.count > 0) gridAdapter.notifyDataSetChanged()
+        }
     }
 
     /**
      * Cell height of the grid: paged → whole rows fitted to the height ([LibraryGridMath.fitRows]) and the pager's fixed
      * page (rows × columns); scrolling → the natural height. Rebinds only when rows exist and the height changed.
      */
-    private fun fitGrid(notify: Boolean = true) {
-        if (!uiBuilt || !LibraryGridMath.isGrid(listMode)) return
+    private fun fitGrid(notify: Boolean = true): Boolean {
+        if (!uiBuilt || !LibraryGridMath.isGrid(listMode)) return false
         val natural = dp(LibraryGridMath.cell(listMode).heightDp)
         var cellH = natural
         var perPage = 0
         // Before its first layout (it was GONE) the grid will have its frame's height: fit now, not after a draw.
         val height = if (gridView.height > 0) gridView.height else (gridView.parent as? View)?.height ?: 0
-        val inner = height - gridView.paddingTop - dp(LibraryGridMath.PAD_DP)
+        val inner = height - gridView.paddingTop - gridView.paddingBottom
         if (paged && inner > 0) {
             val (rows, h) = LibraryGridMath.fitRows(inner, natural, gridView.verticalSpacing)
             cellH = h
             perPage = rows * gridView.numColumns.coerceAtLeast(1)
         }
         gridPager?.rowsPerPage = perPage
-        if (gridAdapter.cellHeight == cellH) return
+        if (gridAdapter.cellHeight == cellH) return false
         gridAdapter.cellHeight = cellH
         if (notify && gridAdapter.count > 0) gridAdapter.notifyDataSetChanged()
+        return true
+    }
+
+    /** Cancels the next draw once (its layout is stale); the traversal is rescheduled with the new layout. */
+    private fun skipOneDraw() {
+        val observer = root.viewTreeObserver
+        observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (observer.isAlive) observer.removeOnPreDrawListener(this)
+                return false
+            }
+        })
     }
 
     /**
@@ -1380,7 +1386,10 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             setStatusVisible(false)
         } else {
             if (statusText.text.toString() != text) statusText.text = text
-            setStatusVisible(true)
+            val notice = text == backupNotice
+            setStatusVisible(true, tall = notice)
+            // Marked shown only once it really is on screen (a scan's text may take the strip first).
+            if (notice) Settings.raw().edit().putBoolean(PREF_BACKUP_NOTICE, true).apply()
         }
     }
 
