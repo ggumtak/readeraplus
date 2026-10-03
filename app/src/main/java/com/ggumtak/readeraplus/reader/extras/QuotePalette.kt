@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.view.Gravity
 import android.view.View
+import android.view.WindowManager
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.LinearLayout
 import android.widget.PopupWindow
@@ -48,7 +49,12 @@ object QuotePalette {
         )
         val w = box.measuredWidth
         val h = box.measuredHeight
-        val parent = ctx.activity()?.window?.decorView ?: anchor.rootView
+        // An anchor in a dialog parents to that dialog's window (else the palette would sit under it); an anchor in a
+        // popup (a sub-window) to the activity's.
+        val root = anchor.rootView
+        val type = (root.layoutParams as? WindowManager.LayoutParams)?.type ?: -1
+        val sub = type in WindowManager.LayoutParams.FIRST_SUB_WINDOW..WindowManager.LayoutParams.LAST_SUB_WINDOW
+        val parent = if (sub) ctx.activity()?.window?.decorView ?: root else root
         val a = IntArray(2)
         val p = IntArray(2)
         anchor.getLocationOnScreen(a)

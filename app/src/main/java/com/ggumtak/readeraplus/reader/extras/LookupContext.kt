@@ -96,6 +96,9 @@ internal object LookupContext {
                 cutRight = true
             }
         }
+        // Never cut a surrogate pair at a limit.
+        if (from in 1 until len && Character.isLowSurrogate(text[from])) from++
+        if (to in 1 until len && Character.isHighSurrogate(text[to - 1])) to--
         if (to < e) to = e
 
         var body = clean(text, from, to)
@@ -147,6 +150,13 @@ internal class LookupSnapshot(
 ) {
     companion object {
         const val MAX_WORD = 200
+
+        /** [selected] cut to [MAX_WORD] chars, never inside a surrogate pair. */
+        fun word(selected: String): String {
+            if (selected.length <= MAX_WORD) return selected
+            val n = if (Character.isHighSurrogate(selected[MAX_WORD - 1])) MAX_WORD - 1 else MAX_WORD
+            return selected.substring(0, n)
+        }
     }
 }
 

@@ -81,14 +81,22 @@ internal object SelectionActions {
  * start, end, id), so an optimistic list and the reloaded one compare equal and the reload draws nothing (pure).
  */
 internal object QuoteHighlights {
-    fun forSection(quotes: List<Quote>, section: Int): List<Highlight> {
+    /**
+     * Highlights of [section]'s quotes. With the session's parse signature [sig] (null = unknown), a quote saved
+     * under another parse (non-empty `sig` ≠ [sig]) is left out like the reader does (NOTES_SPEC §6.5): its offsets
+     * point at other text.
+     */
+    fun forSection(quotes: List<Quote>, section: Int, sig: String? = null): List<Highlight> {
         var n = 0
-        for (q in quotes) if (q.section == section) n++
+        for (q in quotes) if (drawn(q, section, sig)) n++
         if (n == 0) return emptyList()
         val out = ArrayList<Highlight>(n)
-        for (q in quotes) if (q.section == section) out += Highlight(q.start, q.end, HighlightKind.QUOTE, q.style)
+        for (q in quotes) if (drawn(q, section, sig)) out += Highlight(q.start, q.end, HighlightKind.QUOTE, q.style)
         return out
     }
+
+    private fun drawn(q: Quote, section: Int, sig: String?): Boolean =
+        q.section == section && (sig == null || q.sig.isEmpty() || q.sig == sig)
 
     /** [quotes] (database order) with [added] inserted where the database will list it: after every row ≤ it. */
     fun withAdded(quotes: List<Quote>, added: Quote): List<Quote> {

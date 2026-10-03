@@ -5,6 +5,7 @@ import com.ggumtak.readeraplus.reader.LayoutKeys
 import com.ggumtak.readeraplus.reader.extras.SelectionActions.Id
 import com.ggumtak.readeraplus.render.HighlightKind
 import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.StatusItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -87,6 +88,13 @@ class SelectionActionsTest {
     }
 
     @Test
+    fun staleSignature_notDrawn() {
+        val db = listOf(q(1, 0, 0, 5).copy(sig = "old"), q(2, 0, 6, 9).copy(sig = "now"), q(3, 0, 10, 12))
+        assertEquals(listOf(6, 10), QuoteHighlights.forSection(db, 0, "now").map { it.start })
+        assertEquals(listOf(0, 6, 10), QuoteHighlights.forSection(db, 0, null).map { it.start })
+    }
+
+    @Test
     fun originFallback_isTheContentBox_withoutAnyHeaderTerm() {
         // Comet: 720 × 1440 px, density 2. The status bands sit inside the margins: the header switch changes nothing.
         val d = 2f
@@ -95,6 +103,13 @@ class SelectionActionsTest {
         assertEquals(48f, SelectionOrigin.fallbackX(g, 0), 0f)
         assertEquals(60f, SelectionOrigin.fallbackY(g, 0), 0f)
         assertEquals(63f, SelectionOrigin.fallbackY(g, 3), 0f)
+        // No header slot, or a much larger status font: the same box.
+        val noHeader = withHeader.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
+        assertFalse(noHeader.hasHeader)
+        assertEquals(60f, SelectionOrigin.fallbackY(LayoutKeys.geometry(noHeader, 720, 1440, d), 0), 0f)
+        val bigStatus = withHeader.copy(headerLeft = StatusItem.CHAPTER, statusFontSizeSp = 20f)
+        assertTrue(bigStatus.hasHeader)
+        assertEquals(60f, SelectionOrigin.fallbackY(LayoutKeys.geometry(bigStatus, 720, 1440, d), 0), 0f)
         // "페이지 여백" off: the tiny margin.
         val tiny = LayoutKeys.geometry(withHeader.copy(pageMargins = false), 720, 1440, d)
         assertEquals(LayoutKeys.TINY_MARGIN_DP * d, SelectionOrigin.fallbackX(tiny, 0), 0f)

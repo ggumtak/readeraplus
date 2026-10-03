@@ -103,6 +103,8 @@ class SelectionController(private val host: ReaderHost) {
     private var paletteRow: QuotePalette.Row? = null
     private var overflowIds: List<SelectionActions.Id> = emptyList()
     private var editingQuote: Quote? = null
+    /** Bumped per palette-row tap: only the latest recolour's IO result is applied. */
+    private var recolourGen = 0
 
     /** Quotes of the book come from [QuoteCache] (shared with the contents dialog); reloaded once per controller. */
     private var quotesRequested = false
@@ -588,7 +590,7 @@ class SelectionController(private val host: ReaderHost) {
         val layout = validPage()?.first ?: return null
         val bookId = runCatching { host.book.id }.getOrNull() ?: return null
         val context = runCatching { LookupContext.sentence(layout.content.text, selStart, selEnd) }.getOrDefault("")
-        return LookupSnapshot(bookId, selected.take(LookupSnapshot.MAX_WORD), section, selStart, selEnd, context, placeOf(selStart))
+        return LookupSnapshot(bookId, LookupSnapshot.word(selected), section, selStart, selEnd, context, placeOf(selStart))
     }
 
     /** Silently records a lookup the user went through with (never a cancelled chooser), when "찾아본 단어 기록" is on. */
@@ -715,7 +717,9 @@ class SelectionController(private val host: ReaderHost) {
         val before = QuoteCache.get(q.bookId)
         val pending = Quote(id = Long.MAX_VALUE, bookId = q.bookId, section = q.section, start = q.start, end = q.end,
             text = q.text, note = note, createdAt = 0L, style = style)
-        if (sameBook(q.bookId)) applyQuoteHighlights(q.section, QuoteHighlights.withAdded(before ?: emptyList(), pending))
+        // Without the book's list (its load failed or is still running) the reload paints instead: an optimistic list
+        // of the new quote alone would hide the section's other quotes until then.
+        if (before != null && sameBook(q.bookId)) applyQuoteHighlights(q.section, QuoteHighlights.withAdded(before, pending))
         scope.launch {
             var added: Quote? = null
             val all = withContext(Dispatchers.IO) {
@@ -724,7 +728,7 @@ class SelectionController(private val host: ReaderHost) {
             }
             val saved = added
             if (saved == null) {
-                if (sameBook(q.bookId)) applyQuoteHighlights(q.section, QuoteCache.get(q.bookId) ?: before ?: emptyList())
+                if (before != null && sameBook(q.bookId)) applyQuoteHighlights(q.section, QuoteCache.get(q.bookId) ?: before ?: emptyList())
                 ctx.toast("저장하지 못했습니다")
                 return@launch
             }
@@ -745,6 +749,7 @@ class SelectionController(private val host: ReaderHost) {
         val q = editingQuote ?: return
         if (QuoteStyles.of(style) == QuoteStyles.of(q.style)) return
         val bookId = q.bookId
+        val gen = ++recolourGen
         LastQuoteStyle.set(style)
         val updated = q.copy(style = style)
         editingQuote = updated
@@ -762,9 +767,11 @@ class SelectionController(private val host: ReaderHost) {
                     Library.quotes(bookId)
                 }.getOrNull()
             }
+            // A later tap owns the page, the cache and the ring now; its own reload settles them.
+            if (gen != recolourGen) return@launch
             if (all == null) {
                 val cur = QuoteCache.get(bookId)
-                if (cur != null) {
+                if (cur != null && cur.firstOrNull { it.id == q.id }?.style == style) {
                     val back = QuoteHighlights.withStyle(cur, q.id, q.style)
                     QuoteCache.put(bookId, back)
                     if (sameBook(bookId)) applyQuoteHighlights(q.section, back)
@@ -786,7 +793,8 @@ class SelectionController(private val host: ReaderHost) {
 
     /** The section's "quotes" highlights from [all] (with their styles), as the reader builds them. Main thread. */
     private fun applyQuoteHighlights(section: Int, all: List<Quote>) {
-        runCatching { host.setHighlights("quotes", section, QuoteHighlights.forSection(all, section)) }
+        val sig = (host as? NotePlaceHost)?.let { h -> runCatching { h.notePlace(DocPosition(section, 0)) }.getOrNull()?.sig }
+        runCatching { host.setHighlights("quotes", section, QuoteHighlights.forSection(all, section, sig)) }
     }
 
     private fun noteThenQuote() {
