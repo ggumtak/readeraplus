@@ -147,7 +147,7 @@ jobs:
     needs: build
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[screens]')
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 

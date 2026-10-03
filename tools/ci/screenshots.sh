@@ -3,9 +3,12 @@
 # saves screenshots + logs into ./shots. Never fails the job on a UI step (best effort), but records crashes.
 # The later steps run through `step`: each in its own shell with a time limit, from a known state (the app restarted
 # on the library or on a book), logging what it could not find and moving on.
+# The shots follow docs/next/wave2/PLAN.md §5.3 in its run order. Every expectation the script can measure becomes a
+# `CHECK <n> PASS|FAIL <reason>` line in shots/steps.txt; none of them fails the job.
 set -u
 PKG=com.ggumtak.readeraplus
 APK=$(ls dist/*.apk | head -1)
+RESTORE_BACKUP=readeraplus-auto-0badc0de-20260929-2114.json # written by make_samples.py (S §3.9)
 mkdir -p shots samples
 log() { echo "== $*" | tee -a shots/steps.txt; }
 shot() { sleep "${2:-2}"; adb exec-out screencap -p > "shots/$1.png"; log "shot $1"; }
@@ -14,20 +17,43 @@ perf_mark() {
   adb logcat -d -v monotonic -s RAPerf:D '*:S' > "shots/perf_$1.txt"
   log "PERF $1 $(grep 'show ' "shots/perf_$1.txt" | tail -1)"
 }
-no_relayout() {
-  local result
-  result=$(python3 - "$1" "$2" <<'PY'
-import pathlib, sys
-before=pathlib.Path('shots/perf_'+sys.argv[1]+'.txt').read_text().splitlines()
-after=pathlib.Path('shots/perf_'+sys.argv[2]+'.txt').read_text().splitlines()
-# The prefix also verifies that logcat did not wrap between the two marks.
-ok=bool(before) and after[:len(before)]==before and not any('show RELAYOUT ' in x for x in after[len(before):])
-print('PASS' if ok else 'FAIL')
-PY
-  )
-  log "CHECK $1->$2 no_relayout $result"
-  [ "$result" = PASS ]
+
+# ------------------------------------------------------------------ CHECK lines
+
+check() { # check <n> <0|1 = PASS|FAIL> <reason>: one CHECK line
+  if [ "$2" -eq 0 ]; then log "CHECK $1 PASS $3"; else log "CHECK $1 FAIL $3"; fi
 }
+perf_check() { # perf_check <n> first_is|no_relayout|same_start <mark A> <mark B> (tools/ci/perf_log.py)
+  local r; r=$(python3 tools/ci/perf_log.py "$2" "$3" "$4")
+  log "CHECK $1 ${r:-FAIL perf_log.py printed nothing} ($2 $3 $4)"
+  [ "${r%% *}" = PASS ]
+}
+no_relayout() { perf_check "$1" no_relayout "$2" "$3"; } # no_relayout <n> <mark A> <mark B>
+pv_rows() { # "top bottom" of the PageView in screen rows (dumpsys bounds); the whole screen when it can't be found
+  local b
+  adb shell dumpsys activity top > /tmp/top.txt 2>/dev/null
+  b=$(python3 tools/ci/perf_log.py pv_bounds /tmp/top.txt)
+  echo "${b:-0 1440}"
+}
+content_rows() { # "Y0 Y1" of the text box: pv + 80 … pv + 1360 (valid only at 상하 여백 "0", PLAN §5.3)
+  local pv; pv=$(pv_rows); pv=${pv%% *}
+  echo "$((pv + 80)) $((pv + 1360 > 1440 ? 1440 : pv + 1360))"
+}
+raw_check() { # raw_check <n> <raw A> <raw B> <Y0 Y1 | content | pageview>: raw_equal.py over those rows, as a CHECK
+  local r y0 y1
+  case "$4" in
+    content) read -r y0 y1 <<<"$(content_rows)" ;;
+    pageview) read -r y0 y1 <<<"$(pv_rows)" ;;
+    *) y0=$4; y1=$5 ;;
+  esac
+  r=$(python3 tools/ci/raw_equal.py "shots/$2.raw" "shots/$3.raw" "$y0" "$y1")
+  if [ "$r" = EQUAL ]; then check "$1" 0 "pixels EQUAL $2 vs $3 rows $y0..$y1"
+  else check "$1" 1 "pixels ${r:-error} $2 vs $3 rows $y0..$y1"; fi
+  [ "$r" = EQUAL ]
+}
+
+# ------------------------------------------------------------------ UI helpers
+
 dump() { # the active window's UI tree into /tmp/ui.xml; a failed dump leaves no file (never a stale tree)
   rm -f /tmp/ui.xml
   local i
@@ -40,6 +66,7 @@ dump() { # the active window's UI tree into /tmp/ui.xml; a failed dump leaves no
   log "ui dump failed"; return 1
 }
 xy_of() { python3 tools/ci/find_node.py /tmp/ui.xml "$1" "${2:-exact}" "${3:-0}"; } # "x y" in the last dump
+box_of() { python3 tools/ci/find_node.py /tmp/ui.xml "$1" "${2:-exact}" "${3:-0}" --box; } # "x1 y1 x2 y2"
 has() { [ -n "$(xy_of "$@")" ]; }
 tap_label() { # tap_label "label" [exact|contains] [index: 0 = first match, -1 = last]
   dump; local xy; xy=$(xy_of "$1" "${2:-exact}" "${3:-0}")
@@ -84,8 +111,8 @@ fresh_reader() { # fresh_reader file mime: the app cold-started on that book (no
   sleep 4
 }
 step() { # step name function: one best-effort UI step in its own shell (5 minutes at most); never fails the job
-  # No new step after 20 minutes of this script, so a stuck emulator can't run the job into its time limit.
-  if [ "$SECONDS" -gt "${STEPS_UNTIL:-1200}" ]; then log "step $1 skipped (out of time)"; return 0; fi
+  # No new step after STEPS_UNTIL seconds of this script, so a stuck emulator can't run the job into its time limit.
+  if [ "$SECONDS" -gt "${STEPS_UNTIL:-3000}" ]; then log "step $1 skipped (out of time)"; return 0; fi
   log "step $1"
   local rc
   if command -v timeout >/dev/null; then timeout "${STEP_TIMEOUT:-300}" bash -c "$2"; rc=$?; else ( "$2" ); rc=$?; fi
@@ -105,8 +132,10 @@ scroll_find() { # scroll_find "label" [exact|contains]: scroll INSIDE the active
       y=${XY#* }
       [ "$y" -ge 150 ] && [ "$y" -le 1250 ] && return 0
     fi
-    gesture=$(python3 - <<'PY'
-import re, xml.etree.ElementTree as ET
+    # Down first; past 8 swipes (the end of the list) back up, for a row above the first one shown.
+    gesture=$(python3 - "$i" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+up = int(sys.argv[1]) > 8
 boxes=[]
 for n in ET.parse('/tmp/ui.xml').getroot().iter('node'):
     if n.get('scrollable')!='true': continue
@@ -116,8 +145,10 @@ for n in ET.parse('/tmp/ui.xml').getroot().iter('node'):
     if y1-y0>100: boxes.append(((x1-x0)*(y1-y0),x0,y0,x1,y1))
 if boxes:
     _,x0,y0,x1,y1=max(boxes); x=x0+min(80,(x1-x0)//2);h=y1-y0
-    print(x,y0+int(h*.85),x,y0+int(h*.25))
-else: print('100 1150 100 450')
+    a,b=y0+int(h*.85),y0+int(h*.25)
+else:
+    x,a,b=100,1150,450
+print(x,b,x,a) if up else print(x,a,x,b)
 PY
     )
     adb shell input swipe $gesture 1000; sleep 1
@@ -138,40 +169,180 @@ if rows:
   r=min(rows); print(r[2]+' '+r[3])
 PY
 }
-library_more_guard() {
+book_menu_open() { has "문서 속성" || has "책 정보"; } # the library's book menu (N names 문서 속성; the tree 책 정보)
+library_more_guard() { # 41 + CHECK 41, 41b (N H0): ⋮ taps open the menu and never move the list
   local before after xy x y opened
-  set_list_mode "목록" || return 1
+  set_list_mode "전체" || return 1
   dump || return 1
   before=$(first_title_stamp); xy=$(xy_of "책 메뉴")
-  [ -n "$xy" ] || { log "CHECK 41 FAIL: book menu missing"; return 1; }
+  [ -n "$xy" ] || { check 41 1 "book menu (책 메뉴) missing"; return 1; }
   tap_xy "$xy"; sleep 1; dump
-  opened=0; has "책 정보" && opened=1
+  opened=0; book_menu_open && opened=1
   shot 41_library_more 0; back; dump
   after=$(first_title_stamp)
   if [ "$opened" -eq 1 ] && [ -n "$before" ] && [ "$before" = "$after" ]; then
-    log "CHECK 41 PASS: menu opened and title stayed at $after"
-  else log "CHECK 41 FAIL: menu=$opened before='$before' after='$after'"; fi
+    check 41 0 "menu opened and the first title stayed at $after"
+  else check 41 1 "menu=$opened before='$before' after='$after'"; fi
   xy=$(xy_of "책 메뉴"); [ -n "$xy" ] || return 1
   x=${xy% *}; y=${xy#* }
   adb shell input swipe "$x" "$y" "$((x+2))" "$((y+6))" 150
-  sleep 1; dump; opened=0; has "책 정보" && opened=1
+  sleep 1; dump; opened=0; book_menu_open && opened=1
   back; dump; after=$(first_title_stamp)
-  if [ "$opened" -eq 1 ] && [ "$before" = "$after" ]; then log "CHECK 41b PASS: jitter opens menu without seeking"
-  else log "CHECK 41b FAIL: menu=$opened before='$before' after='$after'"; fi
+  if [ "$opened" -eq 1 ] && [ "$before" = "$after" ]; then check 41b 0 "a 6 px roll opens the menu without seeking"
+  else check 41b 1 "menu=$opened before='$before' after='$after'"; fi
   adb shell input swipe 700 1200 700 1190 300
-  log "CHECK 41 strip drag completed"
+  log "41: strip drag completed"
 }
 
-# ------------------------------------------------------------------ reader steps
+# ------------------------------------------------------------------ reader helpers
 
-settings_more() { # 14b: the reading-settings popup (already open) with 더보기 expanded, scrolled to the extra rows
+chrome_open() { dump && has "페이지 이동" contains; } # the reader's bars are on screen (the page label)
+show_chrome() { chrome_open && return 0; adb shell input tap 360 720; sleep 2; chrome_open; }
+hide_chrome() { # closes the go-to dialog / the reader's bars while they show (BACK without them would leave the book)
+  local i
+  for i in 1 2 3; do
+    dump || return 1
+    has "페이지 이동" contains || return 0
+    back
+  done
+}
+reader_more() { # reader_more "item": the reader's ⋮ (content description 더보기) → item
+  show_chrome || return 1
+  tap_label "더보기" || return 1
+  sleep 1
+  tap_label "$1" || { back; return 1; }
+  sleep 3
+}
+open_popup() { # the reading-settings popup with 더보기 expanded (the process remembers the expanded state)
+  show_chrome || return 1
+  tap_label "읽기 설정" contains || return 1
+  sleep 2; dump || return 1
+  has "글자 크기" contains || { log "the reading-settings popup is not the active window"; return 1; }
+  if ! has "접기"; then
+    scroll_find "더보기" || return 1
+    tap_xy "$XY"; sleep 2
+  fi
+}
+close_popup() { back; sleep 2; hide_chrome; sleep 1; } # one BACK closes the popup (and the bars), then make sure
+popup_tap() { scroll_find "$1" "${2:-exact}" || return 1; tap_xy "$XY"; sleep "${3:-2}"; } # a row/button in the popup
+choose() { tap_label "$1" || tap_label "$1" contains; } # an item of an open chooser list
+set_slot() { # set_slot "아래 가운데" "쪽 번호": a status slot in the open popup (its button reads "<slot>: <value>")
+  popup_tap "$1:" contains 1 || return 1
+  choose "$2" || { back; return 1; }
+  sleep 2
+}
+seek_to() { # seek_to <from %> <to %>: drags the chrome's seek bar (open) from one fraction to another and releases
+  local b x0 y0 x1 y1 y
   dump || return 1
-  has "글자 크기" || { log "14b: the reading-settings popup is not the active window"; return 1; }
-  if has "더보기"; then tap_xy "$(xy_of "더보기")"; sleep 2; dump || return 1; fi
-  has "접기" || { log "14b: 더보기 did not open"; return 1; }
-  align "접기" 140 # the 접기 row to the popup's top: the rows it opened fill the popup
-  shot 14b_settings_more 2
+  b=$(box_of SeekBar class); [ -n "$b" ] || { log "no seek bar"; return 1; }
+  read -r x0 y0 x1 y1 <<<"$b"; y=$(((y0 + y1) / 2))
+  adb shell input swipe $((x0 + (x1 - x0) * $1 / 100)) $y $((x0 + (x1 - x0) * $2 / 100)) $y 600
+  log "seek $1% -> $2%"; sleep 2
 }
+open_settings() { # 설정 (SettingsActivity is not exported: through the library's drawer)
+  restart_library
+  open_drawer || return 1
+  tap_label "설정" || return 1
+  sleep 2
+}
+open_turning_page() { # 설정 → 넘김·화면 설정
+  open_settings || return 1
+  scroll_find "넘김·화면 설정" || return 1
+  tap_xy "$XY"; sleep 3
+}
+pick_setting() { # pick_setting "row" "choice": a settings row (found by scrolling) and an item of its chooser
+  scroll_find "$1" contains || return 1
+  tap_xy "$XY"; sleep 2
+  choose "$2" || { back; return 1; }
+  sleep 2
+}
+
+# ------------------------------------------------------------------ reader steps: chrome (U §8.2)
+
+chrome_pin() { # 13 (+rawshot), 13b–13h, then rawshot 10a_pre and the bars open again for 14
+  show_chrome || return 1
+  shot 13_txt_chrome 1; rawshot 13_txt_chrome
+  dump; cp /tmp/ui.xml shots/ui_reader_chrome.xml 2>/dev/null
+  if has "이 페이지 고정" && ! has "지우기"; then check 13 0 "bars open, pin outline, no strip"
+  else check 13 1 "pin (이 페이지 고정) or no-strip expectation missing"; fi
+  # 13b: pin this page; the page itself must not change
+  tap_label "이 페이지 고정" || tap_label "이 쪽 고정" || return 1
+  shot 13b_pin 2; rawshot 13b_pin
+  raw_check 13b 13_txt_chrome 13b_pin 360 1100
+  dump; if has "고정 해제" && has "지우기"; then check 13b 0 "pin filled (고정 해제) and the strip with 지우기"
+  else check 13b 1 "no filled pin or no strip"; fi
+  # 13c: a tap on the page closes the bars and turns nothing
+  adb shell input tap 360 700
+  shot 13c_pin_close 2; rawshot 13c
+  raw_check 13c 12b 13c pageview
+  dump; if has "페이지로" contains; then check 13c 1 "a return chip is shown"; else check 13c 0 "no chip"; fi
+  # 13d: five pages on, the strip offers the pinned page; going there offers the way back
+  for i in 1 2 3 4 5; do adb shell input keyevent KEYCODE_VOLUME_DOWN; sleep 1; done
+  show_chrome
+  shot 13d_strip 1
+  if has "3 페이지로" contains; then check 13d 0 "strip '‹ 3 페이지로'"; else check 13d 1 "no '3 페이지로' in the strip"; fi
+  tap_label "3 페이지로" contains || return 1
+  shot 13d_return 2
+  dump; if has "8 페이지로" contains; then check 13d 0 "back on 3 with '8 페이지로 ›'"; else check 13d 1 "no '8 페이지로' after the return"; fi
+  # 13e: the brightness options (the row stays)
+  tap_label "밝기 옵션" || return 1
+  shot 13e_brightness_opts 2
+  dump; if has "스와이프로 밝기 조절" && has "기기 밝기 직접 조절"; then check 13e 0 "brightness options listed"
+  else check 13e 1 "스와이프로 밝기 조절 / 기기 밝기 직접 조절 missing"; fi
+  # 13f: 지우기 drops the pin (the bars stay)
+  tap_label "지우기" || return 1
+  shot 13f_clear 2
+  dump; if ! has "지우기" && has "이 페이지 고정"; then check 13f 0 "strip gone, pin outline"
+  else check 13f 1 "strip or filled pin still shown"; fi
+  # 13g: two seeks with the menu open, then close: the chip offers the FIRST origin (3)
+  seek_to 2 70 || return 1
+  seek_to 70 60
+  adb shell input tap 360 700
+  shot 13g_seek_chip 2
+  dump; if has "3 페이지로" contains; then check 13g 0 "chip '‹ 3 페이지로' after two seeks"
+  else check 13g 1 "no '3 페이지로' chip"; fi
+  # 13h: two manual turns drop the chip
+  adb shell input keyevent KEYCODE_VOLUME_DOWN; sleep 1; adb shell input keyevent KEYCODE_VOLUME_DOWN
+  shot 13h_chip_gone 2
+  dump; if has "페이지로" contains; then check 13h 1 "the chip is still shown"; else check 13h 0 "chip gone after 2 turns"; fi
+  rawshot 10a_pre; perf_mark 10a_pre # chrome closed: 10b compares against this page
+  show_chrome # the bars open again for 14_reading_settings
+}
+reading_settings() { # 14, 14b, 14c, then 10b (+rawshot, no_relayout): the footer slot never moves the text
+  show_chrome || return 1
+  tap_label "읽기 설정" contains || return 1
+  shot 14_reading_settings 2
+  dump; if has "글자 크기" contains && has "더보기" contains; then check 14 0 "popup with its main rows and 더보기"
+  else check 14 1 "popup rows missing"; fi
+  # 14b: 더보기, then up to the 상태 표시 section
+  if ! has "접기"; then scroll_find "더보기" && tap_xy "$XY"; sleep 2; fi
+  if scroll_find "좌우 여백" contains; then log "14b: $(python3 - <<'PY'
+import xml.etree.ElementTree as ET
+t=[n.get('text') or n.get('content-desc') for n in ET.parse('/tmp/ui.xml').getroot().iter('node')]
+t=[x for x in t if x and ('여백' in x or x in ('0','0dp'))]
+print('margin rows: ' + ' | '.join(t[:8]))
+PY
+)"; fi
+  scroll_find "아래 가운데: 없음" || return 1
+  shot 14b_status_slots 1
+  dump; if has "아래 왼쪽: 없음" && has "아래 오른쪽: 없음" && has "진행 막대" contains; then check 14b 0 "bottom slots 없음, 진행 막대 row"
+  else check 14b 1 "bottom slots not all 없음 or no 진행 막대 row"; fi
+  # 14c: the slot list
+  popup_tap "아래 가운데: 없음" exact 1 || return 1
+  shot 14c_slot_list 1
+  dump; if has "쪽 번호" && has "없음"; then check 14c 0 "slot list with 쪽 번호 and 없음"; else check 14c 1 "slot list items missing"; fi
+  choose "쪽 번호" || return 1
+  sleep 2
+  back # closes the popup (a second BACK would leave the reader)
+  sleep 2; hide_chrome
+  # 10b: same page as 10a_pre, footer now on
+  shot 10b_footer_slots 2; rawshot 10b; perf_mark 10b
+  raw_check 10b 10a_pre 10b content
+  no_relayout 10b 10a_pre 10b
+}
+
+# ------------------------------------------------------------------ reader steps: H3, TOC, go-to, end of book
+
 toc_shots() { # 15: 목차 (header: 지금 · 화 번호 · 검색, pager bar); 15b: one page on with the pager's [다음 ▶]
   tap_label "목차" contains || { adb shell input tap 360 720; sleep 1; tap_label "목차" contains; } || return 1
   shot 15_toc 3
@@ -180,8 +351,8 @@ toc_shots() { # 15: 목차 (header: 지금 · 화 번호 · 검색, pager bar); 
   back
 }
 open_goto() { # 페이지 이동 from the bottom bar's page label (bars shown first); true once its number pad is on screen
-  adb shell input tap 360 720; sleep 2
-  tap_label "페이지 이동" || return 1
+  show_chrome || return 1
+  tap_label "페이지 이동" contains || return 1
   sleep 2
   dump && has "이동" && has "5" && return 0
   log "go-to dialog: no number pad"; return 1
@@ -196,14 +367,6 @@ numpad_type() { # numpad_type 123: taps the pad's keys (found in the last dump, 
   done
   log "typed $digits on the number pad"
 }
-hide_chrome() { # closes the go-to dialog / the reader's bars while they show (BACK without them would leave the book)
-  local i
-  for i in 1 2 3; do
-    dump || return 1
-    has "페이지 이동" || return 0
-    back
-  done
-}
 goto_numpad() { # 15c: 페이지 이동 with its number pad ([페이지] [%] [화] over the pad), "12" typed
   fresh_reader sample-cp949.txt text/plain
   open_goto || return 1
@@ -211,48 +374,22 @@ goto_numpad() { # 15c: 페이지 이동 with its number pad ([페이지] [%] [�
   shot 15c_goto_numpad 2
   back # 취소: the reader stays where it was
 }
-dialog_no_reflow() {
-  fresh_reader sample-cp949.txt text/plain
-  # Keep chrome visible in both captures; the dialog alone takes and returns focus.
-  adb shell input tap 360 720; sleep 2
-  rawshot 57_before
-  perf_mark 57_before
-  tap_label "페이지 이동" || return 1
-  sleep 2
-  shot 57_dialog_no_reflow 0
-  back; sleep 2
-  rawshot 57_after
-  perf_mark 57_after
-  local result
-  result=$(python3 tools/ci/raw_equal.py shots/57_before.raw shots/57_after.raw 360 1100)
-  log "CHECK 57 pixels $result"
-  no_relayout 57_before 57_after || return 1
-  [ "$result" = EQUAL ]
-}
 choose_volume_mode() {
-  adb shell input tap 360 720; sleep 1
-  tap_label "읽기 설정" contains || return 1
-  dump || return 1
-  # The process remembers expanded state; a second chooser must not collapse it.
-  if ! has "접기"; then
-    scroll_find "더보기" || return 1
-    XY=$(xy_of "더보기" exact -1)
-    tap_xy "$XY"; sleep 1
-  fi
+  open_popup || return 1
   scroll_find "볼륨 키" || return 1
   tap_xy "$XY"; sleep 1
   dump || return 1
   has "아래 = 다음 페이지 (기본)" && has "위 = 다음 페이지 (방향 반전)" && has "넘기지 않음 (볼륨 조절)" || return 1
   if [ "$1" = "위 = 다음 페이지 (방향 반전)" ]; then shot 14d_volume_mode 0; fi
   tap_label "$1" || return 1
-  back; sleep 2
+  close_popup
 }
-volume_mode() {
+volume_mode() { # 14d (R U5): 위 = 다음 makes VOLUME_UP the next page without a relayout; then the default again
   fresh_reader sample-cp949.txt text/plain
   perf_mark 14d_before
   choose_volume_mode "위 = 다음 페이지 (방향 반전)" || return 1
   perf_mark 14d_changed
-  no_relayout 14d_before 14d_changed || return 1
+  no_relayout 14d 14d_before 14d_changed
   adb shell input keyevent KEYCODE_VOLUME_UP; sleep 2
   perf_mark 14d_turned
   local result
@@ -262,12 +399,28 @@ def page(mark):
   rows=re.findall(r'show (\w+) s:(\d+) o:(\d+)',pathlib.Path('shots/perf_'+mark+'.txt').read_text())
   return rows[-1] if rows else None
 a,b=page('14d_changed'),page('14d_turned')
-print('PASS' if a and b and b[0]=='TURN' and tuple(map(int,b[1:]))>tuple(map(int,a[1:])) else 'FAIL')
+ok=a and b and b[0]=='TURN' and tuple(map(int,b[1:]))>tuple(map(int,a[1:]))
+print(('PASS' if ok else 'FAIL')+' VOLUME_UP turned from '+str(a)+' to '+str(b))
 PY
   )
-  log "CHECK 14d volume-up-next $result"
+  log "CHECK 14d $result"
+  show_chrome && dump && log "14d: page label '$(python3 - <<'PY'
+import xml.etree.ElementTree as ET
+for n in ET.parse('/tmp/ui.xml').getroot().iter('node'):
+  d=n.get('content-desc') or ''
+  if d.startswith('페이지 이동'): print(d); break
+PY
+)'"
+  hide_chrome
   choose_volume_mode "아래 = 다음 페이지 (기본)" || return 1
-  [ "$result" = PASS ]
+  [ "${result%% *}" = PASS ]
+}
+selection_shot() { # 17: one row of 5 (복사 · 인용 · 메모 · 사전·번역 · ⋮)
+  hide_chrome
+  adb shell input swipe 300 700 300 700 900; shot 17_selection 2
+  dump; if has "복사" && has "인용" contains && has "메모" && has "사전·번역"; then check 17 0 "selection row with 복사 · 인용 · 메모 · 사전·번역"
+  else check 17 1 "selection actions missing"; fi
+  back
 }
 end_of_book() { # 17b: a long-press on the blank part of a page selects nothing; 18: "next" on the last page = end panel
   fresh_reader sample-cp949.txt text/plain
@@ -283,24 +436,83 @@ end_of_book() { # 17b: a long-press on the blank part of a page selects nothing;
   shot 17b_longpress_blank 2
   after=$(popups)
   if [ "${after:-0}" -gt "${before:-0}" ]; then
-    log "17b: UNEXPECTED - a popup (selection bar?) after a long-press on blank space ($before -> $after)"
+    check 17b 1 "a popup (selection bar?) after a long-press on blank space ($before -> $after)"
     back
   else
-    log "17b: ok - no selection bar ($before -> $after popups)"
+    check 17b 0 "no selection bar ($before -> $after popups)"
   fi
   for i in 1 2 3; do
     adb shell input keyevent KEYCODE_PAGE_DOWN; sleep 2
     dump && has "다 읽었습니다" && break
   done
   shot 18_end_panel 1
-  if has "다 읽었습니다"; then log "18: end panel shown"; back; else log "18: no end panel after $i page-downs"; return 1; fi
+  if has "다 읽었습니다"; then check 18 0 "end panel shown"; back; else check 18 1 "no end panel after $i page-downs"; return 1; fi
+}
+
+# ------------------------------------------------------------------ scroll mode (S §1.15), 60–69b
+
+scroll_on() { # 60: the sample EPUB switched to 스크롤 in the popup (넘기는 방식 sits under 더보기, C27)
+  fresh_reader sample.epub application/epub+zip
+  perf_mark 60a
+  open_popup || return 1
+  popup_tap "넘기는 방식" contains || return 1
+  choose "스크롤" || { back; return 1; }
+  sleep 2; close_popup
+  shot 60_scroll_on 2; perf_mark 60b
+  perf_check 60 first_is 60a 60b
+}
+scroll_moves() { # 61–66 in the scroll mode set by 60
+  hide_chrome
+  adb shell input swipe 360 1100 360 500 400; shot 61_scroll_drag 2
+  adb shell input tap 600 900; shot 62_scroll_step 2
+  for i in 1 2 3; do adb shell input keyevent KEYCODE_PAGE_DOWN; sleep 1; done; shot 63_scroll_keys 1
+  show_chrome || return 1
+  tap_label "목차" contains || return 1
+  sleep 2
+  tap_label "제2장 샘플 챕터" || tap_label "샘플 챕터" contains 1 || return 1
+  shot 64_scroll_toc 3
+  dump; if has "페이지로" contains; then check 64 0 "return chip after the TOC jump"; else check 64 1 "no return chip"; fi
+  adb shell input swipe 300 700 300 700 900; shot 65_scroll_select 2; back
+  # 66: step on until the section changes (the seam between chapters)
+  local s0 s i
+  adb logcat -d -v monotonic -s RAPerf:D '*:S' > shots/perf_66.txt
+  s0=$(python3 tools/ci/perf_log.py last 66); s0=${s0#* s:}; s0=${s0%% *}
+  for i in $(seq 1 25); do
+    adb shell input tap 600 900; sleep 1
+    adb logcat -d -v monotonic -s RAPerf:D '*:S' > shots/perf_66.txt
+    s=$(python3 tools/ci/perf_log.py last 66); s=${s#* s:}; s=${s%% *}
+    [ "$s" != "$s0" ] && break
+  done
+  shot 66_scroll_seam 1
+  log "66: section $s0 -> $s after $i steps"
+}
+scroll_release() { # 67: 스크롤 움직임 → 손을 떼면 이동, the book reopened, a slow 300 px swipe
+  open_turning_page || return 1
+  pick_setting "스크롤 움직임" "손을 떼면 이동" || return 1
+  fresh_reader sample.epub application/epub+zip
+  adb shell input swipe 360 1000 360 700 1500
+  shot 67_step_release 2; perf_mark 67
+}
+scroll_round_trip() { # 68: ⋮ → 페이지로 보기 (the page holds the old top line); 69: ⋮ → 스크롤로 보기 (the same top line)
+  reader_more "페이지로 보기" || return 1
+  hide_chrome; shot 68_back_to_paged 1; perf_mark 68
+  perf_check 68 first_is 67 68
+  reader_more "스크롤로 보기" || return 1
+  hide_chrome; shot 69_scroll_again 1; perf_mark 69
+  perf_check 69 same_start 67 69
+}
+scroll_off() { # 69b: 스크롤 움직임 → 기기에 맞춤 (the row shows only in SCROLL), then ⋮ → 페이지로 보기; logged only
+  open_turning_page && pick_setting "스크롤 움직임" "기기에 맞춤"
+  fresh_reader sample.epub application/epub+zip
+  if reader_more "페이지로 보기"; then hide_chrome; else log "69b: no '페이지로 보기' (already paged?)"; hide_chrome; fi
+  shot 69b_back_to_paged 1
 }
 
 # ------------------------------------------------------------------ library and settings steps
 
-set_list_mode() { # set_list_mode 목록|간단히|표지: the toolbar's view toggle (목록 → 간단히 → 표지), else ⋮ → 보기
+set_list_mode() { # set_list_mode 전체|요약|썸네일|그리드 (C29): the toolbar's view toggle, else ⋮ → 보기
   local i
-  for i in 1 2 3 4; do
+  for i in 1 2 3 4 5; do
     dump || return 1
     has "보기: $1" contains && return 0
     tap_xy "$(xy_of "(눌러서 바꾸기)" contains)" || break
@@ -310,61 +522,331 @@ set_list_mode() { # set_list_mode 목록|간단히|표지: the toolbar's view to
   sleep 1
   tap_label "보기:" contains || { back; return 1; }
   sleep 1
-  tap_label "$1" || { back; return 1; }
+  choose "$1" || { back; return 1; }
   sleep 3
 }
-library_compact() { # 41: the library as 간단히 (T1-13), then back to 목록
+open_drawer() { tap_label "메뉴" contains && sleep 1; } # ☰: the first "메뉴" of the library toolbar
+library_compact() { # 42 + CHECK 42b: 12 more books, a scan, 보기 → 요약; a tap 2 px inside the ⋮'s right edge
+  local n b x0 y0 x1 y1
+  for n in 01 02 03 04 05 06 07 08 09 10 11 12; do
+    adb shell cp /sdcard/Download/sample-utf8.txt "/sdcard/Download/extra-$n.txt"
+  done
   restart_library
-  set_list_mode "간단히" || return 1
-  shot 41_library_compact 2
-  set_list_mode "목록"
+  open_drawer || return 1
+  tap_label "도서 스캔" || return 1
+  sleep 8
+  set_list_mode "요약" || return 1
+  shot 42_library_compact 2
+  dump; b=$(box_of "책 메뉴"); [ -n "$b" ] || { check 42b 1 "no 책 메뉴 in 요약"; return 1; }
+  read -r x0 y0 x1 y1 <<<"$b"
+  adb shell input tap $((x1 - 2)) $(((y0 + y1) / 2)); sleep 1
+  dump; if book_menu_open; then check 42b 0 "a tap 2 px inside the ⋮'s right edge opens the menu"; back
+  else check 42b 1 "no menu after the edge tap"; fi
 }
-library_multiselect() { # 42: a long-press on a book starts multi-select ("1권 선택" and the batch actions, T1-13)
+library_views() { # 43 썸네일, 44 그리드, then 전체 again
   restart_library
+  set_list_mode "썸네일" || return 1
+  shot 43_library_thumbs 2
+  set_list_mode "그리드" || return 1
+  shot 44_library_grid 2
+  set_list_mode "전체"
+}
+library_paged() { # 45/46 + CHECK 46: 목록 넘기기 → 쪽 단위, the next page by a swipe; then 자동 again
+  open_settings || return 1
+  pick_setting "목록 넘기기" "쪽 단위" || return 1
+  restart_library
+  shot 45_library_paged 2
+  dump; if has "1 / " contains; then check 45 0 "pager '1 / N'"; else check 45 1 "no pager label '1 / N'"; fi
+  adb shell input swipe 360 1000 360 600 300
+  shot 46_library_page2 2
+  dump; if has "2 / " contains; then check 46 0 "pager '2 / N' after a swipe"; else check 46 1 "no '2 / N' after a swipe"; fi
+  open_settings && pick_setting "목록 넘기기" "자동"
+}
+library_multiselect() { # 46c: a long-press on a book starts multi-select ("1권 선택" and the batch actions, T1-13)
+  restart_library
+  set_list_mode "전체"
   dump || return 1
   local xy
   xy=$(xy_of "sample-utf8")
   [ -n "$xy" ] || xy=$(xy_of "sample" contains)
   [ -n "$xy" ] || xy=$(xy_of "샘플" contains)
-  [ -n "$xy" ] || { xy="360 330"; log "42: no sample book title on screen, long-pressing $xy"; }
+  [ -n "$xy" ] || { xy="360 330"; log "46c: no sample book title on screen, long-pressing $xy"; }
   set -- $xy
   longpress "$1" "$2"
-  shot 42_multiselect 3
+  shot 46c_multiselect 3
   dump || return 1
-  if has "권 선택" contains; then log "42: selection toolbar shown"; back; else log "42: no selection toolbar"; return 1; fi
+  if has "권 선택" contains; then check 46c 0 "selection toolbar shown"; back; else check 46c 1 "no selection toolbar"; return 1; fi
 }
-open_drawer() { tap_label "메뉴" contains && sleep 1; } # ☰: the first "메뉴" of the library toolbar
-stats_page() { # 51: drawer → 읽기 기록 (T1-6)
+status_page() { # 51: 설정 → 넘김·화면 설정 at the 상태 표시줄 section
+  open_turning_page || return 1
+  scroll_find "상태 표시줄" || return 1
+  align "상태 표시줄" 260
+  shot 51_status_page 2
+  dump; if has "위 · 왼쪽" contains && has "아래 · 오른쪽" contains; then check 51 0 "slot rows shown"
+  else check 51 1 "slot rows (위 · 왼쪽 … 아래 · 오른쪽) missing"; fi
+}
+stats_page() { # 50b: drawer → 읽기 기록 (T1-6)
   restart_library
   open_drawer || return 1
   tap_label "읽기 기록" || return 1
-  shot 51_stats 4
+  shot 50b_stats 4
 }
-wifi_page() { # 52: drawer → Wi-Fi로 책 받기 (T1-12)
+wifi_page() { # 50c: drawer → Wi-Fi로 책 받기 (T1-12)
   restart_library
   open_drawer || return 1
   tap_label "Wi-Fi로 책 받기" || tap_label "Wi-Fi" contains || return 1
-  shot 52_wifi 5
+  shot 50c_wifi 5
 }
-eink_settings() { # 53: 설정 → 넘김·화면 설정 at its "e-ink 화면" section (T1-3); 53b: the section's 고급 group opened
-  restart_library
-  open_drawer || return 1
-  tap_label "설정" || return 1
-  sleep 2
-  scroll_find "넘김·화면 설정" || return 1
-  tap_xy "$XY" || return 1
-  sleep 3
+eink_settings() { # 50d: 넘김·화면 설정 at its "e-ink 화면" section (T1-3); 50e: the section's 고급 group opened
+  open_turning_page || return 1
   scroll_find "e-ink 화면" || return 1
   align "e-ink 화면" 260 # the section header just under the toolbar
-  shot 53_eink_settings 2
+  shot 50d_eink_settings 2
   scroll_find "고급" || return 1
   tap_xy "$XY" || return 1
   sleep 2
   dump && align "고급" 260
-  shot 53b_eink_advanced 2
+  shot 50e_eink_advanced 2
 }
 
-export PKG
+# ------------------------------------------------------------------ notes (N §17), 80–90
+
+select_at() { adb shell input swipe "$1" "$2" "$1" "$2" 900; sleep 2; } # select_at x y: a long-press selects a word
+notes_quotes() { # 80 quote, 81/81b palette → 초록, 82 the existing quote's popup
+  fresh_reader sample-utf8.txt text/plain
+  select_at 300 700
+  tap_label "인용" || tap_label "인용" contains || return 1
+  shot 80_quote_saved 1
+  log "80: no toast expected (checked by eye)"
+  select_at 300 820
+  dump || return 1
+  local xy; xy=$(xy_of "인용"); [ -n "$xy" ] || xy=$(xy_of "인용" contains)
+  [ -n "$xy" ] || { check 81 1 "no 인용 cell"; return 1; }
+  set -- $xy; longpress "$1" "$2" 900
+  shot 81_palette 2
+  dump; if has "노랑" contains && has "초록" contains; then check 81 0 "palette with 노랑 and 초록"; else check 81 1 "palette cells missing"; fi
+  choose "초록" || return 1
+  shot 81b_green 2
+  longpress 300 700 900
+  shot 82_quote_popup 2
+  dump; if has "인용 삭제"; then check 82 0 "existing quote popup with 인용 삭제"; else check 82 1 "no 인용 삭제"; fi
+  back
+}
+notes_toc() { # 83: TOC → 인용문
+  show_chrome || return 1
+  tap_label "목차" contains || return 1
+  sleep 2
+  tap_label "인용문" || return 1
+  shot 83_toc_quotes 2
+  dump; if has "모든 책의 노트"; then check 83 0 "link 모든 책의 노트"; else check 83 1 "no 모든 책의 노트"; fi
+  back
+}
+notes_lookup() { # 84: 사전·번역 cancelled, then 웹 검색 (logged only)
+  hide_chrome
+  select_at 300 940
+  tap_label "사전·번역" || return 1
+  sleep 2; back
+  select_at 300 940
+  tap_label "사전·번역" || return 1
+  sleep 2
+  tap_label "웹 검색" contains || { back; return 1; }
+  shot 84_lookup 4
+  back; sleep 2
+}
+first_row_xy() { # the first list row's text below the hub's bars (a long text line), else a fallback point
+  python3 - <<'PY'
+import re, xml.etree.ElementTree as ET
+best=None
+for n in ET.parse('/tmp/ui.xml').getroot().iter('node'):
+  t=n.get('text') or ''
+  m=re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',n.get('bounds',''))
+  if not m or len(t)<12: continue
+  x0,y0,x1,y1=map(int,m.groups())
+  if y0>=300 and (best is None or y0<best[1]): best=((x0+x1)//2,(y0+y1)//2)
+print(*(best or (360,600)))
+PY
+}
+notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select, 89 단어
+  restart_library
+  open_drawer || return 1
+  shot 85a_drawer 1
+  dump; if has "독서 노트" contains && has "단어장" contains; then check 85a 0 "drawer rows 독서 노트 · 단어장"
+  else check 85a 1 "drawer rows missing"; fi
+  tap_label "독서 노트" contains || return 1
+  shot 85_notes_hub 3
+  tap_label "인용문" || return 1
+  shot 86_notes_quotes 2
+  dump; if has "모든 색" contains; then check 86 0 "filter row with 모든 색"; else check 86 1 "no 모든 색 filter"; fi
+  local xy; xy=$(first_row_xy)
+  tap_xy "$xy"
+  shot 87_notes_jump 5
+  dump; if has "페이지로" contains; then check 87 0 "the reader at the quote with the return chip"; else check 87 1 "no '페이지로' chip"; fi
+  back; sleep 2 # to the hub
+  dump; xy=$(first_row_xy); set -- $xy
+  longpress "$1" "$2" 900
+  choose "선택" || return 1
+  shot 88_notes_select 2
+  dump; if has "1개 선택" contains; then check 88 0 "'1개 선택' bar"; else check 88 1 "no '1개 선택' bar"; fi
+  back
+  tap_label "단어" || return 1
+  shot 89_notes_words 2
+  dump; if has "다시 찾기"; then check 89 0 "word row with 다시 찾기"; else check 89 1 "no word row (or the empty state, no browser)"; fi
+}
+notes_ink() { # 90: 인용문 색 표시 → 흑백 무늬 on the quotes; then 자동 again
+  open_settings || return 1
+  pick_setting "인용문 색 표시" "흑백 무늬" || return 1
+  fresh_reader sample-utf8.txt text/plain
+  shot 90_highlight_ink 2
+  open_settings && pick_setting "인용문 색 표시" "자동"
+}
+
+# ------------------------------------------------------------------ anchor checks (A §6.6 → 52–57)
+
+footer_toggle() { # 52: footer slots and header changed: the text box stays pixel-identical, no relayout
+  fresh_reader sample-cp949.txt text/plain
+  open_popup || return 1
+  set_slot "아래 가운데" "없음" || return 1 # 10b had set 쪽 번호
+  close_popup
+  rawshot 52a; perf_mark 52a
+  open_popup || return 1
+  set_slot "아래 가운데" "쪽 번호" || return 1
+  set_slot "아래 오른쪽" "시계 · 배터리" || return 1
+  set_slot "위 가운데" "없음" || return 1
+  close_popup
+  shot 52_footer_toggle_same_text 1; rawshot 52b; perf_mark 52b
+  raw_check 52 52a 52b content
+  no_relayout 52 52a 52b
+}
+progress_toggle() { # 53: 진행 막대 off: same text box, no relayout; then on again
+  open_popup || return 1
+  popup_tap "진행 막대" contains || return 1
+  close_popup
+  shot 53_progress_toggle_same_text 1; rawshot 53; perf_mark 53
+  raw_check 53 52b 53 content
+  no_relayout 53 52b 53
+  open_popup && popup_tap "진행 막대" contains; close_popup
+}
+margin_v_exact() { # 54: 상하 여백 +10 keeps the exact first character; then back to "0" (K8)
+  local i
+  perf_mark 54a
+  open_popup || return 1
+  scroll_find "상하 여백 늘리기" || return 1
+  for i in 1 2 3 4 5; do tap_xy "$XY"; sleep 1; done
+  close_popup
+  sleep 1; perf_mark 54b
+  shot 54_margin_v_exact 0
+  perf_check 54 first_is 54a 54b
+  open_popup || return 1
+  scroll_find "상하 여백 줄이기" || return 1
+  for i in 1 2 3 4 5; do tap_xy "$XY"; sleep 1; done
+  close_popup
+}
+font_up_down() { # 55: 글자 크기 +1 then −1 gives back the exact text box
+  rawshot 55a
+  open_popup || return 1
+  popup_tap "글자 크기 늘리기" exact 2 || return 1
+  popup_tap "글자 크기 줄이기" exact 2 || return 1
+  close_popup
+  shot 55_font_up_down 1; rawshot 55b
+  raw_check 55 55a 55b content
+}
+page_break_paragraph() { # 56: 페이지 나눔 = 문단 단위 keeps the first character; the next page; then 줄 단위 again
+  perf_mark 56a
+  open_popup || return 1
+  popup_tap "문단 단위" || return 1
+  close_popup
+  sleep 1; perf_mark 56b
+  perf_check 56 first_is 56a 56b
+  adb shell input keyevent KEYCODE_VOLUME_DOWN
+  shot 56_page_break_paragraph 2; perf_mark 56c
+  log "56: the next page (a paragraph start, checked by eye): $(python3 tools/ci/perf_log.py last 56c)"
+  open_popup && popup_tap "줄 단위"; close_popup
+}
+dialog_no_reflow() { # 57 (H4): the 페이지 이동 dialog leaves the page pixel-identical, no relayout
+  fresh_reader sample-cp949.txt text/plain
+  # Keep chrome visible in both captures; the dialog alone takes and returns focus.
+  show_chrome || return 1
+  rawshot 57_before
+  perf_mark 57_before
+  tap_label "페이지 이동" contains || return 1
+  sleep 2
+  shot 57_dialog_no_reflow 0
+  back; sleep 2
+  rawshot 57_after
+  perf_mark 57_after
+  raw_check 57 57_before 57_after 360 1100
+  no_relayout 57 57_before 57_after
+}
+
+# ------------------------------------------------------------------ W2 page thumbnails (92–93)
+
+page_thumbs() { # guarded: before W2 lands the ⋮ has no 페이지 썸네일; that is logged and the run goes on
+  fresh_reader sample-cp949.txt text/plain
+  show_chrome || return 1
+  tap_label "더보기" || return 1
+  sleep 1; dump
+  if ! has "페이지 썸네일"; then log "92: no '페이지 썸네일' in the ⋮ menu (W2 not merged yet), skipped"; back; hide_chrome; return 0; fi
+  tap_label "페이지 썸네일" || return 1
+  shot 92_thumbs 3
+  adb shell input swipe 600 900 100 900 300
+  shot 93_thumbs_next 2
+  back
+}
+
+# ------------------------------------------------------------------ U1 helpers (R §7)
+
+top_is() { # top_is <Activity> <step>: the resumed activity, from dumpsys
+  local t; t=$(adb shell dumpsys activity activities | grep -m1 -E "topResumedActivity=|mResumedActivity" | tr -d '\r')
+  case "$t" in *"$1"*) check "$2" 0 "$1 on top";; *) check "$2" 1 "expected $1, got: $t";; esac
+}
+same() { # same <before> <after>: same_page.py as a CHECK line (SKIP counts as FAIL)
+  local r verdict
+  r=$(python3 tools/ci/same_page.py "shots/$1.png" "shots/$2.png" "$2")
+  verdict=${r%% *}; r=${r#* }; r=${r#*: }
+  if [ "$verdict" = PASS ]; then check "$2" 0 "same page as $1 ($r)"; else check "$2" 1 "vs $1: $verdict $r"; fi
+}
+overview_back() { # recents, then the centred (most recent) card
+  adb shell input keyevent KEYCODE_APP_SWITCH; sleep 3
+  adb shell input tap 360 620; sleep 6
+}
+
+# ------------------------------------------------------------------ restore offer (S §3.9 → 95–98), LAST: pm clear
+
+restore_offer() {
+  adb shell mkdir -p /sdcard/Download/ReaderaPlus/backup
+  adb shell 'rm -f /sdcard/Download/ReaderaPlus/backup/readeraplus-auto-*.json' # this run's own: the crafted one is the offer
+  adb push "samples/$RESTORE_BACKUP" /sdcard/Download/ReaderaPlus/backup/ >/dev/null
+  adb shell pm clear $PKG
+  adb shell appops set --uid $PKG MANAGE_EXTERNAL_STORAGE allow
+  adb shell am start -W -n $PKG/.ui.library.LibraryActivity | tee -a shots/steps.txt
+  shot 95_restore_offer 8
+  dump; if has "복원"; then check 95 0 "restore offer shown"; else check 95 1 "no restore offer (복원)"; return 1; fi
+  tap_label "복원" || return 1
+  shot 96_restored 8
+  dump; if has "읽고 있는 책" contains; then check 96 0 "the book is under 읽고 있는 책"; else check 96 1 "no 읽고 있는 책"; fi
+  tap_label "샘플 EPUB" contains || return 1
+  sleep 5
+  open_popup || return 1
+  scroll_find "좌우 여백" contains || return 1
+  shot 97_restored_margins 1
+  log "97: $(python3 - <<'PY'
+import xml.etree.ElementTree as ET
+t=[n.get('text') or n.get('content-desc') for n in ET.parse('/tmp/ui.xml').getroot().iter('node')]
+print('margin rows: ' + ' | '.join(x for x in t if x and ('여백' in x or x in ('0','0dp')))[:200])
+PY
+)"
+  close_popup
+  open_settings || return 1
+  scroll_find "백업 및 복원" || return 1
+  tap_xy "$XY"; sleep 3
+  scroll_find "자동 백업" || return 1
+  align "자동 백업" 260
+  shot 98_backup_page 2
+  check 98 0 "자동 백업 section found"
+}
+
+export PKG RESTORE_BACKUP
+# shellcheck disable=SC2046 # one word per function name
 export -f $(compgen -A function)
 
 adb wait-for-device
@@ -383,28 +865,26 @@ log "library"
 adb shell am start -W -n $PKG/.ui.library.LibraryActivity | tee -a shots/steps.txt
 shot 01_library 10
 step 41_library_more library_more_guard
-tap_label "메뉴" contains && shot 02_drawer && back
+if tap_label "메뉴" contains; then
+  shot 02_drawer
+  if has "독서 노트" contains && has "단어장" contains; then check 02 0 "drawer rows 독서 노트 · 단어장"; else check 02 1 "독서 노트 / 단어장 rows missing"; fi
+  back
+fi
 
 log "reader txt"
 adb shell am start -W -a android.intent.action.VIEW -t text/plain -d file:///sdcard/Download/sample-cp949.txt -n $PKG/.reader.ReaderActivity | tee -a shots/steps.txt
 shot 10_txt_page1 4
 adb shell input keyevent KEYCODE_VOLUME_DOWN; shot 11_txt_page2 2
-adb shell input tap 600 900; shot 12_txt_tap_right 2
-adb shell input tap 360 720; shot 13_txt_chrome 2
-dump; cp /tmp/ui.xml shots/ui_reader_chrome.xml 2>/dev/null
-if tap_label "읽기 설정" contains; then
-  shot 14_reading_settings 2
-  step 14b_settings_more settings_more
-  back
-fi
+adb shell input tap 600 900; shot 12_txt_tap_right 2; rawshot 12b
+step 13_chrome_pin chrome_pin
+step 14_reading_settings reading_settings
+step 14d_volume_mode volume_mode
 step 15_toc toc_shots
-adb shell input tap 360 720; sleep 1
+show_chrome
 if tap_label "검색" contains; then sleep 1; adb shell input text "English" ; adb shell input keyevent KEYCODE_ENTER; shot 16_search 4; back; fi
-sleep 1; adb shell input swipe 300 700 300 700 900; shot 17_selection 2; back
+sleep 1; step 17_selection selection_shot
 
 log "reader txt: go-to pad, long-press on blank space, end of book"
-step 14d_volume_mode volume_mode
-step 57_dialog_no_reflow dialog_no_reflow
 step 15c_goto_numpad goto_numpad
 step 17b_18_end_of_book end_of_book
 fresh_reader sample-cp949.txt text/plain # the TXT book in front again, as the EPUB part below always found it
@@ -415,39 +895,62 @@ shot 20_epub_page1 5
 for i in 1 2 3; do adb shell input keyevent KEYCODE_PAGE_DOWN; sleep 1; done; shot 21_epub_page4 1
 for i in 1 2 3 4 5; do adb shell input keyevent KEYCODE_PAGE_DOWN; sleep 1; done; shot 22_epub_page9 1
 
+log "scroll mode (S §1.15)"
+step 60_scroll_on scroll_on
+step 61_66_scroll_moves scroll_moves
+step 67_step_release scroll_release
+step 68_69_round_trip scroll_round_trip
+step 69b_back_to_paged scroll_off
+
 log "big txt"
 adb shell am force-stop $PKG
 adb shell am start -W -a android.intent.action.VIEW -t text/plain -d file:///sdcard/Download/big-cp949.txt -n $PKG/.reader.ReaderActivity | tee -a shots/steps.txt
 shot 30_big_txt 3
 shot 31_big_txt_later 15
+perf_mark 31
+adb shell input keyevent KEYCODE_HOME; sleep 1 # onPause saves the position the reopen must come back to
 adb shell am force-stop $PKG
 adb shell am start -W -a android.intent.action.VIEW -t text/plain -d file:///sdcard/Download/big-cp949.txt -n $PKG/.reader.ReaderActivity | tee -a shots/steps.txt
 shot 32_big_txt_reopen 2
+perf_mark 32
+perf_check 32 first_is 31 32
 
 log "library after reading"
 adb shell am start -W -n $PKG/.ui.library.LibraryActivity | tee -a shots/steps.txt
 shot 40_library_after 5
-step 41_library_compact library_compact
-step 42_multiselect library_multiselect
+step 42_library_compact library_compact
+step 43_44_library_views library_views
+step 45_46_library_paged library_paged
+step 46c_multiselect library_multiselect
 
 log "settings (via the library's ⋮ menu; SettingsActivity is not exported)"
 restart_library
 adb shell input tap 664 104; sleep 1; tap_label "설정" && shot 50_settings 3
 back
-step 51_stats stats_page
-step 52_wifi wifi_page
-step 53_eink_settings eink_settings
+step 50b_stats stats_page
+step 50c_wifi wifi_page
+step 50d_eink_settings eink_settings
+step 51_status_page status_page
+
+log "notes (N §17)"
+step 80_82_quotes notes_quotes
+step 83_toc_quotes notes_toc
+step 84_lookup notes_lookup
+step 85_89_notes_hub notes_hub
+step 90_highlight_ink notes_ink
+
+log "anchored layout (A §6.6)"
+step 52_footer_toggle footer_toggle
+step 53_progress_toggle progress_toggle
+step 54_margin_v_exact margin_v_exact
+step 55_font_up_down font_up_down
+step 56_page_break_paragraph page_break_paragraph
+step 57_dialog_no_reflow dialog_no_reflow
+
+log "page thumbnails (W2)"
+step 92_93_thumbs page_thumbs
 
 # ---- U1: back from recents must show the same book and page ------------------------------------------------------
-top_is() { # top_is <Activity> <step>: the resumed activity, from dumpsys
-  local t; t=$(adb shell dumpsys activity activities | grep -m1 -E "topResumedActivity=|mResumedActivity" | tr -d '\r')
-  case "$t" in *"$1"*) log "PASS $2: $1 on top";; *) log "FAIL $2: expected $1, got: $t";; esac
-}
-same() { python3 tools/ci/same_page.py "shots/$1.png" "shots/$2.png" "$2" | tee -a shots/steps.txt; }
-overview_back() { # recents, then the centred (most recent) card
-  adb shell input keyevent KEYCODE_APP_SWITCH; sleep 3
-  adb shell input tap 360 620; sleep 6
-}
 launcher_intent="-a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $PKG/.ui.library.LibraryActivity"
 
 log "U1 setup: a launcher-rooted task, a book opened from the library, page 5"
@@ -502,8 +1005,14 @@ adb shell input keyevent KEYCODE_HOME; sleep 1; adb shell am force-stop $PKG
 adb shell am start -W -f 0x10100000 $launcher_intent | tee -a shots/steps.txt
 sleep 5; shot 78_closed_then_recents 0; top_is LibraryActivity 78_closed_then_recents
 
+log "restore offer (S §3.9), last: pm clear wipes everything"
+STEPS_UNTIL=$((${STEPS_UNTIL:-3000} + 600)) step 95_98_restore restore_offer
+
 adb logcat -d > shots/logcat.txt
 adb logcat -d -b crash > shots/crash.txt
 adb logcat -d -s ReaderaPlus:* RAPerf:* > shots/perf.txt
+if [ -s shots/crash.txt ] && grep -q "$PKG" shots/crash.txt; then check crash 1 "crash buffer names $PKG (shots/crash.txt)"
+elif grep -q "draw failed" shots/logcat.txt; then check crash 1 "'draw failed' in logcat"
+else check crash 0 "no crash, no 'draw failed'"; fi
 log "done"
 exit 0

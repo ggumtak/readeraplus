@@ -135,3 +135,43 @@ print("sample-utf8.txt", write_txt("sample-utf8.txt", 3, 20, "utf-8"))
 print("big-cp949.txt", write_txt("big-cp949.txt", 900, 110, "cp949"))
 write_epub("sample.epub")
 print("sample.epub", os.path.getsize(os.path.join(OUT, "sample.epub")))
+
+
+def restore_backup(epub_size):
+    """The crafted auto backup of S §3.9 (CI shots 95–98): one book (sample.epub) with a position and a bookmark, and
+    settings saved by an R2 build: readMode PAGED and the legacy side margins 18/16 without the r.marginBase marker."""
+    created = 1790684040000  # 2026-09-29 21:14 KST, the time in the file name
+    return {
+        "format": "readeraplus-backup",
+        "version": 1,
+        "createdAt": created,
+        "settings": {
+            "reader": {"r.marginLeftDp": 18, "r.marginRightDp": 18, "r.marginTopDp": 16, "r.marginBottomDp": 16},
+            "app": {"a.readMode": "PAGED"},
+            "other": {},
+            "otherTypes": {},
+        },
+        "collections": [],
+        "books": [{
+            "path": "/sdcard/Download/sample.epub",
+            "fileName": "sample.epub",
+            "size": epub_size,
+            "format": "EPUB",
+            "title": "리더플러스 샘플 EPUB",
+            "posSection": 2,
+            "posOffset": 0,
+            "progress": 0.3,
+            "lastReadAt": created - 60_000,
+            "addedAt": created - 86_400_000,
+            "readingSeconds": 600,
+            "bookmarks": [{"section": 2, "offset": 0, "snippet": "제2장 샘플 챕터", "note": "", "createdAt": created - 120_000}],
+        }],
+    }
+
+
+RESTORE_NAME = "readeraplus-auto-0badc0de-20260929-2114.json"
+if __name__ == "__main__":
+    import json
+    with open(os.path.join(OUT, RESTORE_NAME), "w", encoding="utf-8") as f:
+        json.dump(restore_backup(os.path.getsize(os.path.join(OUT, "sample.epub"))), f, ensure_ascii=False)
+    print(RESTORE_NAME)
