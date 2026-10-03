@@ -1,0 +1,38 @@
+{
+  "lane": "SET",
+  "files": [
+    "app/src/main/java/com/ggumtak/readeraplus/ui/settings/AboutPage.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/ui/settings/BackupPage.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/ui/settings/EinkToggle.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/ui/settings/LookupPage.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/ui/settings/MainPage.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/ui/settings/PageTurningPage.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/ui/settings/SettingsLogic.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/ui/settings/SettingsPage.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/ui/settings/SettingsFormatTest.kt",
+    "docs/next/SET_STATUS.md",
+    "docs/next/lanes/SET.result.json"
+  ],
+  "summary": "Settings pages for R3 per PLAN §1.6.3/K12: PageTurningPage (넘기는 방식 first with probeAsync and 스크롤 움직임, SCROLL swipe summaries and disabled 세로 스와이프, 좌우/상하 여백 steppers with live region and shared note, 페이지 나눔 chooser, new 상태 표시줄 section with 6 slot rows, 진행 막대, size row and A §2.7 fit note, e-ink last); MainPage (서재 보기 chooser texts, 목록 넘기기, brightness rows with permission flow and verdict reset, 인용문 색 표시 with swatch strip, K12 reset keeping autoBackup/recordLookups/brightnessDevice/listPaging); BackupPage 자동 백업 section + privacy/merge notes; AboutPage 조명 진단 with 30 s change watch; LookupPage 단어장; polish 12 (no section hairline, 24 dp GRAY chevron/▾, filled off knob, disabled rows unavailable). Pure texts in R3Rows/SettingsReset with JVM tests.",
+  "checks": "module typecheck --own ui/settings green; module unittest OK (87 tests); full tools/typecheck.sh green; full tools/unittest.sh OK (1204 tests). Two reviewer passes; findings fixed.",
+  "contractRequests": [
+    "DA-C AutoBackup.findCandidates: S §3.8 [Δ] wants the BackupPage list to include this install's own auto files; the frozen KDoc says other installs + manual exports only. Either include own files (e.g. a flag) or add a variant; BackupPage calls findCandidates(context) unchanged.",
+    "DA-C AutoBackup: a count of the files deleteFiles(others) would delete (for the confirm's {n}); BackupPage counts them itself today (directory listing with all-files access, MediaStore Downloads RELATIVE_PATH query otherwise).",
+    "EX-S QuoteSwatch: MainPage builds QuoteSwatch(ctx, style, 22, ink) with 22×14 dp LayoutParams for the static strip; the view should draw to its measured size (not a square sizeDp)."
+  ],
+  "rcaNotes": [
+    "No ReaderActivity call is needed for the settings pages; they save through Settings.saveApp/saveReader, and the reader picks up a.readMode, a.scrollStyle, a.highlightLook, a.brightnessDevice via viewPart()/onAppSettingsSaved (C21) and r.* margins/pageBreak/slots/progressBar via the normal reader-settings relayout (anchored, A §5).",
+    "MainPage '기기 밝기 직접 조절' only stores AppSettings.brightnessDevice (after canWrite is granted); it does not call DeviceLight.restore() while turning it off — LightController/DeviceLight must restore/apply on the reader's next onResume according to brightnessDevice/brightnessRestore.",
+    "MainPage '밝기 방식 다시 확인' calls DeviceLight.setVerdict(appCtx, VERDICT_UNKNOWN) on IO; the reader must re-read verdict(ctx) on onResume (LightController.onResume) rather than caching it for the process.",
+    "Choosing 스크롤 in settings starts DeviceClass.probeAsync when cached() is null, so ScrollReader's AUTO resolves from the cache on the next open."
+  ],
+  "deviations": [
+    "스크롤 움직임 labels use the frozen ScrollStyle enum ('손가락을 따라 이동', '손을 떼면 이동') instead of S §1.2's '부드럽게 (휴대폰)'; AUTO reads '자동 (이 기기: e-ink → 손을 떼면 이동 | 휴대폰 → 손가락을 따라 이동)'.",
+    "A null device class (before the probe) resolves like a phone in every '자동 (이 기기: …)' summary, matching QuoteLook, ListPaging.paged and ScrollReader.",
+    "The 일반 section keeps the existing '모든 파일 접근 권한' row (not in the §1.6.3 list) so the grant stays reachable from settings.",
+    "'밝기 방식 다시 확인' uses UI_SPEC §4.6's summary, not brightness.md §5.6's variant.",
+    "'목록 넘기기' shows the value and the N §11 summary on one line ('자동 (이 기기: 쪽 단위) · 서재와 독서 노트를 한 화면씩 넘깁니다 (e-ink 권장)') since a valueRow has one summary line.",
+    "EinkToggle off knob radius stays track/2 − 4 dp (same as the kit InkToggle) rather than − 3 dp."
+  ],
+  "complete": true
+}

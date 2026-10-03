@@ -39,6 +39,8 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
     private var autoStatus: TextView? = null
     /** The candidate list while open (dismissed with the page). */
     private var listDialog: android.app.Dialog? = null
+    /** Left the stack: IO results that arrive later show no dialog. */
+    private var destroyed = false
 
     override fun build(): View {
         val body = ctx.pageBody()
@@ -69,6 +71,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
     }
 
     override fun onDestroy() {
+        destroyed = true
         runCatching { listDialog?.dismiss() }
         listDialog = null
     }
@@ -140,6 +143,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         activity.scope.launch {
             val cands = withContext(Dispatchers.IO) { runCatching { AutoBackup.findCandidates(appCtx) }.getOrDefault(emptyList()) }
             busy = false
+            if (destroyed) return@launch
             if (cands.isEmpty()) {
                 showAutoStatus(
                     if (StorageAccess.granted(ctx)) "찾은 백업 파일이 없습니다" else "찾은 백업 파일이 없습니다. '모든 파일 접근'을 허용하면 이전 설치의 파일도 찾습니다",
@@ -162,6 +166,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
             "현재 서재의 읽기 기록 · 북마크 · 인용문과 설정을 백업 파일의 내용으로 덮어씁니다. 계속할까요?",
             ok = "복원",
         ) {
+            if (busy) return@confirm
             busy = true
             statusText.text = "복원하는 중…"
             val appCtx = activity.applicationContext
@@ -185,11 +190,13 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         val others = canDeleteOthers()
         activity.scope.launch {
             val n = withContext(Dispatchers.IO) { runCatching { countAutoFiles(appCtx, others) }.getOrDefault(0) }
+            if (destroyed) return@launch
             if (n <= 0) {
                 showAutoStatus("지울 자동 백업 파일이 없습니다")
                 return@launch
             }
             ctx.confirm("자동 백업 파일 지우기", R3Rows.deleteAutoFiles(n, others), ok = "지우기") {
+                if (busy) return@confirm
                 busy = true
                 activity.scope.launch {
                     val deleted = withContext(Dispatchers.IO) { runCatching { AutoBackup.deleteFiles(appCtx, others) }.getOrDefault(0) }

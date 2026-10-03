@@ -49,6 +49,8 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
     /** The change watch while running: its observer (registered after the snapshot) and its 30 s stop. */
     private var watchObserver: ContentObserver? = null
     private var watchStop: Runnable? = null
+    /** Posts and cancels the watch's 30 s stop (the same handler must do both). */
+    private val main = Handler(Looper.getMainLooper())
 
     override fun build(): View {
         val body = ctx.pageBody()
@@ -131,10 +133,9 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
      * a change arrives (no timer ticks on e-ink).
      */
     private fun startWatch() {
-        if (watchObserver != null) return
+        if (watchObserver != null || watchStop != null) return
         val resolver = ctx.contentResolver
         val appCtx = activity.applicationContext
-        val main = Handler(Looper.getMainLooper())
         val before = HashMap<String, String?>()
         val after = LinkedHashMap<String, String?>()
         watchButton?.text = "감지 중 (30초)…"
@@ -172,7 +173,7 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
     }
 
     private fun stopWatch() {
-        watchStop?.let { Handler(Looper.getMainLooper()).removeCallbacks(it) }
+        watchStop?.let(main::removeCallbacks)
         watchStop = null
         watchObserver?.let { runCatching { ctx.contentResolver.unregisterContentObserver(it) } }
         watchObserver = null

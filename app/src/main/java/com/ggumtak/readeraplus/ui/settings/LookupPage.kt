@@ -27,6 +27,12 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
     private lateinit var appsBox: LinearLayout
     private var recordRow: View? = null
     private var clearing = false
+    /** Left the stack: a count that arrives later shows no dialog. */
+    private var destroyed = false
+
+    override fun onDestroy() {
+        destroyed = true
+    }
 
     override fun build(): View {
         val body = ctx.pageBody()
@@ -71,11 +77,13 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         if (clearing) return
         activity.scope.launch {
             val n = withContext(Dispatchers.IO) { runCatching { Lookups.count() }.getOrDefault(0) }
+            if (destroyed) return@launch
             if (n <= 0) {
                 ctx.toast("단어장이 비어 있습니다")
                 return@launch
             }
             ctx.confirm("단어장 비우기", R3Rows.clearLookups(n), ok = "비우기") {
+                if (clearing) return@confirm
                 clearing = true
                 activity.scope.launch {
                     val ok = withContext(Dispatchers.IO) { runCatching { Lookups.clearAll() }.isSuccess }
