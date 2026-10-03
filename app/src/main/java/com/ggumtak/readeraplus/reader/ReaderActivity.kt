@@ -769,9 +769,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 )
                 showPage(curSection, l, curPageIdx, Nav.RELAYOUT, anchorOffset = o)
             } else {
-                // The top page holds the anchor line: its layout is [l].
-                val off = a.offset.coerceIn(0, l.content.length)
-                showPage(curSection, l, AnchorMath.pageFor(l, off), Nav.RELAYOUT, anchorOffset = off)
+                // The top page holds the anchor line after every settle: its layout is normally [l]. Should the
+                // anchor's section differ and not be cached, the top page's start is shown instead.
+                val la = if (a.section == curSection) l else session?.peek(a.section)
+                if (la != null) {
+                    val off = a.offset.coerceIn(0, la.content.length)
+                    showPage(a.section, la, AnchorMath.pageFor(la, off), Nav.RELAYOUT, anchorOffset = off)
+                } else {
+                    showPage(curSection, l, curPageIdx, Nav.RELAYOUT)
+                }
             }
         } finally {
             switchingMode = false
@@ -1877,7 +1883,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (session == null) return
         scroll?.let { sc ->
             // TTS: never yank the text from under a moving finger, and a sentence already wholly on screen (e.g.
-            // below a section seam) causes no motion.
+            // below a section seam) causes no motion. S also moves the focus to pos.section until the next settle;
+            // ScrollReader has no public call for that yet (contract request: focusSection(section)).
             if (!remember && (sc.userMoving() || (ttsSpeaking() && sc.lineWhollyVisible(pos.section, pos.offset)))) return
         }
         if (!inFront) turnedInBackground = true
@@ -1927,7 +1934,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /** Jump to a page of a section (seek bar, 페이지 이동): one exact draw, laid out first when needed. */
     override fun goToPage(section: Int, pageIndex: Int, remember: Boolean) {
         if (session == null) return
-        val here = section == curSection && pageIndex == curPageIdx && !layoutStale()
+        // Scroll: the text may sit mid-page, so the jump (to that page's start) always counts as one.
+        val here = scroll == null && section == curSection && pageIndex == curPageIdx && !layoutStale()
         if (remember && curLayout != null && !here) pushReturn(currentPosition())
         jumpTo(section, 0, pageIndex.coerceAtLeast(0))
     }
@@ -2040,14 +2048,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun buildDecor(): PageDecor {
         val s = session ?: return PageDecor()
         val l = curLayout ?: return PageDecor()
-        // Scroll: the strips carry their own highlights; the ribbon shows a bookmark anywhere on screen.
-        // R3 merge(RCA-U): the status inputs of the top page (anchor line page, bar, chapterStartsHere; U §5.6).
-        scroll?.let { return PageDecor(emptyList(), visibleBookmarks(it).isNotEmpty()) }
         val p = l.pages.getOrNull(curPageIdx) ?: return PageDecor()
         val st = s.settings
-        val hl = ArrayList<Highlight>()
-        quotesBySection[curSection]?.let { addOverlapping(hl, it, p) }
-        for ((sec, list) in ownerHighlights.values) if (sec == curSection) addOverlapping(hl, list, p)
+        // Scroll: the strips carry their own highlights (isBookmarked: a bookmark anywhere on screen). Header,
+        // footer and status use the top page (cur*) exactly as in paged mode, so one PageDecor serves both modes.
+        val hl: List<Highlight> = if (scroll != null) emptyList() else ArrayList<Highlight>().also { list ->
+            quotesBySection[curSection]?.let { addOverlapping(list, it, p) }
+            for ((sec, own) in ownerHighlights.values) if (sec == curSection) addOverlapping(list, own, p)
+        }
         return PageDecor(hl, isBookmarked(l, p))
     }
 
@@ -2351,7 +2359,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 val (vw, vh) = pageTargetSize()
                 s.setViewport(vw, vh, AnchorSpec(sec, target.offset, needle))
                 val l = s.layout(sec)
-                if (l != null) preloadImages(s, l, l.pageForOffset(target.offset.coerceIn(0, l.content.length)))
+                if (l != null) {
+                    val at = if (l.anchorBreak >= 0) l.anchorBreak else target.offset.coerceIn(0, l.content.length)
+                    preloadImages(s, l, AnchorMath.pageFor(l, at))
+                }
                 if (session !== old) return@launch
                 if (l == null) {
                     // Keep reading the old parse rather than showing nothing.
@@ -3295,7 +3306,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val panel = endPanel ?: return
         if (!panel.isShowing) return
         panel.hide()
-        trackPage(currentPage)
+        // The real page on top (scroll: not the virtual page), so `pages` means the same in both modes.
+        trackPage(curLayout?.pages?.getOrNull(curPageIdx))
     }
 
     /** Blocking (IO): stores [delta], marks [b] finished when [mark], finds its next part; never throws. */
@@ -3369,7 +3381,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
         override fun onEndRestart() {
             endPanel?.hide()
-            goTo(DocPosition.START, remember = false)
+            jumpTo(0, 0, -1)
         }
 
         override fun onEndReview() {
