@@ -61,8 +61,15 @@ class AfterTest(unittest.TestCase):
 class FirstIsTest(unittest.TestCase):
     def test_page_start_equals_the_anchor(self):
         a = [line(1, "OPEN", 0, 0, 0), line(2, "TURN", 2, 4000, 4010)]
-        b = a + [line(3, "RELAYOUT", 2, 3990, 4010), line(4, "RELAYOUT", 2, 4010, 4010)]
+        b = a + [line(3, "RELAYOUT", 2, 4010, 4010), line(4, "RELAYOUT", 2, 4010, 4010)]
         self.assertEqual(perf_log.first_is(a, b)[0], "PASS")
+
+    def test_every_line_between_counts(self):
+        a = [line(2, "TURN", 2, 4000, 4010)]
+        b = a + [line(3, "RELAYOUT", 2, 3990, 4010), line(4, "RELAYOUT", 2, 4010, 4010)]
+        result, reason = perf_log.first_is(a, b)
+        self.assertEqual(result, "FAIL")
+        self.assertIn("o:3990", reason)
 
     def test_other_start_fails(self):
         a = [line(2, "TURN", 2, 4000, 4010)]
@@ -99,6 +106,11 @@ class NoRelayoutTest(unittest.TestCase):
     def test_nothing_between_passes(self):
         a = [line(1, "OPEN", 0, 0, 0)]
         self.assertEqual(perf_log.no_relayout(a, list(a))[0], "PASS")
+
+    def test_logging_off_fails(self):
+        result, reason = perf_log.no_relayout([OPEN_LINE], [OPEN_LINE])
+        self.assertEqual(result, "FAIL")
+        self.assertIn("logging off", reason)
 
     def test_a_relayout_between_fails(self):
         a = [line(1, "OPEN", 0, 0, 0)]

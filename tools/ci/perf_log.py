@@ -6,9 +6,9 @@ show line reads `RAPerf show <OPEN|TURN|JUMP|RELAYOUT> s:<section> o:<page start
 `PageView` exposes no text to uiautomator, so these lines are the only way to tell which text a page starts with.
 
 Usage (prints "PASS <reason>" or "FAIL <reason>"; never exits non-zero, the CI run is best effort):
-  perf_log.py first_is A B      the page start o: of the last show line logged after mark A, up to mark B, equals
-                                the anchor a: (same section) of the last show line at mark A
-  perf_log.py no_relayout A B   no `show RELAYOUT` line lies between marks A and B
+  perf_log.py first_is A B      every show line logged after mark A, up to mark B (at least one), starts its page
+                                (o:, same section) at the anchor a: of the last show line at mark A
+  perf_log.py no_relayout A B   no `show RELAYOUT` line lies between marks A and B (FAIL when B has no show line)
   perf_log.py same_start A B    the last show lines at A and at B start at the same s:/o:
   perf_log.py last A            prints the last show line at mark A ("KIND s:S o:O a:A g:G")
   perf_log.py pv_bounds FILE    "top bottom" of the PageView in screen rows, from `dumpsys activity top` saved in FILE
@@ -74,12 +74,16 @@ def first_is(a_lines, b_lines):
     new = shows(after(a_lines, b_lines))
     if not new:
         return "FAIL", "no show line between the marks"
-    got = new[-1]
-    ok = got.section == anchor.section and got.start == anchor.anchor
-    return ("PASS" if ok else "FAIL"), f"page s:{got.section} o:{got.start} ({got.kind}) vs anchor s:{anchor.section} a:{anchor.anchor}"
+    # Every page shown between the marks (a stepper's several relayouts included) starts at the anchor.
+    bad = [s for s in new if (s.section, s.start) != (anchor.section, anchor.anchor)]
+    got = bad[0] if bad else new[-1]
+    return ("FAIL" if bad else "PASS"), (f"page s:{got.section} o:{got.start} ({got.kind}, {len(new)} show lines) "
+                                         f"vs anchor s:{anchor.section} a:{anchor.anchor}")
 
 
 def no_relayout(a_lines, b_lines):
+    if not shows(b_lines):
+        return "FAIL", "no RAPerf show lines at all (DEBUG logging off?)"
     new = shows(after(a_lines, b_lines))
     relayouts = [s for s in new if s.kind == "RELAYOUT"]
     if relayouts:
