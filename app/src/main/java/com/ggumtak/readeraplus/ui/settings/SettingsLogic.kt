@@ -517,7 +517,7 @@ object SettingsReset {
         "TXT 정리 설정 · 스캔 폴더 · 지정한 키 · 서재 정렬과 보기 · 목록 넘기기 · 자동 백업 · 찾아본 단어 기록 · " +
         "기기 밝기 직접 조절은 그대로 둡니다."
 
-    const val SUMMARY = "읽기 · 넘김 · 화면 설정을 기본값으로 (TXT 정리 설정 · 스캔 폴더 · 키 지정 · 서재 · 백업 · 단어장 설정은 유지)"
+    const val SUMMARY = "읽기 · 넘김 · 화면 설정을 기본값으로 (TXT 정리 설정 · 스캔 폴더 · 키 지정 · 서재 · 백업 · 단어장 · 기기 밝기 설정은 유지)"
 
     fun app(old: AppSettings): AppSettings = AppSettings().copy(
         scanFolders = old.scanFolders,

@@ -181,7 +181,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
      */
     private fun onDeviceSwitch(on: Boolean) {
         val app = Settings.app
-        if (on && canWrite == false) {
+        if (on && canWrite != true) {
             deviceRow?.setToggleChecked(false)
             askPermission()
             return
@@ -231,7 +231,10 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             row.setSummary(R3Rows.brightnessDevice(app.brightnessDevice, app.brightnessRestore, canWrite != false, none))
             row.setToggleChecked(app.brightnessDevice)
         }
-        restoreRow?.setRowEnabled(app.brightnessDevice && !none)
+        restoreRow?.let { row ->
+            row.setRowEnabled(app.brightnessDevice && !none)
+            row.setSummary(if (app.brightnessDevice) R3Rows.BRIGHTNESS_RESTORE else R3Rows.BRIGHTNESS_RESTORE_OFF)
+        }
     }
 
     /** Dialog A (brightness.md §5.3), then the system's "시스템 설정 수정" page for this app. */
