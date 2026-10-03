@@ -43,7 +43,7 @@ object LayoutKeys {
 
     /** Hash of `LayoutGoldenTest`'s layouts at [ALGO_VERSION]; see there. */
     const val GOLDEN_HASH = "071717a86d158ac8"
-    const val GOLDEN_HASH_PARAGRAPH = "TBD"
+    const val GOLDEN_HASH_PARAGRAPH = "c9982a735d4822a9"
     private val DEFAULTS = ReaderSettings()
     /** Margin used when the "페이지 여백" switch is off. */
     const val TINY_MARGIN_DP = 4

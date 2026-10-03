@@ -12,6 +12,8 @@
 - H1 Actions #17: APK 빌드 성공, 최근 앱 시나리오 전부 PASS (본문 차이 0%).
 - H2·H3·H4 구현 및 JVM 검사 완료. `H234_STATUS.md`에 결과를 기록한다.
 - Phase 0 계약 완료: 타입체크 성공, JVM 1,120개 통과. `PHASE0_STATUS.md`, `../R3_INTERFACES.md` 참고.
+- E1 엔진 완료(2026-10-03): 타입체크 성공, JVM 1,139개 통과. LINE 출력 유지, PARAGRAPH golden 확정,
+  anchor 배치·연속 본문 간격 검사 통과. `E1_STATUS.md` 참고. 다음 레인은 E2다.
 - 다음 작업은 W1 레인 → 통합 → W2 → CI·성능·리뷰다.
 
 ## 지금 상태

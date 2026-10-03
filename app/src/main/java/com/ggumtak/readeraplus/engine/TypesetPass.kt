@@ -138,7 +138,7 @@ internal class TypesetPass(
     private val widowOrphan: Boolean = cfg.widowOrphanControl
     private val imageFraction: Float =
         cfg.maxImageHeightFraction.let { if (it.isFinite() && it > 0f) minOf(it, 1f) else 1f }
-    /** R3 stub (owner: E1). U4 PARAGRAPH mode: a block that fits on one page is never split. */
+    /** U4 PARAGRAPH mode: a block that fits on one page is never split. */
     private val keepParas: Boolean = cfg.pageBreak == PageBreakMode.PARAGRAPH
     /** PARAGRAPH mode: height of the block being staged (its lines, no space-before) and whether it fits a page. */
     private var blockH = 0f
@@ -184,6 +184,7 @@ internal class TypesetPass(
     // Pagination state.
     private var n = 0 // committed items on the current page; the staged item lives at index n
     private var y = 0f
+    private var pageLead = 0f
     private var pageStart = 0
 
     /** Number of pages produced. */
@@ -406,6 +407,21 @@ internal class TypesetPass(
         val ls = buf.lnStart
         val le = buf.lnEnd
         val lw = buf.lnWidth
+        if (keepParas && nl > 1) {
+            // PARAGRAPH mode: the block's own height (line boxes only; its space-before is swallowed at a page top).
+            val mc = metricCursor
+            var h = 0f
+            for (j in 0 until nl) {
+                lineBox(ls[j], le[j])
+                h += mLineH
+            }
+            metricCursor = mc
+            blockH = h
+            blockFits = h <= pageH + EPS
+        } else {
+            blockH = 0f
+            blockFits = false
+        }
         for (j in 0 until nl) {
             val s = ls[j]
             val e = le[j]
@@ -772,13 +788,29 @@ internal class TypesetPass(
         b.pImgW[k] = 0f
     }
 
+    /** Space a page top swallowed; continuous scroll stitches it back between real line bodies. */
+    private fun topGap(j: Int): Float = buf.pSb[j] +
+        if ((buf.pFlags[j] and F_PBB) != 0 && pageCount > 0) PageInfo.BREAK_GAP_EM * em else 0f
+
     /** Places the staged item (index n) on the current page, breaking pages as needed. */
     private fun commit() {
+        val a = anchorLeft
+        if (a >= 0 && (buf.pStart[n] >= a || buf.pEnd[n] > a)) {
+            // U6: this item holds (or is the first after) the anchor: it opens a page (a blank one is dropped there).
+            anchorLeft = -1
+            place(anchored = true)
+            anchorPage = pageCount
+        } else {
+            place(anchored = false)
+        }
+    }
+
+    private fun place(anchored: Boolean) {
         val b = buf
-        if (b.pKind[n] == K_EMPTY && n == 0) return // an empty paragraph at the top of a page is dropped
+        if (b.pKind[n] == K_EMPTY && n == 0) { pageLead += topGap(0) + b.pH[0]; return }
         if ((b.pFlags[n] and F_PBB) != 0 && n > 0) {
             emitPage(n, b.pStart[n], true)
-            if (b.pKind[0] == K_EMPTY) return
+            if (b.pKind[0] == K_EMPTY) { pageLead += topGap(0) + b.pH[0]; return }
         }
         var s = n
         var sb = if (s > 0) b.pSb[s] else 0f
@@ -786,15 +818,25 @@ internal class TypesetPass(
             val cut = decideCut(s)
             emitPage(cut, b.pStart[cut], true)
             s = n
-            if (s == 0 && b.pKind[0] == K_EMPTY) return
+            if (s == 0 && b.pKind[0] == K_EMPTY) { pageLead += topGap(0) + b.pH[0]; return }
             sb = if (s > 0) b.pSb[s] else 0f
             if (s > 0 && y + sb + b.pH[s] > pageH + EPS) {
                 emitPage(s, b.pStart[s], true)
                 s = 0
-                if (b.pKind[0] == K_EMPTY) return
+                if (b.pKind[0] == K_EMPTY) { pageLead += topGap(0) + b.pH[0]; return }
                 sb = 0f
             }
         }
+        if (anchored && s > 0) {
+            // U6: the un-anchored pass would put the anchor's item after other items: end the page before it (the
+            // page may be short). Everything so far is exactly what the un-anchored pass does.
+            anchorShifted = true
+            emitPage(s, b.pStart[s], true)
+            s = 0
+            if (b.pKind[0] == K_EMPTY) { pageLead += topGap(0) + b.pH[0]; return }
+            sb = 0f
+        }
+        if (s == 0) pageLead += topGap(0)
         val top = y + sb
         b.pTop[s] = top
         y = top + b.pH[s]
@@ -806,22 +848,36 @@ internal class TypesetPass(
         val b = buf
         var cut = k
         val kind = b.pKind[k]
-        if (kind == K_TEXT && (b.pFlags[k] and F_HEADING) != 0 && b.pLine[k] > 0) {
-            // Don't split a heading: move all of its lines if it started on this page after other content.
+        // U4 PARAGRAPH: a block that fits on one page never splits. When one of its lines overflows, the whole block
+        // goes to the next page (cut before its first line when that line is on this page after other content).
+        var whole = false
+        if (keepParas && blockFits && kind == K_TEXT) {
             val p = k - b.pLine[k]
-            if (p > 0 && b.pBlock[p] == b.pBlock[k] && b.pLine[p] == 0 && movable(p)) cut = p
-        } else if (widowOrphan && kind == K_TEXT && (b.pFlags[k] and F_WO) != 0 && b.pCount[k] >= 3 &&
-            b.pBlock[k - 1] == b.pBlock[k]
-        ) {
-            val ln = b.pLine[k]
-            if (ln == 1) {
-                // Orphan: the paragraph's first line would sit alone at the page bottom.
-                if (k - 1 >= 2) cut = k - 1
-            } else if (ln == b.pCount[k] - 1) {
-                // Widow: its last line would start the next page alone -> move one more line.
-                var nc = k - 1
-                if (nc >= 1 && b.pBlock[nc - 1] == b.pBlock[k] && b.pLine[nc - 1] == 0) nc--
-                if (nc >= 2) cut = nc
+            if (b.pLine[k] == 0) {
+                whole = true
+            } else if (p > 0 && b.pBlock[p] == b.pBlock[k] && b.pLine[p] == 0) {
+                cut = p
+                whole = true
+            }
+        }
+        if (!whole) {
+            if (kind == K_TEXT && (b.pFlags[k] and F_HEADING) != 0 && b.pLine[k] > 0) {
+                // Don't split a heading: move all of its lines if it started on this page after other content.
+                val p = k - b.pLine[k]
+                if (p > 0 && b.pBlock[p] == b.pBlock[k] && b.pLine[p] == 0 && movable(p)) cut = p
+            } else if (widowOrphan && kind == K_TEXT && (b.pFlags[k] and F_WO) != 0 && b.pCount[k] >= 3 &&
+                b.pBlock[k - 1] == b.pBlock[k]
+            ) {
+                val ln = b.pLine[k]
+                if (ln == 1) {
+                    // Orphan: the paragraph's first line would sit alone at the page bottom.
+                    if (k - 1 >= 2) cut = k - 1
+                } else if (ln == b.pCount[k] - 1) {
+                    // Widow: its last line would start the next page alone -> move one more line.
+                    var nc = k - 1
+                    if (nc >= 1 && b.pBlock[nc - 1] == b.pBlock[k] && b.pLine[nc - 1] == 0) nc--
+                    if (nc >= 2) cut = nc
+                }
             }
         }
         // Keep-with-next chain (headings) ending the page moves with the following content.
@@ -834,8 +890,20 @@ internal class TypesetPass(
             chain = f
             j = f - 1
         }
-        if (chain > 0 && movable(chain)) cut = chain
+        if (chain > 0 && (if (whole) chainFits(chain, cut, k) else movable(chain))) cut = chain
         return if (cut < 1) 1 else cut
+    }
+
+    /**
+     * PARAGRAPH mode: the keep-with-next chain [chain, cut) goes along with the block moving whole from [cut] ([k] =
+     * the staged item) only when the chain alone takes at most [KEEP_MAX_MOVE] of a page and chain + block fit on the
+     * next page together; otherwise the next page would have to split the block or hold the chain alone.
+     */
+    private fun chainFits(chain: Int, cut: Int, k: Int): Boolean {
+        val b = buf
+        val cutTop = if (cut == k) y + b.pSb[k] else b.pTop[cut]
+        val before = cutTop - b.pTop[chain]
+        return before - b.pSb[cut] <= pageH * KEEP_MAX_MOVE && before + blockH <= pageH + EPS
     }
 
     /**
@@ -855,7 +923,7 @@ internal class TypesetPass(
         if (pages != null) {
             val lines = ArrayList<LineInfo>(cut)
             for (j in 0 until cut) lines.add(makeLine(j))
-            pages.add(PageInfo(pageStart, endOffset, lines))
+            pages.add(PageInfo(pageStart, endOffset, lines, pageLead))
         }
         pageCount++
         pageStart = endOffset
@@ -863,12 +931,15 @@ internal class TypesetPass(
         shiftItems(cut, total - cut)
         n -= cut
         // Carried empty paragraphs would now open the page: drop them like any page-top blank line.
+        var next = 0f
         var drop = 0
-        while (drop < n && b.pKind[drop] == K_EMPTY) drop++
+        while (drop < n && b.pKind[drop] == K_EMPTY) { next += topGap(drop) + b.pH[drop]; drop++ }
         if (drop > 0) {
             shiftItems(drop, (if (staged) n + 1 else n) - drop)
             n -= drop
         }
+        if (n > 0) next += topGap(0)
+        pageLead = next
         var yy = 0f
         for (j in 0 until n) {
             val top = if (j == 0) yy else yy + b.pSb[j]
@@ -918,6 +989,12 @@ internal class TypesetPass(
     }
 
     private fun finish() {
+        finishPages()
+        // U6: an anchor on trailing blank paragraphs opened no page of its own.
+        if (anchorPage >= pageCount) anchorPage = pageCount - 1
+    }
+
+    private fun finishPages() {
         if (n > 0) {
             emitPage(n, len, false)
             return
@@ -928,7 +1005,7 @@ internal class TypesetPass(
             pageCount = 1
         } else if (pages != null) {
             val last = pages[pages.size - 1]
-            if (last.end != len) pages[pages.size - 1] = PageInfo(last.start, len, last.lines)
+            if (last.end != len) pages[pages.size - 1] = PageInfo(last.start, len, last.lines, last.lead)
         }
     }
 
