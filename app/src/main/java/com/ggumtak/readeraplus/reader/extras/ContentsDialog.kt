@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextPaint
@@ -16,6 +17,7 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -28,14 +30,18 @@ import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Bookmark
 import com.ggumtak.readeraplus.data.Library
+import com.ggumtak.readeraplus.data.NotesTab
 import com.ggumtak.readeraplus.data.Quote
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.ReaderFormat
+import com.ggumtak.readeraplus.reader.JumpAnchor
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
+import com.ggumtak.readeraplus.render.QuoteLook
+import com.ggumtak.readeraplus.render.QuoteStyles
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.TapAction
@@ -44,6 +50,7 @@ import com.ggumtak.readeraplus.ui.kit.InkNumPad
 import com.ggumtak.readeraplus.ui.kit.InkPager
 import com.ggumtak.readeraplus.ui.kit.InkPagerBar
 import com.ggumtak.readeraplus.ui.kit.MenuItem
+import com.ggumtak.readeraplus.ui.kit.ToolbarAction
 import com.ggumtak.readeraplus.ui.kit.NumPadState
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.borderBox
@@ -61,8 +68,10 @@ import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
+import com.ggumtak.readeraplus.ui.kit.toolbar
 import com.ggumtak.readeraplus.ui.kit.vertical
 import com.ggumtak.readeraplus.ui.library.LibraryText
+import com.ggumtak.readeraplus.ui.notes.NotesActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
@@ -95,7 +104,21 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private val pagers = arrayOfNulls<InkPager>(3)
     private var tab = initialTab.coerceIn(0, 2)
     private lateinit var shareAll: View
+    /** "모든 책의 노트" (북마크 and 인용문 tabs): the notes hub. */
+    private lateinit var hubLink: View
+    /** The book's quotes in reading order, as last loaded. */
+    private var allQuotes: List<Quote> = emptyList()
+    /** The quotes listed: [allQuotes] through the chip filter ([quoteFilter]); 모두 공유 shares these. */
     private var quotes: List<Quote> = emptyList()
+    /** The selected chip's style, [QuoteRows.ALL] for 전체 (in memory only, never persisted). */
+    private var quoteFilter = QuoteRows.ALL
+    /** The open session's NoteSig ([NotePlaceHost]), null without one: decides "· 위치 바뀜". */
+    private var sessionSig: String? = null
+    /** Where the last touch went down on a quote row (row coordinates): a click there opens the palette. */
+    private var quoteDownRow: View? = null
+    private var quoteDownX = -1f
+    /** Uptime of that DOWN: only a click right after it (a tap) uses it, not a later key or accessibility click. */
+    private var quoteDownAt = 0L
     /** Episode numbers of the book's TOC (BookInsightsHost), null while unknown or without a TOC. */
     private var episodes: Episodes? = null
     /** The TOC tab once built (its header is filled in when the episodes arrive late). */
@@ -119,12 +142,14 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
 
     private fun open() {
         val root = ctx.vertical { setBackgroundColor(Ink.WHITE) }
-        // toolbar
-        val bar = ctx.horizontal { minimumHeight = ctx.dp(56); setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
-        bar.addView(ctx.flatIcon(R.drawable.ic_arrow_back, "뒤로") { dialog.dismiss() })
-        bar.addView(ctx.label(book.title, 19f, bold = true, maxLines = 1).apply { setPadding(ctx.dp(12), 0, ctx.dp(8), 0) }, lp(0, WRAP_CONTENT, 1f))
-        shareAll = ctx.flatIcon(R.drawable.ic_share, "인용문 모두 공유") { shareAllQuotes() }.apply { visibility = View.GONE }
-        bar.addView(shareAll)
+        // toolbar: the kit's (title 20 sp bold, U polish 10)
+        val bar = ctx.toolbar(book.title, R.drawable.ic_arrow_back, onNav = { dialog.dismiss() }, actions = listOf(
+            ToolbarAction(R.drawable.ic_open_in_new, "모든 책의 노트") { openHub() },
+            ToolbarAction(R.drawable.ic_share, "인용문 모두 공유") { shareAllQuotes() },
+        ))
+        val actions = bar.getChildAt(0) as ViewGroup
+        hubLink = actions.getChildAt(actions.childCount - 2).apply { visibility = View.GONE }
+        shareAll = actions.getChildAt(actions.childCount - 1).apply { visibility = View.GONE }
         root.addView(bar, lp())
         // tabs
         val tabs = ctx.horizontal()
@@ -197,6 +222,14 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         body.removeAllViews()
         body.addView(v, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         shareAll.visibility = if (i == 2 && quotes.isNotEmpty()) View.VISIBLE else View.GONE
+        hubLink.visibility = if (i == 1 || i == 2) View.VISIBLE else View.GONE
+    }
+
+    /** "모든 책의 노트": the hub on the matching tab; the dialog goes (the reader reloads its notes on return). */
+    private fun openHub() {
+        val notesTab = if (tab == 1) NotesTab.BOOKMARKS else NotesTab.QUOTES
+        dialog.dismiss()
+        runCatching { NotesActivity.open(ctx, notesTab) }
     }
 
     private fun goAndClose(pos: DocPosition) {
@@ -664,38 +697,151 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         scope.launch {
             val loaded = withContext(Dispatchers.IO) { runCatching { Library.quotes(bookId) }.getOrNull() }
             if (loaded != null) QuoteCache.put(bookId, loaded)
-            val list = loaded.orEmpty().sortedWith(compareBy({ it.section }, { it.start }))
-            quotes = list
-            tabLabels[2]?.text = if (list.isEmpty()) "인용문" else "인용문 ${list.size}"
-            if (tab == 2) shareAll.visibility = if (list.isNotEmpty()) View.VISIBLE else View.GONE
-            container.removeAllViews()
-            if (list.isEmpty()) {
-                container.addView(ctx.emptyMessage("인용문이 없습니다\n\n본문을 길게 눌러 문장을 선택한 뒤\n'인용'을 누르세요"))
-                return@launch
+            setQuotes(loaded.orEmpty())
+            showQuotes(container, keep)
+        }
+    }
+
+    /** New quote rows (a load or a recolour): reading order, the session sig, the filter kept while it applies. */
+    private fun setQuotes(all: List<Quote>) {
+        allQuotes = all.sortedWith(compareBy({ it.section }, { it.start }))
+        sessionSig = sessionSig(host)
+        quoteFilter = QuoteRows.keepFilter(quoteFilter, QuoteRows.styleCounts(allQuotes))
+    }
+
+    /** Builds the tab from [allQuotes] in one pass (one e-ink update): chips, list and pager, starting at row [keep]. */
+    private fun showQuotes(container: FrameLayout, keep: Int) {
+        val all = allQuotes
+        val list = QuoteRows.filter(all, quoteFilter)
+        quotes = list
+        pagers[2] = null
+        tabLabels[2]?.text = QuoteRows.tabLabel(list.size, all.size, quoteFilter != QuoteRows.ALL)
+        if (tab == 2) shareAll.visibility = if (list.isNotEmpty()) View.VISIBLE else View.GONE
+        container.removeAllViews()
+        if (all.isEmpty()) {
+            container.addView(ctx.emptyMessage("인용문이 없습니다\n\n본문을 길게 눌러 문장을 선택한 뒤\n'인용'을 누르세요"))
+            return
+        }
+        val ink = QuoteLook.ink()
+        val lv = ctx.einkListView()
+        lv.adapter = object : BaseAdapter() {
+            override fun getCount() = list.size
+            override fun getItem(position: Int) = list[position]
+            override fun getItemId(position: Int) = list[position].id
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val row = (convertView as? LinearLayout) ?: quoteRow(ink)
+                bindQuote(row, list[position])
+                return row
             }
-            val lv = ctx.einkListView()
-            lv.adapter = object : BaseAdapter() {
-                override fun getCount() = list.size
-                override fun getItem(position: Int) = list[position]
-                override fun getItemId(position: Int) = list[position].id
-                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                    val row = (convertView as? LinearLayout) ?: noteRow(4)
-                    val q = list[position]
-                    row.findViewWithTag<TextView>("text").text = q.text.trim()
-                    val note = row.findViewWithTag<TextView>("note")
-                    note.visibility = if (q.note.isBlank()) View.GONE else View.VISIBLE
-                    note.text = "메모: ${q.note}"
-                    row.findViewWithTag<TextView>("meta").text = "${pageOf(q.section, q.start)}쪽  ·  ${Fmt.dateTime(q.createdAt)}"
-                    return row
+        }
+        // The swatch column is not a clickable child (InkPager's drag must see every DOWN): the row's one click
+        // decides by where the touch went down.
+        lv.setOnItemClickListener { _, view, position, _ ->
+            val q = list.getOrNull(position) ?: return@setOnItemClickListener
+            val tap = quoteDownRow === view && SystemClock.uptimeMillis() - quoteDownAt < TAP_CLICK_MS
+            val x = if (tap) quoteDownX else -1f
+            quoteDownRow = null
+            if (QuoteRows.inSwatchColumn(x, view.width, ctx.dp(QuoteRows.SWATCH_COLUMN_DP))) recolour(swatchAnchor(view), q, container)
+            else openQuote(q)
+        }
+        lv.setOnItemLongClickListener { _, view, position, _ ->
+            quoteDownRow = null
+            list.getOrNull(position)?.let { quoteMenu(view, it, container) }
+            true
+        }
+        val col = ctx.vertical()
+        if (QuoteRows.showChips(QuoteRows.styleCounts(all))) {
+            col.addView(chipRow(all, container), lp(MATCH_PARENT, WRAP_CONTENT))
+            col.addView(ctx.hairline())
+        }
+        col.addView(pagedList(2, lv), lp(MATCH_PARENT, 0, 1f))
+        container.addView(col, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        if (keep > 0) pagers[2]?.showRow(keep)
+    }
+
+    /** `[전체 12] [● 5] [● 3] [가̲ 4]`: a tap filters in memory (no query) and rebuilds the list from the top. */
+    private fun chipRow(all: List<Quote>, container: FrameLayout): View {
+        val counts = QuoteRows.styleCounts(all)
+        val row = ctx.horizontal { setPadding(ctx.dp(12), ctx.dp(8), ctx.dp(12), ctx.dp(8)) }
+        val many = QuoteRows.chips(counts).size >= 4
+        fun add(style: Int, chip: LinearLayout) {
+            val selected = style == quoteFilter
+            chip.background = ctx.borderBox(fill = if (selected) Ink.BLACK else Ink.WHITE, radiusDp = 3f)
+            for (k in 0 until chip.childCount) (chip.getChildAt(k) as? TextView)?.setTextColor(if (selected) Ink.WHITE else Ink.BLACK)
+            chip.setOnClickListener {
+                if (quoteFilter == style || stale()) return@setOnClickListener
+                quoteFilter = style
+                showQuotes(container, 0)
+            }
+            // Up to 4 chips keep their width; more share the row (all six styles fit 360 dp without a scroll).
+            val params = if (many) lp(0, ctx.dp(CHIP_DP), 1f) else lp(WRAP_CONTENT, ctx.dp(CHIP_DP))
+            if (row.childCount > 0) params.leftMargin = ctx.dp(if (many) 4 else 6)
+            if (many) chip.setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
+            row.addView(chip, params)
+        }
+        add(QuoteRows.ALL, chip().apply { addView(ctx.label(QuoteRows.allChip(all.size), 14f, maxLines = 1)) })
+        val ink = QuoteLook.ink()
+        for ((style, n) in QuoteRows.chips(counts)) {
+            add(style, chip().apply {
+                contentDescription = "${QuoteStyles.label(style)} $n"
+                addView(QuoteSwatch(ctx, style, ROW_SWATCH_DP, ink))
+                addView(ctx.label("$n", 14f, maxLines = 1).apply { setPadding(ctx.dp(if (many) 3 else 6), 0, 0, 0) })
+            })
+        }
+        return row
+    }
+
+    private fun chip(): LinearLayout = ctx.horizontal {
+        gravity = Gravity.CENTER
+        minimumWidth = ctx.dp(44)
+        setPadding(ctx.dp(12), 0, ctx.dp(12), 0)
+    }
+
+    private fun swatchAnchor(row: View): View = row.findViewWithTag("swatchCol") ?: row
+
+    /** A quote whose place changed goes by its fraction (the offsets point at other text); others go to the offset. */
+    private fun openQuote(q: Quote) {
+        val jump = host as? PageJumpHost
+        if (placeChanged(q) && q.frac in 0f..1f && jump != null) {
+            dialog.dismiss()
+            if (!stale()) jump.goToProgress(q.frac)
+        } else {
+            goAndClose(DocPosition(q.section, q.start))
+        }
+    }
+
+    /** "· 위치 바뀜" (PLAN K2): the reader's rule, with the anchor checked when the quote's section is shown. */
+    private fun placeChanged(q: Quote): Boolean =
+        QuoteRows.placeChanged(q.sig, sessionSig, if (sessionSig != null && q.sig != sessionSig) anchorMatch(host, q) else null)
+
+    /**
+     * The palette at [anchor] (the row's swatch column) → IO `updateQuoteStyle` + reload → the page's highlights of
+     * that section (only while the book is still the open one) → the tab rebuilt in place. No confirm.
+     */
+    private fun recolour(anchor: View, q: Quote, container: FrameLayout) {
+        if (stale()) return
+        QuotePalette.show(anchor, QuoteStyles.of(q.style)) { s ->
+            if (s == q.style || stale()) return@show
+            val keep = pagers[2]?.list?.firstVisiblePosition ?: 0
+            // Not [scope]: closing the dialog mid-write must still recolour the page and the cache.
+            MainScope().launch {
+                val all = withContext(Dispatchers.IO) {
+                    runCatching {
+                        Library.updateQuoteStyle(q.id, s)
+                        Library.quotes(book.id)
+                    }.getOrNull()
                 }
+                if (all == null) {
+                    if (!ctx.isFinishing && !ctx.isDestroyed) ctx.toast("색을 바꾸지 못했습니다")
+                    return@launch
+                }
+                // The last-used style follows every palette pick, a recolour included (N §7.1.3).
+                runCatching { Settings.raw().edit().putInt(PREF_QUOTE_STYLE, s).apply() }
+                if (!stale()) refreshQuoteHighlights(host, q.section, all) else QuoteCache.put(book.id, all)
+                if (!dialog.isShowing) return@launch
+                setQuotes(all)
+                showQuotes(container, keep)
             }
-            lv.setOnItemClickListener { _, _, position, _ -> goAndClose(DocPosition(list[position].section, list[position].start)) }
-            lv.setOnItemLongClickListener { _, view, position, _ ->
-                quoteMenu(view, list[position], container)
-                true
-            }
-            container.addView(pagedList(2, lv), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-            if (keep > 0) pagers[2]?.showRow(keep)
         }
     }
 
@@ -704,6 +850,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         trackedMenu(anchor, listOf(
             MenuItem("복사", R.drawable.ic_content_copy) { TextActions.copy(ctx, q.text) },
             MenuItem("공유", R.drawable.ic_share) { TextActions.share(ctx, quoteShareText(q), book.title) },
+            MenuItem("색 바꾸기", R.drawable.ic_ink_highlighter) { recolour(swatchAnchor(anchor), q, container) },
             MenuItem("메모", R.drawable.ic_edit) {
                 ctx.multilinePrompt("인용문 메모", q.note, "메모", minLines = 3) { text ->
                     scope.launch {
@@ -736,22 +883,13 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         return sb.toString()
     }
 
+    /** 모두 공유 of the listed (chip-filtered) quotes, tagged "[초록]" when they use ≥ 2 styles. */
     private fun shareAllQuotes() {
         if (quotes.isEmpty()) {
             ctx.toast("인용문이 없습니다")
             return
         }
-        val sb = StringBuilder()
-        sb.append("《").append(book.title).append("》")
-        if (book.author.isNotBlank()) sb.append(" — ").append(book.author)
-        sb.append("\n인용문 ").append(quotes.size).append("개\n")
-        for (q in quotes) {
-            sb.append("\n“").append(q.text.trim()).append("”\n")
-            sb.append("  (").append(pageOf(q.section, q.start)).append("쪽)\n")
-            if (q.note.isNotBlank()) sb.append("  메모: ").append(q.note.trim()).append('\n')
-        }
-        // Keep well below the binder transaction limit.
-        val text = if (sb.length > 200_000) sb.substring(0, 200_000) + "\n…" else sb.toString()
+        val text = QuoteRows.shareAll(book.title, book.author, quotes, { pageOf(it.section, it.start) }, TextActions.SHARE_MAX_CHARS)
         TextActions.share(ctx, text, book.title)
     }
 
@@ -759,12 +897,55 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
 
     private fun noteRow(textLines: Int): LinearLayout = ctx.vertical {
         background = pressableBackground()
-        val inner = ctx.vertical { setPadding(ctx.dp(16), ctx.dp(12), ctx.dp(16), ctx.dp(12)) }
+        addView(noteTexts(textLines, ctx.dp(16)), lp())
+        addView(ctx.hairline())
+    }
+
+    private fun noteTexts(textLines: Int, padRight: Int): LinearLayout {
+        val inner = ctx.vertical { setPadding(ctx.dp(16), ctx.dp(12), padRight, ctx.dp(12)) }
         inner.addView(ctx.label("", 16f, maxLines = textLines).apply { tag = "text"; setLineSpacing(0f, 1.2f) }, lp())
         inner.addView(ctx.label("", 14f, color = Ink.GRAY, maxLines = 3).apply { tag = "note"; setPadding(0, ctx.dp(6), 0, 0) }, lp())
         inner.addView(ctx.label("", 13f, color = Ink.GRAY).apply { tag = "meta"; setPadding(0, ctx.dp(6), 0, 0) }, lp())
-        addView(inner, lp())
+        return inner
+    }
+
+    /**
+     * `[text / 메모 / meta (weight 1)] [swatch column 48 dp]`: the swatch at the top, beside the first text line. The
+     * column is a plain (not clickable) view; the row's touch listener only records where the touch went down.
+     */
+    private fun quoteRow(ink: Boolean): LinearLayout = ctx.vertical {
+        background = pressableBackground()
+        val line = ctx.horizontal { gravity = Gravity.TOP }
+        line.addView(noteTexts(4, 0), lp(0, WRAP_CONTENT, 1f))
+        val column = FrameLayout(ctx).apply { tag = "swatchCol"; contentDescription = "색 바꾸기" }
+        column.addView(QuoteSwatch(ctx, QuoteStyles.YELLOW, ROW_SWATCH_DP, ink).apply { tag = "swatch" },
+            FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = ctx.dp(SWATCH_TOP_DP) })
+        line.addView(column, lp(ctx.dp(QuoteRows.SWATCH_COLUMN_DP), MATCH_PARENT))
+        addView(line, lp())
         addView(ctx.hairline())
+        setOnTouchListener { v, e ->
+            if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                quoteDownRow = v
+                quoteDownX = e.x
+                quoteDownAt = e.downTime
+            }
+            false
+        }
+    }
+
+    private fun bindQuote(row: LinearLayout, q: Quote) {
+        row.findViewWithTag<TextView>("text").text = q.text.trim()
+        val note = row.findViewWithTag<TextView>("note")
+        note.visibility = if (q.note.isBlank()) View.GONE else View.VISIBLE
+        note.text = "메모: ${q.note}"
+        val meta = "${pageOf(q.section, q.start)}쪽  ·  ${Fmt.dateTime(q.createdAt)}"
+        row.findViewWithTag<TextView>("meta").text = if (placeChanged(q)) meta + QuoteRows.STALE_SUFFIX else meta
+        val swatch = row.findViewWithTag<QuoteSwatch>("swatch")
+        val style = QuoteStyles.of(q.style)
+        if (swatch.style != style) {
+            swatch.style = style
+            swatch.invalidate()
+        }
     }
 
     private fun trackedMenu(anchor: View, items: List<MenuItem>) {
@@ -781,6 +962,16 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         const val INFO_DP = 26
         /** A message after a jump waits for the dialog to go (the reader's window gets the focus back). */
         const val NOTE_DELAY_MS = 300L
+        /** Filter chips are 44 dp tall (N §7.2). */
+        const val CHIP_DP = 44
+        /** A row click this soon after its DOWN came from that touch (a tap is released before the long press). */
+        const val TAP_CLICK_MS = 1_500L
+        /** The last-used quote style (N §7.1.3; the selection popup's default). */
+        const val PREF_QUOTE_STYLE = "extras.quoteStyle"
+        /** Swatches in rows and chips: a 12 dp dot (QuoteSwatch draws the ink sample at its own row size). */
+        const val ROW_SWATCH_DP = 12
+        /** The row swatch's top: level with the first 16 sp text line under the row's 12 dp padding. */
+        const val SWATCH_TOP_DP = 16
 
         /**
          * [all] is the book's complete, freshly loaded quote list: stores it in [QuoteCache] and re-sends the quote
@@ -788,8 +979,31 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
          */
         fun refreshQuoteHighlights(host: ReaderHost, section: Int, all: List<Quote>) {
             runCatching { QuoteCache.put(host.book.id, all) }
-            val hl = all.filter { it.section == section }.map { Highlight(it.start, it.end, HighlightKind.QUOTE) }
+            // A quote whose place changed is not drawn (its offsets point at other text): the reader's rule (PLAN K2).
+            val sig = sessionSig(host)
+            val hl = ArrayList<Highlight>()
+            for (q in all) {
+                if (q.section != section) continue
+                val anchor = if (sig != null && q.sig != sig) anchorMatch(host, q) else null
+                if (!QuoteRows.placeChanged(q.sig, sig, anchor)) hl += Highlight(q.start, q.end, HighlightKind.QUOTE, q.style)
+            }
             runCatching { host.setHighlights("quotes", section, hl) }
+        }
+
+        /** The open session's NoteSig ("" for EPUB) through [NotePlaceHost]; null when the host has no places. */
+        fun sessionSig(host: ReaderHost): String? =
+            (host as? NotePlaceHost)?.let { h -> runCatching { h.notePlace(host.currentPosition()).sig }.getOrNull() }
+
+        /**
+         * Whether [q]'s text is still at its offset (`JumpAnchor.matches`, ≤ 24 visible chars), when its section is
+         * the one laid out; null when that text is not at hand.
+         */
+        fun anchorMatch(host: ReaderHost, q: Quote): Boolean? {
+            val layout = runCatching { host.currentLayout?.takeIf { host.currentPosition().section == q.section } }.getOrNull()
+                ?: return null
+            val text = layout.content.text
+            if (q.start < 0 || q.start >= text.length) return false
+            return JumpAnchor.matches(text, q.start, q.text)
         }
 
         /**
