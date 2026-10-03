@@ -1,0 +1,30 @@
+{
+  "lane": "NOTES",
+  "files": [
+    "app/src/main/java/com/ggumtak/readeraplus/ui/notes/NotesActivity.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/ui/notes/NotesAdapter.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/ui/notes/NotesMenus.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/ui/notes/NotesText.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/ui/notes/NotesWindow.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/ui/notes/NotesTextTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/ui/notes/NotesWindowTest.kt",
+    "docs/next/NOTES_STATUS.md",
+    "docs/next/lanes/NOTES.result.json"
+  ],
+  "summary": "독서 노트 hub (N §9): 6 tabs, chips, search, day/book headers, per-kind rows and gestures, row menus, multi-select (HashSet<Long>, query when >20k), overflow, book/order/colour choosers, §9.6 empty states, windowed adapter (50-row pages, LRU 6, ±25 prefetch, fetch-then-move ≤250 ms), one-update open (≤250 ms draw hold), saved state, 단어 tab (같은 단어 한 번만, 모든 기록 보기, 다시 찾기, 웹 검색), export (text/markdown, w then wt, ReaderIo app scope, pending export in saved state) and capped share. Pure NotesText/NotesWindow with JVM tests. RANotes DEBUG timings.",
+  "checks": "module typecheck OK; module unittest OK (22 tests); full typecheck OK; full unittest 1216/1217 — only TxtPerfTest.cleanupPacksLineStage failed (timing under concurrent compile load, unrelated lane) and passes when rerun alone (OK 3 tests). Two review rounds (spec + bugs) done; all 6 findings fixed.",
+  "contractRequests": [],
+  "rcaNotes": [
+    "None required for the hub itself: NotesActivity.open(ctx, tab, bookId) is the frozen entry point. Entry points owned by others: reader overflow '독서 노트' → NotesActivity.open(this, NotesTab.ALL, currentBookId) on main (READER/RC-A, ReaderMenus).",
+    "ReaderActivity must accept ReaderActivity.open(context, bookId, ReaderJump) from the hub (jump to a note) and refresh highlights on resume via reloadAnnotations (existing 1 s guard), since the hub deletes/recolours quotes."
+  ],
+  "deviations": [
+    "전체 보기 is offered when bodyCut, ≥4 newlines or >160 chars (line count can't be measured before layout).",
+    "모든 기록 보기 also requires wordCount > 1.",
+    "Unspecified strings: content descriptions 검색/더보기/선택 끝내기/지우기, numpad error '1~N쪽 사이로 입력하세요'.",
+    "'내보내는 중…' lives in the page-bar label, so scroll mode (bar GONE) has no indicator.",
+    "If QuotePalette.show returns null, a '색' chooser of QuoteStyles labels is used.",
+    "Export: no resolveActivity pre-check (package visibility); octet-stream only after ActivityNotFoundException."
+  ],
+  "complete": true
+}
