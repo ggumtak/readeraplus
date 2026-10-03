@@ -277,7 +277,7 @@ internal class NotesMenus(private val a: NotesActivity) {
                 by[NoteKind.LOOKUP]?.let { Lookups.delete(it) }
             }) {
                 a.toast(NotesText.deletedToast(n))
-                a.endSelection()
+                a.endSelectionOnReload()
             }
         }
     }

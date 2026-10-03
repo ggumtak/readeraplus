@@ -140,6 +140,10 @@ class NotesActivity : Activity() {
         private set
     /** Books the pages are grouped by (book orders only). */
     private var pageBooks: List<NoteBook>? = null
+    /** The query the shown rows belong to: page loads use it (never [q] while a reload of a new query is in flight). */
+    private var windowQ = NotesQuery()
+    /** Runs in the next [apply], before its one redraw (e.g. leaving selection mode after a delete). */
+    private var afterApply: (() -> Unit)? = null
     /** The filtered book (chip title), when [NotesQuery.bookId] is set. */
     internal var filterBook: NoteBook? = null
         private set
@@ -511,7 +515,7 @@ class NotesActivity : Activity() {
 
     private class Loaded(
         val counts: NotesCounts, val all: List<NoteBook>, val pageBooks: List<NoteBook>?, val filterBook: NoteBook?,
-        val first: Int, val pageIndex: Int, val page: NotesPage?, val ms: Long, val split: String,
+        val first: Int, val pageIndex: Int, val page: NotesPage?, val next: NotesPage?, val ms: Long, val split: String,
     )
 
     /**
@@ -541,15 +545,23 @@ class NotesActivity : Activity() {
                     val first = NotesWindow.clampFirst(keepFirst, n)
                     val pIdx = first / Notes.PAGE_ROWS
                     val page = if (n > 0) Notes.page(q0, pIdx, pb) else null
+                    // A first row near the page end shows rows of the next page too: fetch it now (no placeholders).
+                    val needNext = first % Notes.PAGE_ROWS > Notes.PAGE_ROWS - NotesWindow.PREFETCH_ROWS && (pIdx + 1) * Notes.PAGE_ROWS < n
+                    val next = if (needNext) Notes.page(q0, pIdx + 1, pb) else null
                     val t3 = SystemClock.uptimeMillis()
-                    Loaded(c, all, pb, fb, first, pIdx, page, t3 - t0, "counts ${t1 - t0} ms, books ${t2 - t1} ms, page ${t3 - t2} ms")
+                    Loaded(c, all, pb, fb, first, pIdx, page, next, t3 - t0, "counts ${t1 - t0} ms, books ${t2 - t1} ms, page ${t3 - t2} ms")
                 }.onFailure { Log.w(NotesPerf.TAG, "notes load failed", it) }.getOrNull()
             }
             if (tok != reloadToken || isDestroyed) return@launch
             loading = false
             if (r == null) {
+                // Back to the query the shown rows belong to: the chrome matches them and the user can retry.
+                q = windowQ
+                afterApply = null
                 releaseDrawHold()
+                updateChrome()
                 updateEmpty()
+                toast(userMessage(IllegalStateException()))
                 return@launch
             }
             apply(r)
@@ -561,10 +573,14 @@ class NotesActivity : Activity() {
         allBooks = r.all
         bookMap = r.all.associateBy { it.id }
         pageBooks = r.pageBooks
+        windowQ = q
         filterBook = r.filterBook
         val n = r.counts.of(q.tab)
         rowWindow.reset(n)
         if (r.page != null) rowWindow.put(rowWindow.token, r.pageIndex, r.page)
+        if (r.next != null) rowWindow.put(rowWindow.token, r.pageIndex + 1, r.next)
+        afterApply?.invoke()
+        afterApply = null
         adapter.notifyDataSetChanged()
         if (n > 0) list.setSelection(r.first)
         updateChrome()
@@ -579,9 +595,9 @@ class NotesActivity : Activity() {
     }
 
     private fun requestPage(p: Int) {
-        if (!rowWindow.request(p)) return
+        if (loading || !rowWindow.request(p)) return
         val tok = rowWindow.token
-        val q0 = q
+        val q0 = windowQ
         val pb = pageBooks
         scope.launch {
             val t0 = SystemClock.uptimeMillis()
@@ -625,7 +641,7 @@ class NotesActivity : Activity() {
         }
         handler.removeCallbacks(moveTimeout)
         handler.postDelayed(moveTimeout, NotesWindow.MOVE_WAIT_MS)
-        requestPage(rowWindow.pageOf(row))
+        for (p in rowWindow.movePages(rowWindow.pendingMove)) requestPage(p)
     }
 
     private fun openPageNumPad() {
@@ -773,14 +789,19 @@ class NotesActivity : Activity() {
         rebindVisible()
     }
 
-    internal fun endSelection() {
+    /** Leaves selection mode with the next reload's single redraw (after a batch delete). */
+    internal fun endSelectionOnReload() {
+        afterApply = { endSelection(rebind = false) }
+    }
+
+    internal fun endSelection(rebind: Boolean = true) {
         if (!selecting) return
         selecting = false
         selected.clear()
         selectBar.visibility = View.GONE
         normalBar.visibility = View.VISIBLE
         updateChrome()
-        rebindVisible()
+        if (rebind) rebindVisible()
     }
 
     private fun toggle(row: NoteRow, @Suppress("UNUSED_PARAMETER") position: Int) = toggleRef(row.ref)
@@ -825,7 +846,7 @@ class NotesActivity : Activity() {
         scope.launch {
             val ok = withContext(Dispatchers.IO) { runCatching { write() }.onFailure { Log.w(NotesPerf.TAG, "write failed", it) }.isSuccess }
             if (isDestroyed) return@launch
-            if (ok) done?.invoke() else toast(userMessage(IOException()))
+            if (ok) done?.invoke() else toast(userMessage(IllegalStateException()))
             reload(list.firstVisiblePosition)
         }
     }

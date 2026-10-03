@@ -113,6 +113,21 @@ class NotesWindowTest {
     }
 
     @Test
+    fun aJumpNearAPageEndWaitsForTheNextPageToo() {
+        val w = window(1000)
+        assertEquals(2..3, w.movePages(140))
+        assertEquals(2..2, w.movePages(110))
+        assertEquals(19..19, w.movePages(990))
+        assertFalse(w.moveTo(140))
+        w.request(2)
+        assertEquals(NotesWindow.Put.STORED, w.put(w.token, 2, "p2"))
+        w.request(3)
+        assertEquals(NotesWindow.Put.MOVE, w.put(w.token, 3, "p3"))
+        assertEquals(140, w.takeMove())
+        assertTrue(w.moveTo(145))
+    }
+
+    @Test
     fun numberPadAndSaveRules() {
         assertEquals(0, NotesWindow.rowForPage(1, 7))
         assertEquals(14, NotesWindow.rowForPage(3, 7))

@@ -8,8 +8,8 @@ package com.ggumtak.readeraplus.ui.notes
  *   hands it to [put] with the [token] it started under ([reset] invalidates loads in flight).
  * - Prefetch: after each move the pages of `first − 25` and `last + 25` are ensured ([prefetch]), so a normal page turn
  *   never shows a placeholder.
- * - Fetch, then move: a far jump ([moveTo]) asks for the target page first; the caller moves the list when that page
- *   arrives ([put] returns [Put.MOVE]) or after a short timeout ([takeMove]).
+ * - Fetch, then move: a far jump ([moveTo]) asks for the target pages ([movePages]) first; the caller moves the list
+ *   when they arrive ([put] returns [Put.MOVE]) or after a short timeout ([takeMove]).
  */
 class NotesWindow<P>(val pageRows: Int = PAGE_ROWS, val maxPages: Int = MAX_PAGES) {
     /** Rows under the current query. */
@@ -64,10 +64,10 @@ class NotesWindow<P>(val pageRows: Int = PAGE_ROWS, val maxPages: Int = MAX_PAGE
         pages[page] = value
         while (pages.size > maxPages) {
             val eldest = pages.keys.iterator().next()
-            if (pendingMove >= 0 && eldest == pageOf(pendingMove)) break
+            if (pendingMove >= 0 && eldest in movePages(pendingMove)) break
             pages.remove(eldest)
         }
-        if (pendingMove >= 0 && pageOf(pendingMove) == page) return Put.MOVE
+        if (pendingMove >= 0 && page in movePages(pendingMove) && movePages(pendingMove).all { pages.containsKey(it) }) return Put.MOVE
         return Put.STORED
     }
 
@@ -91,12 +91,21 @@ class NotesWindow<P>(val pageRows: Int = PAGE_ROWS, val maxPages: Int = MAX_PAGE
      */
     fun moveTo(row: Int): Boolean {
         val r = row.coerceIn(0, (count - 1).coerceAtLeast(0))
-        if (pages.containsKey(pageOf(r))) {
+        if (movePages(r).all { pages.containsKey(it) }) {
             pendingMove = -1
             return true
         }
         pendingMove = r
         return false
+    }
+
+    /**
+     * Pages a jump to [row] needs before it moves: its own, and the next one when the screen below it (up to
+     * [PREFETCH_ROWS] rows) reaches into it, so the new screen shows no placeholder.
+     */
+    fun movePages(row: Int): IntRange {
+        if (count == 0 || row < 0) return IntRange.EMPTY
+        return pageOf(row)..pageOf((row + PREFETCH_ROWS).coerceAtMost(count - 1))
     }
 
     /** The pending far jump's row (once), or -1. */
