@@ -14,12 +14,15 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Library
+import com.ggumtak.readeraplus.data.Lookups
+import com.ggumtak.readeraplus.data.NotePlace
 import com.ggumtak.readeraplus.data.Quote
 import com.ggumtak.readeraplus.data.TxtOverride
 import com.ggumtak.readeraplus.engine.LineGeometry
@@ -30,20 +33,27 @@ import com.ggumtak.readeraplus.engine.RectPx
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.reader.LayoutKeys
 import com.ggumtak.readeraplus.reader.ReaderHost
+import com.ggumtak.readeraplus.reader.ReaderIo
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
+import com.ggumtak.readeraplus.render.QuoteLook
+import com.ggumtak.readeraplus.render.QuoteStyles
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.MenuItem
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.dpF
+import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
+import com.ggumtak.readeraplus.ui.kit.popupMenu
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.sp
@@ -56,8 +66,9 @@ import kotlinx.coroutines.withContext
 import kotlin.math.hypot
 
 /**
- * Long-press text selection with two draggable handles and an action popup
- * (copy, quote, note, share, search, dictionary/translate, web search, read aloud, and in a TXT book "이 문구 지우기").
+ * Long-press text selection with two draggable handles and an action popup: one row of 복사 · 인용 · 메모 · 사전·번역 ·
+ * ⋮ ([SelectionActions]; over an existing quote a colour row above 복사 · 메모 · 인용 삭제 · 사전·번역 · ⋮), the ⋮ menu
+ * holding 색 골라 인용… · 공유 · 문단 · 검색 · 웹 검색 · 여기서 읽기 and, in a TXT book, 문구 지우기.
  * The selection is limited to the current page of the current section; highlight owner "selection". A second long
  * press while a selection shows waits [AppSettings.longPressMs][com.ggumtak.readeraplus.settings.AppSettings.longPressMs],
  * like the page's own.
@@ -84,6 +95,13 @@ class SelectionController(private val host: ReaderHost) {
     private var startHandle: HandleView? = null
     private var endHandle: HandleView? = null
     private var actions: PopupWindow? = null
+    /** The ⋮ menu and the colour palette opened from [actions]. */
+    private var menu: PopupWindow? = null
+    private var palette: PopupWindow? = null
+    /** The 인용 cell of [actions] (the palette's anchor) and the palette row over an existing quote. */
+    private var quoteCell: View? = null
+    private var paletteRow: QuotePalette.Row? = null
+    private var overflowIds: List<SelectionActions.Id> = emptyList()
     private var editingQuote: Quote? = null
 
     /** Quotes of the book come from [QuoteCache] (shared with the contents dialog); reloaded once per controller. */
@@ -255,8 +273,15 @@ class SelectionController(private val host: ReaderHost) {
         showHandles()
     }
 
+    /**
+     * The selection fill; none while the selection is exactly an existing quote, so its real colour shows (the
+     * handles mark its ends). Dragging a handle off the quote brings the fill back.
+     */
     private fun updateHighlight() {
-        runCatching { host.setHighlights("selection", section, listOf(Highlight(selStart, selEnd, HighlightKind.SELECTION))) }
+        val q = editingQuote
+        val list = if (q != null && q.start == selStart && q.end == selEnd) emptyList()
+        else listOf(Highlight(selStart, selEnd, HighlightKind.SELECTION))
+        runCatching { host.setHighlights("selection", section, list) }
     }
 
     /**
@@ -280,9 +305,10 @@ class SelectionController(private val host: ReaderHost) {
                 }
             }
         }
-        val s = Settings.reader
-        originX = if (!dx.isNaN()) dx else v.paddingLeft + if (s.pageMargins) ctx.dpF(s.marginLeftDp.toFloat()) else ctx.dpF(4f)
-        originY = if (!dy.isNaN()) dy else v.paddingTop + (if (s.pageMargins) ctx.dpF(s.marginTopDp.toFloat()) else ctx.dpF(4f))
+        // Fallback: the reader's own content box (margins only; the status bands sit inside the margins, A §2.5).
+        val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density)
+        originX = if (!dx.isNaN()) dx else SelectionOrigin.fallbackX(g, v.paddingLeft)
+        originY = if (!dy.isNaN()) dy else SelectionOrigin.fallbackY(g, v.paddingTop)
         originKey = if (!dx.isNaN() && !dy.isNaN()) key else null
     }
 
@@ -349,40 +375,55 @@ class SelectionController(private val host: ReaderHost) {
 
     // ------------------------------------------------------------------ action popup
 
-    /** [enabled] false: shown gray; a tap explains why instead of acting. */
-    private class Action(val label: String, val icon: Int, val enabled: Boolean = true, val run: () -> Unit)
-
-    private fun actionList(): List<Action> {
-        val list = ArrayList<Action>(10)
-        list += Action("복사", R.drawable.ic_content_copy) { copy() }
-        val q = editingQuote
-        if (q == null) {
-            list += Action("인용", R.drawable.ic_format_quote) {
-                val snap = snapshot()
-                clear()
-                if (snap != null) saveQuote(snap, "")
-            }
-            list += Action("메모", R.drawable.ic_sticky_note_2) { noteThenQuote() }
-        } else {
-            list += Action("메모", R.drawable.ic_sticky_note_2) { editQuoteNote(q) }
-            list += Action("인용 삭제", R.drawable.ic_delete) { deleteQuote(q) }
+    /** Runs the action [id] of the popup ([SelectionActions]); [anchor] is its cell (⋮ anchors its menu there). */
+    private fun perform(id: SelectionActions.Id, anchor: View?) {
+        when (id) {
+            SelectionActions.Id.COPY -> copy()
+            SelectionActions.Id.QUOTE -> quoteNow(LastQuoteStyle.get())
+            SelectionActions.Id.NOTE -> noteThenQuote()
+            SelectionActions.Id.EDIT_NOTE -> editingQuote?.let { editQuoteNote(it) }
+            SelectionActions.Id.DELETE_QUOTE -> editingQuote?.let { deleteQuote(it) }
+            SelectionActions.Id.LOOKUP -> lookUp()
+            SelectionActions.Id.MORE -> if (anchor != null) showOverflow(anchor)
+            SelectionActions.Id.PICK_STYLE -> pickStyleThenQuote()
+            SelectionActions.Id.SHARE -> share()
+            SelectionActions.Id.PARAGRAPH -> selectParagraph()
+            SelectionActions.Id.SEARCH -> searchInBook()
+            SelectionActions.Id.WEB_SEARCH -> webSearch()
+            SelectionActions.Id.READ_ALOUD -> readAloud()
+            SelectionActions.Id.DELETE_PHRASE ->
+                // Rules apply per source line: a selection across a line break can't become one (T1-10).
+                if (selectionIsOneLine()) deletePhrase() else ctx.toast("여러 줄은 한 번에 지울 수 없습니다. 한 줄 안에서 고르세요")
         }
-        list += Action("공유", R.drawable.ic_share) { share() }
-        list += Action("문단", R.drawable.ic_select_all) { selectParagraph() }
-        list += Action("검색", R.drawable.ic_search) { searchInBook() }
-        list += Action("사전·번역", R.drawable.ic_translate) { lookUp() }
-        list += Action("웹 검색", R.drawable.ic_travel_explore) { webSearch() }
-        if (onReadAloud != null || TtsRegistry.get(host) != null) list += Action("여기서 읽기", R.drawable.ic_volume_up) { readAloud() }
-        if (host is TxtOverrideHost && runCatching { host.book.format }.getOrNull() == BookFormat.TXT) {
-            // Rules apply per source line: a selection across a line break can't become one (T1-10).
-            val oneLine = selectionIsOneLine()
-            list += Action("문구 지우기", R.drawable.ic_delete_forever, enabled = oneLine) {
-                if (oneLine) deletePhrase() else ctx.toast("여러 줄은 한 번에 지울 수 없습니다. 한 줄 안에서 고르세요")
-            }
-        }
-        return list
     }
 
+    private fun iconOf(id: SelectionActions.Id): Int = when (id) {
+        SelectionActions.Id.COPY -> R.drawable.ic_content_copy
+        SelectionActions.Id.QUOTE -> R.drawable.ic_format_quote
+        SelectionActions.Id.NOTE, SelectionActions.Id.EDIT_NOTE -> R.drawable.ic_sticky_note_2
+        SelectionActions.Id.DELETE_QUOTE -> R.drawable.ic_delete
+        SelectionActions.Id.LOOKUP -> R.drawable.ic_translate
+        SelectionActions.Id.MORE -> R.drawable.ic_more_vert
+        SelectionActions.Id.PICK_STYLE -> R.drawable.ic_ink_highlighter
+        SelectionActions.Id.SHARE -> R.drawable.ic_share
+        SelectionActions.Id.PARAGRAPH -> R.drawable.ic_select_all
+        SelectionActions.Id.SEARCH -> R.drawable.ic_search
+        SelectionActions.Id.WEB_SEARCH -> R.drawable.ic_travel_explore
+        SelectionActions.Id.READ_ALOUD -> R.drawable.ic_volume_up
+        SelectionActions.Id.DELETE_PHRASE -> R.drawable.ic_delete_forever
+    }
+
+    private fun actionIds(): List<SelectionActions.Id> = SelectionActions.ids(
+        existingQuote = editingQuote != null,
+        readAloud = onReadAloud != null || TtsRegistry.get(host) != null,
+        txt = host is TxtOverrideHost && runCatching { host.book.format }.getOrNull() == BookFormat.TXT,
+    )
+
+    /**
+     * The popup (UI_SPEC polish 13, NOTES_SPEC §7.1): one row of 5 cells, (W − 16 dp) / 5 wide and 56 dp tall with
+     * 13 sp labels, in a square [borderBox]; the 인용 cell shows the last style's swatch with a "▾" (long press: the
+     * palette). Over an existing quote a palette row (current style ringed) sits above the row.
+     */
     private fun showActions() {
         if (!active) return
         val (layout, page) = validPage() ?: return
@@ -391,63 +432,64 @@ class SelectionController(private val host: ReaderHost) {
         origin(layout, page)
         hideActions()
 
-        val cols = 5
-        val acts = actionList()
-        val grid = ctx.vertical {
-            background = ctx.borderBox(radiusDp = 4f)
-            setPadding(ctx.dp(4), ctx.dp(4), ctx.dp(4), ctx.dp(4))
-        }
-        var row: LinearLayout? = null
-        acts.forEachIndexed { i, a ->
-            if (i % cols == 0) row = ctx.horizontal().also { grid.addView(it, lp()) }
-            val cell = ctx.vertical {
-                gravity = Gravity.CENTER_HORIZONTAL
-                background = pressableBackground()
-                setPadding(ctx.dp(2), ctx.dp(8), ctx.dp(2), ctx.dp(6))
-                minimumWidth = ctx.dp(62)
-                setOnClickListener { a.run() }
-            }
-            val color = if (a.enabled) Ink.BLACK else Ink.DISABLED
-            cell.addView(ctx.icon(a.icon, 24, tint = color))
-            cell.addView(ctx.label(a.label, 12f, color = color, maxLines = 1).apply {
-                gravity = Gravity.CENTER
-                setPadding(0, ctx.dp(4), 0, 0)
-                // A longer label shrinks to the cell instead of being cut ("문구 지우기").
-                setAutoSizeTextTypeUniformWithConfiguration(9, 12, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
-            })
-            row?.addView(cell, LinearLayout.LayoutParams(ctx.dp(62), WRAP_CONTENT))
-        }
-
         val dm = ctx.resources.displayMetrics
-        grid.measure(
+        val cellW = PaletteGeometry.selectionCell(dm.widthPixels, dm.density)
+        val box = ctx.vertical { background = ctx.borderBox(radiusDp = 0f) }
+        val q = editingQuote
+        if (q != null) {
+            val row = QuotePalette.paletteRow(ctx, PaletteGeometry.inlinePaletteCell(dm.widthPixels, dm.density), q.style) { s, _ -> recolour(s) }
+            paletteRow = row
+            box.addView(row.view, lp())
+            box.addView(ctx.hairline(), lp(MATCH_PARENT, 1))
+        }
+        val (primary, overflow) = SelectionActions.split(actionIds())
+        overflowIds = overflow
+        val row = ctx.horizontal()
+        for (id in primary) {
+            val cell = ctx.vertical {
+                gravity = Gravity.CENTER
+                background = pressableBackground()
+                contentDescription = id.label
+            }
+            cell.setOnClickListener { perform(id, cell) }
+            if (id == SelectionActions.Id.QUOTE) {
+                quoteCell = cell
+                cell.setOnLongClickListener { pickStyleThenQuote(); true }
+                cell.addView(quoteIcon(), LinearLayout.LayoutParams(ctx.dp(ICON_BOX_DP), ctx.dp(ICON_BOX_DP)))
+            } else {
+                cell.addView(FrameLayout(ctx).apply {
+                    addView(ctx.icon(iconOf(id), 24), FrameLayout.LayoutParams(ctx.dp(24), ctx.dp(24), Gravity.CENTER))
+                }, LinearLayout.LayoutParams(ctx.dp(ICON_BOX_DP), ctx.dp(ICON_BOX_DP)))
+            }
+            cell.addView(ctx.label(id.label, LABEL_SP, maxLines = 1).apply {
+                gravity = Gravity.CENTER
+                setPadding(ctx.dp(2), ctx.dp(2), ctx.dp(2), 0)
+                // A longer label shrinks to the cell instead of being cut ("사전·번역" on a narrow phone).
+                setAutoSizeTextTypeUniformWithConfiguration(10, LABEL_SP.toInt(), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+            }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            row.addView(cell, LinearLayout.LayoutParams(cellW, ctx.dp(PaletteGeometry.CELL_HEIGHT_DP)))
+        }
+        box.addView(row, lp())
+
+        box.measure(
             View.MeasureSpec.makeMeasureSpec(dm.widthPixels, View.MeasureSpec.AT_MOST),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
-        val w = grid.measuredWidth
-        val h = grid.measuredHeight
+        val w = box.measuredWidth
+        val h = box.measuredHeight
         val loc = IntArray(2)
         host.pageView.getLocationInWindow(loc)
         var top = Float.MAX_VALUE
         var bottom = 0f
-        var left = Float.MAX_VALUE
-        var right = 0f
         for (r in rects) {
             top = minOf(top, r.top)
             bottom = maxOf(bottom, r.bottom)
-            left = minOf(left, r.left)
-            right = maxOf(right, r.right)
         }
-        val winTop = loc[1] + originY + top
-        val winBottom = loc[1] + originY + bottom
-        val centerX = loc[0] + originX + (left + right) / 2f
         val margin = ctx.dp(8)
-        val x = (centerX - w / 2f).toInt().coerceIn(margin, (dm.widthPixels - w - margin).coerceAtLeast(margin))
-        var y = (winTop - h - ctx.dp(10)).toInt()
-        if (y < margin) {
-            y = (winBottom + (startHandle?.sizePx ?: ctx.dp(40)) + ctx.dp(4)).toInt()
-            if (y + h > dm.heightPixels - margin) y = ((dm.heightPixels - h) / 2).coerceAtLeast(margin)
-        }
-        val pw = PopupWindow(grid, WRAP_CONTENT, WRAP_CONTENT, false).apply {
+        val x = ((dm.widthPixels - w) / 2).coerceAtLeast(0)
+        val y = PaletteGeometry.selectionY(loc[1] + originY + top, loc[1] + originY + bottom, h, ctx.dp(10),
+            startHandle?.sizePx ?: ctx.dp(40), margin, dm.heightPixels)
+        val pw = PopupWindow(box, WRAP_CONTENT, WRAP_CONTENT, false).apply {
             animationStyle = 0
             elevation = 0f
             isTouchable = true
@@ -458,9 +500,37 @@ class SelectionController(private val host: ReaderHost) {
         actions = pw
     }
 
+    /** The 인용 cell's icon: the last style's swatch with a 9 sp "▾" at its lower right (long press = colours). */
+    private fun quoteIcon(): View = FrameLayout(ctx).apply {
+        addView(QuoteSwatch(ctx, LastQuoteStyle.get(), PaletteGeometry.POPUP_SWATCH_DP, QuoteLook.ink()).apply { reserveRing = false },
+            FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER))
+        addView(ctx.label("▾", 9f, maxLines = 1).apply { includeFontPadding = false },
+            FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.END or Gravity.BOTTOM))
+    }
+
+    /** ⋮: the rest of the actions in a [popupMenu] under the cell. */
+    private fun showOverflow(anchor: View) {
+        val ids = overflowIds
+        if (ids.isEmpty()) return
+        hideMenus()
+        val items = ids.map { id -> MenuItem(id.label, iconOf(id)) { if (active) perform(id, null) } }
+        menu = PanelRegistry.popup(ctx, ctx.popupMenu(anchor, items, widthDp = 220))
+    }
+
     private fun hideActions() {
+        hideMenus()
         actions?.let { runCatching { it.dismiss() } }
         actions = null
+        quoteCell = null
+        paletteRow = null
+    }
+
+    /** Closes the ⋮ menu and the colour palette opened from the popup. */
+    private fun hideMenus() {
+        menu?.let { runCatching { it.dismiss() } }
+        menu = null
+        palette?.let { runCatching { it.dismiss() } }
+        palette = null
     }
 
     // ------------------------------------------------------------------ actions
@@ -500,15 +570,38 @@ class SelectionController(private val host: ReaderHost) {
 
     private fun lookUp() {
         val t = selectedText()
+        val snap = lookupSnapshot(t)
         clear()
-        if (t.isNotEmpty()) TextActions.lookUp(ctx, t)
+        if (t.isNotEmpty()) TextActions.lookUp(ctx, t) { via, app -> recordLookup(snap, via, app) }
     }
 
     private fun webSearch() {
         val t = selectedText().replace('\n', ' ')
+        val snap = lookupSnapshot(t)
         clear()
-        if (t.isNotEmpty()) TextActions.webSearch(ctx, t.take(200))
+        if (t.isNotEmpty()) TextActions.webSearch(ctx, t.take(200)) { recordLookup(snap, Lookups.VIA_WEB, TextActions.webSearchHost()) }
     }
+
+    /** What a lookup of the selection records (hub.md §6.4); taken before [clear]. Null when nothing is selected. */
+    private fun lookupSnapshot(selected: String): LookupSnapshot? {
+        if (!active || section < 0 || selected.isEmpty()) return null
+        val layout = validPage()?.first ?: return null
+        val bookId = runCatching { host.book.id }.getOrNull() ?: return null
+        val context = runCatching { LookupContext.sentence(layout.content.text, selStart, selEnd) }.getOrDefault("")
+        return LookupSnapshot(bookId, selected.take(LookupSnapshot.MAX_WORD), section, selStart, selEnd, context, placeOf(selStart))
+    }
+
+    /** Silently records a lookup the user went through with (never a cancelled chooser), when "찾아본 단어 기록" is on. */
+    private fun recordLookup(snap: LookupSnapshot?, via: Int, app: String) {
+        if (snap == null || !runCatching { Settings.app.recordLookups }.getOrDefault(true)) return
+        ReaderIo.launch {
+            Lookups.record(snap.bookId, snap.word, snap.section, snap.start, snap.end, snap.context, snap.place, via, app)
+        }
+    }
+
+    /** Chapter, fraction and parse signature of [offset] in the selection's section (NotePlaceHost; main thread). */
+    private fun placeOf(offset: Int): NotePlace? =
+        (host as? NotePlaceHost)?.let { h -> runCatching { h.notePlace(DocPosition(section, offset)) }.getOrNull() }
 
     /** The selection holds no line break (a paragraph end in the laid-out text). */
     private fun selectionIsOneLine(): Boolean {
@@ -582,7 +675,7 @@ class SelectionController(private val host: ReaderHost) {
     }
 
     /** What a quote is made of, taken while the selection is valid (the page may change before it is saved). */
-    private class QuoteSnapshot(val bookId: Long, val section: Int, val start: Int, val end: Int, val text: String)
+    private class QuoteSnapshot(val bookId: Long, val section: Int, val start: Int, val end: Int, val text: String, val place: NotePlace?)
 
     /** The current selection as a quote, or null when there is none (or nothing selectable in it). */
     private fun snapshot(): QuoteSnapshot? {
@@ -590,27 +683,110 @@ class SelectionController(private val host: ReaderHost) {
         val t = selectedText()
         if (t.isEmpty()) return null
         val bookId = runCatching { host.book.id }.getOrNull() ?: return null
-        return QuoteSnapshot(bookId, section, selStart, selEnd, t)
+        return QuoteSnapshot(bookId, section, selStart, selEnd, t, placeOf(selStart))
     }
 
-    private fun saveQuote(q: QuoteSnapshot, note: String) {
+    /** 인용 (tap, or a palette pick): the selection becomes a quote in [style]; no success toast. */
+    private fun quoteNow(style: Int) {
+        val snap = snapshot()
+        clear()
+        if (snap != null) saveQuote(snap, "", style)
+    }
+
+    /** Long-press 인용 / ⋮ "색 골라 인용…": the palette at the 인용 cell; a pick quotes in that style and remembers it. */
+    private fun pickStyleThenQuote() {
+        val anchor = quoteCell ?: return
+        if (!active) return
+        hideMenus()
+        palette = QuotePalette.show(anchor, LastQuoteStyle.get()) { s ->
+            palette = null
+            LastQuoteStyle.set(s)
+            if (active) quoteNow(s)
+        }
+    }
+
+    /**
+     * Saves [q] in [style]. The page shows the new quote at once — in the same main-thread message as the [clear]
+     * that came before, so quoting costs ONE e-ink update: the "quotes" list gets a copy of [QuoteCache] plus the new
+     * one, in database order, and the insert + reload then find the page decor unchanged and draw nothing. A failed
+     * insert takes it away again (one update) with "저장하지 못했습니다".
+     */
+    private fun saveQuote(q: QuoteSnapshot, note: String, style: Int) {
+        val before = QuoteCache.get(q.bookId)
+        val pending = Quote(id = Long.MAX_VALUE, bookId = q.bookId, section = q.section, start = q.start, end = q.end,
+            text = q.text, note = note, createdAt = 0L, style = style)
+        if (sameBook(q.bookId)) applyQuoteHighlights(q.section, QuoteHighlights.withAdded(before ?: emptyList(), pending))
         scope.launch {
+            var added: Quote? = null
             val all = withContext(Dispatchers.IO) {
-                runCatching { Library.addQuote(q.bookId, q.section, q.start, q.end, q.text, note) }
-                runCatching { Library.quotes(q.bookId) }.getOrNull()
+                added = runCatching { Library.addQuote(q.bookId, q.section, q.start, q.end, q.text, note, style, q.place) }.getOrNull()
+                if (added == null) null else runCatching { Library.quotes(q.bookId) }.getOrNull()
             }
-            if (all == null) {
+            val saved = added
+            if (saved == null) {
+                if (sameBook(q.bookId)) applyQuoteHighlights(q.section, QuoteCache.get(q.bookId) ?: before ?: emptyList())
                 ctx.toast("저장하지 못했습니다")
                 return@launch
             }
+            // The reload failed: the cache still gets the row the insert returned.
+            val list = all ?: QuoteHighlights.withAdded(QuoteCache.get(q.bookId) ?: before ?: emptyList(), saved.copy(style = style))
+            QuoteCache.put(q.bookId, list)
             // Only repaint when the same book is still open (the quote itself is saved either way).
-            if (runCatching { host.book.id }.getOrNull() == q.bookId) {
-                ContentsDialog.refreshQuoteHighlights(host, q.section, all)
-            } else {
-                QuoteCache.put(q.bookId, all)
-            }
-            ctx.toast("인용문에 저장했습니다")
+            if (sameBook(q.bookId)) applyQuoteHighlights(q.section, list)
         }
+    }
+
+    /**
+     * A palette-row tap over an existing quote: the page and the ring change at once (one partial update; the popup
+     * stays open), then the style is saved on IO; a failed save puts the old style back with a message. Remembered as
+     * the last style. No confirm: recolouring is harmless and reversible.
+     */
+    private fun recolour(style: Int) {
+        val q = editingQuote ?: return
+        if (QuoteStyles.of(style) == QuoteStyles.of(q.style)) return
+        val bookId = q.bookId
+        LastQuoteStyle.set(style)
+        val updated = q.copy(style = style)
+        editingQuote = updated
+        paletteRow?.check(style)
+        val before = QuoteCache.get(bookId)
+        if (before != null) {
+            val next = QuoteHighlights.withStyle(before, q.id, style)
+            QuoteCache.put(bookId, next)
+            if (sameBook(bookId)) applyQuoteHighlights(q.section, next)
+        }
+        scope.launch {
+            val all = withContext(Dispatchers.IO) {
+                runCatching {
+                    Library.updateQuoteStyle(q.id, style)
+                    Library.quotes(bookId)
+                }.getOrNull()
+            }
+            if (all == null) {
+                val cur = QuoteCache.get(bookId)
+                if (cur != null) {
+                    val back = QuoteHighlights.withStyle(cur, q.id, q.style)
+                    QuoteCache.put(bookId, back)
+                    if (sameBook(bookId)) applyQuoteHighlights(q.section, back)
+                }
+                if (editingQuote?.id == q.id) {
+                    editingQuote = editingQuote?.copy(style = q.style)
+                    paletteRow?.check(q.style)
+                }
+                ctx.toast("저장하지 못했습니다")
+                return@launch
+            }
+            QuoteCache.put(bookId, all)
+            if (sameBook(bookId)) applyQuoteHighlights(q.section, all)
+            all.firstOrNull { it.id == q.id }?.let { fresh -> if (editingQuote?.id == q.id) editingQuote = fresh }
+        }
+    }
+
+    private fun sameBook(bookId: Long): Boolean = runCatching { host.book.id }.getOrNull() == bookId
+
+    /** The section's "quotes" highlights from [all] (with their styles), as the reader builds them. Main thread. */
+    private fun applyQuoteHighlights(section: Int, all: List<Quote>) {
+        runCatching { host.setHighlights("quotes", section, QuoteHighlights.forSection(all, section)) }
     }
 
     private fun noteThenQuote() {
@@ -623,7 +799,7 @@ class SelectionController(private val host: ReaderHost) {
         hideActions()
         ctx.multilinePrompt("메모", "", "선택한 문장에 대한 메모", minLines = 3) { note ->
             if (active && section == snap.section && selStart == snap.start && selEnd == snap.end) clear()
-            saveQuote(snap, note.trim())
+            saveQuote(snap, note.trim(), LastQuoteStyle.get())
         }
     }
 
@@ -633,9 +809,9 @@ class SelectionController(private val host: ReaderHost) {
             scope.launch {
                 val all = withContext(Dispatchers.IO) {
                     runCatching { Library.updateQuoteNote(q.id, note.trim()) }
-                    runCatching { Library.quotes(host.book.id) }.getOrNull()
+                    runCatching { Library.quotes(q.bookId) }.getOrNull()
                 }
-                if (all != null) QuoteCache.put(host.book.id, all)
+                if (all != null) QuoteCache.put(q.bookId, all)
             }
         }
     }
@@ -646,9 +822,12 @@ class SelectionController(private val host: ReaderHost) {
             scope.launch {
                 val all = withContext(Dispatchers.IO) {
                     runCatching { Library.deleteQuote(q.id) }
-                    runCatching { Library.quotes(host.book.id) }.getOrNull()
+                    runCatching { Library.quotes(q.bookId) }.getOrNull()
                 }
-                if (all != null) ContentsDialog.refreshQuoteHighlights(host, q.section, all)
+                if (all != null) {
+                    QuoteCache.put(q.bookId, all)
+                    if (sameBook(q.bookId)) applyQuoteHighlights(q.section, all)
+                }
             }
         }
     }
@@ -675,6 +854,9 @@ class SelectionController(private val host: ReaderHost) {
         const val MAX_LONG_PRESS_MS = 2000
         /** Longest phrase quoted in the "이 문구 지우기" dialog (the rule holds all of it). */
         const val PHRASE_SHOWN = 40
+        /** The icon area of a popup cell (fits the 인용 cell's swatch and its "▾"). */
+        const val ICON_BOX_DP = 30
+        const val LABEL_SP = 13f
     }
 }
 
