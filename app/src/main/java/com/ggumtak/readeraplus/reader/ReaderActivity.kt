@@ -486,12 +486,25 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         clearJumpMark()
         val exact = target == DocPosition(jump.section, jump.offset)
-        // A laid-out target section: the mark goes in before the jump, so the page and the mark are one update.
-        val l = if (exact) s.peek(target.section) else null
-        val matched = l != null && JumpAnchor.matches(l.content.text, target.offset.coerceIn(0, l.content.length), jump.anchor)
-        if (matched) putJumpMark(target.section, target.offset.coerceIn(0, l!!.content.length), jump, l.content.length)
-        goTo(target, remember = true)
-        checkJumpAnchor(s, OpenedJump(jump, target, exact, matched))
+        if (!exact) {
+            goTo(target, remember = true)
+            checkJumpAnchor(s, OpenedJump(jump, target, exact = false, matched = false))
+            return
+        }
+        // The mark goes in before the jump, so the page and the mark are one update (C23): the target section is laid
+        // out first when it is not cached (the old page stays; the jump then shows from the cache).
+        anchorJob?.cancel()
+        anchorJob = scope.launch {
+            val sec = target.section.coerceIn(0, s.sectionCount - 1)
+            val l = s.peek(sec) ?: s.layout(sec)
+            if (session !== s) return@launch
+            val matched = l != null &&
+                JumpAnchor.matches(l.content.text, target.offset.coerceIn(0, l.content.length), jump.anchor)
+            if (matched) putJumpMark(sec, target.offset.coerceIn(0, l!!.content.length), jump, l.content.length)
+            anchorJob = null // goTo's user jump cancels a pending search: not this job
+            goTo(target, remember = true)
+            checkJumpAnchor(s, OpenedJump(jump, target, exact = true, matched = matched))
+        }
     }
 
     override fun onResume() {
@@ -928,6 +941,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 val remap = TextPositions.remapFraction(storedPos, sigText, b.posSection, b.posOffset, b.progress)
                 val saved = if (remap != null) s.counts.locateFraction(remap) else DocPosition(b.posSection, b.posOffset)
                 val kept = place?.let { ReaderRestore.start(it, b.id, b.lastReadAt, remapped = remap != null) }
+                // A restored peek only holds for the restored page; the DB row won (newer, remapped): read normally.
+                if (place != null && kept == null) peek.reset()
                 val target = if (kept == null && jump != null) {
                     ReaderJump.resolve(jump, noteSig, s.sectionCount) { f -> s.counts.locateFraction(f) }
                 } else null
@@ -974,7 +989,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 showPage(sec, l, idx, Nav.OPEN, anchorOffset = if (target != null) -1 else off)
                 if (target != null) {
                     // Same main-thread message as the page and the mark: one e-ink update (PLAN C23).
-                    if (!isOnCurrentPage(saved)) returnNav.onJump(saved)
+                    if (!isOnCurrentPage(saved)) safely { returnNav.onJump(saved) }
                     peek.start()
                     // A recreation in this process opens at the saved place, not at the note again (the by-id
                     // intent of a restored reader covers process death, PLAN C8).
@@ -1330,7 +1345,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      * settle.
      */
     private fun endPeek(e: PeekRule.Event) {
-        if (peek.on(e) && curLayout != null) schedulePositionSave()
+        if (!peek.on(e)) return
+        // The note's anchor search must not move a page the user now reads (TTS, auto turn, 여기서 읽기).
+        anchorJob?.cancel()
+        if (curLayout == null) return
+        schedulePositionSave()
+        // A re-parse during the peek skipped the text signature: record it with the parse now shown.
+        val b = bookRef
+        val s = session
+        if (b != null && s != null) writeTextPosition(b, s, anchor)
     }
     // R3 merge(RCA-S): onScrollSettled (first user settle) → endPeek(PeekRule.Event.SCROLL_SETTLE)
 

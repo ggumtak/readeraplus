@@ -53,7 +53,8 @@ ReaderActivity의 열기 경로(PLAN §1.6.1)와 afterOpen/onPause/onDestroy 순
 - **인용 표시 (N §6.5–6.6 + K2)**: `Highlight(q.start, q.end, QUOTE, q.style)`. sig가 세션 NoteSig와 같으면 그리고,
   ''이거나 다르면 `JumpAnchor.matches(구간 텍스트, q.start, q.text)`일 때만 그린다. 구간이 decor에 처음 쓰일 때
   한 번 검사하고 (세션, 구간)별로 캐시한다. 같은 결과를 `QuotePlaceHost.quoteMoved(q)`로 목차의 "· 위치 바뀜"에 제공한다
-  (모르면 sig로 판단). 목차/선택이 OWNER_QUOTES로 넘기는 목록에서도 위치가 바뀐 인용은 걸러진다.
+  (모르면 sig로 판단). 목차/선택이 `setHighlights(OWNER_QUOTES, …)`를 부르면 그 구간 캐시를 버리고 행을 다시 읽어
+  (sig·style·text 포함) 다시 검사한다(갱신 1회).
 - **DecorDiff.same**: start/end/kind/style, bookmarked, statusVersion 비교(순수). sameDecor가 사용한다.
   OWNER_JUMP/OWNER_SEARCH 제거 자리에 `// R3 merge(RCA-S): scroll?.onHighlightsChanged(section)`.
 - **applyAppSettings**: 기존 본문 뒤에 `light.onAppSettingsApplied()` → QuoteLook(+ generation 변화 시 refreshDecor 1회)
@@ -76,7 +77,12 @@ ReaderActivity의 열기 경로(PLAN §1.6.1)와 afterOpen/onPause/onDestroy 순
 - `tools/typecheck.sh --own …`(레인 파일): 성공.
 - 레인 테스트: `tools/unittest.sh --own reader/ReaderJump.kt … --own reader/ReaderRestoreTest.kt` → OK (29 tests).
   (11개 --own 전체는 출력 경로 이름이 너무 길어 도구가 실패하므로 순수 파일과 테스트만 지정했다.)
-- 전체 `tools/typecheck.sh`, `tools/unittest.sh`: 아래 최종 결과 참조.
+- 전체 `tools/typecheck.sh`: 성공. 전체 `tools/unittest.sh`: **OK (1,212 tests)** (기준 1,195 + 새 17개:
+  DecorDiffTest 4, PeekRuleTest 4, ReaderJumpTest +8(find, searchOrder, search 상한·취소, K2 판정, EPUB sig 불일치,
+  NoteSig, 장 제목 정리), ReaderRestoreTest +1).
+- 독립 검토 2회(스펙 완전성, 버그) 반영: OWNER_QUOTES 목록을 검사 없이 캐시하지 않고 다시 읽기, 복원된 peek은 복원 장소가
+  쓰일 때만 유지, peek 해제 시 앵커 탐색 취소와 텍스트 서명 기록, 같은 책 노트 점프는 구간을 먼저 배치해 표시와 페이지를
+  한 번에 그림, `returnNav.onJump`을 safely로 감쌈, 검색 표시 제거·스크롤 정착 병합 주석, `RAPerf afterOpen N ms` 형식.
 
 ## 남은 일 (RC-A 병합 / CI / 기기)
 

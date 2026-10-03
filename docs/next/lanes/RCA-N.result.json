@@ -1,0 +1,39 @@
+{
+  "lane": "RCA-N",
+  "files": [
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderActivity.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderJump.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/DecorDiff.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/PeekRule.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderMenus.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/ReaderJumpTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/DecorDiffTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/PeekRuleTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/ReaderRestoreTest.kt",
+    "docs/next/RCA_N_STATUS.md",
+    "docs/next/lanes/RCA-N.result.json"
+  ],
+  "summary": "startOpen implements PLAN §1.6.1 (restored place > note jump > TXT remap > DB row, anchor before publishing the session, AnchorSpec only for non-jump opens, pageForOffset vs AnchorMath.pageFor, OWNER_JUMP only when JumpAnchor.matches, returnNav.onJump + peek + intent strip in the showPage message, toast). afterOpen runs §1.6.2's 8 steps with a DEBUG 'RAPerf afterOpen N ms'. Peek via pure PeekRule gates every position write; ended by manual turn, TTS, auto turn, user jumps/return point, 여기서 읽기 (scroll settle via merge note); rp.peek saved/restored. onNewIntent same-book note jump (goTo remember=true, mark, anchor check). Capped cancellable anchor search (JumpAnchor.find/search, 48 sections / 3M chars). NotePlaceHost, bookmark places, chunked backfill (64/post, ≤500). Quotes drawn with style under the K2 rule (sig match or anchor match, lazy per section, cached per session) and exposed to the TOC via new QuotePlaceHost.quoteMoved. DecorDiff.same (incl. style). applyAppSettings/onPause/onDestroy orders. Menu '독서 노트' after '내 리뷰'.",
+  "checks": "Module typecheck green; lane unit tests OK (29); full tools/typecheck.sh green; full tools/unittest.sh OK (1212 tests). Two independent reviews applied.",
+  "contractRequests": [
+    "EX-N (ContentsDialog): for the 인용문 rows' '· 위치 바뀜' suffix call (host as? com.ggumtak.readeraplus.reader.QuotePlaceHost)?.quoteMoved(q) (ReaderActivity implements it; falls back to the sig compare when the section was not checked), else q.sig non-empty and ≠ the session sig.",
+    "EX-N/EX-S (ContentsDialog.refreshQuoteHighlights, SelectionController): may pass Highlight(..., it.style); ReaderActivity now treats setHighlights(\"quotes\", section, …) as 'quotes changed' and reloads + re-checks the rows itself, so the passed list is not drawn directly.",
+    "Tooling: tools/unittest.sh/typecheck.sh build the out dir name from all --own flags; 11 flags exceed the filesystem name limit (Errno 36). A hashed TAG would fix it."
+  ],
+  "rcaNotes": [
+    "RCA-S: replace '// R3 merge(RCA-S): scroll?.stopMotion()' at the top of onPause, 'scroll?.detach()' in onDestroy, 'applyReadMode()' in applyAppSettings, 'scroll?.onDeviceClass()' in afterOpen's probeAsync callback, and every 'scroll?.onHighlightsChanged(section)' (clearJumpMark, userTurn OWNER_SEARCH removal, setHighlights owner removal, putJumpMark) with the real calls (main thread).",
+    "RCA-S: in startOpen's showPage pass anchorOffset = off (not -1) when scroll != null and use CONTEXT placement for a mid-line note target (openedAtNote flag), per §1.6.1.",
+    "RCA-S: on the first USER scroll settle call endPeek(PeekRule.Event.SCROLL_SETTLE) (main thread) — marker next to endPeek.",
+    "RCA-S: ScrollReader.Host.highlights(section) should return quotesFor(section, s.peek(section)?.content?.text) plus ownerHighlights for that section (quotesFor is cached per session/section, checks K2 lazily).",
+    "RCA-U: replace '// R3 merge(RCA-U): applyPageInsets()' in applyAppSettings; the existing ReaderWindow.applyBrightness line there duplicates light.onAppSettingsApplied() and can go with U §2.3. returnHost's TODO stubs and the old return chip code remain RCA-U's; returnNav.onJump(saved) is already called in startOpen (wrapped in safely).",
+    "Merge: keep peek.restore(...) in onCreate's restored-place branch and outState.putBoolean(\"rp.peek\", …) in onSaveInstanceState."
+  ],
+  "deviations": [
+    "Peek ends on every user jumpTo (incl. 다음/이전 화), a superset of N §6.2's 'remembered jump'; the anchor check's own move bypasses jumpTo and keeps the peek.",
+    "Anchor search order is one outward sequence (+1, −1, +2, …) which covers 'section ± 3 first, then outward'.",
+    "setHighlights(OWNER_QUOTES) no longer draws the caller's list; it reloads the rows so style and the K2 check apply (one refresh when they arrive).",
+    "A restored peek is dropped when ReaderRestore.start rejects the restored place (the DB row opens normally).",
+    "No contract existed for the TOC '· 위치 바뀜' result: added interface QuotePlaceHost in reader/ReaderJump.kt (lane file)."
+  ],
+  "complete": true
+}
