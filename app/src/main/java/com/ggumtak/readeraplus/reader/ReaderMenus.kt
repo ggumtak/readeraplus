@@ -19,7 +19,6 @@ import com.ggumtak.readeraplus.ui.kit.popupMenu
 import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
-import com.ggumtak.readeraplus.ui.settings.SettingsActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,9 +30,12 @@ internal fun ReaderActivity.showOverflowMenu(anchor: View) {
     // Captured now: every action below works on this book even if another one is opened meanwhile.
     val bk = currentBookOrNull() ?: return
     val bookmarked = isCurrentPageBookmarked()
-    val items = listOf(
+    val items = listOfNotNull(
         MenuItem("페이지 이동", R.drawable.ic_find_in_page) { guarded { ReaderPanels.showGoTo(this) } },
-        MenuItem(if (bookmarked) "북마크 삭제" else "북마크 추가", R.drawable.ic_bookmark_add) { toggleBookmark() },
+        // C22 (narrow): only while the top bar is too narrow for its bookmark button (U §2.2 width guard).
+        if (!bookmarkInChrome()) {
+            MenuItem(if (bookmarked) "북마크 삭제" else "북마크 추가", R.drawable.ic_bookmark_add) { toggleBookmark() }
+        } else null,
         // S §1.2: the quick way into scroll mode and always the way back.
         MenuItem(ScrollWiring.modeItem(scrollMode), if (scrollMode) R.drawable.ic_auto_stories else R.drawable.ic_view_list) {
             toggleReadMode()
@@ -46,7 +48,7 @@ internal fun ReaderActivity.showOverflowMenu(anchor: View) {
         MenuItem("책 정보", R.drawable.ic_info) { guarded { ReaderPanels.showDocumentInfo(this, bk, document) } },
         MenuItem("파일 공유", R.drawable.ic_share) { shareBookFile(bk) },
         MenuItem("휴지통으로 이동", R.drawable.ic_delete) { confirmTrash(bk) },
-        MenuItem("설정", R.drawable.ic_settings) { guarded { SettingsActivity.open(this) } },
+        MenuItem("설정", R.drawable.ic_settings) { guarded { openAppSettings() } },
     )
     guarded { popupMenu(anchor, items, widthDp = 260) }
 }

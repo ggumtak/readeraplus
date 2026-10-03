@@ -41,19 +41,6 @@ class ReaderFormatTest {
     }
 
     @Test
-    fun footers() {
-        // The battery is drawn by the renderer as an icon + digits, never as a second bare percent here.
-        assertEquals("34%  ·  14:05", ReaderFormat.footerRight(34, "14:05"))
-        assertEquals("14:05", ReaderFormat.footerRight(null, "14:05"))
-        assertEquals("100%", ReaderFormat.footerRight(100, null))
-        assertNull(ReaderFormat.footerRight(null, null))
-        assertEquals("12 / 3259", ReaderFormat.footerLeft("12 / 3259", null))
-        assertEquals("12 / 3259  ·  챕터 5쪽 남음", ReaderFormat.footerLeft("12 / 3259", 5))
-        assertEquals("챕터 마지막 쪽", ReaderFormat.footerLeft(null, 0))
-        assertNull(ReaderFormat.footerLeft(null, null))
-    }
-
-    @Test
     fun snippets() {
         val text = "첫 줄입니다.\n\n  둘째   줄$OBJECT_CHAR 셋째 줄."
         assertEquals("첫 줄입니다. 둘째 줄 셋째 줄.", ReaderFormat.snippet(text, 0, text.length))
@@ -67,13 +54,13 @@ class ReaderFormatTest {
 
     @Test
     fun chipsAndPreview() {
-        assertEquals("← 돌아가기 (p. 12)", ReaderFormat.returnChip(12))
-        assertEquals("p. 7 · 3화 등불", ReaderFormat.previewLabel(7, " 3화 등불 "))
-        assertEquals("p. 7", ReaderFormat.previewLabel(7, null))
+        assertEquals("7쪽 · 3화 등불", ReaderFormat.previewLabel(7, " 3화 등불 "))
+        assertEquals("1234쪽 · 제3장 …", ReaderFormat.previewLabel(1234, "제3장 …"))
+        assertEquals("7쪽", ReaderFormat.previewLabel(7, null))
+        assertEquals("7쪽", ReaderFormat.previewLabel(7, "  "))
         // nothing the reader formats shows a tilde any more
         for (s in listOf(
-            ReaderFormat.pageLabel(3, 9), ReaderFormat.returnChip(3), ReaderFormat.previewLabel(3, "제목"),
-            ReaderFormat.footerLeft(ReaderFormat.pageLabel(3, 9), 4)!!, ReaderFormat.chapterLeft(2),
+            ReaderFormat.pageLabel(3, 9), ReaderFormat.previewLabel(3, "제목"), ReaderFormat.chapterLeft(2),
         )) {
             assertTrue(s, '~' !in s)
         }
