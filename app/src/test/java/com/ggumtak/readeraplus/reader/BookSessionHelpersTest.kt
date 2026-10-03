@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.reader
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -10,6 +11,72 @@ import org.junit.Test
  * counts are written, A2).
  */
 class BookSessionHelpersTest {
+
+    @Test
+    fun splitSpinesStartUnitsOnlyAtTheirFirstPartAndOnlyWholeItemsAreSampleable() {
+        val starts = BooleanArray(6)
+        val samples = BooleanArray(6)
+        UnitStarts.spines(listOf(2, 1, 3), starts, samples)
+        assertEquals(listOf(false, false, true, true, false, false), starts.toList())
+        assertEquals(listOf(false, false, true, false, false, false), samples.toList())
+    }
+
+    @Test
+    fun malformedOrMissingSpineMetadataCannotLeavePartialFlagsBehind() {
+        for (parts in listOf(null, listOf(1, 2, 4), listOf(1, 1), listOf(1, 0, 2), listOf(Int.MAX_VALUE))) {
+            val starts = BooleanArray(3) { true }
+            val samples = BooleanArray(3) { true }
+            UnitStarts.spines(parts, starts, samples)
+            assertTrue(starts.none { it })
+            assertTrue(samples.none { it })
+        }
+    }
+
+    @Test
+    fun txtUnitStartsUseTitlesAndNeverTreatTheBookStartAsAGap() {
+        val starts = BooleanArray(4)
+        UnitStarts.txt(listOf("첫 장", null, "다음 장", null).map {
+            com.ggumtak.readeraplus.format.SectionInfo(it, 20)
+        }, starts)
+        assertEquals(listOf(false, false, true, false), starts.toList())
+    }
+
+    @Test
+    fun evictionProtectsEveryVisibleSectionEvenWhenTheCacheMustGrow() {
+        assertEquals(0, pickVictim(listOf(0, 1, 2, 3), 1, 3))
+        assertEquals(4, pickVictim(listOf(2, 1, 3, 4), 1, 3))
+        assertEquals(null, pickVictim(listOf(1, 2, 3, 4, 5), 1, 5))
+        assertEquals(null, pickVictim(emptyList(), 0, 2))
+        // The single-page case preserves the previous LRU rule.
+        assertEquals(9, pickVictim(listOf(7, 9, 8), 7, 7))
+    }
+
+    @Test
+    fun anchoredCountsAreMaskedInASaveCopyWithoutChangingLivePageLabels() {
+        val live = PageCounts(intArrayOf(100, 100, 100))
+        live.set(0, 3, 100); live.set(1, 7, 100); live.set(2, 5, 100)
+        val missingCache = live.toArray()
+        CountSaves.maskAnchor(missingCache, 1, -1)
+        assertArrayEquals(intArrayOf(3, -1, 5), missingCache)
+        assertArrayEquals(intArrayOf(3, 7, 5), live.toArray())
+        val savedCache = live.toArray()
+        CountSaves.maskAnchor(savedCache, 1, 6)
+        assertArrayEquals(intArrayOf(3, 6, 5), savedCache)
+        CountSaves.maskFailed(savedCache, listOf(1))
+        assertArrayEquals(intArrayOf(3, -1, 5), savedCache)
+    }
+
+    @Test
+    fun anchorCacheMaskRejectsInvalidCachedCountsAndIndices() {
+        for (cached in intArrayOf(-10, -1, 0)) {
+            val arr = intArrayOf(4)
+            CountSaves.maskAnchor(arr, 0, cached)
+            assertArrayEquals(intArrayOf(-1), arr)
+        }
+        val arr = intArrayOf(4)
+        CountSaves.maskAnchor(arr, -1, 8); CountSaves.maskAnchor(arr, 1, 8)
+        assertArrayEquals(intArrayOf(4), arr)
+    }
 
     @Test
     fun countsAreSavedWhenTheyAddSomethingAndTheLayoutSettled() {

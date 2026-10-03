@@ -19,6 +19,20 @@ class AnchorsTest {
     private fun content(t: String) = SectionContent(t, listOf(ParagraphBlock(0, t.length)))
 
     @Test
+    fun aGenerationAppliesItsAnchorOnlyToTheMatchingSection() {
+        val settings = com.ggumtak.readeraplus.settings.ReaderSettings()
+        val geometry = LayoutKeys.geometry(settings, 720, 1440, 2f)
+        val gen = BookSession.Generation(1, settings, geometry, LayoutKeys.config(settings, geometry), 2f,
+            AnchorSpec(3, 8))
+        val c = content("가나다라마바사아자차카타파하".repeat(4))
+        assertEquals(8, gen.anchorFor(3, c))
+        assertEquals(-1, gen.anchorFor(2, c))
+        assertEquals(-1, gen.anchorFor(3, SectionContent.EMPTY))
+        val plain = BookSession.Generation(2, settings, geometry, gen.config, 2f)
+        assertEquals(-1, plain.anchorFor(3, c))
+    }
+
+    @Test
     fun snippetTakesVisibleCharsOnly() {
         assertEquals("가나다라마바사아", TextRefind.snippet("  가나 다\n라마바 사아", 0))
         assertNull(TextRefind.snippet("가나다", 0))            // fewer than MIN_NEEDLE
@@ -59,6 +73,30 @@ class AnchorsTest {
         assertEquals(-1, AnchorSpec(0, 3, needle = "가나다라마바사아").resolve(c))   // nearest match is the section start
     }
 
+    @Test
+    fun pageForUsesTheAnchorPageOnlyForItsOwnOffset() {
+        val b = SectionBuilder()
+        repeat(30) { b.para(SampleText.koreanParagraph(Random(it), 200)) }
+        val c = b.build()
+        val cfg = LayoutConfig(width = 300, height = 400)
+        val base = Typesetter(FakeMeasurer(), cfg).layout(c)
+        val mid = (base.pages[3].start + base.pages[3].end) / 2
+        val l = Typesetter(FakeMeasurer(), cfg).layout(c, mid)
+        assertEquals(l.anchorPage, AnchorMath.pageFor(l, mid))
+        assertTrue(l.pages[l.anchorPage].start <= mid)
+        assertEquals(l.pageForOffset(mid + 1), AnchorMath.pageFor(l, mid + 1))
+        assertEquals(base.pageForOffset(mid), AnchorMath.pageFor(base, mid))
+    }
 
+    @Test
+    fun anchoredCountsNeverReachTheCache() {
+        val arr = intArrayOf(3, 7, 5)
+        CountSaves.maskAnchor(arr, 1, cached = 6)
+        assertArrayEquals(intArrayOf(3, 6, 5), arr)
+        CountSaves.maskAnchor(arr, 2, cached = -1)
+        assertArrayEquals(intArrayOf(3, 6, -1), arr)
+        CountSaves.maskAnchor(arr, 9, cached = 4)
+        assertArrayEquals(intArrayOf(3, 6, -1), arr)
+    }
 
 }

@@ -18,6 +18,7 @@ import com.ggumtak.readeraplus.engine.TextMeasurer
 import com.ggumtak.readeraplus.engine.Typesetter
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.BookFormat
+import com.ggumtak.readeraplus.format.SectionInfo
 import com.ggumtak.readeraplus.format.epub.EpubBook
 import com.ggumtak.readeraplus.reader.extras.Episodes
 import com.ggumtak.readeraplus.render.AndroidTextMeasurer
@@ -79,12 +80,18 @@ class BookSession(
         val geometry: PageGeometry,
         val config: LayoutConfig,
         val density: Float,
-    )
+        /** The position preserved by this generation; never part of the count-cache key. */
+        val anchor: AnchorSpec? = null,
+    ) {
+        fun anchorFor(section: Int, content: SectionContent): Int =
+            if (anchor != null && anchor.section == section) anchor.resolve(content) else -1
+    }
 
     enum class Change { NONE, REPAINT, RELAYOUT }
 
     /** [failed]: the section could not be loaded/typeset and was counted as its error page instead. */
-    private class CountResult(val pages: Int, val chars: Int, val anchors: Map<String, Int>, val failed: Boolean)
+    private class CountResult(val pages: Int, val chars: Int, val anchors: Map<String, Int>, val failed: Boolean,
+                              val shifted: Boolean = false)
 
     /**
      * A layout request in flight. Requests nobody waits for (prefetches, or jumps the user already abandoned)
@@ -142,6 +149,11 @@ class BookSession(
     private val cache = HashMap<Int, SectionLayout>()
     private val lru = ArrayList<Int>()
     private var protectedSection = -1
+    private var protectedTo = -1
+    private var unitStarts: BooleanArray? = null
+    private var sampleSections: BooleanArray? = null
+    private var anchorShifted: Boolean? = null
+    private var anchorCached = -1
     private val pending = HashMap<Int, Pending>()
     private var countJob: Job? = null
     private var closed = false
@@ -182,7 +194,7 @@ class BookSession(
         if (width == viewW && height == viewH && generation != null) return false
         viewW = width
         viewH = height
-        rebuild()
+        rebuild(anchor)
         return true
     }
 
@@ -194,19 +206,21 @@ class BookSession(
         val relayout = LayoutKeys.layoutChanged(forLayout(settings), forLayout(new), document.format)
         settings = new
         if (!relayout) return Change.REPAINT
-        rebuild()
+        rebuild(anchor)
         return Change.RELAYOUT
     }
 
-    private fun rebuild() {
+    private fun rebuild(anchor: AnchorSpec?) {
         if (closed || viewW <= 0 || viewH <= 0) return
         val dm = context.resources.displayMetrics
-        val statusPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, settings.statusFontSizeSp, dm)
         val g = LayoutKeys.geometry(settings, viewW, viewH, dm.density)
         genCounter++
         liveGenId = genCounter
         generationBornAt = SystemClock.uptimeMillis()
-        generation = Generation(genCounter, settings, g, LayoutKeys.config(settings, g, txt = document.format == BookFormat.TXT), dm.density)
+        generation = Generation(genCounter, settings, g, LayoutKeys.config(settings, g, txt = document.format == BookFormat.TXT), dm.density,
+            anchor?.takeIf { it.section in 0 until sectionCount })
+        anchorShifted = null
+        anchorCached = -1
         invalidateJobs()
         cache.clear()
         lru.clear()
@@ -240,12 +254,32 @@ class BookSession(
     /** Cached layout of [section] (does not change the LRU order). */
     fun peek(section: Int): SectionLayout? = cache[section]
 
-    /** Marks [section] as displayed: most recently used and never evicted while displayed. */
-    fun startsUnit(section: Int): Boolean = false // R3 stub (owner: RC-P)
+    /** Chapter/spine boundaries are read once, on first scroll/count use. */
+    fun startsUnit(section: Int): Boolean {
+        if (section <= 0 || section >= sectionCount) return false
+        ensureUnitStarts()
+        return unitStarts!![section]
+    }
 
+    private fun ensureUnitStarts() {
+        if (unitStarts != null) return
+        val starts = BooleanArray(sectionCount)
+        if (document.format == BookFormat.TXT) {
+            UnitStarts.txt(document.sections, starts)
+        } else {
+            val samples = BooleanArray(sectionCount)
+            val parts = try { (document as? EpubBook)?.partCounts } catch (_: Throwable) { null }
+            UnitStarts.spines(parts, starts, samples)
+            sampleSections = samples
+        }
+        unitStarts = starts
+    }
+
+    /** Protect all sections on screen, including throughout a drag or fling. */
     fun touch(section: Int, shownTo: Int = section) {
-        protectedSection = section
-        if (lru.remove(section)) lru.add(section)
+        protectedSection = minOf(section, shownTo).coerceAtLeast(0)
+        protectedTo = maxOf(section, shownTo).coerceAtMost(sectionCount - 1)
+        for (s in protectedSection..protectedTo) if (lru.remove(s)) lru.add(s)
     }
 
     /**
@@ -330,11 +364,12 @@ class BookSession(
         lru.remove(section)
         lru.add(section)
         while (lru.size > MAX_CACHED) {
-            val victim = lru.firstOrNull { it != protectedSection } ?: break
+            val victim = pickVictim(lru, protectedSection, protectedTo) ?: break
             lru.remove(victim)
             cache.remove(victim)
         }
         counts.set(section, layout.pageCount, layout.content.length)
+        if (generation?.anchor?.section == section) anchorShifted = layout.anchorShifted
         resolveAnchors(section, layout.content.anchors)
         if (fresh && cache[section] === layout) {
             try {
@@ -354,9 +389,10 @@ class BookSession(
         }
         val m = StaleCheck(layoutMeasurer!!, gen.id)
         m.check()
-        val content = loadContent(section).content
+        val loaded = loadContent(section)
+        val content = loaded.content
         return try {
-            Typesetter(m, gen.config).layout(content)
+            Typesetter(m, gen.config).layout(content, if (loaded.failed) -1 else gen.anchorFor(section, content))
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
@@ -370,7 +406,7 @@ class BookSession(
      * Counts [section] exactly as [layoutOnThread] lays it out: a section that fails is counted as its error
      * page, so page numbers stay consistent with what is shown (flagged so such counts are never cached).
      */
-    private fun countOnThread(gen: Generation, section: Int): CountResult {
+    private fun countOnThread(gen: Generation, section: Int, anchored: Boolean = true): CountResult {
         if (countGenId != gen.id || countMeasurer == null) {
             countMeasurer = AndroidTextMeasurer(context, gen.settings) { images.size(it) }
             countGenId = gen.id
@@ -380,8 +416,8 @@ class BookSession(
         val loaded = loadContent(section)
         val c = loaded.content
         return try {
-            val pages = Typesetter(m, gen.config).countPages(c)
-            CountResult(pages, if (loaded.failed) -1 else c.length, c.anchors, loaded.failed)
+            val t = Typesetter(m, gen.config).count(c, if (anchored && !loaded.failed) gen.anchorFor(section, c) else -1)
+            CountResult(t.pages, if (loaded.failed) -1 else c.length, c.anchors, loaded.failed, t.anchorShifted)
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
@@ -467,38 +503,43 @@ class BookSession(
      * for a settled layout, see [saveCounts]).
      */
     private suspend fun countAll(gen: Generation, countDelayMs: Long) {
+        val started = if (ReaderPerf.turns) SystemClock.uptimeMillis() else 0L
+        var counted = 0
+        var cached = 0
+        var extra = 0
         val key = withContext(Dispatchers.IO) { computeKey(gen) }
         if (gen !== generation) return
         layoutKey = key
         savedKnown = 0
-        if (counts.isComplete) {
-            // Every section was already laid out in the foreground (small book).
+        // Complete foreground counts need no read unless their anchor may have changed pagination.
+        if (counts.isComplete && (gen.anchor == null || anchorShifted == false)) {
             notifyCounts(true)
             saveCounts(key)
+            traceCounts(started, counted, cached, extra)
             return
         }
         val saved = withContext(Dispatchers.IO) {
-            try {
-                Library.pageCounts(book.id, key)
-            } catch (t: Throwable) {
-                Log.w(TAG, "pageCounts failed", t)
-                null
-            }
+            try { Library.pageCounts(book.id, key) }
+            catch (t: Throwable) { Log.w(TAG, "pageCounts failed", t); null }
         }
         if (gen !== generation) return
-        if (saved != null && saved.size == sectionCount) {
+        if (saved != null && saved.size == sectionCount && saved.all { it >= 1 || it == -1 }) {
+            anchorCached = gen.anchor?.let { saved[it.section] } ?: -1
             counts.setKnown(saved)
             savedKnown = PageCounts.countedIn(saved)
+            cached = savedKnown
             if (counts.isComplete) {
                 notifyCounts(true)
-                saveCounts(key) // only when the foreground counted what the cache lacked
-                return
-            }
-            if (savedKnown > 0) notifyCounts(false)
+                if (!needsAnchorRecount(gen)) {
+                    saveCounts(key)
+                    traceCounts(started, counted, cached, extra)
+                    return
+                }
+            } else if (savedKnown > 0) notifyCounts(false)
         }
+        // The one extra un-anchored count also waits: it never competes with the first page.
         if (countDelayMs > 0) delay(countDelayMs)
         if (gen !== generation || closed) return
-        // The section on screen, unless its foreground layout is still running (it counts itself when stored).
         val shown = protectedSection.takeIf { it >= 0 && !pending.containsKey(it) } ?: -1
         val order = CountOrder.plan(sectionCount, shown, samplableSections())
         var sinceSave = 0
@@ -507,37 +548,38 @@ class BookSession(
             if (counts.isKnown(i)) continue
             val r = withContext(countDispatcher) { countOnThread(gen, i) }
             if (gen !== generation) return
+            counted++
             if (!counts.isKnown(i)) counts.set(i, r.pages, if (r.chars >= 0) r.chars else counts.charLength(i))
+            if (i == gen.anchor?.section) anchorShifted = r.shifted
             resolveAnchors(i, r.anchors)
             val complete = counts.isComplete
             notifyCounts(complete)
             if (complete) break
-            if (++sinceSave >= SAVE_EVERY) {
-                sinceSave = 0
-                saveCounts(key)
-            }
+            if (++sinceSave >= SAVE_EVERY) { sinceSave = 0; saveCounts(key) }
+        }
+        if (needsAnchorRecount(gen)) {
+            val r = withContext(countDispatcher) { countOnThread(gen, gen.anchor!!.section, anchored = false) }
+            if (gen !== generation || closed) return
+            extra = 1
+            if (!r.failed) anchorCached = r.pages
         }
         saveCounts(key)
+        traceCounts(started, counted, cached, extra)
     }
 
-    /**
-     * Sections the counter may sample out of order (see [CountOrder.plan]): null (all) for TXT; for an EPUB only the
-     * sections that are a whole spine item, none when the split plan can't be read.
-     */
+    private fun needsAnchorRecount(gen: Generation): Boolean =
+        gen.anchor != null && anchorShifted == true && anchorCached < 1 && counts.isComplete
+
+    private fun traceCounts(start: Long, counted: Int, cached: Int, extra: Int) {
+        if (ReaderPerf.turns) Log.d(ReaderPerf.TAG,
+            "count counted=$counted cached=$cached extra=$extra ${SystemClock.uptimeMillis() - start} ms")
+    }
+
+    /** Whole EPUB spine items only, sharing the one lazy partCounts read with startsUnit. */
     private fun samplableSections(): BooleanArray? {
         if (document.format != BookFormat.EPUB) return null
-        val out = BooleanArray(sectionCount)
-        val parts = try {
-            (document as? EpubBook)?.partCounts
-        } catch (t: Throwable) {
-            null
-        } ?: return out
-        var first = 0
-        for (n in parts) {
-            if (n == 1 && first < sectionCount) out[first] = true
-            first += n
-        }
-        return if (first == sectionCount) out else BooleanArray(sectionCount)
+        ensureUnitStarts()
+        return sampleSections
     }
 
     private fun notifyCounts(complete: Boolean) {
@@ -562,6 +604,8 @@ class BookSession(
         val age = SystemClock.uptimeMillis() - generationBornAt
         if (!CountSaves.due(known, savedKnown, counts.isComplete, age)) return
         val arr = counts.toArray()
+        val a = generation?.anchor
+        if (a != null && anchorShifted != false) CountSaves.maskAnchor(arr, a.section, anchorCached)
         val counted = CountSaves.maskFailed(arr, failedSections)
         savedKnown = known
         if (counted <= 0) return
@@ -780,8 +824,37 @@ class BookSession(
     }
 }
 
+/** Oldest cache entry outside the whole visible range, or null when every cached section is on screen. */
+internal fun pickVictim(lru: List<Int>, from: Int, to: Int): Int? = lru.firstOrNull { it < from || it > to }
+
+/** Lazy chapter/spine maps. Invalid split metadata never invents boundaries or sampleable sections. */
+internal object UnitStarts {
+    fun txt(sections: List<SectionInfo>, starts: BooleanArray) {
+        starts.fill(false)
+        for (i in 1 until minOf(sections.size, starts.size)) starts[i] = sections[i].title != null
+    }
+    fun spines(parts: List<Int>?, starts: BooleanArray, samples: BooleanArray) {
+        starts.fill(false); samples.fill(false)
+        if (parts == null || samples.size != starts.size) return
+        var first = 0L
+        for (n in parts) {
+            if (n <= 0 || first + n > starts.size) { starts.fill(false); samples.fill(false); return }
+            val at = first.toInt()
+            starts[at] = at > 0
+            samples[at] = n == 1
+            first += n
+        }
+        if (first != starts.size.toLong()) { starts.fill(false); samples.fill(false) }
+    }
+}
+
 /** When and what [BookSession] writes to the page-count cache (A2). Pure. */
 internal object CountSaves {
+    /** Only an un-anchored count may travel to the persistent cache. */
+    fun maskAnchor(arr: IntArray, section: Int, cached: Int) {
+        if (section in arr.indices) arr[section] = if (cached >= 1) cached else -1
+    }
+
     /**
      * True when counts with [known] counted sections should be written: they hold more than the cache has
      * ([savedKnown]), and they are [complete] or their layout generation is [ageMs] ≥ [BookSession.SAVE_SETTLE_MS] old.
