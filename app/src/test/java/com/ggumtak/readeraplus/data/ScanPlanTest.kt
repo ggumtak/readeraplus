@@ -10,8 +10,8 @@ import org.junit.Test
 
 class ScanPlanTest {
 
-    private fun known(id: Long, path: String, size: Long = 2000, mtime: Long = 1, trashed: Boolean = false) =
-        FileScanner.Known(id, path, size, mtime, trashed, path.substringAfterLast('/'))
+    private fun known(id: Long, path: String, size: Long = 2000, mtime: Long = 1, trashed: Boolean = false, missingAt: Long = 0) =
+        FileScanner.Known(id, path, size, mtime, trashed, path.substringAfterLast('/'), missingAt)
 
     private fun found(path: String, size: Long = 2000, mtime: Long = 1) =
         FileScanner.Found(path, path.substringAfterLast('/'), BookFormat.TXT, size, mtime)
@@ -152,5 +152,145 @@ class ScanPlanTest {
         // The entry of the file itself is never a move source.
         assertEquals("/r/Gone/a.txt", pick({ true }, newPath = "/r/Old/a.txt"))
         assertNull(FileScanner.movedFrom(listOf(""), { it }, "/r/a.txt", { true }) { false })
+    }
+
+    // ---- N §5.5: notes are never lost silently ----
+
+    @Test
+    fun vanishedWithNotesIsTrashedWithoutIsGone() {
+        val k = listOf(known(1, "/r/a.txt"), known(2, "/r/b.txt"))
+        val plan = FileScanner.plan(
+            k, emptyMap(), emptySet(), emptyList(), vanished = { true }, userDataIds = noUserData,
+            noteIds = { setOf(1L) },
+        )
+        assertEquals(listOf(1L), plan.trash)
+        assertEquals(listOf(2L), plan.gone)
+        assertTrue(plan.revive.isEmpty())
+        assertTrue(plan.changesBooks)
+    }
+
+    @Test
+    fun movedWithNotesIsRePointedNotTrashed() {
+        val k = listOf(known(1, "/r/old/a.txt", size = 7000))
+        val f = found("/r/new/a.txt", size = 7000)
+        val plan = FileScanner.plan(
+            k, foundMap(f), emptySet(), emptyList(), vanished = { true }, userDataIds = noUserData,
+            noteIds = { setOf(1L) },
+        )
+        assertEquals(1L, plan.todo.single().second!!.id)
+        assertTrue(plan.trash.isEmpty())
+        assertTrue(plan.gone.isEmpty())
+        assertTrue(plan.revive.isEmpty())
+    }
+
+    @Test
+    fun missingFoundAgainAtItsPathIsRevived() {
+        val k = listOf(known(4, "/r/a.txt", trashed = true, missingAt = 99), known(5, "/r/b.txt", trashed = true, missingAt = 99, mtime = 1))
+        val plan = FileScanner.plan(
+            k, foundMap(found("/r/a.txt"), found("/r/b.txt", mtime = 2)), emptySet(), emptyList(),
+            vanished = { false }, userDataIds = noUserData,
+        )
+        assertEquals(listOf(4L, 5L), plan.revive)
+        // Changed on disk while it was away: refreshed as usual.
+        assertEquals(listOf(5L), plan.todo.map { it.second!!.id })
+        assertTrue(plan.changesBooks)
+    }
+
+    @Test
+    fun userTrashedIsNeverRevivedOrMarkedMissing() {
+        val k = listOf(known(6, "/r/a.txt", trashed = true), known(7, "/r/gone.txt", trashed = true))
+        val back = FileScanner.plan(
+            k, foundMap(found("/r/a.txt")), emptySet(), emptyList(), vanished = { true }, userDataIds = noUserData,
+            noteIds = { setOf(6L, 7L) },
+        )
+        assertTrue(back.revive.isEmpty())
+        assertTrue(back.trash.isEmpty())
+        assertTrue(back.gone.isEmpty())
+        assertFalse(back.changesBooks)
+    }
+
+    @Test
+    fun missingFileReappearingElsewhereIsRePointedAndRevived() {
+        val k = listOf(known(8, "/r/old/a.txt", size = 3000, trashed = true, missingAt = 50))
+        val f = found("/r/new/a.txt", size = 3000)
+        val plan = FileScanner.plan(
+            k, foundMap(f), emptySet(), emptyList(), vanished = { true }, userDataIds = noUserData,
+            noteIds = { throw AssertionError("nothing vanished unmoved") },
+        )
+        assertEquals(8L, plan.todo.single().second!!.id)
+        assertSame(f, plan.todo.single().first)
+        assertEquals(listOf(8L), plan.revive)
+        assertTrue(plan.gone.isEmpty())
+    }
+
+    @Test
+    fun missingStillAwayIsLeftAsItIs() {
+        val k = listOf(known(9, "/r/Ex/a.txt", trashed = true, missingAt = 50))
+        for (vanished in listOf(true, false)) {
+            val plan = FileScanner.plan(
+                k, emptyMap(), emptySet(), listOf("/r/Ex"), vanished = { vanished }, userDataIds = { emptySet() },
+                noteIds = { emptySet() },
+            )
+            assertTrue(plan.gone.isEmpty())
+            assertTrue(plan.trash.isEmpty())
+            assertTrue(plan.revive.isEmpty())
+            assertFalse(plan.changesBooks)
+        }
+    }
+
+    @Test
+    fun noteIdsAreNotQueriedWhenNothingVanished() {
+        val k = listOf(known(1, "/r/a.txt"), known(2, "/r/b.txt", mtime = 1))
+        val plan = FileScanner.plan(
+            k, foundMap(found("/r/a.txt"), found("/r/b.txt", mtime = 5)), emptySet(), emptyList(),
+            vanished = { false }, userDataIds = noUserData, noteIds = { throw AssertionError("queried") },
+        )
+        assertEquals(1, plan.todo.size)
+        // Not trusted as gone (vanished = false): never trashed, never dropped, no query either.
+        val untrusted = FileScanner.plan(
+            listOf(known(3, "/r/c.txt")), emptyMap(), emptySet(), emptyList(), vanished = { false },
+            userDataIds = noUserData, noteIds = { throw AssertionError("queried") },
+        )
+        assertFalse(untrusted.changesBooks)
+    }
+
+    @Test
+    fun noteIdsAreQueriedOnceForManyVanished() {
+        var calls = 0
+        val k = (1L..5L).map { known(it, "/r/$it.txt") }
+        val plan = FileScanner.plan(
+            k, emptyMap(), emptySet(), emptyList(), vanished = { true }, userDataIds = noUserData,
+            noteIds = { calls++; setOf(2L, 4L) },
+        )
+        assertEquals(1, calls)
+        assertEquals(listOf(2L, 4L), plan.trash)
+        assertEquals(listOf(1L, 3L, 5L), plan.gone)
+    }
+
+    @Test
+    fun missingButUntrashedIsJudgedAgain() {
+        // An R2 build's 복원 leaves trashed = 0 with missing_at > 0: found → revived (cleared); gone → by notes.
+        val back = FileScanner.plan(
+            listOf(known(1, "/r/a.txt", missingAt = 5)), foundMap(found("/r/a.txt")), emptySet(), emptyList(),
+            vanished = { false }, userDataIds = noUserData,
+        )
+        assertEquals(listOf(1L), back.revive)
+        val away = FileScanner.plan(
+            listOf(known(1, "/r/a.txt", missingAt = 5)), emptyMap(), emptySet(), emptyList(),
+            vanished = { true }, userDataIds = noUserData, noteIds = { setOf(1L) },
+        )
+        assertEquals(listOf(1L), away.trash)
+    }
+
+    @Test
+    fun scannerStatementsKeepTheUsersTrash() {
+        assertTrue(LibrarySql.SET_MISSING.endsWith("WHERE id = ? AND trashed = 0"))
+        assertTrue(LibrarySql.CLEAR_MISSING.endsWith("WHERE id = ? AND missing_at > 0"))
+        assertTrue(LibrarySql.SELECT_MOVE_CANDIDATES.contains("(trashed = 0 OR missing_at > 0)"))
+        assertTrue(LibrarySql.SELECT_SCAN_STATE.contains("missing_at"))
+        for (t in listOf("FROM quotes", "FROM bookmarks", "review <> ''", "FROM lookups")) {
+            assertTrue(t, LibrarySql.SELECT_IDS_WITH_NOTES.contains(t))
+        }
+        assertEquals(0, LibrarySql.SELECT_IDS_WITH_NOTES.count { it == '?' })
     }
 }

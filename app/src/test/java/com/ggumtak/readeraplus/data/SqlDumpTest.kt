@@ -31,6 +31,16 @@ class SqlDumpTest {
         return out
     }
 
+    private companion object {
+        val NOTES_STATEMENTS = listOf(
+            "INSERT_QUOTE", "INSERT_BOOKMARK", "SELECT_QUOTES", "SELECT_ALL_QUOTES", "SELECT_BOOKMARKS",
+            "SELECT_ALL_BOOKMARKS", "UPDATE_QUOTE_STYLE", "UPDATE_QUOTE_PLACE", "UPDATE_BOOKMARK_PLACE", "SET_REVIEW",
+            "CLEAR_REVIEW", "UNTRASH", "SET_MISSING", "CLEAR_MISSING", "SELECT_IDS_WITH_NOTES", "SELECT_IDS_WITH_USER_DATA",
+            "SELECT_MOVE_CANDIDATES", "SELECT_SCAN_STATE", "DELETE_LOOKUPS_OF_BOOK", "SELECT_RETURN_MARK",
+            "SET_PREFS_RETURN", "INSERT_PREFS_RETURN", "CLEAR_RETURN_MARK", "PRUNE_BOOK_PREFS",
+        )
+    }
+
     @Test
     fun collectAndOptionallyDump() {
         val consts = constants()
@@ -65,6 +75,21 @@ class SqlDumpTest {
             )
         }
         root.put("counts", counts)
+        // N §16: the notes statements of the data core (writes, place backfill, scanner trash / revive, return mark)
+        // and the upgrade order; tools/check_sql.py prepares every one against v3 files made fresh and by upgrades.
+        val notes = JSONObject()
+        for (name in NOTES_STATEMENTS) {
+            val sql = consts[name]
+            assertTrue(name, sql != null)
+            notes.put(name, sql)
+        }
+        root.put("notes", notes)
+        val upgrade = JSONObject()
+        for (v in 1..LibrarySchema.DB_VERSION) {
+            upgrade.put("v$v", JSONArray(LibraryDb.upgradeTail(v) { emptySet() }))
+        }
+        upgrade.put("sweep", JSONArray(LibrarySchema.UPGRADE_SWEEP))
+        root.put("upgrade", upgrade)
         val path = System.getenv("DATA_SQL_DUMP") ?: return
         File(path).writeText(root.toString(1))
     }
