@@ -233,12 +233,20 @@ private fun Context.checkList(labels: List<String>, checked: BooleanArray, onTog
     }
 }
 
+/** Counts notes on IO, then [then] on main; a failed count shows the question without the notes line (0). */
+private fun LibraryActivity.notesCountThen(count: () -> Int, then: (Int) -> Unit) {
+    scope.launch {
+        val n = withContext(Dispatchers.IO) { runCatching(count).getOrDefault(0) }
+        if (!isFinishing && !isDestroyed) then(n)
+    }
+}
+
 /**
  * "영구 삭제" of one book. The book's notes are counted first (IO): when it has some, the question says so and offers
  * [독서 노트] (the hub filtered to this book) to export them first (NOTES_SPEC §10.1).
  */
 private fun LibraryActivity.confirmDelete(b: Book) {
-    io("삭제하지 못했습니다", { Notes.countForBooks(listOf(b.id)) }) { notes ->
+    notesCountThen({ Notes.countForBooks(listOf(b.id)) }) { notes ->
         val cb = deleteFileCheckBox()
         val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
         val d = alert().setTitle("영구 삭제")
@@ -263,7 +271,7 @@ private fun LibraryActivity.confirmDelete(b: Book) {
 
 /** "휴지통 비우기": like [confirmDelete], for every trashed book ([독서 노트] opens the hub unfiltered). */
 internal fun LibraryActivity.confirmEmptyTrash() {
-    io("비우지 못했습니다", {
+    notesCountThen({
         val ids = Library.books(LibraryQuery(Shelf.TRASH, null, ""), LibrarySort.RECENT).map { it.id }
         if (ids.isEmpty()) 0 else Notes.countForBooks(ids)
     }) { notes ->

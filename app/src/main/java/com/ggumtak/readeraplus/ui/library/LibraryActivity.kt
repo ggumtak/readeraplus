@@ -688,7 +688,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         row.addView(titleView, lp(0, WRAP_CONTENT, 1f))
         extraBtn = iconButton(R.drawable.ic_add, "새 컬렉션") { onExtraAction() }.apply { visibility = View.GONE }
         row.addView(extraBtn)
-        // 목록 → 간단히 → 표지 in one tap each (no chooser dialog to open and close on e-ink).
+        // 전체 → 요약 → 썸네일 → 그리드 in one tap each (no chooser dialog to open and close on e-ink).
         viewBtn = iconButton(modeIcon(listMode), modeDescription(listMode)) { cycleListMode() }
         viewBtnMode = listMode
         row.addView(viewBtn)
@@ -1463,6 +1463,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         @Suppress("DEPRECATION")
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_LEGACY_PERM && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            // A fresh install's restore offer holds the first scan: refreshVisible (onResume) asks first.
+            if (InstallState.offerPending(this)) return
             hasAccess = true
             if (uiBuilt) updatePermissionPanel()
             LibraryJobs.startScan(this, announce = true)

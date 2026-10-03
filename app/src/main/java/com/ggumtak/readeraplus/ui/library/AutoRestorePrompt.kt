@@ -49,8 +49,14 @@ internal class AutoRestorePrompt(private val activity: LibraryActivity, private 
                 }.getOrNull()
             }
             if (activity.isFinishing || activity.isDestroyed) return@launch
-            val best = found?.second
-            if (found == null || best == null) {
+            if (found == null) {
+                // Unreadable (IO error): the offer stays pending (asked again next visit); this visit scans.
+                active = false
+                onReleased()
+                return@launch
+            }
+            val best = found.second
+            if (best == null) {
                 // None with content (or unreadable): never ask again on this install.
                 settle()
                 return@launch
