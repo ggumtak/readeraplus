@@ -264,13 +264,13 @@ internal object InfoDialogs {
             box.addView(pad, lp())
             pad.onEnter = { v -> enter(v) }
             render(resetPad = true)
+            // showNoAnim, like the TOC and search dialogs: in fullscreen the dialog asks for the reader's bar state
+            // (H4); a plain show() let the focused dialog bring the system bars up over the page.
             dialog = ctx.alert().setTitle("페이지 이동")
                 .setView(ctx.einkScroll(box))
                 .setNegativeButton("취소", null)
-                .create()
-            dialog.setOnKeyListener { _, keyCode, ev -> pad.handleKey(keyCode, ev) }
-            dialog.window?.setWindowAnimations(0)
-            dialog.show()
+                .setOnKeyListener { _, keyCode, ev -> pad.handleKey(keyCode, ev) }
+                .showNoAnim()
             PanelRegistry.dialog(ctx, dialog)
         }
 

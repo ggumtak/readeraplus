@@ -90,6 +90,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
 
     /** Every remembered jump, called before the jump while [from] (the origin) is still the current page. */
     fun onJump(from: DocPosition) {
+        notePage(from)
         val m = state.mark
         closed = false
         state.jumped(from, m != null && host.isOnCurrentPage(m))
@@ -191,7 +192,9 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
 
     private fun useMark() {
         val m = state.mark ?: return
-        val t = state.useMark(host.currentPosition(), host.isOnCurrentPage(m)) ?: return
+        val here = host.currentPosition()
+        val t = state.useMark(here, host.isOnCurrentPage(m)) ?: return
+        notePage(here) // the place left becomes the other place
         host.jumpToReturn(t)
         host.onReturnChanged()
         refresh()
@@ -199,10 +202,21 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
 
     private fun useOther() {
         val m = state.mark
-        val t = state.useOther(host.currentPosition(), m != null && host.isOnCurrentPage(m)) ?: return
+        val here = host.currentPosition()
+        val t = state.useOther(here, m != null && host.isOnCurrentPage(m)) ?: return
+        notePage(here)
         host.jumpToReturn(t)
         host.onReturnChanged()
         refresh()
+    }
+
+    /**
+     * Asks for [pos]'s page while it is on screen, before a jump: the host remembers the exact page of a place whose
+     * section is laid out ([ReturnPageMemo]), so the strip and the chip keep reading it after that section leaves the
+     * layout cache (jumps made with the bars hidden bind nothing before the jump).
+     */
+    private fun notePage(pos: DocPosition) {
+        host.globalPageOf(pos)
     }
 
     private fun clearAll() {
@@ -586,6 +600,55 @@ internal class ReturnPoints {
         /** ★5 The chip's visibility is derived, never stored. */
         fun chipVisible(offer: Chip, chromeVisible: Boolean, targetOnScreen: Boolean): Boolean =
             offer != Chip.NONE && !chromeVisible && !targetOnScreen
+    }
+}
+
+/**
+ * Exact in-section page indexes of the return places, per layout generation ([ReturnHost.globalPageOf]). BookSession
+ * keeps only [BookSession.MAX_CACHED] sections laid out; once a place's section has left that cache its index would be a
+ * char-proportional estimate, which lands a page short right after a chapter's heading page (CI 29 13g: page 3 =
+ * s:1 o:210 read "2 페이지로" after two far seeks). Each place is remembered while its section is laid out and kept
+ * until the layout changes. [SLOTS] places, least recently asked replaced first (the strip asks for the mark and the
+ * other place on every bind, so the live ones stay). Pure; allocates nothing.
+ */
+internal class ReturnPageMemo {
+    private val sec = IntArray(SLOTS) { -1 }
+    private val off = IntArray(SLOTS)
+    private val idx = IntArray(SLOTS)
+    private val used = IntArray(SLOTS)
+    private var clock = 0
+    private var gen: Any? = null
+
+    /**
+     * The page index of ([section], [offset]) inside its section in [generation]: [exact] when it is known (>= 0, the
+     * section is laid out), which is remembered; else the remembered index; -1 when there is none (estimate it).
+     */
+    fun resolve(generation: Any?, section: Int, offset: Int, exact: Int): Int {
+        if (gen !== generation) {
+            sec.fill(-1)
+            used.fill(0)
+            clock = 0
+            gen = generation
+        }
+        var slot = -1
+        for (i in 0 until SLOTS) if (sec[i] == section && off[i] == offset) { slot = i; break }
+        if (exact < 0 && slot < 0) return -1
+        if (slot < 0) {
+            slot = 0 // a free slot, else the least recently asked
+            for (i in 0 until SLOTS) {
+                if (sec[i] < 0) { slot = i; break }
+                if (used[i] < used[slot]) slot = i
+            }
+            sec[slot] = section
+            off[slot] = offset
+        }
+        if (exact >= 0) idx[slot] = exact
+        used[slot] = ++clock
+        return idx[slot]
+    }
+
+    companion object {
+        const val SLOTS = 4
     }
 }
 

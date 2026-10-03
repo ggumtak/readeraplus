@@ -241,9 +241,22 @@ class RawEqualTest(unittest.TestCase):
             raw_image(b, 4, 6, [99, 10, 20, 30, 40, 99], header=12)
             raw_image(c, 4, 5, [0, 10, 20, 30, 40])
             self.assertEqual(raw_equal.compare(a, b, 1, 5), "EQUAL")
-            self.assertEqual(raw_equal.compare(a, b, 0, 5), "DIFF 4")
+            self.assertEqual(raw_equal.compare(a, b, 0, 5), "DIFF 4 bbox 0,0-3,0")
+            self.assertEqual(raw_equal.compare(a, b, 0, 6), "DIFF 8 bbox 0,0-3,5")
             self.assertEqual(raw_equal.compare(a, c, 1, 5), "BADSIZE")
             self.assertEqual(raw_equal.compare(a, b, 3, 9), "BADSIZE")
+
+    def test_diff_box_names_the_pixels(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = (os.path.join(d, n) for n in ("a.raw", "b.raw"))
+            raw_image(a, 4, 6, [0, 10, 20, 30, 40, 50])
+            data = bytearray(open(a, "rb").read())
+            pixel = 16 + (3 * 4 + 2) * 4  # (x 2, y 3) after the 16-byte header
+            data[pixel] = 200
+            with open(b, "wb") as f:
+                f.write(bytes(data))
+            self.assertEqual(raw_equal.compare(a, b, 1, 5), "DIFF 1 bbox 2,3-2,3")
+            self.assertEqual(raw_equal.compare(a, b, 0, 3), "EQUAL")
 
 
 class RestoreBackupTest(unittest.TestCase):

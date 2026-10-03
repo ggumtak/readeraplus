@@ -24,8 +24,17 @@ def compare(a, b, y0, y1):
     start, end = y0 * wa * 4, y1 * wa * 4
     if pa[start:end] == pb[start:end]:
         return "EQUAL"
-    count = sum(pa[i:i + 4] != pb[i:i + 4] for i in range(start, end, 4))
-    return f"DIFF {count}"
+    # Where they differ, in screen pixels (x0,y0-x1,y1 inclusive): a centred box is an overlay, a band at an edge of
+    # the range a bar that changed height.
+    count = 0
+    x0 = y0d = wa
+    x1 = y1d = -1
+    for i in range(start, end, 4):
+        if pa[i:i + 4] != pb[i:i + 4]:
+            count += 1
+            x, y = (i // 4) % wa, (i // 4) // wa
+            x0, x1, y0d, y1d = min(x0, x), max(x1, x), min(y0d, y), max(y1d, y)
+    return f"DIFF {count} bbox {x0},{y0d}-{x1},{y1d}"
 
 
 if __name__ == "__main__":

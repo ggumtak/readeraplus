@@ -3778,7 +3778,18 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // Paged: the page start; scroll mode: the virtual page start (ReaderHost.currentPosition()'s scroll branch).
         override fun currentPosition(): DocPosition = this@ReaderActivity.currentPosition()
         override fun isOnCurrentPage(pos: DocPosition): Boolean = this@ReaderActivity.isOnCurrentPage(pos)
-        override fun globalPageOf(pos: DocPosition): Int = this@ReaderActivity.globalPageOf(pos)
+        private val pages = ReturnPageMemo()
+
+        // The exact page while the place's section is laid out, remembered for this layout (ReturnPageMemo): after a
+        // far jump that section leaves the 4-section cache, and the char estimate can read one page short.
+        override fun globalPageOf(pos: DocPosition): Int {
+            val s = session ?: return 1
+            val sec = pos.section.coerceIn(0, s.sectionCount - 1)
+            val l = s.peek(sec)
+            val idx = pages.resolve(s.generation, sec, pos.offset, if (l != null) l.pageForOffset(pos.offset) else -1)
+            return s.counts.globalPage(sec, if (idx >= 0) idx else s.counts.estimatePageIndex(sec, pos.offset))
+        }
+
         override fun jumpToReturn(pos: DocPosition) = jumpTo(pos.section, pos.offset, -1)
         override fun charProgressOf(pos: DocPosition): Float =
             session?.counts?.charProgress(pos.section, pos.offset) ?: 0f
