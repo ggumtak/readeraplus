@@ -19,7 +19,8 @@
 - RC-P 세션·페이지 수 완료: 타입체크 성공, JVM 1,163개 통과. anchor를 유지하는 layout/count와 안전한 캐시 저장,
   화면 구간 LRU 보호를 구현했다. `RC_P_STATUS.md` 참고.
 - RC-S 순수 위치 계산 완료: 타입체크 성공, JVM 1,180개 통과. `RC_S_MATH_STATUS.md` 참고.
-  다음 작업은 RC-S의 ScrollReader·PageView 연결이다. 아직 새 스크롤 UI가 활성화된 상태는 아니다.
+  PageView의 스크롤 draw/touch·접근성 분기도 구현했다(타입체크 성공, JVM 1,180개 통과).
+  `RC_S_INPUT_STATUS.md` 참고. 다음 작업은 ScrollReader 본체다. 아직 새 스크롤 UI가 활성화된 상태는 아니다.
 - 다음 작업은 W1 레인 → 통합 → W2 → CI·성능·리뷰다.
 
 ## 지금 상태

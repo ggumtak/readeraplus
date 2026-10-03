@@ -5,12 +5,15 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.VelocityTracker
+import android.view.accessibility.AccessibilityNodeInfo
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.render.PageDecor
 import com.ggumtak.readeraplus.render.PageRenderer
@@ -43,6 +46,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     var scroll: ScrollInput? = null
     interface ScrollInput {
         val live: Boolean
+        /** Apply a pending device/style choice only at the beginning of a new gesture. */
+        fun onDown() {}
         fun isMoving(): Boolean; fun stopMotion(): Boolean; fun dragBy(dy: Float)
         fun release(totalDy: Float, velocityY: Float); fun cancelDrag()
         fun a11yStep(next: Boolean): Boolean; fun computeScroll(); fun draw(canvas: Canvas, width: Int, height: Int)
@@ -90,6 +95,12 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     private val swipeMin = 60f * resources.displayMetrics.density
     /** A finger that strays up to this far is still a tap (larger than the long-press cancel slop). */
     private val tapSlop = maxOf(touchSlop * 2f, 20f * resources.displayMetrics.density)
+
+    private var maxFling = 0f
+    private var velocityTracker: VelocityTracker? = null
+    private var scrollDragging = false
+    private var scrollStopper = false
+    private var scrollLastY = 0f
 
     private var downX = 0f
     private var downY = 0f
@@ -143,6 +154,21 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
+        val scrolling = scroll
+        if (scrolling != null) {
+            try {
+                scrolling.draw(canvas, width, height)
+                drawFailed = false
+            } catch (t: Throwable) {
+                if (!drawFailed) Log.w(TAG, "scroll draw failed", t)
+                drawFailed = true
+                canvas.drawColor(Color.WHITE)
+                canvas.drawText("페이지를 그리지 못했습니다.", 12f * resources.displayMetrics.density,
+                    errorPaint.textSize * 2f, errorPaint)
+            }
+            if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces()
+            return
+        }
         val f = frame
         if (f == null) {
             canvas.drawColor(blankColor)
@@ -188,6 +214,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(ev: MotionEvent): Boolean {
+        val scrolling = scroll
+        if (scrolling != null) return onScrollTouch(ev, scrolling)
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 cb.onTouchStarted()
@@ -304,6 +332,128 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         return true
     }
 
+    /** Scroll gestures share the existing selection/brightness callbacks; paged gesture handling stays separate. */
+    private fun onScrollTouch(ev: MotionEvent, input: ScrollInput): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            cb.onTouchStarted()
+            removeCallbacks(longPress)
+            extraTaps.clear()
+            multiIgnored = false
+            toSelection = cb.isSelectionActive()
+            if (toSelection) { cb.onSelectionTouch(ev); return true }
+            scrollStopper = input.stopMotion()
+            input.onDown()
+            if (maxFling <= 0f) maxFling = ViewConfiguration.get(context).scaledMaximumFlingVelocity.toFloat()
+            val tracker = velocityTracker ?: VelocityTracker.obtain().also { velocityTracker = it }
+            tracker.clear(); tracker.addMovement(ev)
+            tracking = true; moved = false; multi = false; longPressFired = false
+            scrollDragging = false; brightnessDragging = false
+            primaryId = ev.getPointerId(0); primaryDownAt = ev.eventTime
+            downX = ev.x; downY = ev.y; scrollLastY = downY; maxDist = 0f
+            brightnessMode = brightnessSwipe && Gestures.inBrightnessStrip(ev.x, width)
+            if (!scrollStopper && longPressEnabled) postDelayed(longPress, longPressMs)
+            return true
+        }
+        if (toSelection) {
+            cb.onSelectionTouch(ev)
+            if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) toSelection = false
+            return true
+        }
+        velocityTracker?.addMovement(ev)
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_MOVE -> {
+                if (!tracking || multiIgnored || longPressFired) return true
+                val index = ev.findPointerIndex(primaryId)
+                if (index < 0) return true
+                val x = ev.getX(index); val y = ev.getY(index)
+                val dx = x - downX; val dy = y - downY
+                maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
+                val slop = if (input.live) touchSlop else tapSlop
+                if (!moved && maxDist > slop) {
+                    moved = true
+                    removeCallbacks(longPress)
+                    if (ScrollMath.isVertical(dx, dy)) {
+                        if (brightnessMode) { brightnessDragging = true; brightnessFrom = cb.brightnessStart() }
+                        else { scrollDragging = true; cb.onScrollStart() }
+                    }
+                    scrollLastY = y
+                    if (brightnessDragging) cb.onBrightness(Gestures.brightness(brightnessFrom, dy, height), false)
+                    return true
+                }
+                if (brightnessDragging) cb.onBrightness(Gestures.brightness(brightnessFrom, dy, height), false)
+                else if (scrollDragging && input.live) input.dragBy(scrollLastY - y)
+                scrollLastY = y
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                removeCallbacks(longPress)
+                if (scrollDragging) input.cancelDrag()
+                finishBrightness(ev)
+                scrollDragging = false; tracking = false; multiIgnored = true
+            }
+            MotionEvent.ACTION_UP -> {
+                removeCallbacks(longPress)
+                if (multiIgnored) { multiIgnored = false; tracking = false; return true }
+                if (!tracking) return true
+                tracking = false
+                val index = ev.findPointerIndex(primaryId)
+                val x = if (index >= 0) ev.getX(index) else ev.x
+                val y = if (index >= 0) ev.getY(index) else ev.y
+                if (brightnessDragging) finishBrightness(ev)
+                else if (scrollDragging) {
+                    scrollDragging = false
+                    if (input.live) input.dragBy(scrollLastY - y)
+                    val tracker = velocityTracker
+                    tracker?.computeCurrentVelocity(1000, maxFling)
+                    lastInputAt = ev.eventTime
+                    input.release(downY - y, -(tracker?.getYVelocity(primaryId) ?: 0f))
+                } else if (!scrollStopper && !longPressFired) {
+                    val dx = x - downX; val dy = y - downY
+                    maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
+                    when (Gestures.end(dx, dy, maxDist, tapSlop, swipeMin, swipeToTurn, false)) {
+                        GestureEnd.NEXT -> swipe(SwipeDir.NEXT, ev.eventTime)
+                        GestureEnd.PREV -> swipe(SwipeDir.PREV, ev.eventTime)
+                        GestureEnd.TAP -> deliverTap(downX, downY, ev.eventTime)
+                        GestureEnd.NONE -> {}
+                    }
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(longPress)
+                if (scrollDragging) input.cancelDrag()
+                finishBrightness(ev)
+                scrollDragging = false; tracking = false; multiIgnored = false
+            }
+        }
+        return true
+    }
+
+    override fun computeScroll() { scroll?.computeScroll() }
+
+    override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        if (scroll != null) {
+            info.isScrollable = true
+            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
+            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
+        }
+    }
+
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+        val input = scroll
+        if (input != null) {
+            if (action == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) return input.a11yStep(true)
+            if (action == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) return input.a11yStep(false)
+        }
+        return super.performAccessibilityAction(action, arguments)
+    }
+
+    /** Use the same reader command as a tap/remote, including manual-turn and auto-turn bookkeeping. */
+    internal fun accessibilityStep(next: Boolean): Boolean {
+        lastInputAt = SystemClock.uptimeMillis()
+        cb.onWheel(next)
+        return true
+    }
+
     /** The first finger of the gesture lifted (pointer index [i] of [ev]): tap, swipe or the end of a drag. */
     private fun finishPrimary(ev: MotionEvent, i: Int) {
         removeCallbacks(longPress)
@@ -388,6 +538,10 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
 
     override fun onDetachedFromWindow() {
         removeCallbacks(longPress)
+        if (scrollDragging) scroll?.cancelDrag()
+        scrollDragging = false; tracking = false
+        velocityTracker?.recycle()
+        velocityTracker = null
         super.onDetachedFromWindow()
     }
 
