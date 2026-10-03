@@ -77,9 +77,9 @@ ReaderActivity의 열기 경로(PLAN §1.6.1)와 afterOpen/onPause/onDestroy 순
 - `tools/typecheck.sh --own …`(레인 파일): 성공.
 - 레인 테스트: `tools/unittest.sh --own reader/ReaderJump.kt … --own reader/ReaderRestoreTest.kt` → OK (29 tests).
   (11개 --own 전체는 출력 경로 이름이 너무 길어 도구가 실패하므로 순수 파일과 테스트만 지정했다.)
-- 전체 `tools/typecheck.sh`: 성공. 전체 `tools/unittest.sh`: **OK (1,212 tests)** (기준 1,195 + 새 17개:
+- 전체 `tools/typecheck.sh`: 성공. 전체 `tools/unittest.sh`: **OK (1,213 tests)** (기준 1,195 + 새 18개:
   DecorDiffTest 4, PeekRuleTest 4, ReaderJumpTest +8(find, searchOrder, search 상한·취소, K2 판정, EPUB sig 불일치,
-  NoteSig, 장 제목 정리), ReaderRestoreTest +1).
+  NoteSig, 장 제목 정리, EPUB/legacy 규칙), ReaderRestoreTest +1).
 - 독립 검토 2회(스펙 완전성, 버그) 반영: OWNER_QUOTES 목록을 검사 없이 캐시하지 않고 다시 읽기, 복원된 peek은 복원 장소가
   쓰일 때만 유지, peek 해제 시 앵커 탐색 취소와 텍스트 서명 기록, 같은 책 노트 점프는 구간을 먼저 배치해 표시와 페이지를
   한 번에 그림, `returnNav.onJump`을 safely로 감쌈, 검색 표시 제거·스크롤 정착 병합 주석, `RAPerf afterOpen N ms` 형식.
@@ -91,3 +91,10 @@ ReaderActivity의 열기 경로(PLAN §1.6.1)와 afterOpen/onPause/onDestroy 순
   `quotesFor(section, s.peek(section)?.content?.text)` + ownerHighlights를 쓴다.
 - Comet 수동 확인: 노트에서 열기(페이지·표시·칩 한 번 갱신), 뒤로 → 서재 순서/진행률 그대로, 3쪽 넘김 후 저장 재개,
   프로세스 종료 후 복원 시 peek 유지.
+
+## EX-N 후속 (리드 요청)
+
+- 인용 표시 규칙을 목차의 `QuoteRows.placeChanged`와 같게 맞췄다: sig가 세션 장소 sig(TXT는 NoteSig, EPUB은 '')와 같으면
+  그리고, 아니면 시작 위치에서 `JumpAnchor.matches`. 자리에 `// R3 merge(EX-N)` 주석.
+- `setHighlights("quotes", …)`는 목차/선택이 보낸 목록을 바로 그리고(1회 갱신) 행을 다시 읽는다(같은 결과라 추가 갱신 없음).
+- `openNote(jump: ReaderJump)` 추가: 같은 책 노트 점프 경로(resolve·표시·앵커 검사). 계약 인터페이스는 병합 때 리드가 추가.

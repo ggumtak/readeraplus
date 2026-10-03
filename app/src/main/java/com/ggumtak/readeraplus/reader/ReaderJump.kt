@@ -122,11 +122,13 @@ object JumpAnchor {
     }
 
     /**
-     * PLAN K2: a quote is drawn on the page when it was made against this text ([sig] equals the session's [noteSig]),
-     * or, for a legacy `''` or another sig, when its own [quoteText] is still found at [start] (≤ 24 visible chars).
+     * PLAN K2: a quote is drawn on the page when it was made against this text ([sig] equals the session's place sig
+     * [sessionSig], `NotePlace.sig`: the NoteSig for TXT, '' for EPUB), or, for a legacy `''` or another sig, when its
+     * own [quoteText] is still found at [start] (≤ 24 visible chars). The same rule as the contents dialog's
+     * `QuoteRows.placeChanged` with the anchor result at hand, so both draw the same set.
      */
-    fun quoteHolds(sig: String, noteSig: String?, text: CharSequence, start: Int, quoteText: String): Boolean =
-        (sig.isNotEmpty() && sig == noteSig) || matches(text, start, quoteText)
+    fun quoteHolds(sig: String, sessionSig: String, text: CharSequence, start: Int, quoteText: String): Boolean =
+        sig == sessionSig || (start >= 0 && start < text.length && matches(text, start, quoteText))
 }
 
 /** N §6.5: how a note's place reads. */

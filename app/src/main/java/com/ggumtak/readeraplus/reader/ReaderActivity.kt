@@ -1247,7 +1247,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         quotesBySection[section]?.let { return it }
         val rows = quoteRows[section]
         if (rows.isNullOrEmpty() || text == null) return emptyList()
-        val sig = noteSig(s)
+        // R3 merge(EX-N): same rule as QuoteRows.placeChanged(q.sig, placeSig, anchorMatch)
+        val sig = placeSig(s)
         val out = ArrayList<Highlight>(rows.size)
         for (q in rows) {
             val holds = JumpAnchor.quoteHolds(q.sig, sig, text, q.start, q.text)
@@ -1262,8 +1263,22 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     override fun quoteMoved(quote: Quote): Boolean {
         val s = session ?: return false
         if (quoteCheckSession === s) quoteMovedById[quote.id]?.let { return it }
-        return quote.sig.isNotEmpty() && quote.sig != noteSig(s)
+        val sig = placeSig(s)
+        return quote.sig != sig && quote.sig.isNotEmpty() && sig.isNotEmpty()
     }
+
+    /** [NotePlace.sig] of the session: its [NoteSig] for TXT, '' for EPUB (what notes store and the TOC compares). */
+    private fun placeSig(s: BookSession): String {
+        val sig = noteSig(s)
+        return if (sigPlain == null) "" else sig
+    }
+
+    /**
+     * Opens [jump] (a note of the open book) through the note-jump path: [ReaderJump.resolve] (stored place, else the
+     * fraction), the mark and the anchor check (N §6.3); a remembered jump. Main thread. For the contents dialog's
+     * moved quotes (EX-N); the contract interface is added at merge.
+     */
+    fun openNote(jump: ReaderJump) = jumpToNote(jump)
 
     /** The session's [NoteSig] (computed once per session: re-parses make a new one). */
     private fun noteSig(s: BookSession): String {
@@ -1283,12 +1298,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     override fun notePlace(pos: DocPosition): NotePlace {
         val s = session ?: return NotePlace.UNKNOWN
         return try {
-            val sig = noteSig(s)
             val ci = s.chapters.indexAt(pos.section, pos.offset)
             NotePlace(
                 NotePlaceText.chapter(if (ci >= 0) s.chapters.title(ci) else null),
                 s.counts.charProgress(pos.section, pos.offset),
-                if (sigPlain == null) "" else sig,
+                placeSig(s),
             )
         } catch (t: Throwable) {
             Log.w(TAG, "note place failed", t)
@@ -2125,9 +2139,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     override fun setHighlights(owner: String, section: Int, highlights: List<Highlight>) {
         if (owner == OWNER_QUOTES) {
-            // A quote was added, recoloured or deleted: the rows (sig, style, text) are read again and the section is
-            // checked again (PLAN K2) rather than drawing the caller's list unchecked; that reload refreshes once.
-            quotesBySection.remove(section)
+            // A quote was added, recoloured or deleted. The contents dialog / selection send the section's quotes by
+            // the same K2 rule (QuoteRows.placeChanged) with their colours: drawn now (one update). The rows are read
+            // again for the other sections and the TOC; that reload draws the same set (sameDecor, no second update).
+            val s = session
+            if (s != null && quoteCheckSession !== s) resetQuoteChecks(s)
+            quotesBySection[section] = highlights
+            refreshDecor(onlyIfChanged = true)
             reloadAnnotations()
             return
         } else if (highlights.isEmpty()) {
