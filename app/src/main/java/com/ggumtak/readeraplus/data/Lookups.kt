@@ -49,7 +49,7 @@ object Lookups {
             Log.w(TAG, "record failed", t)
             -1L
         }
-        if (id > 0) Notes.bumpLocal() // R3 merge(DA-C): Library.notesChanged()
+        if (id > 0) Library.notesChanged()
         perf("record", t0)
         return id
     }
@@ -57,7 +57,7 @@ object Lookups {
     /** The "뜻 메모" of one lookup ("" clears it). */
     fun setNote(id: Long, note: String) {
         Library.db().exec(NotesSql.LOOKUP_SET_NOTE, MetaInfo.truncate(note.trim(), DataLimits.NOTE), id)
-        Notes.bumpLocal() // R3 merge(DA-C): Library.notesChanged()
+        Library.notesChanged()
     }
 
     /** Deletes lookups by id (one transaction). */
@@ -72,13 +72,13 @@ object Lookups {
                 i += DELETE_CHUNK
             }
         }
-        Notes.bumpLocal() // R3 merge(DA-C): Library.notesChanged()
+        Library.notesChanged()
     }
 
     /** "단어장 비우기". */
     fun clearAll() {
         Library.db().execSQL(NotesSql.LOOKUP_CLEAR)
-        Notes.bumpLocal() // R3 merge(DA-C): Library.notesChanged()
+        Library.notesChanged()
     }
 
     fun count(): Int = Library.db().queryFirst(NotesSql.LOOKUP_COUNT, null) { it.getInt(0) } ?: 0

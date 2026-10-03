@@ -174,7 +174,7 @@ object Backup {
         val data = BackupJson.parse(String(bytes, Charsets.UTF_8))
         val matches = resolveBooks(data.books)
         val remap = applyLibrary(data, matches)
-        // R3 merge(DA-C): call `Library.notesChanged()` here (after applyLibrary's commit; N §5.1 / §5.6 notesGen++).
+        Library.notesChanged() // after applyLibrary's commit (N §5.1 / §5.6)
         markTextPositions(context, remap)
         data.settings?.let { applySettings(it) }
         InstallState.settleOffer(context)
