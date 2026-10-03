@@ -123,7 +123,11 @@ class ListPager(val list: AbsListView,val bar: InkPagerBar,private val cols: Int
         bindBar()
         list.setOnScrollListener(object : AbsListView.OnScrollListener {
             override fun onScrollStateChanged(view: AbsListView,state: Int) {}
-            override fun onScroll(view: AbsListView,first: Int,visible: Int,total: Int) { update();onPaged?.invoke(first,(first+visible-1).coerceAtLeast(first)) }
+            override fun onScroll(view: AbsListView,first: Int,visible: Int,total: Int) {
+                // A hidden bar (scroll mode) needs no label on every scroll frame; showing it lays the list out again.
+                if (bar.visibility!=View.VISIBLE) return
+                update();onPaged?.invoke(first,(first+visible-1).coerceAtLeast(first))
+            }
         })
     }
     /** Points the bar's ◀ / ▶ / "3 / 27" at this pager (one bar can serve two lists; the shown one binds it). */

@@ -388,8 +388,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             restartAutoScanWait()
         }
         // Then the idle auto backup (at most daily; never while a book opens or a scan runs).
-        backupPending = app.autoBackup &&
+        backupPending = app.autoBackup && runCatching {
             AutoBackup.isDue(System.currentTimeMillis(), Settings.raw().getLong(AutoBackup.PREF_CHECKED_AT, 0L))
+        }.getOrDefault(false)
         restartAutoScanWait()
         if (backupNotice == null) backupNotice = pendingBackupNotice()
         updateStatus()
@@ -1235,7 +1236,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val natural = dp(LibraryGridMath.cell(listMode).heightDp)
         var cellH = natural
         var perPage = 0
-        val inner = gridView.height - gridView.paddingTop - dp(LibraryGridMath.PAD_DP)
+        // Before its first layout (it was GONE) the grid will have its frame's height: fit now, not after a draw.
+        val height = if (gridView.height > 0) gridView.height else (gridView.parent as? View)?.height ?: 0
+        val inner = height - gridView.paddingTop - dp(LibraryGridMath.PAD_DP)
         if (paged && inner > 0) {
             val (rows, h) = LibraryGridMath.fitRows(inner, natural, gridView.verticalSpacing)
             cellH = h
