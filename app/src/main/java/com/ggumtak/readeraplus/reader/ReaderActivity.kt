@@ -352,8 +352,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var sigPlain: String? = null
     /** The book's quotes by section as loaded, before the K2 check ([quotesFor]). */
     private var quoteRows: Map<Int, List<Quote>> = emptyMap()
-    /** Per section: the (start, end) of quotes that do not hold (a TOC refresh of the section must not redraw them). */
-    private val quotesRejected = HashMap<Int, HashSet<Long>>()
     /** Per quote id: whether its place moved, as the K2 check found it (the TOC's "· 위치 바뀜"). */
     private val quoteMovedById = HashMap<Long, Boolean>()
     private var quoteCheckSession: BookSession? = null
@@ -1064,7 +1062,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // A12-1: cache files the open computed but left for later (the EPUB section plan).
         ReaderIo.launch { Documents.writeDeferredCaches() }
         loadSpeed()
-        if (ReaderPerf.turns) Log.d(ReaderPerf.TAG, "afterOpen ${SystemClock.uptimeMillis() - t0}ms")
+        if (ReaderPerf.turns) Log.d(ReaderPerf.TAG, "afterOpen ${SystemClock.uptimeMillis() - t0} ms")
     }
 
     /**
@@ -1164,7 +1162,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         bookmarks = emptyList()
         quotesBySection.clear()
         quoteRows = emptyMap()
-        quotesRejected.clear()
         quoteMovedById.clear()
         quoteCheckSession = null
         sigSession = null
@@ -1220,7 +1217,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun resetQuoteChecks(s: BookSession) {
         quoteCheckSession = s
         quotesBySection.clear()
-        quotesRejected.clear()
         quoteMovedById.clear()
     }
 
@@ -1241,17 +1237,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         for (q in rows) {
             val holds = JumpAnchor.quoteHolds(q.sig, sig, text, q.start, q.text)
             quoteMovedById[q.id] = !holds
-            if (holds) {
-                out += Highlight(q.start, q.end, HighlightKind.QUOTE, q.style)
-            } else {
-                quotesRejected.getOrPut(section) { HashSet() } += spanKey(q.start, q.end)
-            }
+            if (holds) out += Highlight(q.start, q.end, HighlightKind.QUOTE, q.style)
         }
         quotesBySection[section] = out
         return out
     }
-
-    private fun spanKey(start: Int, end: Int): Long = (start.toLong() shl 32) or (end.toLong() and 0xffffffffL)
 
     /** TOC "· 위치 바뀜" (PLAN K2): the page's result when the section was checked, else the sig. */
     override fun quoteMoved(quote: Quote): Boolean {
@@ -1342,6 +1332,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun endPeek(e: PeekRule.Event) {
         if (peek.on(e) && curLayout != null) schedulePositionSave()
     }
+    // R3 merge(RCA-S): onScrollSettled (first user settle) → endPeek(PeekRule.Event.SCROLL_SETTLE)
 
     /** Removes the note mark (a manual turn, a new note jump). */
     private fun clearJumpMark() {
@@ -2111,15 +2102,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     override fun setHighlights(owner: String, section: Int, highlights: List<Highlight>) {
         if (owner == OWNER_QUOTES) {
-            // The section's quotes as the caller has them now (added / recoloured / deleted); the ones the K2 check
-            // found moved stay off the page.
-            val s = session
-            if (s != null && quoteCheckSession !== s) resetQuoteChecks(s)
-            val bad = quotesRejected[section]
-            quotesBySection[section] =
-                if (bad == null) highlights else highlights.filter { spanKey(it.start, it.end) !in bad }
+            // A quote was added, recoloured or deleted: the rows (sig, style, text) are read again and the section is
+            // checked again (PLAN K2) rather than drawing the caller's list unchecked; that reload refreshes once.
+            quotesBySection.remove(section)
+            reloadAnnotations()
+            return
         } else if (highlights.isEmpty()) {
-            ownerHighlights.remove(owner)
+            ownerHighlights.remove(owner)?.let { (sec, _) ->
+                // R3 merge(RCA-S): scroll?.onHighlightsChanged(sec)
+                sec
+            }
         } else {
             ownerHighlights[owner] = section to highlights
         }
