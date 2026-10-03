@@ -95,7 +95,13 @@ class QuoteRowsTest {
     fun shareAllIsCapped() {
         val many = (1L..200L).map { q(it, 0, "가".repeat(100)) }
         val text = QuoteRows.shareAll("책", "", many, { "1" }, 1_000)
-        assertEquals(1_002, text.length)
-        assertTrue(text.endsWith("\n…"))
+        assertTrue(text.length <= 1_002)
+        assertTrue(text.endsWith("  (1쪽)\n\n…"))
+        // Whole entries only: 8 fit under 1,000 chars (header 13 + 8 × 111).
+        assertEquals(8, Regex("“").findAll(text).count())
+        // A first entry longer than the cap is cut inside it, never inside a surrogate pair.
+        val one = QuoteRows.shareAll("책", "", listOf(q(1, 0, "😀".repeat(100))), { "1" }, 20)
+        assertFalse(Character.isHighSurrogate(one[one.length - 3]))
+        assertTrue(one.endsWith("\n…"))
     }
 }

@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextPaint
@@ -23,7 +24,6 @@ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.BaseAdapter
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
@@ -117,6 +117,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     /** Where the last touch went down on a quote row (row coordinates): a click there opens the palette. */
     private var quoteDownRow: View? = null
     private var quoteDownX = -1f
+    /** Uptime of that DOWN: only a click right after it (a tap) uses it, not a later key or accessibility click. */
+    private var quoteDownAt = 0L
     /** Episode numbers of the book's TOC (BookInsightsHost), null while unknown or without a TOC. */
     private var episodes: Episodes? = null
     /** The TOC tab once built (its header is filled in when the episodes arrive late). */
@@ -736,7 +738,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         // decides by where the touch went down.
         lv.setOnItemClickListener { _, view, position, _ ->
             val q = list.getOrNull(position) ?: return@setOnItemClickListener
-            val x = if (quoteDownRow === view) quoteDownX else -1f
+            val tap = quoteDownRow === view && SystemClock.uptimeMillis() - quoteDownAt < TAP_CLICK_MS
+            val x = if (tap) quoteDownX else -1f
             quoteDownRow = null
             if (QuoteRows.inSwatchColumn(x, view.width, ctx.dp(QuoteRows.SWATCH_COLUMN_DP))) recolour(swatchAnchor(view), q, container)
             else openQuote(q)
@@ -760,6 +763,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private fun chipRow(all: List<Quote>, container: FrameLayout): View {
         val counts = QuoteRows.styleCounts(all)
         val row = ctx.horizontal { setPadding(ctx.dp(12), ctx.dp(8), ctx.dp(12), ctx.dp(8)) }
+        val many = QuoteRows.chips(counts).size >= 4
         fun add(style: Int, chip: LinearLayout) {
             val selected = style == quoteFilter
             chip.background = ctx.borderBox(fill = if (selected) Ink.BLACK else Ink.WHITE, radiusDp = 3f)
@@ -769,22 +773,22 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 quoteFilter = style
                 showQuotes(container, 0)
             }
-            row.addView(chip, lp(WRAP_CONTENT, ctx.dp(CHIP_DP)).apply { if (row.childCount > 0) leftMargin = ctx.dp(6) })
+            // Up to 4 chips keep their width; more share the row (all six styles fit 360 dp without a scroll).
+            val params = if (many) lp(0, ctx.dp(CHIP_DP), 1f) else lp(WRAP_CONTENT, ctx.dp(CHIP_DP))
+            if (row.childCount > 0) params.leftMargin = ctx.dp(if (many) 4 else 6)
+            if (many) chip.setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
+            row.addView(chip, params)
         }
-        add(QuoteRows.ALL, chip().apply { addView(ctx.label(QuoteRows.allChip(all.size), 14f)) })
+        add(QuoteRows.ALL, chip().apply { addView(ctx.label(QuoteRows.allChip(all.size), 14f, maxLines = 1)) })
         val ink = QuoteLook.ink()
         for ((style, n) in QuoteRows.chips(counts)) {
             add(style, chip().apply {
                 contentDescription = "${QuoteStyles.label(style)} $n"
                 addView(QuoteSwatch(ctx, style, ROW_SWATCH_DP, ink))
-                addView(ctx.label("$n", 14f).apply { setPadding(ctx.dp(6), 0, 0, 0) })
+                addView(ctx.label("$n", 14f, maxLines = 1).apply { setPadding(ctx.dp(if (many) 3 else 6), 0, 0, 0) })
             })
         }
-        return HorizontalScrollView(ctx).apply {
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            addView(row)
-        }
+        return row
     }
 
     private fun chip(): LinearLayout = ctx.horizontal {
@@ -819,7 +823,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         QuotePalette.show(anchor, QuoteStyles.of(q.style)) { s ->
             if (s == q.style || stale()) return@show
             val keep = pagers[2]?.list?.firstVisiblePosition ?: 0
-            scope.launch {
+            // Not [scope]: closing the dialog mid-write must still recolour the page and the cache.
+            MainScope().launch {
                 val all = withContext(Dispatchers.IO) {
                     runCatching {
                         Library.updateQuoteStyle(q.id, s)
@@ -827,10 +832,13 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                     }.getOrNull()
                 }
                 if (all == null) {
-                    ctx.toast("색을 바꾸지 못했습니다")
+                    if (!ctx.isFinishing && !ctx.isDestroyed) ctx.toast("색을 바꾸지 못했습니다")
                     return@launch
                 }
+                // The last-used style follows every palette pick, a recolour included (N §7.1.3).
+                runCatching { Settings.raw().edit().putInt(PREF_QUOTE_STYLE, s).apply() }
                 if (!stale()) refreshQuoteHighlights(host, q.section, all) else QuoteCache.put(book.id, all)
+                if (!dialog.isShowing) return@launch
                 setQuotes(all)
                 showQuotes(container, keep)
             }
@@ -919,6 +927,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             if (e.actionMasked == MotionEvent.ACTION_DOWN) {
                 quoteDownRow = v
                 quoteDownX = e.x
+                quoteDownAt = e.downTime
             }
             false
         }
@@ -932,8 +941,9 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         val meta = "${pageOf(q.section, q.start)}쪽  ·  ${Fmt.dateTime(q.createdAt)}"
         row.findViewWithTag<TextView>("meta").text = if (placeChanged(q)) meta + QuoteRows.STALE_SUFFIX else meta
         val swatch = row.findViewWithTag<QuoteSwatch>("swatch")
-        if (swatch.style != q.style) {
-            swatch.style = q.style
+        val style = QuoteStyles.of(q.style)
+        if (swatch.style != style) {
+            swatch.style = style
             swatch.invalidate()
         }
     }
@@ -954,6 +964,10 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         const val NOTE_DELAY_MS = 300L
         /** Filter chips are 44 dp tall (N §7.2). */
         const val CHIP_DP = 44
+        /** A row click this soon after its DOWN came from that touch (a tap is released before the long press). */
+        const val TAP_CLICK_MS = 1_500L
+        /** The last-used quote style (N §7.1.3; the selection popup's default). */
+        const val PREF_QUOTE_STYLE = "extras.quoteStyle"
         /** Swatches in rows and chips: a 12 dp dot (QuoteSwatch draws the ink sample at its own row size). */
         const val ROW_SWATCH_DP = 12
         /** The row swatch's top: level with the first 16 sp text line under the row's 12 dp padding. */

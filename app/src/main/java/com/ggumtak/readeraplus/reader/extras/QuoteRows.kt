@@ -71,8 +71,9 @@ internal object QuoteRows {
     fun tagged(quotes: List<Quote>): Boolean = distinctStyles(quotes) >= 2
 
     /**
-     * Text of 모두 공유 for [quotes] (already filtered), capped at [maxChars] with "\n…". One style: exactly the
-     * untagged format; two or more: each entry starts with its tag.
+     * Text of 모두 공유 for [quotes] (already filtered), capped at [maxChars]: cut after the last whole entry that fits,
+     * then "\n…" (a first entry longer than the cap is cut inside, never between a surrogate pair). One style: exactly
+     * the untagged format; two or more: each entry starts with its tag.
      */
     fun shareAll(title: String, author: String, quotes: List<Quote>, pageOf: (Quote) -> String, maxChars: Int): String {
         val tag = tagged(quotes)
@@ -80,6 +81,8 @@ internal object QuoteRows {
         sb.append("《").append(title).append("》")
         if (author.isNotBlank()) sb.append(" — ").append(author)
         sb.append("\n인용문 ").append(quotes.size).append("개\n")
+        val header = sb.length
+        var fits = header
         for (q in quotes) {
             sb.append('\n')
             if (tag) sb.append(QuoteStyles.tag(q.style)).append(' ')
@@ -87,7 +90,12 @@ internal object QuoteRows {
             sb.append("  (").append(pageOf(q)).append("쪽)\n")
             if (q.note.isNotBlank()) sb.append("  메모: ").append(q.note.trim()).append('\n')
             if (sb.length > maxChars) break
+            fits = sb.length
         }
-        return if (sb.length > maxChars) sb.substring(0, maxChars) + "\n…" else sb.toString()
+        if (sb.length <= maxChars) return sb.toString()
+        var cut = if (fits > header) fits else maxChars
+        if (cut in 1 until sb.length && Character.isHighSurrogate(sb[cut - 1])) cut--
+        return sb.substring(0, cut) + "\n…"
     }
+
 }
