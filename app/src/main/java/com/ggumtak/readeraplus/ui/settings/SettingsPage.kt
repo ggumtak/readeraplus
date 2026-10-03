@@ -20,7 +20,6 @@ import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.InkToggle
 import com.ggumtak.readeraplus.ui.kit.dp
-import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.label
@@ -91,9 +90,12 @@ internal fun Context.pageBody(): LinearLayout = vertical {
     setPadding(0, 0, 0, dp(32))
 }
 
-/** Bold section header; a 1px line above every section but the first. */
+/**
+ * Bold section header (UI_SPEC polish 12): spacing only, no line above (the header's own 24 dp top / 8 dp bottom
+ * padding separates the groups). [first] is kept for the callers; every section looks the same now.
+ */
+@Suppress("UNUSED_PARAMETER")
 internal fun LinearLayout.section(text: String, first: Boolean = false) {
-    if (!first) addView(context.hairline().apply { (layoutParams as LinearLayout.LayoutParams).topMargin = context.dp(8) })
     addView(context.sectionHeader(text))
 }
 
@@ -105,23 +107,48 @@ internal fun Context.note(text: CharSequence, sizeSp: Float = 14f): TextView = l
 
 /** Row that opens a sub-page (grey chevron on the right). */
 internal fun Context.navRow(title: String, summary: String?, onClick: (View) -> Unit): LinearLayout =
-    row(title, summary, icon(R.drawable.ic_chevron_right, 22, Ink.GRAY), onClick)
+    row(title, summary, icon(R.drawable.ic_chevron_right, 24, Ink.GRAY), onClick)
 
 /** Row whose summary shows the current value; tapping opens a chooser. */
 internal fun Context.valueRow(title: String, value: String, onClick: (View) -> Unit): LinearLayout =
-    row(title, value, icon(R.drawable.ic_arrow_drop_down, 24), onClick)
+    row(title, value, icon(R.drawable.ic_arrow_drop_down, 24, Ink.GRAY), onClick)
 
 /** Updates the summary line of a row made with [row] (only when the row was created with a summary). */
 internal fun View.setSummary(text: CharSequence) {
     findViewWithTag<TextView>("summary")?.text = text
 }
 
-/** Disables the row and its accessibility controls, with an explanatory summary kept by the caller. */
+/**
+ * Disables the row and its accessibility controls, with an explanatory summary kept by the caller. A disabled row
+ * ignores taps and TalkBack announces it as unavailable ("사용 중지됨"), not merely grey.
+ */
 internal fun View.setRowEnabled(enabled: Boolean) {
     isEnabled = enabled
     if (this is TextView) setTextColor(if (!enabled) Ink.DISABLED else if (tag == "summary") Ink.GRAY else Ink.BLACK)
-    if (this is InkToggle) alpha = if (enabled) 1f else 0.4f
+    if (this is InkToggle || this is EinkToggle) alpha = if (enabled) 1f else 0.4f
     if (this is ViewGroup) for (i in 0 until childCount) getChildAt(i).setRowEnabled(enabled)
+}
+
+/** Sets the [EinkToggle] of a [toggleRow] without calling its change handler (the row's value changed elsewhere). */
+internal fun View.setToggleChecked(checked: Boolean) {
+    val toggle = (this as? ViewGroup)?.let { g -> (0 until g.childCount).map(g::getChildAt).firstOrNull { it is EinkToggle } } as? EinkToggle
+    toggle?.isChecked = checked
+}
+
+/** VISIBLE / GONE, touching the view only when the state changes (no extra layout pass, no extra e-ink update). */
+internal fun View.setShown(shown: Boolean) {
+    val v = if (shown) View.VISIBLE else View.GONE
+    if (visibility != v) visibility = v
+}
+
+/**
+ * Marks the value of a `stepperRow` as a polite live region, so TalkBack speaks "−10" after a tap on − or + (scroll
+ * SPEC §2.4). The row is `row(title, null, box)` with the value between the two buttons.
+ */
+internal fun LinearLayout.liveStepperValue(): LinearLayout {
+    val box = getChildAt(childCount - 1) as? ViewGroup
+    (box?.getChildAt(1) as? TextView)?.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+    return this
 }
 
 /** Radio-style row: radio icon on the left, title + optional summary. */

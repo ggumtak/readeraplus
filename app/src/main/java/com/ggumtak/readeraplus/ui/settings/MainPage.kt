@@ -1,23 +1,38 @@
 package com.ggumtak.readeraplus.ui.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.view.View
+import android.widget.LinearLayout
 import com.ggumtak.readeraplus.BuildConfig
+import com.ggumtak.readeraplus.reader.DeviceLight
+import com.ggumtak.readeraplus.reader.extras.QuoteSwatch
+import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.FontCatalog
 import com.ggumtak.readeraplus.render.FontManager
+import com.ggumtak.readeraplus.render.QuoteStyles
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.LibraryListMode
 import com.ggumtak.readeraplus.settings.LibrarySort
-import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.ReadMode
 import com.ggumtak.readeraplus.settings.Settings
+import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.confirm
+import com.ggumtak.readeraplus.ui.kit.dp
+import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.row
+import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import android.provider.Settings as SystemSettings
 
 /** The ReadEra-like main list: 일반 · 읽기 설정 · 기타. */
 internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_MAIN, "설정") {
@@ -31,6 +46,19 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
     private var sortRow: View? = null
     private var listModeRow: View? = null
     private var orientationRow: View? = null
+    private var listPagingRow: View? = null
+    private var swipeLightRow: View? = null
+    private var deviceRow: View? = null
+    private var restoreRow: View? = null
+    private var swatches: LinearLayout? = null
+    private var swatchInk: Boolean? = null
+    /** "시스템 설정 수정" as last read on IO; null until the first read (the subtitle then assumes it is granted). */
+    private var canWrite: Boolean? = null
+    /** Verdict NONE: the app cannot change the front light here (the light rows are disabled). */
+    private var lightNone = false
+    /** The user went to the permission page from "기기 밝기 직접 조절": turn it on when they come back granted. */
+    private var pendingDevice = false
+    private var lightDialog: android.app.AlertDialog? = null
     private var cacheBusy = false
     /** Cache-size walk in flight (onShown and onResume both refresh on first open; walk the tree once). */
     private var sizeJob: Job? = null
@@ -61,9 +89,17 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         }.also(body::addView)
         listModeRow = ctx.valueRow("서재 보기", app.libraryListMode.label) {
             val all = LibraryListMode.entries
-            ctx.chooser("서재 보기", all.map { it.label }, all.indexOf(Settings.app.libraryListMode)) { i ->
+            ctx.chooser("서재 보기", all.map { R3Rows.libraryViewChoice(it) }, all.indexOf(Settings.app.libraryListMode)) { i ->
                 editApp { it.copy(libraryListMode = all[i]) }
                 listModeRow?.setSummary(all[i].label)
+            }
+        }.also(body::addView)
+        listPagingRow = ctx.valueRow("목록 넘기기", R3Rows.listPagingSummary(app.listPaging, DeviceClass.cached(ctx))) {
+            val opts = R3Rows.LIST_PAGINGS
+            val eink = DeviceClass.cached(ctx)
+            ctx.chooser("목록 넘기기", opts.map { R3Rows.listPaging(it, eink) }, opts.indexOf(Settings.app.listPaging)) { i ->
+                editApp { it.copy(listPaging = opts[i]) }
+                listPagingRow?.setSummary(R3Rows.listPagingSummary(opts[i], eink))
             }
         }.also(body::addView)
 
@@ -78,9 +114,11 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             activity.push(SettingsActivity.PAGE_LOOKUP)
         }.also(body::addView)
         body.addView(ctx.toggleRow("전체 화면 모드", "상태표시줄과 네비게이션바 숨김", app.fullscreen) { v -> editApp { it.copy(fullscreen = v) } })
-        body.addView(ctx.toggleRow("스와이프로 밝기 조절", "화면 좌측을 위아래로 스와이프하여 밝기를 조절합니다", app.brightnessSwipe) { v ->
+        swipeLightRow = ctx.toggleRow("스와이프로 밝기 조절", R3Rows.brightnessSwipe(app.readMode == ReadMode.SCROLL, false), app.brightnessSwipe) { v ->
             editApp { it.copy(brightnessSwipe = v) }
-        })
+        }.also(body::addView)
+        addBrightness(body, app)
+        addHighlightLook(body, app)
         body.addView(ctx.toggleRow("터치로 흑백 반전", "좌측 상단을 터치해 흰 바탕 ↔ 검은 바탕 전환", app.invertByTouch) { v ->
             editApp { it.copy(invertByTouch = v) }
         })
@@ -101,7 +139,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
 
         body.section("기타")
         cacheRow = ctx.row("캐시 비우기", "표지 · TXT 색인 · 쪽수 캐시 (계산 중…)") { clearCache() }.also(body::addView)
-        body.addView(ctx.row("설정 초기화", "읽기 · 넘김 · 화면 설정을 기본값으로 (TXT 정리 설정 · 스캔 폴더 · 키 지정은 유지)") { resetSettings() })
+        body.addView(ctx.row("설정 초기화", SettingsReset.SUMMARY) { resetSettings() })
         body.addView(ctx.navRow("정보", "버전 ${BuildConfig.VERSION_NAME}") { activity.push(SettingsActivity.PAGE_ABOUT) })
         return ctx.pageScroll(body)
     }
@@ -114,6 +152,180 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         refreshSummaries()
     }
 
+    override fun onDestroy() {
+        runCatching { lightDialog?.dismiss() }
+        lightDialog = null
+    }
+
+    // ---------------------------------------------------------------- brightness (UI_SPEC §4.6, brightness.md §5.6)
+
+    private fun addBrightness(body: LinearLayout, app: AppSettings) {
+        deviceRow = ctx.toggleRow(
+            "기기 밝기 직접 조절",
+            R3Rows.brightnessDevice(app.brightnessDevice, app.brightnessRestore, canWrite = true, none = false),
+            app.brightnessDevice,
+        ) { on -> onDeviceSwitch(on) }.also(body::addView)
+        restoreRow = ctx.toggleRow("리더를 나가면 원래 밝기로", R3Rows.BRIGHTNESS_RESTORE, app.brightnessRestore) { v ->
+            editApp { it.copy(brightnessRestore = v) }
+            updateLightUi()
+        }.also(body::addView)
+        body.addView(ctx.row("밝기 방식 다시 확인", R3Rows.VERDICT_RESET) { resetVerdict() })
+        body.addView(ctx.navRow("기기 조명 설정 열기", R3Rows.LIGHT_SETTINGS) { openDisplaySettings() })
+        updateLightUi()
+    }
+
+    /**
+     * The switch flipped to [on]. Turning it on needs "시스템 설정 수정": without it the switch stays off and dialog A
+     * leads to the permission page; the grant is picked up in [refreshLight] when the user comes back. A tap while it
+     * is on but the permission was revoked opens the same flow instead of turning it off.
+     */
+    private fun onDeviceSwitch(on: Boolean) {
+        val app = Settings.app
+        if (on && canWrite == false) {
+            deviceRow?.setToggleChecked(false)
+            askPermission()
+            return
+        }
+        if (!on && app.brightnessDevice && canWrite == false) {
+            deviceRow?.setToggleChecked(true)
+            askPermission()
+            return
+        }
+        if (app.brightnessDevice != on) editApp { it.copy(brightnessDevice = on) }
+        updateLightUi()
+    }
+
+    /** Re-reads the permission and the verdict on IO (prefs and a system call; never on main), then updates the rows. */
+    private fun refreshLight() {
+        val appCtx = activity.applicationContext
+        activity.scope.launch {
+            val (write, verdict) = withContext(Dispatchers.IO) {
+                runCatching { SystemSettings.System.canWrite(appCtx) }.getOrDefault(false) to
+                    runCatching { DeviceLight.verdict(appCtx) }.getOrDefault(DeviceLight.VERDICT_UNKNOWN)
+            }
+            canWrite = write
+            lightNone = verdict == DeviceLight.VERDICT_NONE
+            if (pendingDevice) {
+                pendingDevice = false
+                if (write && !lightNone) {
+                    editApp { it.copy(brightnessDevice = true) }
+                    deviceRow?.setToggleChecked(true)
+                } else if (!write) {
+                    ctx.toast("권한이 허용되지 않아 앱 화면 밝기로 조절합니다")
+                }
+            }
+            updateLightUi()
+        }
+    }
+
+    private fun updateLightUi() {
+        val app = Settings.app
+        val none = lightNone
+        swipeLightRow?.let { row ->
+            row.setRowEnabled(!none)
+            row.setSummary(R3Rows.brightnessSwipe(app.readMode == ReadMode.SCROLL, none))
+            row.setToggleChecked(app.brightnessSwipe)
+        }
+        deviceRow?.let { row ->
+            row.setRowEnabled(!none)
+            row.setSummary(R3Rows.brightnessDevice(app.brightnessDevice, app.brightnessRestore, canWrite != false, none))
+            row.setToggleChecked(app.brightnessDevice)
+        }
+        restoreRow?.setRowEnabled(app.brightnessDevice && !none)
+    }
+
+    /** Dialog A (brightness.md §5.3), then the system's "시스템 설정 수정" page for this app. */
+    private fun askPermission() {
+        if (lightDialog?.isShowing == true) return
+        lightDialog = ctx.alert()
+            .setTitle("기기 밝기 직접 조절")
+            .setMessage(R3Rows.DEVICE_DIALOG)
+            .setNegativeButton("취소", null)
+            .setPositiveButton("허용하러 가기") { _, _ -> openWritePermission() }
+            .showNoAnim()
+    }
+
+    private fun openWritePermission() {
+        val pkg = activity.packageName
+        val withUri = Intent(SystemSettings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$pkg"))
+        val plain = Intent(SystemSettings.ACTION_MANAGE_WRITE_SETTINGS)
+        for (intent in arrayOf(withUri, plain)) {
+            try {
+                activity.startActivity(intent)
+                pendingDevice = true
+                return
+            } catch (_: Exception) {
+                // Trimmed firmware: try the next form, then explain the adb grant.
+            }
+        }
+        lightDialog = ctx.alert()
+            .setTitle("권한 화면을 찾을 수 없어요")
+            .setMessage(R3Rows.NO_PERMISSION_SCREEN)
+            .setNegativeButton("닫기", null)
+            .setPositiveButton("명령 복사") { _, _ ->
+                runCatching {
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("adb", R3Rows.ADB_GRANT))
+                }
+                ctx.toast("복사했습니다")
+            }
+            .showNoAnim()
+    }
+
+    /** "밝기 방식 다시 확인": the reader asks again at the next brightness change. */
+    private fun resetVerdict() {
+        val appCtx = activity.applicationContext
+        activity.scope.launch {
+            withContext(Dispatchers.IO) { runCatching { DeviceLight.setVerdict(appCtx, DeviceLight.VERDICT_UNKNOWN) } }
+            lightNone = false
+            updateLightUi()
+            ctx.toast("다음에 밝기를 조절할 때 다시 묻습니다")
+        }
+    }
+
+    private fun openDisplaySettings() {
+        try {
+            activity.startActivity(Intent(SystemSettings.ACTION_DISPLAY_SETTINGS))
+        } catch (_: Exception) {
+            ctx.toast("화면 위에서 아래로 내려 기기 조명을 조절하세요")
+        }
+    }
+
+    // ---------------------------------------------------------------- 인용문 색 표시 (NOTES §11)
+
+    private fun addHighlightLook(body: LinearLayout, app: AppSettings) {
+        val eink = DeviceClass.cached(ctx)
+        var lookRow: View? = null
+        lookRow = ctx.valueRow("인용문 색 표시", R3Rows.highlightLook(app.highlightLook, eink)) {
+            val opts = R3Rows.HL_LOOKS
+            val e = DeviceClass.cached(ctx)
+            ctx.chooser("인용문 색 표시", opts.map { R3Rows.highlightLook(it, e) }, opts.indexOf(Settings.app.highlightLook)) { i ->
+                if (Settings.app.highlightLook != opts[i]) editApp { it.copy(highlightLook = opts[i]) }
+                lookRow?.setSummary(R3Rows.highlightLook(opts[i], e))
+                fillSwatches(R3Rows.inkLook(opts[i], e))
+            }
+        }.also(body::addView)
+        swatches = ctx.horizontal {
+            setPadding(ctx.dp(16), 0, ctx.dp(16), ctx.dp(8))
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        }.also(body::addView)
+        fillSwatches(R3Rows.inkLook(app.highlightLook, eink))
+        body.addView(ctx.note(R3Rows.HL_LOOK_NOTE))
+    }
+
+    /** A static strip of the six quote looks (22 × 14 dp each) as they are drawn on the page. */
+    private fun fillSwatches(ink: Boolean) {
+        val strip = swatches ?: return
+        if (swatchInk == ink && strip.childCount > 0) return
+        swatchInk = ink
+        strip.removeAllViews()
+        for (style in 0 until QuoteStyles.COUNT) {
+            strip.addView(QuoteSwatch(ctx, style, SWATCH_W_DP, ink), LinearLayout.LayoutParams(ctx.dp(SWATCH_W_DP), ctx.dp(SWATCH_H_DP)).apply {
+                if (style > 0) leftMargin = ctx.dp(8)
+            })
+        }
+    }
+
     private fun refreshSummaries() {
         val app = Settings.app
         scanRow?.setSummary(scanSummary(app))
@@ -123,6 +335,8 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         lookupRow?.setSummary("웹 검색: ${WebEngines.nameOf(app.webSearchUrl)}")
         sortRow?.setSummary(app.librarySort.label)
         listModeRow?.setSummary(app.libraryListMode.label)
+        listPagingRow?.setSummary(R3Rows.listPagingSummary(app.listPaging, DeviceClass.cached(ctx)))
+        refreshLight()
         orientationRow?.setSummary(SettingsFormat.orientation(app.orientationLock))
         val fontId = Settings.reader.fontId
         activity.scope.launch {
@@ -148,6 +362,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
 
     private fun turnSummary(app: AppSettings): String {
         val parts = ArrayList<String>()
+        if (app.readMode == ReadMode.SCROLL) parts += "스크롤"
         parts += TapZoneModel.modeName(app.tapZoneMode)
         if (app.volumeKeysTurn) parts += "볼륨 키"
         val keys = KeyAssign.entries(app).size
@@ -196,42 +411,23 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
     }
 
     /**
-     * Back to the defaults, except what took the user work to set up: scan folders, assigned keys, the library view
-     * and the TXT cleanup defaults (their replacement rules; resetting them would also re-parse every TXT once).
+     * Back to the defaults, except what took the user work to set up (scan folders, assigned keys, the library view,
+     * the TXT cleanup defaults: their replacement rules; resetting them would also re-parse every TXT once) and the
+     * privacy and device choices (자동 백업, 찾아본 단어 기록, 기기 밝기 직접 조절, 목록 넘기기): see [SettingsReset].
      */
     private fun resetSettings() {
-        val msg = "글꼴 · 글자 크기 · 간격 · 여백과 넘김 · 화면 설정을 기본값으로 되돌릴까요?\nTXT 정리 설정 · 스캔 폴더 · 지정한 키는 그대로 둡니다."
-        ctx.confirm("설정 초기화", msg, ok = "초기화") {
-            val old = Settings.app
-            Settings.saveApp(
-                AppSettings().copy(
-                    scanFolders = old.scanFolders,
-                    excludedFolders = old.excludedFolders,
-                    nextPageKeys = old.nextPageKeys,
-                    prevPageKeys = old.prevPageKeys,
-                    keyBindings = old.keyBindings,
-                    librarySort = old.librarySort,
-                    libraryListMode = old.libraryListMode,
-                ),
-            )
-            val r = Settings.reader
-            Settings.saveReader(
-                ReaderSettings().copy(
-                    txtBlankLines = r.txtBlankLines,
-                    txtStripIndent = r.txtStripIndent,
-                    txtJoinWrappedLines = r.txtJoinWrappedLines,
-                    txtDetectChapters = r.txtDetectChapters,
-                    txtChapterRegex = r.txtChapterRegex,
-                    txtEmphasizeHeadings = r.txtEmphasizeHeadings,
-                    txtReplaceRules = r.txtReplaceRules,
-                ),
-            )
+        ctx.confirm("설정 초기화", SettingsReset.MESSAGE, ok = "초기화") {
+            Settings.saveApp(SettingsReset.app(Settings.app))
+            Settings.saveReader(SettingsReset.reader(Settings.reader))
             // Rebuild so every switch shows its new value.
             activity.rebuildTop()
             ctx.toast("기본값으로 되돌렸습니다")
         }
     }
 }
+
+private const val SWATCH_W_DP = 22
+private const val SWATCH_H_DP = 14
 
 /** Total size of a file or directory tree (blocking). */
 internal fun dirSize(f: File): Long {
