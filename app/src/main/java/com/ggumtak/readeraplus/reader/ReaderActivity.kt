@@ -1578,6 +1578,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      * lookup (O(log C)); allocates nothing for the items themselves.
      */
     private fun fillStatus(s: BookSession, l: SectionLayout, p: PageInfo, inp: StatusInputs, sample: Boolean, all: Boolean) {
+        // R3 merge(RCA-S): scroll mode fills these at settle from the anchor line (U §5.6): page / total of the real
+        // paged page holding it, bar = counts.charProgress(section, anchor line start) (1 at atBookEnd()), and
+        // chapterStartsHere = the anchor line starts the chapter.
         val st = s.settings
         val c = s.counts
         val lastOfBook = curSection == s.sectionCount - 1 && curPageIdx == l.pageCount - 1
