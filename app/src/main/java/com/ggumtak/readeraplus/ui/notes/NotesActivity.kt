@@ -245,6 +245,7 @@ class NotesActivity : Activity() {
         super.onResume()
         // Back from the reader or another screen: reload only when a note changed (no idle redraw).
         if (!loading && loadedGen != Long.MIN_VALUE && Library.notesGen != loadedGen) reload(list.firstVisiblePosition)
+        else if (!loading && rowWindow.count == 0 && ::emptyBox.isInitialized) updateEmpty() // e.g. 단어 기록 toggled in settings
     }
 
     override fun onSaveInstanceState(out: Bundle) {
@@ -510,7 +511,7 @@ class NotesActivity : Activity() {
 
     private class Loaded(
         val counts: NotesCounts, val all: List<NoteBook>, val pageBooks: List<NoteBook>?, val filterBook: NoteBook?,
-        val first: Int, val pageIndex: Int, val page: NotesPage?, val ms: Long,
+        val first: Int, val pageIndex: Int, val page: NotesPage?, val ms: Long, val split: String,
     )
 
     /**
@@ -529,16 +530,19 @@ class NotesActivity : Activity() {
                 runCatching {
                     val t0 = SystemClock.uptimeMillis()
                     val c = Notes.counts(q0)
+                    val t1 = SystemClock.uptimeMillis()
                     val all = Notes.books(q0.copy(bookId = null))
                     val bookId = q0.bookId
                     val pb = if (!q0.order.byBook) null else if (bookId == null) all else Notes.books(q0)
                     val fb = if (bookId == null) null else all.firstOrNull { it.id == bookId }
                         ?: Library.book(bookId)?.let { NoteBook(it.id, it.title, it.author, it.path, it.trashed, false, 0L, 0) }
+                    val t2 = SystemClock.uptimeMillis()
                     val n = c.of(q0.tab)
                     val first = NotesWindow.clampFirst(keepFirst, n)
                     val pIdx = first / Notes.PAGE_ROWS
                     val page = if (n > 0) Notes.page(q0, pIdx, pb) else null
-                    Loaded(c, all, pb, fb, first, pIdx, page, SystemClock.uptimeMillis() - t0)
+                    val t3 = SystemClock.uptimeMillis()
+                    Loaded(c, all, pb, fb, first, pIdx, page, t3 - t0, "counts ${t1 - t0} ms, books ${t2 - t1} ms, page ${t3 - t2} ms")
                 }.onFailure { Log.w(NotesPerf.TAG, "notes load failed", it) }.getOrNull()
             }
             if (tok != reloadToken || isDestroyed) return@launch
@@ -567,10 +571,10 @@ class NotesActivity : Activity() {
         updateEmpty()
         updateBarLabel()
         if (holdDraw) {
-            NotesPerf.log("open: first rows ${SystemClock.uptimeMillis() - openedAt} ms (queries ${r.ms} ms, $n rows)")
+            NotesPerf.log("open: first rows ${SystemClock.uptimeMillis() - openedAt} ms (queries ${r.ms} ms: ${r.split}; $n rows)")
             releaseDrawHold()
         } else {
-            NotesPerf.log("reload: ${r.ms} ms ($n rows, ${q.tab}, ${q.order})")
+            NotesPerf.log("reload: ${r.ms} ms (${r.split}; $n rows, ${q.tab}, ${q.order})")
         }
     }
 
@@ -832,16 +836,21 @@ class NotesActivity : Activity() {
         val name = NotesText.fileName(title, format.ext, System.currentTimeMillis())
         val i = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
             .setType(format.mime).putExtra(Intent.EXTRA_TITLE, name)
-        // Never text/plain for a .md name (the provider would append .txt); octet-stream only if nothing resolves.
-        if (i.resolveActivity(packageManager) == null) i.type = "application/octet-stream"
         exportFormat = format
         exportRefs = refs
+        // Never text/plain for a .md name (the provider would append .txt); octet-stream only if nothing handles the
+        // format's own type. No resolveActivity pre-check: package visibility (API 30+) can hide DocumentsUI from it.
         try {
             @Suppress("DEPRECATION") startActivityForResult(i, REQ_EXPORT)
-        } catch (e: ActivityNotFoundException) {
-            exportFormat = null
-            exportRefs = null
-            toast("내보내지 못했습니다: " + userMessage(e))
+        } catch (_: ActivityNotFoundException) {
+            try {
+                i.type = "application/octet-stream"
+                @Suppress("DEPRECATION") startActivityForResult(i, REQ_EXPORT)
+            } catch (e: ActivityNotFoundException) {
+                exportFormat = null
+                exportRefs = null
+                toast("내보내지 못했습니다: " + userMessage(e))
+            }
         }
     }
 
