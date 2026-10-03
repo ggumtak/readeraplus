@@ -1105,6 +1105,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // Panels first, while the session and book still exist: the settings popup's pending change applies to this
         // book, and no TOC / search / bar is left acting on the next one.
         safely { ReaderPanels.dismissAll(this) }
+        // Settles a running drag or fling, so the position saved is the line on top now.
+        scroll?.stopMotion()
         savePositionNow(persistText = true)
         bookRef?.let { b -> tracker.flush(SystemClock.elapsedRealtime())?.let { writeReading(b.id, it) } }
         stopAutoTurn(showToast = false)
@@ -1540,7 +1542,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val cached = if (layoutStale()) null else s.peek(sec)
         if (cached != null) {
             val tp = targetPage(cached, offset, pageIndex)
-            if (!needsImageDecode(s, cached, tp)) {
+            if (!needsPreload(s, cached, tp)) {
                 display(sec, cached, offset, pageIndex, kind, fraction)
                 return
             }
@@ -1617,16 +1619,24 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      * so their images are decoded before it is shown. Text-only pages cost one scan each and nothing else.
      */
     private suspend fun preloadScrollImages(s: BookSession, l: SectionLayout, pageIndex: Int) {
+        if (!needsPreload(s, l, pageIndex)) return
         val from = (pageIndex - 1).coerceAtLeast(0)
         val to = (pageIndex + 1).coerceAtMost(l.pageCount - 1)
-        var due = false
-        for (i in from..to) if (needsImageDecode(s, l, i)) due = true
-        if (!due) return
         imagePrefetch?.let { if (it.isActive) it.join() }
+        // Decided on the main thread (like the paged check); only the decoding runs on IO.
+        val due = (from..to).filter { needsImageDecode(s, l, it) }
+        if (due.isEmpty()) return
         val r = safely { s.renderer() } ?: return
-        withContext(Dispatchers.IO) {
-            for (i in from..to) if (needsImageDecode(s, l, i)) runCatching { r.preload(l, i) }
+        withContext(Dispatchers.IO) { for (i in due) runCatching { r.preload(l, i) } }
+    }
+
+    /** [preloadImages] has work to do: the page itself, and in scroll mode also the pages above and below it. */
+    private fun needsPreload(s: BookSession, l: SectionLayout, pageIndex: Int): Boolean {
+        if (!scrollWanted) return needsImageDecode(s, l, pageIndex)
+        for (i in (pageIndex - 1).coerceAtLeast(0)..(pageIndex + 1).coerceAtMost(l.pageCount - 1)) {
+            if (needsImageDecode(s, l, i)) return true
         }
+        return false
     }
 
     /**
@@ -1897,7 +1907,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         val pos = c.locateProgress(f)
         val p = currentPage
-        val here = p != null && isOnCurrentPage(pos) && p.start >= pos.offset
+        val here = p != null && isOnCurrentPage(pos) && currentPosition().section == pos.section && p.start >= pos.offset
         if (curLayout != null && !here) pushReturn(currentPosition())
         jumpTo(pos.section, pos.offset, PAGE_AT_OR_AFTER, f)
     }
