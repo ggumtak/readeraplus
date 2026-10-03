@@ -293,4 +293,21 @@ class ScanPlanTest {
         }
         assertEquals(0, LibrarySql.SELECT_IDS_WITH_NOTES.count { it == '?' })
     }
+
+    @Test
+    fun aLiveEntryWinsTheMoveOverAnOlderMissingNamesake() {
+        val k = listOf(known(1, "/r/x/a.txt", size = 4000, trashed = true, missingAt = 7), known(2, "/r/y/a.txt", size = 4000))
+        val plan = FileScanner.plan(
+            k, foundMap(found("/r/z/a.txt", size = 4000)), emptySet(), emptyList(), vanished = { true },
+            userDataIds = noUserData, noteIds = { emptySet() },
+        )
+        assertEquals(2L, plan.todo.single().second!!.id)
+        assertTrue(plan.revive.isEmpty())
+        assertTrue(plan.gone.isEmpty())
+    }
+
+    @Test
+    fun trashingClearsAStaleMissingMark() {
+        assertEquals("UPDATE books SET trashed = 1, missing_at = 0 WHERE id = ?", LibrarySql.TRASH)
+    }
 }

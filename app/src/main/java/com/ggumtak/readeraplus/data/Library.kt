@@ -324,9 +324,12 @@ object Library {
         if (db.exec(LibrarySql.CLEAR_FINISHED_AT, bookId) > 0) db.exec(LibrarySql.PRUNE_BOOK_PREFS, bookId)
     }
 
-    /** [value] false (복원) also clears `missing_at`: a restored missing book is an ordinary one again. */
+    /**
+     * [value] false (복원) also clears `missing_at`: a restored missing book is an ordinary one again. True (휴지통)
+     * clears it as well, so the scanner never takes a book the user trashed out of the trash.
+     */
     fun setTrashed(bookId: Long, value: Boolean) {
-        if (value) db().exec(LibrarySql.SET_TRASHED, true, bookId) else db().exec(LibrarySql.UNTRASH, bookId)
+        db().exec(if (value) LibrarySql.TRASH else LibrarySql.UNTRASH, bookId)
         notesChanged()
     }
 
@@ -357,7 +360,7 @@ object Library {
     /** Moves every book of [ids] to the trash ([setTrashed] true). */
     fun trash(ids: Collection<Long>) {
         if (ids.isEmpty()) return
-        db().inTransaction { for (id in ids) exec(LibrarySql.SET_TRASHED, true, id) }
+        db().inTransaction { for (id in ids) exec(LibrarySql.TRASH, id) }
         notesChanged()
     }
 

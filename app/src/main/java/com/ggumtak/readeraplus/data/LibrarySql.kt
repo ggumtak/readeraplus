@@ -93,6 +93,11 @@ internal object LibrarySql {
     /** Run [CLEAR_FINISHED_AT] and [PRUNE_BOOK_PREFS] with it (a finish time belongs to a finished book only). */
     const val SET_HAVE_READ_OFF = "UPDATE books SET have_read = 0 WHERE id = ?"
     const val SET_TRASHED = "UPDATE books SET trashed = ? WHERE id = ?"
+    /**
+     * The user's own 휴지통: never revivable by the scanner, so a stale `missing_at` (an R2 build's 복원, a restored
+     * backup) is cleared with it. Args: id.
+     */
+    const val TRASH = "UPDATE books SET trashed = 1, missing_at = 0 WHERE id = ?"
     /** 복원 (out of the trash): a scanner-trashed book is no longer missing either. Args: id. */
     const val UNTRASH = "UPDATE books SET trashed = 0, missing_at = 0 WHERE id = ?"
     /**

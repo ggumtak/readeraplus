@@ -317,6 +317,8 @@ object FileScanner {
             }
         }
         val movable = HashMap<String, ArrayDeque<Known>>()
+        // Live entries first: a moved file re-points the entry it was just read as, not an older missing namesake.
+        vanishedBooks.sortBy { if (it.missingAt > 0) 1 else 0 }
         for (k in vanishedBooks) movable.getOrPut(moveKey(k.fileName, k.size)) { ArrayDeque() }.addLast(k)
 
         val todo = ArrayList<Pair<Found, Known?>>()
