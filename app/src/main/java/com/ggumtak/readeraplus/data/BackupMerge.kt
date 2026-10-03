@@ -49,9 +49,10 @@ internal object BackupMerge {
 
     /**
      * The merged book row. [fileFound] = the resolver matched the entry to a file present on this device: a backup
-     * entry trashed because its file was missing (`missingAt > 0`) comes back out of the trash then.
+     * entry trashed because its file was missing (`missingAt > 0`) comes back out of the trash then. [placeholderAt]
+     * > 0: the row is a placeholder made for an unresolved entry with notes, always trashed and missing since then.
      */
-    fun book(cur: BookState, b: BackupBook, fileFound: Boolean): BookResult {
+    fun book(cur: BookState, b: BackupBook, fileFound: Boolean, placeholderAt: Long = 0L): BookResult {
         val deviceNewer = deviceNewer(cur.lastReadAt, b.lastReadAt)
         val haveRead = if (deviceNewer) cur.haveRead else b.haveRead
         val toRead = (if (deviceNewer) cur.toRead else b.toRead) && !haveRead
@@ -70,6 +71,10 @@ internal object BackupMerge {
         if (b.missingAt > 0 && fileFound && !(deviceNewer && userTrashedHere)) {
             trashed = false
             missingAt = 0L
+        }
+        if (placeholderAt > 0L) {
+            trashed = true
+            missingAt = placeholderAt
         }
         if (!trashed) missingAt = 0L
         val takeReview = b.review.isNotBlank() && (cur.review.isEmpty() || b.reviewAt > cur.reviewAt)

@@ -60,8 +60,6 @@ internal object BackupSql {
      */
     const val INSERT_PLACEHOLDER = "INSERT OR IGNORE INTO books(path, file_name, folder, title, author, series, " +
         "series_index, format, size, mtime, added_at, language) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    /** A placeholder for a backup book whose file is not here (N §5.6). Args: missing_at, id. */
-    const val SET_PLACEHOLDER_MISSING = "UPDATE books SET trashed = 1, missing_at = ? WHERE id = ?"
 
     /** book_id, txt_override, finished_at, episode_label, return_mark. */
     const val SELECT_ALL_BOOK_PREFS = "SELECT book_id, txt_override, finished_at, episode_label, return_mark " +

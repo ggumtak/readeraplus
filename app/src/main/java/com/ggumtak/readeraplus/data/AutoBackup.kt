@@ -260,9 +260,13 @@ object AutoBackup {
                 prefs.edit().putLong(PREF_CHECKED_AT, now).commit()
                 return Outcome.UNCHANGED
             }
-            if (wouldEmpty(st.summary, summary) || isBlank(summary, snap.settingsAreDefault)) {
+            val emptied = wouldEmpty(st.summary, summary)
+            if (emptied || isBlank(summary, snap.settingsAreDefault)) {
                 Log.i(TAG, "nothing written: snapshot empty ($summary, last ${st.summary})")
-                val e = prefs.edit().putLong(PREF_CHECKED_AT, now)
+                val e = prefs.edit()
+                // An emptied library is checked again tomorrow; a blank install (a cheap snapshot) on the next
+                // trigger, so its first quote or read book is saved the same day.
+                if (emptied) e.putLong(PREF_CHECKED_AT, now)
                 if (!st.owned) claim(e, installId)
                 e.commit()
                 return Outcome.SKIPPED_EMPTY

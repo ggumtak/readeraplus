@@ -305,7 +305,7 @@ object Backup {
                         reviewAt = c.getLong(6), encoding = c.getString(7) ?: "", missingAt = c.getLong(8),
                     )
                 } ?: continue
-                val r = BackupMerge.book(cur, b, m.fileFound)
+                val r = BackupMerge.book(cur, b, m.fileFound, if (m.placeholder) now else 0L)
                 if (b.metaLocked && b.title.isNotBlank()) {
                     val series = b.series?.let { MetaInfo.clean(it, 500) }?.ifEmpty { null }
                     exec(
@@ -319,7 +319,6 @@ object Backup {
                     r.favorite, r.toRead, r.haveRead, r.trashed, r.review, r.reviewAt, r.encoding, r.missingAt,
                     b.readingSeconds, if (b.addedAt > 0) b.addedAt else Long.MAX_VALUE, id,
                 )
-                if (m.placeholder) exec(BackupSql.SET_PLACEHOLDER_MISSING, now, id)
                 // Newer wins: an older backup doesn't move a position read later on this device.
                 if (r.applyPosition) {
                     exec(LibrarySql.UPDATE_POSITION, b.posSection, b.posOffset, b.progress, b.lastReadAt, id)

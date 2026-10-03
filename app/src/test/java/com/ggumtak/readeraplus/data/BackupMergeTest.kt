@@ -182,6 +182,14 @@ class BackupMergeTest {
         // Without notes: skipped (a 500-book backup doesn't flood the trash).
         assertFalse(BackupMerge.needsPlaceholder(entry.copy(lastReadAt = 5, favorite = true)))
         assertFalse(BackupMerge.needsPlaceholder(entry.copy(path = "", quotes = listOf(bq(0, 1, 2)))))
+        // The placeholder row is trashed and missing (revivable when the file arrives), whatever the backup said.
+        val ph = BackupMerge.book(BackupMerge.BookState(), entry.copy(review = "리뷰", lastReadAt = 7, favorite = true),
+            fileFound = false, placeholderAt = 5000)
+        assertTrue(ph.trashed)
+        assertEquals(5000L, ph.missingAt)
+        assertEquals("리뷰", ph.review)
+        assertTrue(ph.favorite)
+        assertTrue(ph.applyPosition)
         // Its notes all go in: nothing on the placeholder yet.
         val plan = BackupMerge.quotes(emptyList(), listOf(bq(0, 1, 2), bq(0, 3, 4)))
         assertEquals(2, plan.inserts.size)
