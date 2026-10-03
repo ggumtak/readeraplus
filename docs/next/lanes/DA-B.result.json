@@ -1,0 +1,43 @@
+{
+ "lane": "DA-B",
+ "files": [
+  "app/src/main/java/com/ggumtak/readeraplus/data/Backup.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/data/BackupJson.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/data/BackupMerge.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/data/BackupSql.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/data/AutoBackup.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/data/InstallState.kt",
+  "app/src/test/java/com/ggumtak/readeraplus/data/BackupJsonTest.kt",
+  "app/src/test/java/com/ggumtak/readeraplus/data/BackupMergeTest.kt",
+  "app/src/test/java/com/ggumtak/readeraplus/data/AutoBackupPolicyTest.kt",
+  "app/src/test/java/com/ggumtak/readeraplus/data/InstallStateTest.kt",
+  "app/src/test/java/com/ggumtak/readeraplus/data/BookPrefsBackupTest.kt",
+  "docs/next/DA_B_STATUS.md",
+  "docs/next/lanes/DA-B.result.json"
+ ],
+ "summary": "Backup v3 fields both ways (quote style/place, bookmark place, lookups, reviewAt, missingAt, prefs.returnMark) with origin/summary header before books and a streaming header reader; pure BackupMerge implementing every N §5.6 rule incl. placeholders (nothing deleted); own BackupSql over the v3 schema; streamed snapshot/export; AutoBackup (gates, busy checks per query and 256 KB, hash/UNCHANGED, empty guards, atomic File/MediaStore writes, rotation, triggers, candidates, restore, delete, labels); InstallState ensure/verify/ids/offer.",
+ "checks": "tools/typecheck.sh module + full: green. tools/unittest.sh --own data: OK (214 tests) (explicit --own list exceeds the out-dir name length limit; data/ other files equal base here). Full tools/unittest.sh: OK (1235 tests). Two reviewer subagents (spec + bugs) ran; all real findings fixed.",
+ "contractRequests": [
+  "DA-C Library.kt: internal fun Library.notesChanged() (notesGen++); Backup.import has a '// R3 merge(DA-C)' comment at the call site after applyLibrary.",
+  "DA-C: resetProgress must set book_prefs.return_mark = NULL (U §3.3) with its test; PRUNE_BOOK_PREFS must also require return_mark IS NULL so a row holding only a return mark is kept.",
+  "DA-N: LookupWords.key must be implemented (Backup restore of lookups calls it; until then a backup with lookups throws)."
+ ],
+ "rcaNotes": [
+  "ReaderActivity.onStart (main): AutoBackup.cancelScheduled().",
+  "ReaderActivity.onStop (main, not isChangingConfigurations): AutoBackup.schedule(applicationContext, 5_000) { ReaderPresence.inFront }.",
+  "ReaderActivity.afterOpen step 2 (main, after first page): InstallState.ensure(this) (apply(), no binder call except on the one launch that creates the id).",
+  "LIB: LibraryActivity.onCreate first thing: InstallState.ensure(this) (must run before any settings-prefs write, e.g. PREF_LEGACY_ASKED / shelf / DeviceClass, else decide() sees keys and the offer is settled as done). refreshVisible: when isDue(now, checkedAt) start 10 s idle wait → AutoBackup.schedule(ctx, 0) { ReaderPresence.inFront || LibraryJobs.scanning }; restore offer: if InstallState.offerPending(ctx) && access → IO AutoBackup.findCandidates(ctx) → pickDefault → dialog; 복원 = IO AutoBackup.restore(ctx, c) then main toast + recreate(); 새로 시작 / no candidate = IO InstallState.settleOffer(ctx). First WROTE notice: show once when AutoBackup.lastWrittenAt(ctx) > 0 (LIB keeps its own 'shown' flag, use a key containing 'backupauto' so it stays transient).",
+  "SET BackupPage: 지금 자동 백업하기 = IO AutoBackup.runNow(ctx, force = true) { false } → Outcome as status; 자동 백업에서 복원 = IO AutoBackup.findCandidates(ctx, includeOwn = true) → restore; 자동 백업 파일 지우기 = IO AutoBackup.deleteFiles(ctx, others = hasAllFilesAccess); summary uses AutoBackup.lastWrittenAt(ctx) and locationLabel(). Manual restore via Backup.import already settles the offer."
+ ],
+ "deviations": [
+  "S §3.2 snapshotJson (JSONObject tree, toString(1)) replaced by Backup.snapshot (models) + BackupJson.write streaming compact JSON byte-identical to toJson().toString(); hash = SHA-1 of the streamed snapshot with createdAt=0 and no origin (K11 memory).",
+  "SKIPPED_EMPTY records checkedAt only for wouldEmpty; a blank install is re-checked on the next trigger (cheap) so its first notes are saved the same day.",
+  "Rotation never deletes the file just written (clock moved back); keeps it plus KEEP_OWN-1 newest others (toRotate itself unchanged).",
+  "MediaStore same-minute rewrite deletes the earlier same-name own row first (avoids '(1)' names).",
+  "returnMark merge: the device's own mark stays when the device read the book later than the backup.",
+  "Added overload AutoBackup.findCandidates(context, includeOwn) for S §3.8 (frozen one = includeOwn false).",
+  "InstallState.decide keeps the spec's isEmpty rule (no transient-key filtering); ensure must therefore run first (see rcaNotes).",
+  "Not tested here: resetProgress clears return_mark (DA-C's code)."
+ ],
+ "complete": true
+}

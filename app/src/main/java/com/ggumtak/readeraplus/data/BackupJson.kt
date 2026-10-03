@@ -12,6 +12,10 @@ internal data class BackupBookmark(
     val snippet: String,
     val note: String,
     val createdAt: Long,
+    /** v3 place (N §5.6): [frac] < 0 = unknown, then [chapter] and [sig] are empty too. */
+    val chapter: String = "",
+    val frac: Float = -1f,
+    val sig: String = "",
 )
 
 internal data class BackupQuote(
@@ -21,23 +25,56 @@ internal data class BackupQuote(
     val text: String,
     val note: String,
     val createdAt: Long,
+    /** v2 highlight look, 0..[DataLimits.QUOTE_STYLE_MAX]. */
+    val style: Int = 0,
+    val chapter: String = "",
+    val frac: Float = -1f,
+    val sig: String = "",
 )
+
+/** One dictionary lookup (N §5.4 / §5.6); its dedupe key on restore is (word key, section, start, createdAt). */
+internal data class BackupLookup(
+    val word: String,
+    val section: Int = 0,
+    val start: Int = 0,
+    val end: Int = 0,
+    val context: String = "",
+    val chapter: String = "",
+    val frac: Float = -1f,
+    val sig: String = "",
+    val via: Int = 0,
+    val app: String = "",
+    val note: String = "",
+    val createdAt: Long = 0,
+)
+
+/** Who wrote a backup (S §3.6); every field optional. */
+internal data class BackupOrigin(val installId: String, val auto: Boolean, val app: String, val device: String)
 
 /** One day of a book's reading log (T1-6); [day] = local yyyymmdd. */
 internal data class BackupLogDay(val day: Int, val seconds: Long, val pages: Int, val chars: Long)
 
-/** A book's `book_prefs` row (T1-9 / T1-2 / T2-13). [finishedAt] 0 = not finished. */
+/**
+ * A book's `book_prefs` row (T1-9 / T1-2 / T2-13; v3 [returnMark], U §3.3: the pinned return point as
+ * `ReturnMarkCodec` text). [finishedAt] 0 = not finished.
+ */
 internal data class BackupPrefs(
     val txtOverride: TxtOverride? = null,
     val finishedAt: Long = 0,
     val episodeLabel: String? = null,
+    val returnMark: String? = null,
 ) {
-    val isEmpty: Boolean get() = txtOverride == null && finishedAt <= 0 && episodeLabel == null
+    val isEmpty: Boolean get() = txtOverride == null && finishedAt <= 0 && episodeLabel == null && returnMark == null
 }
 
 /** A `book_prefs` row as stored ([txtOverride] = the column's JSON text); see [BackupJson.mergePrefs]. */
-internal data class PrefsRow(val txtOverride: String?, val finishedAt: Long, val episodeLabel: String?) {
-    val isEmpty: Boolean get() = txtOverride == null && finishedAt <= 0 && episodeLabel == null
+internal data class PrefsRow(
+    val txtOverride: String?,
+    val finishedAt: Long,
+    val episodeLabel: String?,
+    val returnMark: String? = null,
+) {
+    val isEmpty: Boolean get() = txtOverride == null && finishedAt <= 0 && episodeLabel == null && returnMark == null
 }
 
 /** One library entry in a backup file. */
@@ -73,6 +110,12 @@ internal data class BackupBook(
     val readingLog: List<BackupLogDay> = emptyList(),
     /** The book's prefs row (R2; null in older backups and for books without one). */
     val prefs: BackupPrefs? = null,
+    /** v3 (N §5.6): when [review] was last written (0 = unknown, e.g. an older backup). */
+    val reviewAt: Long = 0,
+    /** v3: > 0 when the scanner trashed the book because its file vanished. */
+    val missingAt: Long = 0,
+    /** v3: the book's dictionary lookups (단어장). */
+    val lookups: List<BackupLookup> = emptyList(),
 )
 
 internal class BackupData(
@@ -87,6 +130,18 @@ internal class BackupData(
      * wrote the file, 0 = unknown (a backup from before R2). See [BackupJson.remapsTextPosition].
      */
     val txtParseVersion: Int = 0,
+    /** S §3.6: who wrote the file; null in older backups. */
+    val origin: BackupOrigin? = null,
+    /** S §3.6: the counts of [books] as written; null in older backups (then [BackupJson.summaryOf] counts them). */
+    val summary: AutoBackup.Summary? = null,
+)
+
+/** The fields a header read returns (S §3.4) without building the books. */
+internal class BackupHeader(
+    val version: Int,
+    val createdAt: Long,
+    val origin: BackupOrigin?,
+    val summary: AutoBackup.Summary,
 )
 
 /**
@@ -96,6 +151,11 @@ internal class BackupData(
  * R2 added two optional per-book keys (so the format version stays 1: older builds ignore them, older backups lack
  * them): `readingLog` (`[{day, seconds, pages, chars}]`) and `prefs` (`{txtOverride: {…}, finishedAt,
  * episodeLabel}`), both written only when the book has any; and the top-level `txtParseVersion`.
+ *
+ * R3 (still version 1; every key optional both ways, written only when it holds something): the header `origin` and
+ * `summary`, written right after `createdAt` so [readHeader] stops before `settings` and `books` (S §3.6, C10); per
+ * quote `style` (≠ 0) and the place `chapter, frac, sig` (when `frac ≥ 0`), per bookmark the place; per book
+ * `reviewAt`, `missingAt`, `lookups`, and `prefs.returnMark` (N §5.6, U §3.3).
  */
 internal object BackupJson {
     const val FORMAT = "readeraplus-backup"
@@ -107,6 +167,13 @@ internal object BackupJson {
     /** Signature of a restored position's parse record: no parse has it (theirs are hex). */
     private const val STALE_TEXT_SIGNATURE = "restored"
 
+    /** Caps of fields without a [DataLimits] entry (a place signature is "e:<size>" / "<hex>:<size>"). */
+    private const val MAX_SIG = 100
+    private const val MAX_RETURN_MARK = 1_000
+    private const val MAX_ORIGIN_FIELD = 200
+    /** Lookups kept per book on restore. */
+    private const val MAX_LOOKUPS = 50_000
+
     fun fromBook(
         b: Book,
         metaLocked: Boolean,
@@ -115,6 +182,8 @@ internal object BackupJson {
         quotes: List<Quote>,
         readingLog: List<BackupLogDay> = emptyList(),
         prefs: BackupPrefs? = null,
+        reviewAt: Long = 0,
+        lookups: List<Lookup> = emptyList(),
     ): BackupBook = BackupBook(
         path = b.path,
         fileName = b.fileName,
@@ -140,17 +209,46 @@ internal object BackupJson {
         addedAt = b.addedAt,
         readingSeconds = b.readingSeconds,
         collections = collections,
-        bookmarks = bookmarks.map { BackupBookmark(it.section, it.offset, it.snippet, it.note, it.createdAt) },
-        quotes = quotes.map { BackupQuote(it.section, it.start, it.end, it.text, it.note, it.createdAt) },
+        bookmarks = bookmarks.map {
+            val known = it.frac >= 0f
+            BackupBookmark(it.section, it.offset, it.snippet, it.note, it.createdAt,
+                if (known) it.chapter else "", if (known) it.frac else -1f, if (known) it.sig else "")
+        },
+        quotes = quotes.map {
+            val known = it.frac >= 0f
+            BackupQuote(it.section, it.start, it.end, it.text, it.note, it.createdAt, it.style,
+                if (known) it.chapter else "", if (known) it.frac else -1f, if (known) it.sig else "")
+        },
         readingLog = readingLog.sortedBy { it.day },
         prefs = prefs?.takeUnless { it.isEmpty },
+        reviewAt = reviewAt.coerceAtLeast(0L),
+        missingAt = b.missingAt.coerceAtLeast(0L),
+        lookups = lookups.map {
+            BackupLookup(it.word, it.section, it.start, it.end, it.context, it.chapter, it.frac, it.sig, it.via, it.app,
+                it.note, it.createdAt)
+        },
     )
+
+    /** The header counts of [books] (S §3.6): "read" = opened at least once. */
+    fun summaryOf(books: List<BackupBook>): AutoBackup.Summary {
+        var read = 0
+        var bookmarks = 0
+        var quotes = 0
+        for (b in books) {
+            if (b.lastReadAt > 0) read++
+            bookmarks += b.bookmarks.size
+            quotes += b.quotes.size
+        }
+        return AutoBackup.Summary(books.size, read, bookmarks, quotes)
+    }
 
     fun toJson(data: BackupData): JSONObject {
         val root = JSONObject()
         root.put("format", FORMAT)
         root.put("version", data.version)
         root.put("createdAt", data.createdAt)
+        data.origin?.let { root.put("origin", originToJson(it)) }
+        data.summary?.let { root.put("summary", summaryToJson(it)) }
         if (data.txtParseVersion > 0) root.put("txtParseVersion", data.txtParseVersion)
         if (data.settings != null) root.put("settings", data.settings)
         root.put("collections", JSONArray().also { a -> data.collections.forEach { a.put(it) } })
@@ -158,6 +256,66 @@ internal object BackupJson {
         for (b in data.books) books.put(bookToJson(b))
         root.put("books", books)
         return root
+    }
+
+    /**
+     * Streams [data] to [out] book by book: the same text as `toJson(data).toString()` (keys in the same order),
+     * without ever holding the whole tree or the whole text (K11: a 1,000-book snapshot is a 10–20 MB tree).
+     * [checkpoint] runs after the header and after every book; it may throw to abort (the busy check).
+     */
+    fun write(data: BackupData, out: java.io.Writer, checkpoint: () -> Unit = {}) {
+        val head = JSONObject()
+        head.put("format", FORMAT)
+        head.put("version", data.version)
+        head.put("createdAt", data.createdAt)
+        data.origin?.let { head.put("origin", originToJson(it)) }
+        data.summary?.let { head.put("summary", summaryToJson(it)) }
+        if (data.txtParseVersion > 0) head.put("txtParseVersion", data.txtParseVersion)
+        if (data.settings != null) head.put("settings", data.settings)
+        head.put("collections", JSONArray().also { a -> data.collections.forEach { a.put(it) } })
+        val h = head.toString()
+        out.write(h, 0, h.length - 1) // without the closing brace
+        out.write(",\"books\":[")
+        checkpoint()
+        for ((i, b) in data.books.withIndex()) {
+            if (i > 0) out.write(",")
+            out.write(bookToJson(b).toString())
+            checkpoint()
+        }
+        out.write("]}")
+        out.flush()
+    }
+
+    fun originToJson(o: BackupOrigin): JSONObject = JSONObject()
+        .put("installId", o.installId)
+        .put("auto", o.auto)
+        .put("app", o.app)
+        .put("device", o.device)
+
+    fun summaryToJson(s: AutoBackup.Summary): JSONObject = JSONObject()
+        .put("books", s.books)
+        .put("read", s.read)
+        .put("bookmarks", s.bookmarks)
+        .put("quotes", s.quotes)
+
+    fun originFromJson(o: JSONObject?): BackupOrigin? {
+        if (o == null) return null
+        return BackupOrigin(
+            installId = MetaInfo.truncate(str(o, "installId", "").trim(), MAX_ORIGIN_FIELD),
+            auto = bool(o, "auto", false),
+            app = MetaInfo.truncate(str(o, "app", "").trim(), MAX_ORIGIN_FIELD),
+            device = MetaInfo.truncate(str(o, "device", "").trim(), MAX_ORIGIN_FIELD),
+        )
+    }
+
+    fun summaryFromJson(o: JSONObject?): AutoBackup.Summary? {
+        if (o == null) return null
+        return AutoBackup.Summary(
+            books = int(o, "books", 0).coerceAtLeast(0),
+            read = int(o, "read", 0).coerceAtLeast(0),
+            bookmarks = int(o, "bookmarks", 0).coerceAtLeast(0),
+            quotes = int(o, "quotes", 0).coerceAtLeast(0),
+        )
     }
 
     fun bookToJson(b: BackupBook): JSONObject {
@@ -194,7 +352,8 @@ internal object BackupJson {
                     .put("offset", m.offset)
                     .put("snippet", m.snippet)
                     .put("note", m.note)
-                    .put("createdAt", m.createdAt),
+                    .put("createdAt", m.createdAt)
+                    .also { putPlace(it, m.chapter, m.frac, m.sig) },
             )
         }
         o.put("bookmarks", bms)
@@ -207,10 +366,37 @@ internal object BackupJson {
                     .put("end", q.end)
                     .put("text", q.text)
                     .put("note", q.note)
-                    .put("createdAt", q.createdAt),
+                    .put("createdAt", q.createdAt)
+                    .also {
+                        if (q.style != 0) it.put("style", q.style)
+                        putPlace(it, q.chapter, q.frac, q.sig)
+                    },
             )
         }
         o.put("quotes", qs)
+        if (b.reviewAt > 0) o.put("reviewAt", b.reviewAt)
+        if (b.missingAt > 0) o.put("missingAt", b.missingAt)
+        if (b.lookups.isNotEmpty()) {
+            val ls = JSONArray()
+            for (l in b.lookups) {
+                ls.put(
+                    JSONObject()
+                        .put("word", l.word)
+                        .put("section", l.section)
+                        .put("start", l.start)
+                        .put("end", l.end)
+                        .put("context", l.context)
+                        .put("chapter", l.chapter)
+                        .put("frac", finiteOr(l.frac, -1f))
+                        .put("sig", l.sig)
+                        .put("via", l.via)
+                        .put("app", l.app)
+                        .put("note", l.note)
+                        .put("createdAt", l.createdAt),
+                )
+            }
+            o.put("lookups", ls)
+        }
         if (b.readingLog.isNotEmpty()) {
             val log = JSONArray()
             for (d in b.readingLog) {
@@ -229,6 +415,7 @@ internal object BackupJson {
             p.txtOverride?.let { po.put("txtOverride", JSONObject(it.toJson())) }
             if (p.finishedAt > 0) po.put("finishedAt", p.finishedAt)
             p.episodeLabel?.let { po.put("episodeLabel", it) }
+            p.returnMark?.let { po.put("returnMark", it) }
             o.put("prefs", po)
         }
         return o
@@ -259,6 +446,8 @@ internal object BackupJson {
             collections = strings(root.optJSONArray("collections")),
             settings = root.optJSONObject("settings"),
             txtParseVersion = int(root, "txtParseVersion", 0).coerceAtLeast(0),
+            origin = originFromJson(root.optJSONObject("origin")),
+            summary = summaryFromJson(root.optJSONObject("summary")),
         )
     }
 
@@ -278,7 +467,7 @@ internal object BackupJson {
                     snippet = capped(m, "snippet", DataLimits.SNIPPET),
                     note = capped(m, "note", DataLimits.NOTE),
                     createdAt = long(m, "createdAt", 0L),
-                )
+                ).withPlace(placeFromJson(m))
             }
         }
         val quotes = ArrayList<BackupQuote>()
@@ -294,7 +483,8 @@ internal object BackupJson {
                     text = capped(q, "text", DataLimits.QUOTE),
                     note = capped(q, "note", DataLimits.NOTE),
                     createdAt = long(q, "createdAt", 0L),
-                )
+                    style = int(q, "style", 0).coerceIn(0, DataLimits.QUOTE_STYLE_MAX),
+                ).withPlace(placeFromJson(q))
             }
         }
         val progress = float(o, "progress", 0f)
@@ -327,7 +517,170 @@ internal object BackupJson {
             quotes = quotes,
             readingLog = logFromJson(o.optJSONArray("readingLog")),
             prefs = o.optJSONObject("prefs")?.let(::prefsFromJson),
+            reviewAt = long(o, "reviewAt", 0L).coerceAtLeast(0L),
+            missingAt = long(o, "missingAt", 0L).coerceAtLeast(0L),
+            lookups = lookupsFromJson(o.optJSONArray("lookups")),
         )
+    }
+
+    /** A note's place: (chapter, frac, sig) when `frac` is a fraction 0..1, else [NotePlace.UNKNOWN]. */
+    fun placeFromJson(o: JSONObject): NotePlace {
+        val frac = floatOrNull(o, "frac") ?: return NotePlace.UNKNOWN
+        if (frac < 0f) return NotePlace.UNKNOWN
+        return NotePlace(
+            chapter = MetaInfo.clean(str(o, "chapter", ""), DataLimits.CHAPTER),
+            frac = frac.coerceAtMost(1f),
+            sig = MetaInfo.truncate(str(o, "sig", "").trim(), MAX_SIG),
+        )
+    }
+
+    private fun BackupBookmark.withPlace(p: NotePlace): BackupBookmark =
+        if (p.frac < 0f) this else copy(chapter = p.chapter, frac = p.frac, sig = p.sig)
+
+    private fun BackupQuote.withPlace(p: NotePlace): BackupQuote =
+        if (p.frac < 0f) this else copy(chapter = p.chapter, frac = p.frac, sig = p.sig)
+
+    private fun putPlace(o: JSONObject, chapter: String, frac: Float, sig: String) {
+        if (!(frac >= 0f) || !frac.isFinite()) return
+        o.put("chapter", chapter).put("frac", frac.toDouble()).put("sig", sig)
+    }
+
+    /** A backup entry's lookups: entries without a word skipped, text fields capped, offsets ordered, capped count. */
+    fun lookupsFromJson(arr: JSONArray?): List<BackupLookup> {
+        if (arr == null || arr.length() == 0) return emptyList()
+        val out = ArrayList<BackupLookup>(minOf(arr.length(), MAX_LOOKUPS))
+        for (i in 0 until arr.length()) {
+            if (out.size >= MAX_LOOKUPS) break
+            val o = arr.optJSONObject(i) ?: continue
+            val word = MetaInfo.clean(str(o, "word", ""), DataLimits.WORD)
+            if (word.isEmpty()) continue
+            val s = int(o, "start", 0).coerceAtLeast(0)
+            val e = int(o, "end", s).coerceAtLeast(0)
+            val place = placeFromJson(o)
+            out += BackupLookup(
+                word = word,
+                section = int(o, "section", 0).coerceAtLeast(0),
+                start = minOf(s, e),
+                end = maxOf(s, e),
+                context = capped(o, "context", DataLimits.CONTEXT),
+                chapter = place.chapter,
+                frac = place.frac,
+                sig = place.sig,
+                via = int(o, "via", 0).coerceAtLeast(0),
+                app = MetaInfo.truncate(str(o, "app", "").trim(), DataLimits.APP),
+                note = capped(o, "note", DataLimits.NOTE),
+                createdAt = long(o, "createdAt", 0L).coerceAtLeast(0L),
+            )
+        }
+        return out
+    }
+
+    /**
+     * The header of a backup file (S §3.4): `version`, `createdAt`, `origin` and `summary`, read with a streaming
+     * reader — `settings` and the rest are skipped, no tree is built. The read stops at `books` once `summary` is
+     * known (R3 files write it before `books`); an older file without one is counted while its `books` stream past.
+     * Throws on a malformed file or one that is not a ReaderaPlus backup.
+     */
+    fun readHeader(input: java.io.Reader): BackupHeader {
+        val pr = java.io.PushbackReader(input, 1)
+        val first = pr.read()
+        if (first != -1 && first != 0xFEFF) pr.unread(first)
+        val r = android.util.JsonReader(pr)
+        r.isLenient = true
+        var version = VERSION
+        var createdAt = 0L
+        var origin: BackupOrigin? = null
+        var summary: AutoBackup.Summary? = null
+        var counted: AutoBackup.Summary? = null
+        var format: String? = null
+        var sawBooks = false
+        r.beginObject()
+        while (r.hasNext()) {
+            when (r.nextName()) {
+                "format" -> format = scalar(r)
+                "version" -> version = scalar(r)?.trim()?.toDoubleOrNull()?.toInt() ?: VERSION
+                "createdAt" -> createdAt = scalar(r)?.trim()?.toDoubleOrNull()?.toLong() ?: 0L
+                "origin" -> origin = originFromJson(smallObject(r))
+                "summary" -> summary = summaryFromJson(smallObject(r))
+                "books" -> {
+                    sawBooks = true
+                    if (summary != null) break
+                    counted = countBooks(r)
+                }
+                else -> r.skipValue()
+            }
+        }
+        if (format != FORMAT && !sawBooks) throw IllegalArgumentException("리더플러스 백업 파일이 아닙니다")
+        return BackupHeader(version, createdAt, origin, summary ?: counted ?: AutoBackup.Summary(0, 0, 0, 0))
+    }
+
+    /** A string / number / boolean value as text; null (skipped) for anything else. */
+    private fun scalar(r: android.util.JsonReader): String? = when (r.peek()) {
+        android.util.JsonToken.STRING, android.util.JsonToken.NUMBER -> r.nextString()
+        android.util.JsonToken.BOOLEAN -> r.nextBoolean().toString()
+        else -> { r.skipValue(); null }
+    }
+
+    /** A flat object of scalars (origin, summary) as a JSONObject; null when it is not an object. */
+    private fun smallObject(r: android.util.JsonReader): JSONObject? {
+        if (r.peek() != android.util.JsonToken.BEGIN_OBJECT) { r.skipValue(); return null }
+        val o = JSONObject()
+        r.beginObject()
+        while (r.hasNext()) {
+            val k = r.nextName()
+            scalar(r)?.let { o.put(k, it) }
+        }
+        r.endObject()
+        return o
+    }
+
+    /** Counts a `books` array like [summaryOf] would, without building the books. */
+    private fun countBooks(r: android.util.JsonReader): AutoBackup.Summary {
+        if (r.peek() != android.util.JsonToken.BEGIN_ARRAY) { r.skipValue(); return AutoBackup.Summary(0, 0, 0, 0) }
+        var books = 0
+        var read = 0
+        var bookmarks = 0
+        var quotes = 0
+        r.beginArray()
+        while (r.hasNext()) {
+            if (r.peek() != android.util.JsonToken.BEGIN_OBJECT) { r.skipValue(); continue }
+            var path = ""
+            var fileName = ""
+            var lastRead = 0L
+            var bms = 0
+            var qs = 0
+            r.beginObject()
+            while (r.hasNext()) {
+                when (r.nextName()) {
+                    "path" -> path = scalar(r)?.trim() ?: ""
+                    "fileName" -> fileName = scalar(r)?.trim() ?: ""
+                    "lastReadAt" -> lastRead = scalar(r)?.trim()?.toDoubleOrNull()?.toLong() ?: 0L
+                    "bookmarks" -> bms = countObjects(r)
+                    "quotes" -> qs = countObjects(r)
+                    else -> r.skipValue()
+                }
+            }
+            r.endObject()
+            if (path.isEmpty() && fileName.isEmpty()) continue // bookFromJson drops these too
+            books++
+            if (lastRead > 0) read++
+            bookmarks += bms
+            quotes += qs
+        }
+        r.endArray()
+        return AutoBackup.Summary(books, read, bookmarks, quotes)
+    }
+
+    private fun countObjects(r: android.util.JsonReader): Int {
+        if (r.peek() != android.util.JsonToken.BEGIN_ARRAY) { r.skipValue(); return 0 }
+        var n = 0
+        r.beginArray()
+        while (r.hasNext()) {
+            if (r.peek() == android.util.JsonToken.BEGIN_OBJECT) n++
+            r.skipValue()
+        }
+        r.endArray()
+        return n
     }
 
     /**
@@ -392,6 +745,7 @@ internal object BackupJson {
             finishedAt = long(o, "finishedAt", 0L).coerceAtLeast(0L),
             episodeLabel = strOrNull(o, "episodeLabel")?.let { MetaInfo.clean(it, BookPrefs.MAX_EPISODE_LABEL) }
                 ?.ifEmpty { null },
+            returnMark = strOrNull(o, "returnMark")?.trim()?.takeIf { it.isNotEmpty() && it.length <= MAX_RETURN_MARK },
         )
         return if (p.isEmpty) null else p
     }
@@ -399,9 +753,11 @@ internal object BackupJson {
     /**
      * The `book_prefs` row after restoring a backup entry over [current] (pure; null = no row now): the backup's
      * override and episode label win when it has them; the finish time is the backup's when it has one, but always
-     * 0 when the restored book isn't [haveRead] (a finish time belongs to a finished book). Null when nothing is left.
+     * 0 when the restored book isn't [haveRead] (a finish time belongs to a finished book). The return mark (U §3.3)
+     * belongs to a reading position: the backup's wins unless [deviceNewer] (this device read the book later than the
+     * backup) and the device has one of its own. Null when nothing is left.
      */
-    fun mergePrefs(current: PrefsRow?, backup: BackupPrefs?, haveRead: Boolean): PrefsRow? {
+    fun mergePrefs(current: PrefsRow?, backup: BackupPrefs?, haveRead: Boolean, deviceNewer: Boolean = false): PrefsRow? {
         val merged = PrefsRow(
             txtOverride = backup?.txtOverride?.let(BookPrefs::overrideJson) ?: current?.txtOverride,
             finishedAt = when {
@@ -410,6 +766,8 @@ internal object BackupJson {
                 else -> current?.finishedAt ?: 0L
             },
             episodeLabel = backup?.episodeLabel ?: current?.episodeLabel,
+            returnMark = if (deviceNewer && current?.returnMark != null) current.returnMark
+            else backup?.returnMark ?: current?.returnMark,
         )
         return if (merged.isEmpty) null else merged
     }
@@ -493,6 +851,8 @@ internal object BackupJson {
         }
         return out
     }
+
+    private fun finiteOr(f: Float, def: Float): Double = (if (f.isFinite()) f else def).toDouble()
 
     private fun finiteOrNull(f: Float?): Any = if (f != null && f.isFinite()) f.toDouble() else JSONObject.NULL
 }
