@@ -21,6 +21,15 @@ import kotlin.math.abs
  * page at a time. Each move is one layout and one draw, the "3 / 27" indicator included.
  */
 
+/**
+ * Anything the page keys and ◀ ▶ move a page at a time: an [InkPager] list, the contents dialog's 썸네일 grid
+ * (`ThumbsTab`). Main thread.
+ */
+interface PageTarget {
+    /** One page towards [dir] (+1 next, -1 previous). False when already at that end (nothing changes). */
+    fun page(dir: Int): Boolean
+}
+
 /** Pure page maths of [InkPager] (unit-tested). "Rows" are adapter positions. */
 object PagerMath {
     /** Rows one page moves: the visible rows minus one (the last row, usually cut, becomes the next page's first). */
@@ -129,7 +138,7 @@ class InkPagerBar(context: Context) : LinearLayout(context) {
  *
  * The pager owns the list's OnTouchListener and OnScrollListener: use [onMoved] to follow the visible rows.
  */
-class InkPager internal constructor(val list: ListView, private val bar: InkPagerBar) {
+class InkPager internal constructor(val list: ListView, private val bar: InkPagerBar) : PageTarget {
     /** Runs after every layout of the list (a page jump, a data change): the visible rows may be different. */
     var onMoved: (() -> Unit)? = null
 
@@ -171,7 +180,7 @@ class InkPager internal constructor(val list: ListView, private val bar: InkPage
     }
 
     /** One page towards [dir] (+1 next, -1 previous). False when already at that end (or nothing is laid out yet). */
-    fun page(dir: Int): Boolean {
+    override fun page(dir: Int): Boolean {
         val n = count
         if (n == 0 || list.childCount == 0 || dir == 0) return false
         if (if (dir > 0) atEnd() else atStart()) return false
@@ -260,12 +269,12 @@ class InkPager internal constructor(val list: ListView, private val bar: InkPage
 fun ListView.inkPaging(bar: InkPagerBar): InkPager = InkPager(this, bar)
 
 /**
- * Hardware page keys page [pager]'s list while this dialog has the focus (the dialog window gets the keys, not the
+ * Hardware page keys page [pager] (an [InkPager] list or any other [PageTarget]) while this dialog has the focus (the dialog window gets the keys, not the
  * activity below). [direction] maps a key code to +1 (next page), -1 or 0 (not a page key: left alone). A page key's
  * DOWN and UP are both consumed, so the system volume panel never shows; a held key pages once (fresh presses only).
  * [skip] leaves a key to the dialog (e.g. while typing in a search field).
  */
-fun Dialog.inkPagerKeys(pager: () -> InkPager?, direction: (Int) -> Int, skip: (KeyEvent) -> Boolean = { false }) {
+fun Dialog.inkPagerKeys(pager: () -> PageTarget?, direction: (Int) -> Int, skip: (KeyEvent) -> Boolean = { false }) {
     setOnKeyListener { _, keyCode, ev ->
         val dir = direction(keyCode)
         if (dir == 0 || skip(ev)) return@setOnKeyListener false
