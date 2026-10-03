@@ -141,4 +141,168 @@ class BackupJsonTest {
         assertEquals(3.9f, BackupJson.float(o, "d", 0f), 1e-6f)
         assertNull(BackupJson.floatOrNull(o, "big"))
     }
+
+    // ---- R3: v3 note fields (N §5.6) and the header (S §3.6, C10) ----
+
+    private val v3 = BackupJson.fromBook(
+        book.copy(missingAt = 1_700_000_000_000), metaLocked = false,
+        collections = emptyList(),
+        bookmarks = listOf(
+            Bookmark(1, 3, 1, 10, "a", 1000, "", chapter = "1장", frac = 0.25f, sig = "ab12:4096"),
+            Bookmark(2, 3, 2, 20, "b", 1001),
+        ),
+        quotes = listOf(
+            Quote(3, 3, 2, 5, 9, "인용", "", 2000, style = 4, chapter = "2장", frac = 0.5f, sig = "e:4096"),
+            Quote(4, 3, 3, 1, 2, "x", "", 2001),
+        ),
+        reviewAt = 3000,
+        lookups = listOf(Lookup(9, 3, "사과", 1, 2, 4, "사과를 먹었다", "1장", 0.1f, "e:1", 1, "com.dict", "메모", 4000)),
+    )
+
+    @Test
+    fun v3FieldsRoundTrip() {
+        val text = BackupJson.toJson(BackupData(1, 5, listOf(v3), emptyList(), null)).toString()
+        val back = BackupJson.parse(text).books.single()
+        assertEquals(v3, back)
+        assertEquals(3000L, back.reviewAt)
+        assertEquals(1_700_000_000_000L, back.missingAt)
+        assertEquals(BackupLookup("사과", 1, 2, 4, "사과를 먹었다", "1장", 0.1f, "e:1", 1, "com.dict", "메모", 4000), back.lookups[0])
+
+        val o = JSONObject(text).getJSONArray("books").getJSONObject(0)
+        val qs = o.getJSONArray("quotes")
+        // style only when ≠ 0, the place only when frac ≥ 0.
+        assertEquals(4, qs.getJSONObject(0).getInt("style"))
+        assertEquals("e:4096", qs.getJSONObject(0).getString("sig"))
+        assertFalse(qs.getJSONObject(1).has("style"))
+        assertFalse(qs.getJSONObject(1).has("frac"))
+        assertFalse(qs.getJSONObject(1).has("chapter"))
+        assertFalse(o.getJSONArray("bookmarks").getJSONObject(1).has("frac"))
+        assertEquals("1장", o.getJSONArray("bookmarks").getJSONObject(0).getString("chapter"))
+    }
+
+    @Test
+    fun v3FieldsAreOmittedWhenEmptyAndOldBackupsGetDefaults() {
+        val o = BackupJson.bookToJson(sample)
+        assertFalse(o.has("reviewAt"))
+        assertFalse(o.has("missingAt"))
+        assertFalse(o.has("lookups"))
+        val old = JSONObject("""{"path": "/a.txt", "quotes": [{"start": 1, "end": 2, "text": "t"}],
+            "bookmarks": [{"offset": 3}]}""")
+        val b = BackupJson.bookFromJson(old)!!
+        assertEquals(0L, b.reviewAt)
+        assertEquals(0L, b.missingAt)
+        assertTrue(b.lookups.isEmpty())
+        assertEquals(0, b.quotes[0].style)
+        assertEquals(-1f, b.quotes[0].frac, 0f)
+        assertEquals("", b.quotes[0].sig)
+        assertEquals(-1f, b.bookmarks[0].frac, 0f)
+    }
+
+    @Test
+    fun v3FieldsAreCappedAndClamped() {
+        val o = JSONObject()
+            .put("path", "/a.txt").put("reviewAt", -4).put("missingAt", "x")
+            .put("quotes", org.json.JSONArray()
+                .put(JSONObject().put("start", 1).put("end", 2).put("style", 99).put("frac", 7).put("chapter", "c".repeat(500)))
+                .put(JSONObject().put("start", 1).put("end", 2).put("style", -3).put("frac", -0.5).put("chapter", "z").put("sig", "s")))
+            .put("lookups", org.json.JSONArray()
+                .put(JSONObject().put("word", "  ").put("createdAt", 1))
+                .put(JSONObject().put("word", "w".repeat(500)).put("start", 9).put("end", 3).put("context", "k".repeat(1000))
+                    .put("app", "a".repeat(500)).put("via", -2))
+                .put("junk"))
+        val b = BackupJson.bookFromJson(o)!!
+        assertEquals(0L, b.reviewAt)
+        assertEquals(0L, b.missingAt)
+        assertEquals(DataLimits.QUOTE_STYLE_MAX, b.quotes[0].style)
+        assertEquals(1f, b.quotes[0].frac, 0f)
+        assertTrue(b.quotes[0].chapter.length <= DataLimits.CHAPTER)
+        assertEquals(0, b.quotes[1].style)
+        // An unknown place carries no chapter or sig.
+        assertEquals(-1f, b.quotes[1].frac, 0f)
+        assertEquals("", b.quotes[1].chapter)
+        assertEquals("", b.quotes[1].sig)
+        val l = b.lookups.single()
+        assertTrue(l.word.length <= DataLimits.WORD)
+        assertTrue(l.context.length <= DataLimits.CONTEXT)
+        assertTrue(l.app.length <= DataLimits.APP)
+        assertEquals(3, l.start)
+        assertEquals(9, l.end)
+        assertEquals(0, l.via)
+    }
+
+    private fun header(data: BackupData): BackupHeader =
+        BackupJson.readHeader(java.io.StringReader(BackupJson.toJson(data).toString(1)))
+
+    @Test
+    fun headerFieldsAreWrittenBeforeBooksAndOptionalBothWays() {
+        val origin = BackupOrigin("0badc0de11112222", true, "3.0", "Bigme Comet")
+        val data = BackupData(1, 99, listOf(sample, v3), listOf("c"), JSONObject().put("x", 1), 5, origin,
+            BackupJson.summaryOf(listOf(sample, v3)))
+        val text = BackupJson.toJson(data).toString()
+        val keys = JSONObject(text).keys().asSequence().toList()
+        assertEquals(listOf("format", "version", "createdAt", "origin", "summary"), keys.take(5))
+        assertEquals("books", keys.last())
+        val back = BackupJson.parse(text)
+        assertEquals(origin, back.origin)
+        assertEquals("2,2,3,3", back.summary.toString())
+        // Older backups have neither; nothing is written for null.
+        val old = BackupJson.toJson(BackupData(1, 99, listOf(sample), emptyList(), null))
+        assertFalse(old.has("origin"))
+        assertFalse(old.has("summary"))
+        assertNull(BackupJson.parse(old.toString()).origin)
+        assertNull(BackupJson.parse(old.toString()).summary)
+        // Malformed header values fall back.
+        val bad = BackupJson.parse("""{"books": [], "origin": 5, "summary": {"books": -3, "read": "2"}}""")
+        assertNull(bad.origin)
+        assertEquals("0,2,0,0", bad.summary.toString())
+    }
+
+    @Test
+    fun headerReaderMatchesAFullParse() {
+        val books = listOf(sample, v3, sample.copy(path = "/c.txt", lastReadAt = 0, bookmarks = emptyList()))
+        val summary = BackupJson.summaryOf(books)
+        val origin = BackupOrigin("abc", false, "", "")
+        val h = header(BackupData(1, 77, books, emptyList(), JSONObject().put("a", JSONObject().put("b", 2)), 0, origin, summary))
+        assertEquals(1, h.version)
+        assertEquals(77L, h.createdAt)
+        assertEquals(origin, h.origin)
+        assertEquals(summary.toString(), h.summary.toString())
+        // A file without a summary (older builds) is counted while its books stream past.
+        val counted = header(BackupData(1, 77, books, emptyList(), null))
+        assertEquals(summary.toString(), counted.summary.toString())
+        assertEquals(BackupJson.summaryOf(BackupJson.parse(BackupJson.toJson(BackupData(1, 77, books, emptyList(), null))
+            .toString()).books).toString(), counted.summary.toString())
+        assertNull(counted.origin)
+        // Entries without a file are dropped by the parse, so the count skips them too; a BOM is fine.
+        val raw = "\uFEFF{\"books\":[{\"title\":\"x\"},{\"path\":\"/a\",\"lastReadAt\":5,\"quotes\":[{},{},3]}],\"version\":1}"
+        assertEquals("1,1,0,2", BackupJson.readHeader(java.io.StringReader(raw)).summary.toString())
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun headerReaderRejectsForeignJson() {
+        BackupJson.readHeader(java.io.StringReader("{\"docs\": [], \"version\": 3}"))
+    }
+
+    @Test
+    fun streamedWriteEqualsTheTree() {
+        val data = BackupData(1, 99, listOf(sample, v3), listOf("c", "d"), JSONObject().put("x", 1), 5,
+            BackupOrigin("id", true, "v", "d"), BackupJson.summaryOf(listOf(sample, v3)))
+        for (d in listOf(data, BackupData(1, 0, emptyList(), emptyList(), null))) {
+            val w = java.io.StringWriter()
+            var checks = 0
+            BackupJson.write(d, w) { checks++ }
+            assertEquals(BackupJson.toJson(d).toString(), w.toString())
+            assertEquals(1 + d.books.size, checks)
+        }
+    }
+
+    @Test
+    fun summaryCountsOpenedBooksAndNotes() {
+        val s = BackupJson.summaryOf(listOf(sample, sample.copy(lastReadAt = 0, quotes = emptyList())))
+        assertEquals(2, s.books)
+        assertEquals(1, s.read)
+        assertEquals(2, s.bookmarks)
+        assertEquals(1, s.quotes)
+        assertEquals(4, s.score)
+    }
 }
