@@ -27,7 +27,6 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.BookPrefs
 import com.ggumtak.readeraplus.data.Bookmark
@@ -52,6 +51,7 @@ import com.ggumtak.readeraplus.reader.extras.QuoteCache
 import com.ggumtak.readeraplus.reader.extras.ReaderEndHost
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
 import com.ggumtak.readeraplus.reader.extras.SelectionController
+import com.ggumtak.readeraplus.reader.extras.StatusSampleHost
 import com.ggumtak.readeraplus.reader.extras.TtsController
 import com.ggumtak.readeraplus.reader.extras.TxtOverrideHost
 import com.ggumtak.readeraplus.render.Covers
@@ -62,23 +62,23 @@ import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
 import com.ggumtak.readeraplus.render.ImageCoverage
 import com.ggumtak.readeraplus.render.PageDecor
+import com.ggumtak.readeraplus.render.ProgressMath
+import com.ggumtak.readeraplus.render.StatusFit
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.KeyHold
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
+import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.ui.library.LibraryActivity
+import com.ggumtak.readeraplus.ui.settings.SettingsActivity
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.dpF
-import com.ggumtak.readeraplus.ui.kit.hairline
-import com.ggumtak.readeraplus.ui.kit.horizontal
-import com.ggumtak.readeraplus.ui.kit.iconButton
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
-import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 import kotlinx.coroutines.CancellationException
@@ -90,15 +90,16 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.Calendar
+import java.util.TimeZone
 
 /**
  * The reading screen: opens a book (library id or ACTION_VIEW uri), shows one page at a time on a [PageView],
- * handles taps/swipes/keys, the chrome, the return chip, e-ink refresh cadence, auto page turn, keep-screen-on,
- * brightness, orientation lock, position saving, reading time ([ReadingTracker]) and the end panel ([EndPanel]), and
+ * handles taps/swipes/keys, the chrome, the return point ([ReturnNav]), e-ink refresh cadence, auto page turn, keep-screen-on,
+ * brightness ([LightController]), the status slots ([StatusModel]), orientation lock, position saving, reading time ([ReadingTracker]) and the end panel ([EndPanel]), and
  * hosts the reader extras through [ReaderHost] and its optional capabilities.
  */
-class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, TxtOverrideHost, ReaderEndHost {
+class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, TxtOverrideHost, ReaderEndHost,
+    StatusSampleHost {
     companion object {
         const val EXTRA_BOOK_ID = "book_id"
         private const val STATE_BOOK = "rp.book"
@@ -120,15 +121,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         private const val GLYPH_SLOP_DP = 4f
         private const val SAVE_DELAY_MS = 1000L
         private const val COUNT_DELAY_MS = 800L
-        private const val MAX_RETURN_STACK = 16
-        private const val PREF_BRIGHTNESS_COLLAPSED = "reader.brightnessCollapsed"
-        private const val PREF_LAST_BRIGHTNESS = "reader.lastBrightness"
         private const val OWNER_QUOTES = "quotes"
         private const val OWNER_SEARCH = "search"
         private const val REFRESH_SETTLE_MS = 16L
         private const val CHROME_COUNTS_MS = 2000L
-        /** Manual page turns after a jump that hide the "돌아가기" chip (the reader has moved on). */
-        private const val CHIP_HIDE_TURNS = 2
         /** navigateTo page index: the first page starting at or after the offset (go-to by percent). */
         private const val PAGE_AT_OR_AFTER = -3
         /** Per book: text signature + char fraction of the saved position (see [TextPositions]). */
@@ -163,8 +159,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private lateinit var returnNav: ReturnNav
     internal lateinit var chrome: ReaderChrome
         private set
-    private lateinit var chip: LinearLayout
-    private lateinit var chipLabel: TextView
     private lateinit var statusText: TextView
     private lateinit var brightnessOverlay: TextView
     private lateinit var errorPanel: LinearLayout
@@ -195,9 +189,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         cadenceRefreshPending = false
         if (!isDestroyed) refreshAfterDraw(0L)
     }
-    /** Manual page turns since the last remembered jump (the return chip hides after [CHIP_HIDE_TURNS]). */
-    private var turnsSinceJump = 0
-
     private var bookRef: Book? = null
     internal var session: BookSession? = null
         private set
@@ -233,7 +224,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var lastChapterIdx = Int.MIN_VALUE
     private var insets = IntArray(4)
 
-    private val returnStack = ArrayList<DocPosition>()
     private var bookmarks: List<Bookmark> = emptyList()
     private var quotesBySection: Map<Int, List<Highlight>> = emptyMap()
     private val ownerHighlights = HashMap<String, Pair<Int, List<Highlight>>>()
@@ -243,10 +233,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     internal var autoTurnOn = false
         private set
     private var chromeVisible = false
-    /** Chrome was shown automatically for "메뉴 고정" once after opening. */
-    private var pinShown = false
-    /** "메뉴 고정": the page already has its between-the-bars size for the book being opened (bars not shown yet). */
-    private var pinPending = false
     /** Background decode of a neighbour section's boundary page images (see [prefetchImages]). */
     private var imagePrefetch: Job? = null
     private val textPosPrefs by lazy { getSharedPreferences(PREFS_TEXT_POS, MODE_PRIVATE) }
@@ -254,6 +240,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var lastTextPos: Pair<String, String>? = null
     private var batteryLevel = -1
     private var batteryAt = 0L
+    /** The sticky battery broadcast's filter, built once (the battery is read at most once a minute). */
+    private val batteryFilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+    /** The status slots of the page on screen: one shared [StatusModel.decor], filled from [statusInputs]. */
+    private val status = StatusModel()
+    private val statusInputs = StatusInputs()
+    /** The clock's time zone and 12/24 h format, read on the first clock sample after [onResume] (null = re-read). */
+    private var clockZone: TimeZone? = null
+    private var clock24 = true
     private var annotationsLoadedAt = 0L
     private var chromeCountsAt = 0L
     private var edgeToastAt = 0L
@@ -323,6 +317,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     // ================================================================== lifecycle
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // S §1.10: the library's auto-scan and auto-backup yield from the very start of the open, not from onResume.
+        ReaderPresence.inFront = true
         super.onCreate(savedInstanceState)
         // A book opened from a file manager starts the process: its splash (plain white, see values-v31) goes at once,
         // without the platform's exit animation.
@@ -335,6 +331,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         ReaderWindow.setup(this)
         keeper = ScreenOnKeeper(this)
         buildViews()
+        // The window's brightness override only (no IO): the device light waits for the first page.
+        light.onCreate()
         applyReaderColors(Settings.reader)
         applyAppSettings()
         unlistenSettings = Settings.addListener(settingsListener)
@@ -405,7 +403,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun viewPart(a: AppSettings): List<Any> = listOf(
         a.fullscreen, a.brightness, a.orientationLock, a.keepScreenOn, a.einkRefreshEvery, a.einkRefreshOnChapter,
         a.swipeToTurn, a.verticalSwipe, a.brightnessSwipe, a.longPressSelect, a.einkMode,
-        a.longPressMs, a.einkRefreshEveryNight, a.einkRefreshMethod, a.einkFlashMs,
+        a.longPressMs, a.einkRefreshEveryNight, a.einkRefreshMethod, a.einkFlashMs, a.brightnessDevice,
     )
 
     /**
@@ -432,6 +430,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         ReaderPresence.inFront = true
         inFront = true
         applyAppSettings()
+        light.onResume()
+        // The clock's zone / 12-24 h and the battery may have changed while away: sampled again by the refresh below
+        // (it rides on the resume redraw, so no extra e-ink update) or by the next page shown.
+        clockZone = null
+        batteryLevel = -1
         tracker.resume(SystemClock.elapsedRealtime(), dayClock.day(System.currentTimeMillis()))
         safely { tts?.onReaderResumed() }
         // Per-view refresh modes may be reset by the firmware while another app was in front.
@@ -439,7 +442,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (session != null) {
             // The book's effective settings, as the open path built them (no relayout when only this merge differs).
             val r = Settings.reader
-            if (r.withTxt(bookOverride) != readerTarget) applyToSession(r) else refreshDecor(onlyIfChanged = true)
+            if (r.withTxt(bookOverride) != readerTarget) applyToSession(r) else refreshDecor(onlyIfChanged = true, sample = true)
         }
         // T1-11: TTS turned pages while the reader was in the background: one full refresh for the page now shown
         // (never on a wake that finds the same page, nor for a relayout of the page the reader left).
@@ -549,29 +552,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         root.addView(brightnessOverlay, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER))
 
-        chip = horizontal {
-            background = borderBox()
-            visibility = View.GONE
-            isClickable = true
-        }
-        chipLabel = label("", 16f, bold = true, maxLines = 1).apply {
-            minHeight = dp(44)
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), 0, dp(12), 0)
-            background = pressableBackground()
-            setOnClickListener { useReturnChip() }
-        }
-        chip.addView(chipLabel, lp(WRAP_CONTENT, WRAP_CONTENT))
-        chip.addView(hairline(vertical = true))
-        chip.addView(iconButton(R.drawable.ic_close, "닫기", sizeDp = 44) { dismissReturnChip() })
-        root.addView(chip, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
-
         light = LightController(lightHost)
         returnNav = ReturnNav(this, returnHost)
         chrome = ReaderChrome(this, chromeActions, returnNav.dock, light)
         light.attach(chrome)
+        // The floating return chip: an overlay under the bars (it never resizes the page, C24); empty until shown.
+        root.addView(returnNav.chip, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
         chrome.attach(root)
-        chrome.setBrightnessCollapsed(Settings.raw().getBoolean(PREF_BRIGHTNESS_COLLAPSED, false))
 
         errorText = label("", 16f).apply {
             gravity = Gravity.CENTER
@@ -607,14 +594,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             insetsGate.offer(ReaderWindow.insetsOf(wi, app.fullscreen), settled, forced)?.let(::applyInsets)
             wi
         }
-        // Bar heights change with the title, the brightness row, insets and rotation: keep the pinned page area and
-        // the return chip clear of them.
+        // Bars the extras add over the page (search results, TTS): the return chip moves above them. The chrome's own
+        // bars are overlays: their height changes (title, options panel, return strip) never move the page.
         val barsResized = View.OnLayoutChangeListener { _, _, t, _, b, _, ot, _, ob ->
             if (b - t != ob - ot) handler.post { if (!isDestroyed) onBarsResized() }
         }
-        chrome.top.addOnLayoutChangeListener(barsResized)
-        chrome.bottom.addOnLayoutChangeListener(barsResized)
-        // Bars the extras add over the page (search results, TTS): the return chip moves above them.
         root.setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
             override fun onChildViewAdded(parent: View, child: View) {
                 if (isOwnView(child)) return
@@ -640,15 +624,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     private fun isOwnView(v: View): Boolean =
-        v === page || v === statusText || v === brightnessOverlay || v === chip || v === errorPanel || chrome.owns(v) ||
+        v === page || v === statusText || v === brightnessOverlay || v === returnNav.chip || v === errorPanel || chrome.owns(v) ||
             endPanel?.owns(v) == true
 
-    private fun onBarsResized() {
-        applyPinnedArea()
-        updateChipPosition()
-    }
+    private fun onBarsResized() = updateChipPosition()
 
-    /** Left/right margins follow the insets here; top/bottom belong to [applyPinnedArea] (insets or pinned bars). */
+    /**
+     * The (gated, C18) system-bar insets: left/right margins here, top/bottom in [applyPageInsets]. Nothing else ever
+     * changes the page view's size.
+     */
     private fun applyInsets(i: IntArray) {
         if (i.contentEquals(insets)) return
         insets = i
@@ -660,12 +644,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         chrome.setInsets(i[0], i[1], i[2], i[3])
         updateChipPosition()
-        applyPinnedArea()
+        applyPageInsets()
     }
 
     private fun applyAppSettings() {
+        // The brightness (window or device path) and page.brightnessSwipe: LightController is their only writer.
+        light.onAppSettingsApplied()
         ReaderWindow.applyFullscreen(this, app.fullscreen)
-        ReaderWindow.applyBrightness(this, app.brightness)
         if (requestedOrientation != app.orientationLock) requestedOrientation = app.orientationLock
         keeper.enabled = app.keepScreenOn
         applyCadence(Settings.reader.invert)
@@ -674,12 +659,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         Eink.configure(app.einkRefreshMethod, app.einkFlashMs)
         page.swipeToTurn = app.swipeToTurn
         page.verticalSwipe = app.verticalSwipe
-        page.brightnessSwipe = app.brightnessSwipe
         page.longPressEnabled = app.longPressSelect
         page.longPressMs = app.longPressMs.coerceIn(MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS).toLong()
         appliedApp = app
-        chrome.setPinned(false, false)
-        applyPinnedArea()
+        applyPageInsets()
         root.requestApplyInsets()
     }
 
@@ -829,12 +812,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 session = s
                 adopted = true
                 viewReady.await()
-                if (false && !pinShown) {
-                    // "메뉴 고정": give the page its between-the-bars size before the first layout, so the book is laid
-                    // out and drawn once (showing the bars then changes nothing).
-                    pinPending = true
-                    applyPinnedArea()
-                }
                 val (vw, vh) = pageTargetSize()
                 s.setViewport(vw, vh)
                 // Cached page counts load in parallel with the first layout.
@@ -930,9 +907,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
     }
 
-    /** Asks for the footer's episode numbers a moment after the first page (the parse runs on Dispatchers.Default). */
+    /**
+     * Asks for the status slots' episode numbers a moment after the first page (the parse runs on Dispatchers.Default);
+     * only while a slot shows [StatusItem.EPISODE] (U §5.3).
+     */
     private fun scheduleEpisodes() {
         if (episodesAsked || epShown != null) return
+        if (session?.settings?.shows(StatusItem.EPISODE) != true) return
         handler.removeCallbacks(askEpisodes)
         handler.postDelayed(askEpisodes, EPISODES_DELAY_MS)
     }
@@ -999,14 +980,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         bookmarks = emptyList()
         quotesBySection = emptyMap()
         ownerHighlights.clear()
-        dismissReturnChip()
+        // The pin and the jump origins belong to this book; a pin load still in flight is dropped (U §3.3).
+        returnNav.reset()
         backlog.clear()
         pendingJump = null
         handler.removeCallbacks(cadenceRefresh)
         cadenceRefreshPending = false
         imagePrefetch?.cancel()
         imagePrefetch = null
-        pinShown = false
         setChromeVisible(false)
         page.frame = null
         page.invalidate()
@@ -1046,8 +1027,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             if (curLayout == null) return
             if (complete) {
                 refreshDecor(onlyIfChanged = true)
+                // The page label and the return strip's page numbers become exact (bindChrome binds the strip).
                 if (chromeVisible) bindChrome()
-                if (chip.visibility == View.VISIBLE) showReturnChip()
                 return
             }
             val now = SystemClock.uptimeMillis()
@@ -1108,7 +1089,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         errorPanel.visibility = View.GONE
         page.frame = PageFrame(
             renderer, layout, idx, gen.geometry.contentLeft.toFloat(), gen.geometry.contentTop.toFloat(),
-            buildDecor(),
+            buildDecor(sample = true),
         )
         page.invalidate()
         if (kind == Nav.OPEN) page.traceOpen(bookRef?.id ?: -1L, openStartedAt)
@@ -1127,10 +1108,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         safely { selection?.onPageChanged() }
         if (chromeVisible) bindChrome()
-        if (false && !pinShown && !chromeVisible) {
-            pinShown = true
-            setChromeVisible(true)
-        }
 
         // A relayout shows the same place again: the page on screen keeps counting.
         if (kind != Nav.RELAYOUT) trackPage(p)
@@ -1422,12 +1399,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     override fun goTo(pos: DocPosition, remember: Boolean) {
         if (session == null) return
         if (!inFront) turnedInBackground = true
-        // A "jump" to the page already shown (e.g. the current chapter in the TOC) is not worth a return chip.
-        if (remember && curLayout != null && !isOnCurrentPage(pos)) pushReturn(currentPosition())
+        // A "jump" to the page already shown (e.g. the current chapter in the TOC) is not worth a return point.
+        if (remember && curLayout != null && !isOnCurrentPage(pos)) returnNav.onJump(currentPosition())
         jumpTo(pos.section, pos.offset, -1)
     }
 
-    /** An explicit jump (TOC, link, 페이지 이동, seek bar, return chip): turns still pending belong to the page left. */
+    /** An explicit jump (TOC, link, 페이지 이동, seek bar, return point): turns still pending belong to the page left. */
     private fun jumpTo(section: Int, offset: Int, pageIndex: Int, fraction: Float = Float.NaN) {
         backlog.clear()
         navigateTo(section, offset, pageIndex, Nav.JUMP, fraction)
@@ -1454,7 +1431,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val pos = c.locateProgress(f)
         val p = currentPage
         val here = p != null && isOnCurrentPage(pos) && p.start >= pos.offset
-        if (curLayout != null && !here) pushReturn(currentPosition())
+        if (curLayout != null && !here) returnNav.onJump(currentPosition())
         jumpTo(pos.section, pos.offset, PAGE_AT_OR_AFTER, f)
     }
 
@@ -1468,7 +1445,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     override fun goToPage(section: Int, pageIndex: Int, remember: Boolean) {
         if (session == null) return
         val here = section == curSection && pageIndex == curPageIdx && !layoutStale()
-        if (remember && curLayout != null && !here) pushReturn(currentPosition())
+        if (remember && curLayout != null && !here) returnNav.onJump(currentPosition())
         jumpTo(section, 0, pageIndex.coerceAtLeast(0))
     }
 
@@ -1523,11 +1500,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     /** A page turn the reader made (not auto turn / TTS): enough of them after a jump retire the return chip. */
-    private fun onManualTurn() {
-        if (chip.visibility != View.VISIBLE) return
-        turnsSinceJump++
-        if (turnsSinceJump >= CHIP_HIDE_TURNS) dismissReturnChip()
-    }
+    private fun onManualTurn() = returnNav.onManualTurn()
 
     private fun imageCoverage(layout: SectionLayout, pageIndex: Int): Float = try {
         ImageCoverage.of(layout, pageIndex)
@@ -1537,7 +1510,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /**
      * The previous / next chapter from the current page (다음 화 / 이전 화: keys, tap zones, the chrome's buttons).
-     * Sequential navigation: no return chip (remember = false).
+     * Sequential navigation: no return point (remember = false).
      */
     private fun jumpChapter(next: Boolean) {
         val p = currentPage ?: return
@@ -1570,26 +1543,131 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     // ================================================================== decor (header, footer, highlights)
 
-    private fun buildDecor(): PageDecor {
+    /**
+     * The decor of the page on screen: its highlights (a list only when one overlaps), the bookmark ribbon and the
+     * status slots. [sample] re-reads the clock and the battery: only for a page shown (turn, jump, open, relayout)
+     * and on resume; background refreshes reuse the last sample, so they redraw only when their own data changed.
+     *
+     * Mutation invariant (U §5.3): this updates the one shared [StatusModel.decor] the frame on screen also points
+     * to, so it may only run in the main-thread step that installs the new frame (callers check for a stale frame
+     * first).
+     */
+    private fun buildDecor(sample: Boolean = false): PageDecor {
         val s = session ?: return PageDecor()
         val l = curLayout ?: return PageDecor()
         val p = l.pages.getOrNull(curPageIdx) ?: return PageDecor()
+        var hl: ArrayList<Highlight>? = null
+        quotesBySection[curSection]?.let { hl = addOverlapping(hl, it, p) }
+        for ((sec, list) in ownerHighlights.values) if (sec == curSection) hl = addOverlapping(hl, list, p)
+        fillStatus(s, l, p, statusInputs, sample, all = false)
+        status.update(s.settings, statusInputs, statusTrackPx(s, l))
+        return PageDecor(hl ?: emptyList(), isBookmarked(l, p), status.decor, status.decor.version)
+    }
+
+    private fun addOverlapping(into: ArrayList<Highlight>?, list: List<Highlight>, p: PageInfo): ArrayList<Highlight>? {
+        var out = into
+        for (h in list) {
+            if (h.end > h.start && h.end > p.start && h.start < p.end) (out ?: ArrayList<Highlight>().also { out = it }) += h
+        }
+        return out
+    }
+
+    /**
+     * Fills [inp] for page [p] of [l] (the page on screen): only the inputs of the items a slot shows ([all] = every
+     * item, for [statusSample]), and the progress line's position when it is on. O(1) per item except the chapter
+     * lookup (O(log C)); allocates nothing for the items themselves.
+     */
+    private fun fillStatus(s: BookSession, l: SectionLayout, p: PageInfo, inp: StatusInputs, sample: Boolean, all: Boolean) {
         val st = s.settings
-        val hl = ArrayList<Highlight>()
-        quotesBySection[curSection]?.let { addOverlapping(hl, it, p) }
-        for ((sec, list) in ownerHighlights.values) if (sec == curSection) addOverlapping(hl, list, p)
-        return PageDecor(hl, isBookmarked(l, p))
+        val c = s.counts
+        val lastOfBook = curSection == s.sectionCount - 1 && curPageIdx == l.pageCount - 1
+        if (all || st.shows(StatusItem.PAGE)) {
+            inp.page = c.globalPage(curSection, curPageIdx)
+            inp.total = c.total()
+        }
+        if (all || st.shows(StatusItem.PERCENT)) inp.percent = ReaderFormat.percent(progress())
+        inp.bar = if (st.progressBar) (if (lastOfBook) 1f else c.charProgress(curSection, p.start)) else -1f
+        val chapterShown = all || st.shows(StatusItem.CHAPTER)
+        val episodeShown = all || st.shows(StatusItem.EPISODE)
+        if (chapterShown || episodeShown) {
+            val ch = s.chapters
+            val idx = ch.indexAt(curSection, p.start)
+            if (chapterShown) {
+                inp.chapterTitle = chapterTitle(s, idx, curSection)
+                // U polish 16: the page that begins the chapter does not repeat its title above it.
+                inp.chapterStartsHere = idx >= 0 && ch.section(idx) == curSection && ch.offset(idx) == p.start
+            }
+            if (episodeShown) fillEpisode(s, idx, inp)
+        }
+        if (all || st.shows(StatusItem.BOOK_TITLE)) inp.bookTitle = bookRef?.title
+        if (all || st.shows(StatusItem.CHAPTER_PAGES_LEFT)) inp.chapterPagesLeft = chapterPagesLeft(s, l, p)
+        if (all || st.shows(StatusItem.TIME_LEFT_EPISODE)) inp.minutesEpisode = minutesLeft(false) ?: -1
+        if (all || st.shows(StatusItem.TIME_LEFT_BOOK)) inp.minutesBook = minutesLeft(true) ?: -1
+        val clockShown = all || st.shows(StatusItem.CLOCK) || st.shows(StatusItem.CLOCK_BATTERY)
+        if (clockShown && (sample || inp.minuteOfDay < 0)) {
+            inp.minuteOfDay = minuteOfDay()
+            inp.is24 = clock24
+        }
+        val batteryShown = all || st.shows(StatusItem.BATTERY) || st.shows(StatusItem.CLOCK_BATTERY)
+        if (batteryShown && (sample || inp.battery < 0)) inp.battery = battery()
     }
 
-    private fun addOverlapping(out: ArrayList<Highlight>, list: List<Highlight>, p: PageInfo) {
-        for (h in list) if (h.end > h.start && h.end > p.start && h.start < p.end) out += h
+    /**
+     * The 회차 inputs (T1-5) for chapter [chapterIdx]: unknown (-1, an empty slot) until the episodes are parsed, before
+     * the first numbered one, or outside the TOC.
+     */
+    private fun fillEpisode(s: BookSession, chapterIdx: Int, inp: StatusInputs) {
+        inp.epNumbered = false
+        inp.epNumber = -1
+        inp.epMax = -1
+        inp.tocIndex = -1
+        inp.tocCount = 0
+        val shown = epShown
+        if (shown == null) {
+            // Turned on while reading (the popup): ask now; the item appears once they are parsed.
+            scheduleEpisodes()
+            return
+        }
+        if (chapterIdx < 0) return
+        val toc = s.chapters.tocIndex(chapterIdx)
+        if (toc !in shown.indices) return
+        if (epNumbered && shown[toc] <= 0) return
+        inp.epNumbered = epNumbered
+        inp.epNumber = shown[toc]
+        inp.epMax = epMax
+        inp.tocIndex = toc
+        inp.tocCount = shown.size
     }
 
-    /** Rebuilds the decor of the page on screen (highlights/bookmarks/footer changed) and redraws. */
-    private fun refreshDecor(onlyIfChanged: Boolean = false) {
+    /** Pixels the progress dot travels (ProgressMath, the renderer's lane rule); 0 without a lane. */
+    private fun statusTrackPx(s: BookSession, l: SectionLayout): Int {
+        if (!s.settings.progressBar) return 0
+        val g = s.generation?.geometry ?: return 0
+        val density = resources.displayMetrics.density
+        val lane = StatusFit.lane((g.viewHeight - g.contentTop - l.config.height).toFloat(), density)
+        return if (lane > 0f) ProgressMath.trackPx(g.viewWidth, lane, density) else 0
+    }
+
+    override fun statusSample(item: StatusItem): String? {
+        val s = session ?: return null
+        val l = curLayout ?: return null
+        val p = l.pages.getOrNull(curPageIdx) ?: return null
+        if (layoutStale()) return null
+        // A scratch copy: the chooser's samples must never touch the page's shared decor.
+        val inp = StatusInputs()
+        fillStatus(s, l, p, inp, sample = true, all = true)
+        return status.sample(item, inp)
+    }
+
+    /**
+     * Rebuilds the decor of the page on screen (highlights/bookmarks/status changed) and redraws. [sample]: also
+     * re-read the clock and battery ([onResume] only; see [buildDecor]).
+     */
+    private fun refreshDecor(onlyIfChanged: Boolean = false, sample: Boolean = false) {
         val f = page.frame ?: return
+        // Before buildDecor: a stale frame must not have the shared status decor changed under it.
         if (f.layout !== curLayout || f.pageIndex != curPageIdx) return
-        val d = buildDecor()
+        val d = buildDecor(sample)
         if (onlyIfChanged && sameDecor(d, f.decor)) return
         page.frame = PageFrame(f.renderer, f.layout, f.pageIndex, f.left, f.top, d)
         page.invalidate()
@@ -1615,32 +1693,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun chapterTitle(s: BookSession, i: Int, section: Int): String? {
         if (i >= 0) return s.chapters.title(i)
         return s.document.sections.getOrNull(section)?.title ?: bookRef?.title
-    }
-
-    /** The footer's 회차 (T1-5) for chapter [chapterIdx]: null until the episodes are parsed, or before the first one. */
-    private fun episodeLabel(s: BookSession, chapterIdx: Int): String? {
-        val shown = epShown
-        if (shown == null) {
-            // Turned on while reading (the popup): ask now; the item appears once they are parsed.
-            scheduleEpisodes()
-            return null
-        }
-        if (chapterIdx < 0) return null
-        val toc = s.chapters.tocIndex(chapterIdx)
-        if (toc !in shown.indices) return null
-        if (epNumbered) {
-            val n = shown[toc]
-            return if (n > 0) ReaderFormat.episodeLabel(true, n, epMax, toc, shown.size) else null
-        }
-        return ReaderFormat.episodeLabel(false, -1, -1, toc, shown.size)
-    }
-
-    /** The footer's 남은 시간 (T1-7) per [mode] (com.ggumtak.readeraplus.settings.StatusMigration.LEGACY_TIME_LEFT_*), or null. */
-    private fun timeLeftLabel(mode: Int): String? {
-        if (mode != com.ggumtak.readeraplus.settings.StatusMigration.LEGACY_TIME_LEFT_EPISODE && mode != com.ggumtak.readeraplus.settings.StatusMigration.LEGACY_TIME_LEFT_BOOK) return null
-        val book = mode == com.ggumtak.readeraplus.settings.StatusMigration.LEGACY_TIME_LEFT_BOOK
-        val m = minutesLeft(book) ?: return null
-        return ReaderFormat.timeLeft(book, m)
     }
 
     private fun isBookmarked(l: SectionLayout, p: PageInfo): Boolean {
@@ -1670,9 +1722,17 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         return c.pagesLeftUntil(curSection, curPageIdx, l.pageCount, ns, tIdx, atStart)
     }
 
-    private fun clock(): String {
-        val cal = Calendar.getInstance()
-        return ReaderFormat.clock(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), DateFormat.is24HourFormat(this))
+    /**
+     * Minutes since local midnight, without a Calendar: the zone and the 12/24 h format are read once after each
+     * [onResume] (they can only change while the reader is away).
+     */
+    private fun minuteOfDay(): Int {
+        val zone = clockZone ?: TimeZone.getDefault().also {
+            clockZone = it
+            clock24 = DateFormat.is24HourFormat(this)
+        }
+        val now = System.currentTimeMillis()
+        return Math.floorMod((now + zone.getOffset(now)) / 60_000L, 1440L).toInt()
     }
 
     /** Battery percent from the sticky broadcast, read at most once a minute (on page turns only). */
@@ -1681,7 +1741,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (batteryLevel >= 0 && now - batteryAt < 60_000) return batteryLevel
         batteryAt = now
         batteryLevel = try {
-            val i = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val i = registerReceiver(null, batteryFilter)
             val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
             val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
             if (level >= 0 && scale > 0) level * 100 / scale else -1
@@ -1846,6 +1906,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     toast("새 설정으로 책을 표시하지 못했습니다")
                     return@launch
                 }
+                // The pin's place in the old parse (its counts), found again in the new one below (U §3.5 item 8).
+                val markF = returnNav.markFraction()
                 session = s
                 adopted = true
                 reopening = false
@@ -1860,7 +1922,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 // this re-open stays open: only the bar goes).
                 safely { ReaderPanels.closeSearchBar(this@ReaderActivity) }
                 ownerHighlights.clear()
-                dismissReturnChip()
+                returnNav.reparsed(markF, exact = d.format == BookFormat.EPUB && s.sectionCount == oldCount)
                 backlog.clear()
                 lastChapterIdx = Int.MIN_VALUE
                 val off = target.offset.coerceIn(0, l.content.length)
@@ -1907,59 +1969,24 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     override fun setChromeVisible(visible: Boolean) {
         val v = visible && session != null && curLayout != null
         chromeVisible = v
-        pinPending = false
         chrome.setVisible(v)
-        chrome.setPinned(false, false)
-        if (v) {
-            bindChrome()
-            chrome.top.post { updateChipPosition() }
-        }
+        // The chrome is an overlay: the page keeps its size. The floating chip hides under the open menu (whose strip
+        // shows the same places) and comes back when it closes.
+        if (v) returnNav.onChromeShown() else returnNav.onChromeHidden()
+        if (v) bindChrome()
         updateChipPosition()
-        applyPinnedArea()
     }
 
-    /** "메뉴 고정" area wanted: the pinned bars are shown, or about to be shown for the book being opened. */
-    private fun pinnedArea(): Boolean = false && (chromeVisible || pinPending)
-
-    /**
-     * The only owner of the page's top/bottom margins: the system-bar insets, or with "메뉴 고정" (while the bars are
-     * shown) the space the bars take, so no text hides under them. A size change re-lays out through
-     * onViewSizeChanged, keeping the position; showing / hiding unpinned chrome never changes the page size.
-     */
-    private fun applyPinnedArea() {
+    /** The page view's top/bottom margins: the system-bar insets, nothing else (U §2.6, C18). */
+    private fun applyPageInsets() {
         val lp = page.layoutParams as? FrameLayout.LayoutParams ?: return
-        var t = insets[1]
-        var b = insets[3]
-        if (pinnedArea()) {
-            // The bars pad themselves by the insets; max() covers bars that can't be measured yet.
-            val h = chromeBarHeights()
-            t = maxOf(t, h[0])
-            b = maxOf(b, h[1])
-        }
+        val t = insets[1]
+        val b = insets[3]
         if (lp.topMargin != t || lp.bottomMargin != b) {
             lp.topMargin = t
             lp.bottomMargin = b
             page.layoutParams = lp
         }
-    }
-
-    /** Heights of the top / bottom chrome bars; measured now when they are hidden or not laid out yet. */
-    private fun chromeBarHeights(): IntArray {
-        val top = chrome.top
-        val bottom = chrome.bottom
-        fun laidOut(v: View) = v.visibility == View.VISIBLE && !v.isLayoutRequested && v.height > 0
-        if (laidOut(top) && laidOut(bottom)) return intArrayOf(top.height, bottom.height)
-        val w = root.width
-        if (w <= 0) return intArrayOf(top.height, bottom.height)
-        val ws = View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY)
-        val hs = if (root.height > 0) {
-            View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.AT_MOST)
-        } else {
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-        }
-        top.measure(ws, hs)
-        bottom.measure(ws, hs)
-        return intArrayOf(top.measuredHeight, bottom.measuredHeight)
     }
 
     /** Size the page view gets at the next layout (its margins may have changed since the last one). */
@@ -1971,10 +1998,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val pw = w - root.paddingLeft - root.paddingRight - lp.leftMargin - lp.rightMargin
         val ph = h - root.paddingTop - root.paddingBottom - lp.topMargin - lp.bottomMargin
         return if (pw > 0 && ph > 0) pw to ph else page.width to page.height
-    }
-
-    private fun togglePin() {
-        // R3 stub (owner: RC-A): the pin becomes a persisted return point.
     }
 
     override fun hitTest(x: Float, y: Float): Int {
@@ -2076,7 +2099,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         override fun onTap(x: Float, y: Float) = handleTap(x, y)
 
         override fun onSwipe(dir: SwipeDir) {
-            if (chromeVisible && !false) setChromeVisible(false)
+            if (chromeVisible) setChromeVisible(false)
             userTurn(dir == SwipeDir.NEXT)
         }
 
@@ -2091,10 +2114,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             return true
         }
 
-        override fun brightnessStart(): Float =
-            if (app.brightness >= 0f) app.brightness else ReaderWindow.systemBrightness(this@ReaderActivity)
+        override fun brightnessStart(): Float = light.currentPos()
 
-        override fun onBrightness(value: Float, done: Boolean) = setBrightness(value, done, overlay = true)
+        override fun onBrightness(value: Float, done: Boolean) {
+            light.onDrag(value, done)
+            showBrightnessOverlay(value.coerceIn(0f, 1f), done)
+        }
 
         override fun onViewSizeChanged(w: Int, h: Int) = this@ReaderActivity.onViewSizeChanged(w, h)
 
@@ -2106,7 +2131,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     private fun handleTap(x: Float, y: Float) {
-        if (chromeVisible && !false) {
+        if (chromeVisible) {
             closeChrome()
             return
         }
@@ -2335,29 +2360,53 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val p = l.pages.getOrNull(curPageIdx)
         chrome.setBookmarked(p != null && isBookmarked(l, p))
         chrome.setRotationLocked(app.orientationLock != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
-        chrome.setBrightness(if (app.brightness < 0f) ReaderWindow.systemBrightness(this) else app.brightness, app.brightness < 0f)
+        returnNav.bind()
+        chrome.setPinned(returnNav.pinned, returnNav.markOnScreen())
+        light.bind()
     }
 
+    /** LightController's view of the reader (a private object: its members would clash with the activity's own). */
     private val lightHost = object : LightHost {
         override val activity: Activity get() = this@ReaderActivity
         override val handler: Handler get() = this@ReaderActivity.handler
         override val app: AppSettings get() = this@ReaderActivity.app
         override val chromeVisible: Boolean get() = this@ReaderActivity.chromeVisible
         override fun saveApp(a: AppSettings) = this@ReaderActivity.saveApp(a)
-        override fun setPageBrightnessSwipe(on: Boolean) { page.brightnessSwipe=on }
+        override fun setPageBrightnessSwipe(on: Boolean) {
+            page.brightnessSwipe = on
+        }
+
         override fun showChrome() = setChromeVisible(true)
     }
+
+    /** ReturnNav's view of the reader (U §3.5): positions, page numbers, the jump and the pin's storage. */
     private val returnHost = object : ReturnHost {
         override val chromeVisible: Boolean get() = this@ReaderActivity.chromeVisible
-        override fun currentPosition(): DocPosition = TODO("owner: RC-A")
+        // Paged: the page start. R3 merge(RCA-S): scroll mode's virtual page start comes through currentPosition().
+        override fun currentPosition(): DocPosition = this@ReaderActivity.currentPosition()
         override fun isOnCurrentPage(pos: DocPosition): Boolean = this@ReaderActivity.isOnCurrentPage(pos)
-        override fun globalPageOf(pos: DocPosition): Int = TODO("owner: RC-A")
-        override fun jumpToReturn(pos: DocPosition) { jumpTo(pos.section,pos.offset,-1) }
-        override fun charProgressOf(pos: DocPosition): Float = TODO("owner: RC-A")
-        override fun locateFraction(f: Float): DocPosition = TODO("owner: RC-A")
-        override fun textSignature(): String? = TODO("owner: RC-A")
-        override fun saveReturnMark(text: String?) {} // R3 stub (owner: RC-A)
-        override fun onReturnChanged() {} // R3 stub (owner: RC-A)
+        override fun globalPageOf(pos: DocPosition): Int = this@ReaderActivity.globalPageOf(pos)
+        override fun jumpToReturn(pos: DocPosition) = jumpTo(pos.section, pos.offset, -1)
+        override fun charProgressOf(pos: DocPosition): Float =
+            session?.counts?.charProgress(pos.section, pos.offset) ?: 0f
+
+        override fun locateFraction(f: Float): DocPosition = session?.counts?.locateFraction(f) ?: DocPosition.START
+
+        override fun textSignature(): String? {
+            val s = session ?: return null
+            val b = bookRef ?: return null
+            return LayoutKeys.textSignature(s.settings, s.document.format, b.encoding)
+        }
+
+        override fun saveReturnMark(text: String?) {
+            val id = bookRef?.id ?: return
+            ReaderIo.launch { BookPrefs.setReturnMark(id, text) }
+        }
+
+        override fun onReturnChanged() {
+            if (chromeVisible) bindChrome()
+            updateChipPosition()
+        }
     }
 
     private val chromeActions = object : ReaderChrome.Actions {
@@ -2435,17 +2484,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
     }
 
-    private fun setBrightness(value: Float, done: Boolean, overlay: Boolean) {
-        val v = value.coerceIn(0f, 1f)
-        ReaderWindow.applyBrightness(this, v)
-        if (overlay) showBrightnessOverlay(v, done)
-        if (done) {
-            Settings.raw().edit().putFloat(PREF_LAST_BRIGHTNESS, v).apply()
-            saveApp(app.copy(brightness = v))
-            if (chromeVisible) bindChrome()
-        }
-    }
-
     /**
      * The left-edge brightness drag's overlay: its text changes at most every [Throttle.LABEL_MS] (a value held back
      * shows once the finger rests), and the final value on [done], when it hides.
@@ -2501,14 +2539,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private fun openReadingSettings() {
         if (session == null || curLayout == null) return
-        if (!false) {
-            // The popup hides unpinned bars and takes the top bar's place: showing them first would only cost two
-            // extra e-ink updates.
-            safely { ReaderPanels.showReadingSettings(this, chrome.gear) }
-            return
-        }
-        if (!chromeVisible) setChromeVisible(true)
-        chrome.gear.post { safely { ReaderPanels.showReadingSettings(this, chrome.gear) } }
+        // The popup hides the bars and takes the top bar's place: showing them first would only cost two extra e-ink
+        // updates.
+        safely { ReaderPanels.showReadingSettings(this, chrome.gear) }
     }
 
     internal fun startTts() {
@@ -2549,6 +2582,21 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     internal fun currentBookOrNull(): Book? = bookRef
+
+    /**
+     * The top bar has room for its bookmark button (U §2.2: 352 dp of row between the insets); otherwise the ⋮ menu
+     * carries "북마크 추가" / "북마크 삭제" (C22).
+     */
+    internal fun bookmarkInChrome(): Boolean {
+        val w = root.width - insets[0] - insets[2]
+        return w <= 0 || ChromeMath.bookmarkFits(w, resources.displayMetrics.density)
+    }
+
+    /** The app's settings from the reader's ⋮ menu: the light restores nothing for our own settings page (U §4.2). */
+    internal fun openAppSettings() {
+        light.markOwnLaunch()
+        SettingsActivity.open(this)
+    }
 
     internal fun isCurrentPageBookmarked(): Boolean {
         val l = curLayout ?: return false
@@ -2641,8 +2689,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (curLayout == null || endPanel?.isShowing == true || endLoading) return
         endLoading = true
         stopAutoTurn(showToast = false)
-        // Pinned bars stay (the panel covers them); open ones close.
-        if (!false) setChromeVisible(false)
+        setChromeVisible(false)
         // Progress 1.0 (the last page) and the reading so far, before the book's total time is read back. The panel
         // covers the page from here: it counts again only when the panel closes on it ([closeEndPanel]).
         savePositionNow()
@@ -2763,46 +2810,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     // ================================================================== return chip
 
-    /** A remembered jump: the chip offers the way back until used, closed, or [CHIP_HIDE_TURNS] manual turns. */
-    private fun pushReturn(pos: DocPosition) {
-        if (returnStack.lastOrNull() != pos) returnStack.add(pos)
-        while (returnStack.size > MAX_RETURN_STACK) returnStack.removeAt(0)
-        turnsSinceJump = 0
-        showReturnChip()
-    }
-
-    private fun showReturnChip() {
-        val top = returnStack.lastOrNull()
-        if (top == null) {
-            chip.visibility = View.GONE
-            return
-        }
-        chipLabel.text = ReaderFormat.returnChip(globalPageOf(top))
-        chip.visibility = View.VISIBLE
-        updateChipPosition()
-    }
-
-    private fun useReturnChip() {
-        val pos = returnStack.removeLastOrNull() ?: return
-        chip.visibility = View.GONE
-        jumpTo(pos.section, pos.offset, -1)
-    }
-
-    private fun dismissReturnChip() {
-        returnStack.clear()
-        turnsSinceJump = 0
-        if (::chip.isInitialized) chip.visibility = View.GONE
-    }
-
+    /**
+     * The floating return chip's place (C24): above the progress lane and the extras' bottom bars (search results,
+     * TTS, which would otherwise cover it and take its taps). An overlay: it may cover the footer band for its two
+     * turns and never resizes the page. Only shown with the chrome hidden.
+     */
     private fun updateChipPosition() {
-        if (!::chip.isInitialized) return
-        val lp = chip.layoutParams as FrameLayout.LayoutParams
-        var bottom = if (chromeVisible) {
-            (chrome.bottomHeight.takeIf { it > 0 } ?: dp(120)) + dp(8)
-        } else {
-            insets[3] + dp(6)
-        }
-        // Above the extras' bottom bars (search results, TTS), which would otherwise cover it and take its taps.
+        if (!::returnNav.isInitialized) return
+        val chip = returnNav.chip
+        val lp = chip.layoutParams as? FrameLayout.LayoutParams ?: return
+        var bottom = insets[3] + dp(ReaderSettings.PROGRESS_LANE_DP) + dp(4)
         val bars = overlayBarsHeight()
         if (bars > 0) bottom = maxOf(bottom, bars + dp(6))
         val left = insets[0] + dp(8)

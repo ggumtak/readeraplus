@@ -10,8 +10,9 @@ import java.util.Locale
 import java.util.zip.ZipException
 
 /**
- * Pure string formatting for the reader's footer, chrome and chips (unit-tested). Page numbers are shown as plain
- * numbers even while the counts are still estimates (no "~"): the estimate only settles into the exact number.
+ * Pure string formatting for the reader's chrome, panels and toasts (unit-tested; the page's status slots are
+ * formatted without allocation by [StatusText]). Page numbers are shown as plain numbers even while the counts are
+ * still estimates (no "~"): the estimate only settles into the exact number.
  */
 object ReaderFormat {
     const val SEP = "  ·  "
@@ -51,35 +52,7 @@ object ReaderFormat {
         return if (is24 && h < 10) "0$h:$mm" else "$h:$mm"
     }
 
-    /** "12 / 3259  ·  챕터 5쪽 남음" (null when there is nothing to show). */
-    fun footerLeft(pageLabel: String?, chapterPagesLeft: Int?): String? {
-        val parts = ArrayList<String>(2)
-        if (pageLabel != null) parts += pageLabel
-        if (chapterPagesLeft != null) parts += chapterLeft(chapterPagesLeft)
-        return if (parts.isEmpty()) null else parts.joinToString(SEP)
-    }
-
     fun chapterLeft(pages: Int): String = if (pages <= 0) "챕터 마지막 쪽" else "챕터 ${pages}쪽 남음"
-
-    /**
-     * The footer's left part (R2): the page label, the episode counter ("123/540화", T1-5), the pages left in the
-     * chapter and the time left ("이 화 3분", T1-7), each when given, joined with [SEP]; null when there is nothing.
-     * Built with one StringBuilder: the footer asks for it on every turn.
-     */
-    fun footerLeft(pageLabel: String?, episode: String?, chapterPagesLeft: Int?, timeLeft: String?): String? {
-        val sb = StringBuilder(48)
-        appendPart(sb, pageLabel)
-        appendPart(sb, episode)
-        if (chapterPagesLeft != null) appendPart(sb, chapterLeft(chapterPagesLeft))
-        appendPart(sb, timeLeft)
-        return if (sb.isEmpty()) null else sb.toString()
-    }
-
-    private fun appendPart(sb: StringBuilder, part: String?) {
-        if (part == null) return
-        if (sb.isNotEmpty()) sb.append(SEP)
-        sb.append(part)
-    }
 
     /**
      * The footer's 회차 item (T1-5): "123/540화" — the episode [number] of the current TOC entry over the book's
@@ -129,17 +102,6 @@ object ReaderFormat {
     fun durationOfSeconds(seconds: Long): String =
         duration((seconds.coerceAtLeast(0) / 60).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
 
-    /**
-     * "34%  ·  14:05" per enabled item (null when empty). The battery is not text: the renderer draws it after this
-     * as a small battery icon with its digits ([com.ggumtak.readeraplus.render.PageDecor.battery]).
-     */
-    fun footerRight(percent: Int?, clock: String?): String? {
-        val parts = ArrayList<String>(2)
-        if (percent != null) parts += "$percent%"
-        if (clock != null) parts += clock
-        return if (parts.isEmpty()) null else parts.joinToString(SEP)
-    }
-
     /** Bookmark list snippet: page text with newlines/objects as spaces, whitespace collapsed, ≤ [max] chars. */
     fun snippet(text: String, start: Int, end: Int, max: Int = 80): String {
         val s = start.coerceIn(0, text.length)
@@ -164,14 +126,11 @@ object ReaderFormat {
         return out
     }
 
-    /** Seekbar drag preview: "p. 12 · 3화 제목". */
+    /** Seekbar drag preview: "1234쪽 · 제3장 …" (U polish 17). */
     fun previewLabel(page: Int, chapter: String?): String {
-        val p = "p. $page"
+        val p = "${page}쪽"
         return if (chapter.isNullOrBlank()) p else "$p · ${chapter.trim()}"
     }
-
-    /** Return chip text: "← 돌아가기 (p. 12)". */
-    fun returnChip(page: Int): String = "← 돌아가기 (p. $page)"
 
     fun brightness(value: Float): String =
         if (value < 0f) "밝기 자동" else "밝기 ${Math.round(value.coerceIn(0f, 1f) * 100f)}%"
