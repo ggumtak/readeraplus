@@ -1,0 +1,33 @@
+{
+  "lane": "RCA-S",
+  "files": [
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderActivity.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderMenus.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderMath.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/ScrollWiringTest.kt",
+    "docs/next/RCA_S_STATUS.md",
+    "docs/next/lanes/RCA-S.result.json"
+  ],
+  "summary": "Wired ScrollReader into ReaderActivity: scroll field, applyReadMode/switchMode (exact round trips, no layout), every S §1.10 entry point (showPage TOP/CONTEXT, preload ±1, instant turn/flush ≤10, hold, settle bookkeeping, scroll start, host navigation suppression, virtual page host API, hit tests, long press/tap focus, bookmarks, chapter jumps, highlight invalidation, blocked-section layout), A §5.5 anchored relayouts (keepHere, stopMotion first, AnchorMath.pageFor, JUMP page start, reopen needle), AutoBackup onStart/onStop, C19 trim, viewPart keys, ⋮ items. Pure decisions in ScrollWiring with tests.",
+  "checks": "module typecheck OK; module unittest OK (17 tests); full typecheck OK; full unittest OK (1204 tests); two review rounds (spec, bugs) applied",
+  "contractRequests": [
+    "ScrollReader.focusSection(section: Int): set the virtual-page focus to a section until the next settle (S §1.10 goTo-to-visible-line row); RC-S owns ScrollReader.kt",
+    "ScrollReader.visibleRanges with a non-boxing visitor (or an anyInRange query) so the ribbon check allocates nothing"
+  ],
+  "rcaNotes": [
+    "onPause (RCA-N): first line scroll?.stopMotion() (main), before the position save",
+    "afterOpen probeAsync callback (RCA-N): scroll?.onDeviceClass() (main)",
+    "onDestroy (RCA-N): detach the scroll viewport (closeCurrentBook already calls detachScroll())",
+    "applyAppSettings (RCA-N order): keep the applyReadMode() call this branch adds at the end, at the '// R3 merge(RCA-S): applyReadMode()' spot",
+    "buildDecor (RCA-U): the status fill goes into the single final PageDecor(...) so scroll mode gets it too (top page cur*; U §5.6 inputs)",
+    "startOpen (RCA-N): an open at a note in scroll mode should use CONTEXT placement (comment in showScroll marks the spot); pass anchorOffset = off when scroll != null"
+  ],
+  "deviations": [
+    "flushTurns NEED_SECTION: remaining steps go into ScrollNavigation's ordered queue instead of backlog.restore (nothing dropped; avoids double execution)",
+    "onScrollSettled does not call session.touch/prefetch: ScrollReader already does both at settle",
+    "goTo(remember=false) to a visible line while TTS speaks does not move the focus section (no public ScrollReader API; contract request)",
+    "renderer.fitFooter does not exist in the renderer; not called",
+    "Auto-scroll off toast '자동 스크롤 꺼짐' (spec gives only the on toast)"
+  ],
+  "complete": true
+}

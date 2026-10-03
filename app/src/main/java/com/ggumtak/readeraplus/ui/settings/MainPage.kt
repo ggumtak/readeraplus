@@ -323,7 +323,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         swatchInk = ink
         strip.removeAllViews()
         for (style in 0 until QuoteStyles.COUNT) {
-            strip.addView(QuoteSwatch(ctx, style, SWATCH_W_DP, ink), LinearLayout.LayoutParams(ctx.dp(SWATCH_W_DP), ctx.dp(SWATCH_H_DP)).apply {
+            strip.addView(QuoteSwatch(ctx, style, SWATCH_W_DP, ink).apply { reserveRing = false }, LinearLayout.LayoutParams(ctx.dp(SWATCH_W_DP), ctx.dp(SWATCH_H_DP)).apply {
                 if (style > 0) leftMargin = ctx.dp(8)
             })
         }

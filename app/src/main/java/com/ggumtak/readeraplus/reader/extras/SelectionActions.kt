@@ -86,17 +86,17 @@ internal object QuoteHighlights {
      * under another parse (non-empty `sig` ≠ [sig]) is left out like the reader does (NOTES_SPEC §6.5): its offsets
      * point at other text.
      */
-    fun forSection(quotes: List<Quote>, section: Int, sig: String? = null): List<Highlight> {
+    fun forSection(quotes: List<Quote>, section: Int, sig: String? = null, anchorMatch: ((Quote) -> Boolean?)? = null): List<Highlight> {
         var n = 0
-        for (q in quotes) if (drawn(q, section, sig)) n++
+        for (q in quotes) if (drawn(q, section, sig, anchorMatch)) n++
         if (n == 0) return emptyList()
         val out = ArrayList<Highlight>(n)
-        for (q in quotes) if (drawn(q, section, sig)) out += Highlight(q.start, q.end, HighlightKind.QUOTE, q.style)
+        for (q in quotes) if (drawn(q, section, sig, anchorMatch)) out += Highlight(q.start, q.end, HighlightKind.QUOTE, q.style)
         return out
     }
 
-    private fun drawn(q: Quote, section: Int, sig: String?): Boolean =
-        q.section == section && (sig == null || q.sig.isEmpty() || q.sig == sig)
+    private fun drawn(q: Quote, section: Int, sig: String?, anchorMatch: ((Quote) -> Boolean?)?): Boolean =
+        q.section == section && !QuoteRows.placeChanged(q.sig, sig, if (sig != null && q.sig != sig) anchorMatch?.invoke(q) else null)
 
     /** [quotes] (database order) with [added] inserted where the database will list it: after every row ≤ it. */
     fun withAdded(quotes: List<Quote>, added: Quote): List<Quote> {

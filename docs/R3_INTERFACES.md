@@ -1580,3 +1580,10 @@ Saved Activity keys: `rp.book`, `rp.section`, `rp.offset`, `rp.at`; RC-A adds `r
 Reader lifecycle order is PLAN §1.6.2. Restored state wins over a note jump, then TXT fraction remap, then DB position.
 Normal/resume opens use an anchored generation. A note jump uses natural pagination and highlights only a matching
 anchor. Return-mark IO, device probe, note-place backfill and auto-backup remain after the first page.
+
+## RC-A integration additions (2026-10-04)
+
+- `NoteJumpHost.openNote(ReaderJump)` (main): the contents dialog uses the reader note-resolution/anchor-search path for a moved quote.
+- `PageThumbsHost.thumbnailsShown` (main, default true): false in scroll mode, hiding both the fourth tab and overflow entry.
+- `ReturnHost.clampPosition(DocPosition)` (main): clamps restored/reparsed pins against the current section count and cached character lengths, without IO.
+- `PageView.afterFirstFrame: Runnable?`: one-shot, posted after a successful body draw. ReaderActivity schedules afterOpen and deferred TXT-position persistence through it, guarded by session identity.

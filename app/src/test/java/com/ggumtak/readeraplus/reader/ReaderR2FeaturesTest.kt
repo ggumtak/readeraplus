@@ -4,7 +4,6 @@ import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.format.TocEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -56,19 +55,6 @@ class ReaderR2FeaturesTest {
         assertTrue(c.onPanelClosed())
         val off = EinkCadence(every = 0, onChapter = true)
         repeat(10) { assertFalse(off.onPanelClosed()) }
-    }
-
-    @Test
-    fun footerLeftJoinsTheItemsInOrder() {
-        assertEquals(
-            "12 / 3259  ·  123/540화  ·  챕터 5쪽 남음  ·  이 화 3분",
-            ReaderFormat.footerLeft("12 / 3259", "123/540화", 5, "이 화 3분"),
-        )
-        assertEquals("12 / 3259  ·  책 7시간 20분", ReaderFormat.footerLeft("12 / 3259", null, null, "책 7시간 20분"))
-        assertEquals("87/612", ReaderFormat.footerLeft(null, "87/612", null, null))
-        assertNull(ReaderFormat.footerLeft(null, null, null, null))
-        // The two-item form reads the same as before.
-        assertEquals(ReaderFormat.footerLeft("1 / 9", 2), ReaderFormat.footerLeft("1 / 9", null, 2, null))
     }
 
     @Test

@@ -153,6 +153,15 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         cb.onViewSizeChanged(w, h)
     }
 
+    var afterFirstFrame: Runnable? = null
+
+    private fun finishFirstFrame() {
+        if (drawFailed) return
+        val task = afterFirstFrame ?: return
+        afterFirstFrame = null
+        post(task)
+    }
+
     override fun onDraw(canvas: Canvas) {
         val scrolling = scroll
         if (scrolling != null) {
@@ -166,7 +175,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                 canvas.drawText("페이지를 그리지 못했습니다.", 12f * resources.displayMetrics.density,
                     errorPaint.textSize * 2f, errorPaint)
             }
-            if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces()
+            finishFirstFrame()
+        if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces()
             return
         }
         val f = frame
@@ -183,6 +193,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
             canvas.drawColor(Color.WHITE)
             canvas.drawText("페이지를 그리지 못했습니다: ${t.javaClass.simpleName}", f.left, f.top + errorPaint.textSize * 2, errorPaint)
         }
+        finishFirstFrame()
         if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces()
     }
 

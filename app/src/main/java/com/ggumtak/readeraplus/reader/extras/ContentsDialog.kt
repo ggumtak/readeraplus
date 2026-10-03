@@ -25,6 +25,9 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.BaseAdapter
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.HorizontalScrollView
+import com.ggumtak.readeraplus.ui.kit.PageTarget
+import com.ggumtak.readeraplus.reader.ReaderJump
 import android.widget.ListView
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
@@ -97,12 +100,15 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private val scope = MainScope()
     private lateinit var dialog: Dialog
     private val body = FrameLayout(ctx)
-    private val tabLabels = arrayOfNulls<TextView>(3)
-    private val tabBars = arrayOfNulls<View>(3)
-    private val tabViews = arrayOfNulls<View>(3)
+    private val tabLabels = arrayOfNulls<TextView>(4)
+    private val tabBars = arrayOfNulls<View>(4)
+    private val tabViews = arrayOfNulls<View>(4)
     /** The tabs' list pagers (null while a tab loads or is empty): the page keys move the selected one. */
-    private val pagers = arrayOfNulls<InkPager>(3)
-    private var tab = initialTab.coerceIn(0, 2)
+    private val pagers = arrayOfNulls<PageTarget>(4)
+    private var tab = initialTab.coerceIn(0, 3).let { if (it == 3 && !thumbsShown()) 0 else it }
+    private var thumbsTab: ThumbsTab? = null
+    private var onFirstShown: (() -> Unit)? = null
+    private fun thumbsShown(): Boolean = (host as? PageThumbsHost)?.thumbnailsShown == true
     private lateinit var shareAll: View
     /** "모든 책의 노트" (북마크 and 인용문 tabs): the notes hub. */
     private lateinit var hubLink: View
@@ -153,7 +159,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         root.addView(bar, lp())
         // tabs
         val tabs = ctx.horizontal()
-        listOf("목차", "북마크", "인용문").forEachIndexed { i, name ->
+        listOf("목차", "북마크", "인용문", "썸네일").forEachIndexed { i, name ->
             val cell = ctx.vertical {
                 gravity = Gravity.CENTER_HORIZONTAL
                 background = pressableBackground()
@@ -168,13 +174,14 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             cell.addView(underline, LinearLayout.LayoutParams(ctx.dp(64), ctx.dp(3)))
             tabLabels[i] = t
             tabBars[i] = underline
-            tabs.addView(cell, lp(0, WRAP_CONTENT, 1f))
+            if (i == 3 && !thumbsShown()) cell.visibility = View.GONE
+            tabs.addView(cell, lp(ctx.dp(90), WRAP_CONTENT))
         }
-        root.addView(tabs, lp())
+        root.addView(HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled = false; isFillViewport = true; addView(tabs) }, lp())
         root.addView(ctx.hairline())
         root.addView(body, lp(MATCH_PARENT, 0, 1f))
         dialog = ctx.fullScreenDialog(root)
-        dialog.setOnDismissListener { scope.cancel() }
+        dialog.setOnDismissListener { thumbsTab?.stop(); onFirstShown = null; scope.cancel() }
         dialog.setOnKeyListener { _, code, event ->
             if (code == KeyEvent.KEYCODE_BACK && tab == 0 && tocTab?.isFiltering == true) {
                 if (event.action == KeyEvent.ACTION_UP) tocTab?.clearFilterIfAny()
@@ -187,9 +194,14 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 }
             }
         }
-        select(tab)
-        dialog.show()
-        PanelRegistry.dialog(ctx, dialog)
+        if (tab == 3 && ThumbsTab.available(host)) {
+            onFirstShown = { if (!stale() && !ctx.isFinishing && !ctx.isDestroyed) { dialog.show(); PanelRegistry.dialog(ctx, dialog) } }
+            select(tab)
+        } else {
+            select(tab)
+            dialog.show()
+            PanelRegistry.dialog(ctx, dialog)
+        }
     }
 
     /**
@@ -207,18 +219,34 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             dialog.dismiss()
             return
         }
+        if (tab == 3 && i != 3) thumbsTab?.stop()
         tab = i
-        for (k in 0..2) {
+        if (i == 3 && ThumbsTab.available(host)) {
+            val t = thumbsTab ?: ThumbsTab(host) { dialog.dismiss() }.also { thumbsTab = it; tabViews[3] = it.view; pagers[3] = it }
+            t.prepare(body.width, body.height) {
+                if (tab == 3 && !stale()) {
+                    showTabBody(3, t.view)
+                    val ready = onFirstShown; onFirstShown = null; ready?.invoke()
+                }
+            }
+            return
+        }
+        val v = tabViews[i] ?: when (i) {
+            0 -> buildToc()
+            1 -> FrameLayout(ctx).also { loadBookmarks(it) }
+            2 -> FrameLayout(ctx).also { loadQuotes(it) }
+            else -> ctx.label("책을 여는 중입니다…", 16f).apply { gravity = Gravity.CENTER }
+        }.also { tabViews[i] = it }
+        showTabBody(i, v)
+    }
+
+    private fun showTabBody(i: Int, v: View) {
+        for (k in 0..3) {
             val sel = k == i
             tabLabels[k]?.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             tabLabels[k]?.setTextColor(if (sel) Ink.BLACK else Ink.GRAY)
             tabBars[k]?.setBackgroundColor(if (sel) Ink.BLACK else Color.TRANSPARENT)
         }
-        val v = tabViews[i] ?: when (i) {
-            0 -> buildToc()
-            1 -> FrameLayout(ctx).also { loadBookmarks(it) }
-            else -> FrameLayout(ctx).also { loadQuotes(it) }
-        }.also { tabViews[i] = it }
         body.removeAllViews()
         body.addView(v, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         shareAll.visibility = if (i == 2 && quotes.isNotEmpty()) View.VISIBLE else View.GONE
@@ -623,7 +651,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     // ------------------------------------------------------------------ 북마크
 
     private fun loadBookmarks(container: FrameLayout) {
-        val keep = pagers[1]?.list?.firstVisiblePosition ?: 0
+        val keep = (pagers[1] as? InkPager)?.list?.firstVisiblePosition ?: 0
         pagers[1] = null
         container.removeAllViews()
         container.addView(ctx.emptyMessage("불러오는 중…"))
@@ -661,7 +689,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             }
             container.addView(pagedList(1, lv), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
             // Reloaded after an edit: stay where the user was.
-            if (keep > 0) pagers[1]?.showRow(keep)
+            if (keep > 0) (pagers[1] as? InkPager)?.showRow(keep)
         }
     }
 
@@ -689,7 +717,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     // ------------------------------------------------------------------ 인용문
 
     private fun loadQuotes(container: FrameLayout) {
-        val keep = pagers[2]?.list?.firstVisiblePosition ?: 0
+        val keep = (pagers[2] as? InkPager)?.list?.firstVisiblePosition ?: 0
         pagers[2] = null
         container.removeAllViews()
         container.addView(ctx.emptyMessage("불러오는 중…"))
@@ -756,7 +784,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         }
         col.addView(pagedList(2, lv), lp(MATCH_PARENT, 0, 1f))
         container.addView(col, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        if (keep > 0) pagers[2]?.showRow(keep)
+        if (keep > 0) (pagers[2] as? InkPager)?.showRow(keep)
     }
 
     /** `[전체 12] [● 5] [● 3] [가̲ 4]`: a tap filters in memory (no query) and rebuilds the list from the top. */
@@ -801,13 +829,11 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
 
     /** A quote whose place changed goes by its fraction (the offsets point at other text); others go to the offset. */
     private fun openQuote(q: Quote) {
-        val jump = host as? PageJumpHost
-        if (placeChanged(q) && q.frac in 0f..1f && jump != null) {
+        val notes = host as? NoteJumpHost
+        if (placeChanged(q) && notes != null) {
             dialog.dismiss()
-            if (!stale()) jump.goToProgress(q.frac)
-        } else {
-            goAndClose(DocPosition(q.section, q.start))
-        }
+            if (!stale()) notes.openNote(ReaderJump(q.section, q.start, q.end, q.frac, q.sig, q.text.take(ReaderJump.ANCHOR_MAX)))
+        } else goAndClose(DocPosition(q.section, q.start))
     }
 
     /** "· 위치 바뀜" (PLAN K2): the reader's rule, with the anchor checked when the quote's section is shown. */
@@ -822,7 +848,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         if (stale()) return
         QuotePalette.show(anchor, QuoteStyles.of(q.style)) { s ->
             if (s == q.style || stale()) return@show
-            val keep = pagers[2]?.list?.firstVisiblePosition ?: 0
+            val keep = (pagers[2] as? InkPager)?.list?.firstVisiblePosition ?: 0
             // Not [scope]: closing the dialog mid-write must still recolour the page and the cache.
             MainScope().launch {
                 val all = withContext(Dispatchers.IO) {
@@ -981,12 +1007,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             runCatching { QuoteCache.put(host.book.id, all) }
             // A quote whose place changed is not drawn (its offsets point at other text): the reader's rule (PLAN K2).
             val sig = sessionSig(host)
-            val hl = ArrayList<Highlight>()
-            for (q in all) {
-                if (q.section != section) continue
-                val anchor = if (sig != null && q.sig != sig) anchorMatch(host, q) else null
-                if (!QuoteRows.placeChanged(q.sig, sig, anchor)) hl += Highlight(q.start, q.end, HighlightKind.QUOTE, q.style)
-            }
+            val hl = QuoteHighlights.forSection(all, section, sig) { anchorMatch(host, it) }
             runCatching { host.setHighlights("quotes", section, hl) }
         }
 

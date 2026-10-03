@@ -263,7 +263,9 @@ internal object PanelRegistry {
 interface StatusSampleHost { fun statusSample(item: com.ggumtak.readeraplus.settings.StatusItem): String? }
 /** Optional reader-only place capture. The notes hub never opens a book file. */
 interface NotePlaceHost { fun notePlace(pos: com.ggumtak.readeraplus.format.DocPosition): com.ggumtak.readeraplus.data.NotePlace }
+interface NoteJumpHost { fun openNote(jump: com.ggumtak.readeraplus.reader.ReaderJump) }
 interface PageThumbsHost {
+    val thumbnailsShown: Boolean get() = true
     fun thumbTotal(): Int; fun thumbCurrent(): Int; fun thumbAspect(): Float
     fun requestThumbs(first: Int, count: Int, widthPx: Int, heightPx: Int, progressive: Boolean, onBatch: (ThumbBatch)->Unit)
     fun cancelThumbs()

@@ -794,7 +794,7 @@ class SelectionController(private val host: ReaderHost) {
     /** The section's "quotes" highlights from [all] (with their styles), as the reader builds them. Main thread. */
     private fun applyQuoteHighlights(section: Int, all: List<Quote>) {
         val sig = (host as? NotePlaceHost)?.let { h -> runCatching { h.notePlace(DocPosition(section, 0)) }.getOrNull()?.sig }
-        runCatching { host.setHighlights("quotes", section, QuoteHighlights.forSection(all, section, sig)) }
+        runCatching { host.setHighlights("quotes", section, QuoteHighlights.forSection(all, section, sig) { ContentsDialog.anchorMatch(host, it) }) }
     }
 
     private fun noteThenQuote() {

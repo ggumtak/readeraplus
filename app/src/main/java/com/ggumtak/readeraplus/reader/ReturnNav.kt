@@ -29,6 +29,7 @@ internal interface ReturnHost {                       // implemented by ReaderAc
     /** Jump without creating a return point; the chrome stays as it is. Scroll mode: top-line placement. */
     fun jumpToReturn(pos: DocPosition)
     fun charProgressOf(pos: DocPosition): Float       // counts.charProgress
+    fun clampPosition(pos: DocPosition): DocPosition = pos
     fun locateFraction(f: Float): DocPosition         // counts.locateFraction
     fun textSignature(): String?                      // LayoutKeys.textSignature(...) for TXT, null for EPUB
     fun saveReturnMark(text: String?)                 // IO write
@@ -143,7 +144,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         if (state.pinned) return
         val sig = host.textSignature()
         val relocate = sig != null && m.sig != sig && (m.pos.section > 0 || m.pos.offset > 0)
-        val pos = if (relocate) host.locateFraction(m.fraction) else m.pos
+        val pos = host.clampPosition(if (relocate) host.locateFraction(m.fraction) else m.pos)
         state.restorePinned(pos)
         // A pin placed by fraction is stored again under this parse, so the next open is exact.
         if (relocate) save(pos)
@@ -166,7 +167,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             exact -> m
             else -> host.locateFraction(fraction.coerceIn(0f, 1f))
         }
-        state.reparsed(p)
+        state.reparsed(p?.let(host::clampPosition))
         savePin(wasPinned)
         host.onReturnChanged()
         refresh()

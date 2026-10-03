@@ -29,6 +29,8 @@ object AllocCounter {
     /** Bytes [block] allocated on this thread, net of the measuring overhead; null when unsupported. */
     fun measure(block: () -> Unit): Long? {
         val r = read ?: return null
+        // Finish JDK 17 reflection accessor inflation before reading the baseline.
+        repeat(32) { r() }
         var overhead = Long.MAX_VALUE
         repeat(5) {
             val a = r()

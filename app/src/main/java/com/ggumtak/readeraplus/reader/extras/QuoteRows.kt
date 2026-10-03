@@ -68,7 +68,7 @@ internal object QuoteRows {
         x >= 0f && rowWidth > 0 && x >= rowWidth - columnPx
 
     /** Two or more distinct styles: share-all entries carry "[초록]" (highlights.md §7). */
-    fun tagged(quotes: List<Quote>): Boolean = distinctStyles(quotes) >= 2
+    fun tagged(quotes: List<Quote>): Boolean = QuoteExport.tagged(quotes)
 
     /**
      * Text of 모두 공유 for [quotes] (already filtered), capped at [maxChars]: cut after the last whole entry that fits,
@@ -85,7 +85,7 @@ internal object QuoteRows {
         var fits = header
         for (q in quotes) {
             sb.append('\n')
-            if (tag) sb.append(QuoteStyles.tag(q.style)).append(' ')
+            if (tag) sb.append(QuoteExport.prefix(q, true))
             sb.append('“').append(q.text.trim()).append("”\n")
             sb.append("  (").append(pageOf(q)).append("쪽)\n")
             if (q.note.isNotBlank()) sb.append("  메모: ").append(q.note.trim()).append('\n')

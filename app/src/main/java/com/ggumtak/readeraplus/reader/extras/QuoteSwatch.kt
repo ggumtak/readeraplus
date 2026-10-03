@@ -86,7 +86,9 @@ class QuoteSwatch(context: Context, style: Int, sizeDp: Int, ink: Boolean) : Vie
         val cx = width / 2f
         val cy = height / 2f
         val s = QuoteStyles.of(style)
-        rect.set(cx - boxW / 2f, cy - boxH / 2f, cx + boxW / 2f, cy + boxH / 2f)
+        val w = minOf(boxW, (width - 2 * pad).coerceAtLeast(0f))
+        val h = minOf(boxH, (height - 2 * pad).coerceAtLeast(0f))
+        rect.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
         if (ink) drawInk(canvas, s, cx, cy) else drawColour(canvas, s, cx, cy)
         if (isChecked) {
             val out = ringGap + ringWidth / 2f
@@ -94,7 +96,7 @@ class QuoteSwatch(context: Context, style: Int, sizeDp: Int, ink: Boolean) : Vie
                 rect.inset(-out, -out)
                 canvas.drawRect(rect, ring)
             } else {
-                canvas.drawCircle(cx, cy, boxW / 2f + out, ring)
+                canvas.drawCircle(cx, cy, minOf(rect.width(), rect.height()) / 2f + out, ring)
             }
         }
     }
@@ -109,7 +111,7 @@ class QuoteSwatch(context: Context, style: Int, sizeDp: Int, ink: Boolean) : Vie
             canvas.drawLine(rect.left + boxW * 0.15f, y, rect.right - boxW * 0.15f, y, line)
             return
         }
-        val r = boxW / 2f
+        val r = minOf(rect.width(), rect.height()) / 2f
         fill.color = QuoteStyles.colorFill(s, night = false)
         canvas.drawCircle(cx, cy, r, fill)
         canvas.drawCircle(cx, cy, r - 0.5f, edge)

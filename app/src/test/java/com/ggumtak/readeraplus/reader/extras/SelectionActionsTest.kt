@@ -95,6 +95,21 @@ class SelectionActionsTest {
     }
 
     @Test
+    fun changedSignature_keepsOnlyMatchingAnchorsAndTheirStyles() {
+        val rows = listOf(q(1, 0, 0, 5, 4).copy(sig = "old"), q(2, 0, 6, 9, 2).copy(sig = "old"))
+        val found = QuoteHighlights.forSection(rows, 0, "now") { it.id == 1L }
+        assertEquals(listOf(0), found.map { it.start })
+        assertEquals(listOf(4), found.map { it.style })
+        assertTrue(QuoteHighlights.forSection(rows, 0, "now") { null }.isEmpty())
+    }
+
+    @Test
+    fun epubQuotesRemainVisibleWithoutParseSignatures() {
+        val rows = listOf(q(1, 0, 0, 5, 3).copy(sig = "previous"))
+        assertEquals(3, QuoteHighlights.forSection(rows, 0, "").single().style)
+    }
+
+    @Test
     fun originFallback_isTheContentBox_withoutAnyHeaderTerm() {
         // Comet: 720 × 1440 px, density 2. The status bands sit inside the margins: the header switch changes nothing.
         val d = 2f

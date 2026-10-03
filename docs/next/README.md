@@ -1,3 +1,5 @@
+> 2026-10-04: RC-A 통합 및 썸네일·노트·복원 연결 보완. 현재 인계는 [HANDOFF_NEXT.md](HANDOFF_NEXT.md), 변경/검사는 [RC_A_INTEGRATION_STATUS.md](RC_A_INTEGRATION_STATUS.md). CI 화면·코멧 실기기 확인은 남아 있음.
+
 # 다음 작업 인수인계 (2026-10-02)
 
 ## 2026-10-03 병렬 진행 (빌드 25 이후)
