@@ -2,13 +2,15 @@ package com.ggumtak.readeraplus.reader
 
 import android.content.Context
 import android.content.res.ColorStateList
-import android.graphics.Paint
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
@@ -16,21 +18,29 @@ import android.widget.SeekBar
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.InkToggle
 import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.dp
+import com.ggumtak.readeraplus.ui.kit.dpF
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
+import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.iconButton
+import com.ggumtak.readeraplus.ui.kit.keepAll
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.vertical
 
 /**
- * Reader chrome (hidden by default): a top panel with actions, book title and a brightness row, and a bottom
- * panel with the page label, rotation lock, bookmark toggle and a seek row ([이전 화] seek bar [다음 화]). White, 1px black lines,
- * no animation. Both panels swallow touches so taps never fall through to the page. While the seek bar is dragged
- * a full-width preview box floats just above the bottom panel (outside the panels, so their heights never change).
+ * Reader chrome (hidden by default, U §2): an overlay that never resizes the page. The top bar holds the actions
+ * (back, bookmark, TTS, search, TOC, settings, more), the one-line book title and the brightness row with its lazily
+ * built options panel; the bottom bar holds the return strip ([ReturnNav.dock]), the page label centred on the full
+ * width with [rotation][pin] on the right, and the seek row ([이전 화] seek bar [다음 화]). White, 1 px black lines, no
+ * animation, state shown by swapping icons (never `isSelected`). Both bars swallow touches so taps never fall through
+ * to the page. While the seek bar is dragged a full-width preview box floats just above the bottom bar (outside the
+ * bars, so their heights never change). Every setter compares with the last bound value: an unchanged view is never
+ * touched (e-ink).
  */
 internal class ReaderChrome(private val ctx: Context, private val actions: Actions, returnDock: View, private val light: LightController) {
 
@@ -47,7 +57,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         fun onRotation()
         fun onRotationChooser()
         fun onBookmark()
-        /** "이 쪽 고정" toggle (ReadEra's pin). */
+        /** The pin: this page becomes the book's return point (or is released, on that page). */
         fun onPinHere()
         fun onSeekStart()
         /** Preview text for a seek position while dragging. */
@@ -59,18 +69,24 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     val bottom: LinearLayout
     val gear: ImageButton
     val more: ImageButton
+    private val bookmark: ImageButton
     private val title: TextView
     private val brightnessRow: LinearLayout
     private val brightnessAuto: ImageButton
     private val brightnessBar: SeekBar
-    private val brightnessShow: ImageButton
+    private val optionsButton: ImageButton
+    /** Verdict NONE: "기기 조명 설정에서 조절 ›" in place of the auto button and the bar (built on first need). */
+    private var unavailableLink: TextView? = null
+    private val optionsLine: View
+    /** The options panel: an empty container until it is first opened (nothing inflated before the first page). */
+    private val optionsPanel: LinearLayout
     private val pageLabel: TextView
     private val rotation: ImageButton
-    private val bookmark: ImageButton
     private val pin: ImageButton
     private val seek: SeekBar
-    /** Seek preview ("p. 1234 · 제3장 …"), shown over the page just above the bottom panel while dragging. */
+    /** Seek preview ("1234쪽 · 제3장 …"), shown over the page just above the bottom bar while dragging. */
     private val seekInfo: TextView
+    private var root: FrameLayout? = null
 
     var isSeeking = false
         private set
@@ -86,11 +102,37 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             setSeekInfo(actions.onSeekPreview(p))
         }
     }
-    private var bindingBrightness = false
-    // Last bound icon states: page turns re-bind the chrome, and an unchanged icon must not be redrawn (e-ink).
+
+    // Insets and the bar width the width-dependent views were last sized for (decided in setVisible(true) only).
+    private var insetLeft = 0
+    private var insetRight = 0
+    private var sizedRowW = -1
+
+    // Last bound states: page turns re-bind the chrome, and an unchanged view must not be redrawn (e-ink).
     private var boundBookmarked: Boolean? = null
     private var boundRotationLocked: Boolean? = null
     private var boundPinned: Boolean? = null
+    private var boundPinDescription: String = PIN_SET
+    private var boundAuto: Boolean? = null
+    private var bindingBrightness = false
+    private var optionsOpen = false
+    private var unavailable = false
+
+    // Options panel values: cached until the rows exist, then bound on change.
+    private var swipeOn = false
+    private var swipeEnabled = true
+    private var swipeSubtitle = SWIPE_SUBTITLE
+    private var askKind = LightController.ASK_NONE
+    private var deviceOn = false
+    private var deviceSubtitle = DEVICE_SUBTITLE_OFF
+    private var deviceEnabled = true
+    private var panelRowVisible = false
+    private var panelSubtitle = PANEL_SUBTITLE
+    private var rows: OptionRows? = null
+
+    // SeekBar looks (U §2.2): manual = solid black thumb; auto = hollow ring thumb and a grey progress track.
+    private val manualThumb: Drawable = dot(hollow = false)
+    private val autoThumb: Drawable by lazy { dot(hollow = true) }
 
     init {
         top = ctx.vertical {
@@ -103,6 +145,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         }
         actionsRow.addView(ctx.iconButton(R.drawable.ic_arrow_back, "뒤로") { actions.onBack() })
         actionsRow.addView(View(ctx), lp(0, 1, 1f))
+        bookmark = ctx.iconButton(R.drawable.ic_bookmark, "북마크 추가") { actions.onBookmark() }
+        actionsRow.addView(bookmark)
         actionsRow.addView(ctx.iconButton(R.drawable.ic_volume_up, "TTS 읽기") { actions.onTts() })
         actionsRow.addView(ctx.iconButton(R.drawable.ic_search, "검색") { actions.onSearch() })
         actionsRow.addView(ctx.iconButton(R.drawable.ic_toc, "목차") { actions.onToc() })
@@ -112,24 +156,29 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         actionsRow.addView(more)
         top.addView(actionsRow, lp())
 
-        val titleRow = ctx.horizontal { setPadding(ctx.dp(16), 0, ctx.dp(4), ctx.dp(6)) }
-        title = ctx.label("", 18f, bold = true, maxLines = 2)
-        titleRow.addView(title, lp(0, WRAP_CONTENT, 1f))
-        brightnessShow = ctx.iconButton(R.drawable.ic_brightness_medium, "밝기 조절 보이기") {
-            setBrightnessCollapsed(false)
-            light.onOpenPanel()
+        // One line, so the bar height never depends on the title; text on the 20 dp keyline (polish 10).
+        title = ctx.label("", 17f, bold = true, maxLines = 1).apply {
+            setPadding(ctx.dp(20), 0, ctx.dp(16), ctx.dp(10))
         }
-        titleRow.addView(brightnessShow)
-        top.addView(titleRow, lp())
+        top.addView(title, lp())
+        top.addView(ctx.hairline())
 
-        brightnessRow = ctx.horizontal { setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
-        brightnessAuto = ctx.iconButton(R.drawable.ic_brightness_auto, "시스템 밝기") { light.onAuto() }
+        brightnessRow = ctx.horizontal {
+            minimumHeight = ctx.dp(48)
+            setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
+        }
+        brightnessAuto = ctx.iconButton(R.drawable.ic_brightness_medium, AUTO_FOLLOW) { light.onAuto() }
+        brightnessAuto.setOnLongClickListener(null)
         brightnessRow.addView(brightnessAuto)
         brightnessBar = einkSeekBar().apply {
             max = 100
+            contentDescription = "밝기"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
-                    if (fromUser && !bindingBrightness) light.onDrag(p / 100f, false)
+                    if (!fromUser || bindingBrightness) return
+                    // The icon never says "auto" mid-drag: the first user move switches to the manual look.
+                    if (boundAuto == true) applyBrightnessLook(false)
+                    light.onDrag(p / 100f, false)
                 }
 
                 override fun onStartTrackingTouch(s: SeekBar) {}
@@ -139,11 +188,13 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             })
         }
         brightnessRow.addView(brightnessBar, lp(0, WRAP_CONTENT, 1f))
-        brightnessRow.addView(ctx.iconButton(R.drawable.ic_expand_less, "밝기 조절 숨기기") {
-            setBrightnessCollapsed(true)
-            light.onOpenPanel()
-        })
+        optionsButton = ctx.iconButton(R.drawable.ic_expand_more, OPTIONS) { setBrightnessOptionsOpen(!optionsOpen) }
+        brightnessRow.addView(optionsButton)
         top.addView(brightnessRow, lp())
+        optionsLine = ctx.hairline().apply { visibility = View.GONE }
+        top.addView(optionsLine)
+        optionsPanel = ctx.vertical { visibility = View.GONE }
+        top.addView(optionsPanel, lp())
         top.addView(ctx.hairline())
 
         bottom = ctx.vertical {
@@ -152,31 +203,29 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         }
         bottom.addView(ctx.hairline())
         bottom.addView(returnDock, lp())
-        val row = ctx.horizontal {
-            minimumHeight = ctx.dp(56)
-            setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
-        }
-        // The label takes all the room left of the buttons (≈ 208dp on the 360dp-wide Comet), so
-        // "12345 / 23259" fits; it is centred in that room rather than across the whole width. Underlined: it is
-        // the way into 페이지 이동 (A13).
-        pageLabel = ctx.label("", 18f, bold = true, maxLines = 1).apply {
+        val labelRow = FrameLayout(ctx).apply { minimumHeight = ctx.dp(52) }
+        // Centred on the FULL width with a fixed width (rowW − 2·108 dp, set in setVisible): autosize is unreliable
+        // with wrap_content, and the fixed box can never run under the right cluster. No underline (polish 1).
+        pageLabel = ctx.label("", 17f, bold = true, maxLines = 1).apply {
             gravity = Gravity.CENTER
-            setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
-            minHeight = ctx.dp(48)
-            paintFlags = paintFlags or Paint.UNDERLINE_TEXT_FLAG
-            contentDescription = "페이지 이동"
+            setPadding(ctx.dp(12), 0, ctx.dp(12), 0)
+            fontFeatureSettings = "tnum"
+            setAutoSizeTextTypeUniformWithConfiguration(14, 17, 1, TypedValue.COMPLEX_UNIT_SP)
+            contentDescription = PAGE_LABEL
             background = pressableBackground()
             setOnClickListener { actions.onPageLabel() }
         }
-        row.addView(pageLabel, lp(0, WRAP_CONTENT, 1f))
+        labelRow.addView(pageLabel, FrameLayout.LayoutParams(ctx.dp(144), ctx.dp(48), Gravity.CENTER))
+        val cluster = ctx.horizontal()
         rotation = ctx.iconButton(R.drawable.ic_screen_rotation, "화면 회전 잠금") { actions.onRotation() }
         rotation.setOnLongClickListener { actions.onRotationChooser(); true }
-        row.addView(rotation)
-        bookmark = ctx.iconButton(R.drawable.ic_bookmark, "북마크") { actions.onBookmark() }
-        row.addView(bookmark)
-        pin = ctx.iconButton(R.drawable.ic_push_pin, "이 쪽 고정") { actions.onPinHere() }
-        row.addView(pin)
-        bottom.addView(row, lp())
+        cluster.addView(rotation)
+        pin = ctx.iconButton(R.drawable.ic_push_pin, PIN_SET) { actions.onPinHere() }
+        cluster.addView(pin)
+        labelRow.addView(cluster, FrameLayout.LayoutParams(WRAP_CONTENT, ctx.dp(48), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+            marginEnd = ctx.dp(4)
+        })
+        bottom.addView(labelRow, lp())
         seekInfo = ctx.label("", 16f, bold = true, maxLines = 2).apply {
             gravity = Gravity.CENTER
             background = ctx.borderBox()
@@ -184,6 +233,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             visibility = View.GONE
         }
         seek = einkSeekBar().apply {
+            contentDescription = "페이지 위치"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
                     if (fromUser && isSeeking) previewSeek(p)
@@ -209,32 +259,40 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
                 }
             })
         }
-        val seekRow = ctx.horizontal()
+        val seekRow = ctx.horizontal { setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
         seekRow.addView(ctx.iconButton(R.drawable.ic_skip_previous, "이전 화") { actions.onChapter(false) })
         seekRow.addView(seek, lp(0, WRAP_CONTENT, 1f))
         seekRow.addView(ctx.iconButton(R.drawable.ic_skip_next, "다음 화") { actions.onChapter(true) })
         bottom.addView(seekRow, lp())
-        setBrightnessCollapsed(false)
     }
 
     private fun einkSeekBar(): SeekBar = SeekBar(ctx).apply {
         progressTintList = ColorStateList.valueOf(Ink.BLACK)
-        progressBackgroundTintList = ColorStateList.valueOf(Ink.GRAY)
+        progressBackgroundTintList = ColorStateList.valueOf(Ink.DISABLED)
         // The platform thumb is an animated selector (grows on press = several e-ink updates): use a plain dot.
-        thumb = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(Ink.BLACK)
-            val d = ctx.dp(20)
-            setSize(d, d)
-        }
-        thumbOffset = ctx.dp(10)
+        thumb = dot(hollow = false)
+        thumbOffset = ctx.dp(8)
         background = null
         splitTrack = false
         minimumHeight = ctx.dp(48)
-        setPadding(ctx.dp(20), ctx.dp(14), ctx.dp(20), ctx.dp(14))
+        setPadding(ctx.dp(12), ctx.dp(16), ctx.dp(12), ctx.dp(16))
+    }
+
+    /** A 16 dp thumb: solid black, or ([hollow]) a white ring with a 1.5 dp black stroke. */
+    private fun dot(hollow: Boolean): Drawable = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        val d = ctx.dp(16)
+        setSize(d, d)
+        if (hollow) {
+            setColor(Ink.WHITE)
+            setStroke(ctx.dpF(1.5f).toInt().coerceAtLeast(1), Ink.BLACK)
+        } else {
+            setColor(Ink.BLACK)
+        }
     }
 
     fun attach(root: FrameLayout) {
+        this.root = root
         root.addView(top, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
         root.addView(bottom, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
         root.addView(seekInfo, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM).apply {
@@ -244,15 +302,43 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         setVisible(false)
     }
 
+    /** Hiding also closes the options panel and the seek preview. */
     fun setVisible(visible: Boolean) {
+        if (visible) sizeForWidth()
         val v = if (visible) View.VISIBLE else View.GONE
-        top.visibility = v
-        bottom.visibility = v
+        if (top.visibility != v) top.visibility = v
+        if (bottom.visibility != v) bottom.visibility = v
         if (!visible) {
             dropHeldSeek()
             showSeekInfo(false)
+            setBrightnessOptionsOpen(false)
         }
     }
+
+    /**
+     * The width guard (U §2.2) and the fixed label width (§2.4), from the root width minus the side insets. Decided
+     * here, before the bars become visible, and only when that width changed — never in a layout listener, where a
+     * size or visibility change would force a second layout and draw (a second e-ink update on the first show).
+     */
+    private fun sizeForWidth() {
+        val r = root
+        val full = r?.width?.takeIf { it > 0 } ?: ctx.resources.displayMetrics.widthPixels
+        val rowW = (full - insetLeft - insetRight).coerceAtLeast(0)
+        if (rowW == sizedRowW) return
+        sizedRowW = rowW
+        val density = ctx.resources.displayMetrics.density
+        val bv = if (ChromeMath.bookmarkFits(rowW, density)) View.VISIBLE else View.GONE
+        if (bookmark.visibility != bv) bookmark.visibility = bv
+        val labelW = ChromeMath.labelMaxWidth(rowW, density)
+        val lpLabel = pageLabel.layoutParams as FrameLayout.LayoutParams
+        if (lpLabel.width != labelW) {
+            lpLabel.width = labelW
+            pageLabel.layoutParams = lpLabel
+        }
+    }
+
+    /** True while the top-row bookmark is hidden by the width guard (the ⋮ menu then offers 북마크 추가/삭제). */
+    val bookmarkHidden: Boolean get() = bookmark.visibility != View.VISIBLE
 
     /** Views of the chrome itself (the host lays out other overlays around them). */
     fun owns(v: View): Boolean = v === top || v === bottom || v === seekInfo
@@ -299,18 +385,33 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     val isVisible: Boolean get() = top.visibility == View.VISIBLE
 
     fun setInsets(left: Int, topInset: Int, right: Int, bottomInset: Int) {
-        top.setPadding(left, topInset, right, 0)
-        bottom.setPadding(left, 0, right, bottomInset)
+        if (top.paddingLeft != left || top.paddingTop != topInset || top.paddingRight != right) {
+            top.setPadding(left, topInset, right, 0)
+        }
+        if (bottom.paddingLeft != left || bottom.paddingRight != right || bottom.paddingBottom != bottomInset) {
+            bottom.setPadding(left, 0, right, bottomInset)
+        }
+        if (left != insetLeft || right != insetRight) {
+            insetLeft = left
+            insetRight = right
+            if (isVisible) sizeForWidth()
+        }
     }
 
     fun setTitle(text: CharSequence) {
-        if (title.text != text) title.text = text
+        if (title.text.toString() != text.toString()) title.text = text
     }
 
-    /** Page label and seek position (ignored while the user drags the seek bar). */
+    /**
+     * Page label and seek position (ignored while the user drags the seek bar). The label's content description
+     * carries the page ("페이지 이동, 3 / 167"); it is set with the text, so it costs nothing while the chrome is hidden.
+     */
     fun setPage(label: String, max: Int, progress: Int) {
         if (isSeeking) return
-        if (pageLabel.text.toString() != label) pageLabel.text = label
+        if (pageLabel.text.toString() != label) {
+            pageLabel.text = label
+            pageLabel.contentDescription = "$PAGE_LABEL, $label"
+        }
         val m = max.coerceAtLeast(1)
         if (seek.max != m) seek.max = m
         val p = progress.coerceIn(0, m)
@@ -324,41 +425,308 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         bookmark.contentDescription = if (on) "북마크 삭제" else "북마크 추가"
     }
 
+    /** The pin's icon (filled while the book has a pinned return point) and content description (U §3.1). */
     fun setPinned(on: Boolean, onMarkPage: Boolean) {
-        if (boundPinned == on) return
-        boundPinned = on
-        pin.setImageResource(if (on) R.drawable.ic_push_pin_fill else R.drawable.ic_push_pin)
-        pin.contentDescription = if (on) "이 쪽 고정 해제" else "이 쪽 고정"
-        pin.isSelected = on
+        if (boundPinned != on) {
+            boundPinned = on
+            pin.setImageResource(if (on) R.drawable.ic_push_pin_fill else R.drawable.ic_push_pin)
+        }
+        val d = when {
+            !on -> PIN_SET
+            onMarkPage -> PIN_RELEASE
+            else -> PIN_MOVE
+        }
+        if (boundPinDescription !== d) {
+            boundPinDescription = d
+            pin.contentDescription = d
+        }
     }
 
     fun setRotationLocked(locked: Boolean) {
         if (boundRotationLocked == locked) return
         boundRotationLocked = locked
         rotation.setImageResource(if (locked) R.drawable.ic_screen_lock_rotation else R.drawable.ic_screen_rotation)
-        rotation.isSelected = locked
     }
 
-    /** [value] < 0 = system brightness ([systemValue] positions the bar). */
+    // ------------------------------------------------------------------ brightness (bound by LightController only)
+
+    /** [value] = the bar position 0..1; [auto] = system brightness (the bar then shows the auto look). */
     fun setBrightness(value: Float, auto: Boolean) {
-        bindingBrightness = true
-        brightnessAuto.isSelected = auto
-        val p = Math.round(value.coerceIn(0f, 1f) * 100f)
-        if (brightnessBar.progress != p) brightnessBar.progress = p
-        bindingBrightness = false
+        val p = Math.round((if (value.isNaN()) 0f else value).coerceIn(0f, 1f) * 100f)
+        if (brightnessBar.progress != p) {
+            bindingBrightness = true
+            brightnessBar.progress = p
+            bindingBrightness = false
+        }
+        if (boundAuto != auto) applyBrightnessLook(auto)
     }
 
-    fun setBrightnessCollapsed(collapsed: Boolean) {
-        brightnessRow.visibility = if (collapsed) View.GONE else View.VISIBLE
-        brightnessShow.visibility = if (collapsed) View.VISIBLE else View.GONE
+    private fun applyBrightnessLook(auto: Boolean) {
+        boundAuto = auto
+        brightnessAuto.setImageResource(if (auto) R.drawable.ic_brightness_auto else R.drawable.ic_brightness_medium)
+        brightnessAuto.contentDescription = if (auto) AUTO_MANUAL else AUTO_FOLLOW
+        brightnessBar.progressTintList = ColorStateList.valueOf(if (auto) Ink.DISABLED else Ink.BLACK)
+        brightnessBar.thumb = if (auto) autoThumb else manualThumb
     }
 
-    fun setBrightnessOptionsOpen(open: Boolean) {} // R3 stub (owner: RU)
-    fun setSwipeOption(on: Boolean, enabled: Boolean, subtitle: String) {} // R3 stub (owner: RU)
-    fun setLightAsk(kind: Int) {} // R3 stub (owner: RU)
-    fun setLightDevice(on: Boolean, subtitle: String, enabled: Boolean) {} // R3 stub (owner: RU)
-    fun setBrightnessUnavailable(unavailable: Boolean) {} // R3 stub (owner: RU)
-    fun setLightPanelRow(visible: Boolean, subtitle: String) {} // R3 stub (owner: RU)
+    /** The brightness row is never hidden any more (U §2.3); kept for source compatibility, a no-op. */
+    @Suppress("UNUSED_PARAMETER")
+    fun setBrightnessCollapsed(collapsed: Boolean) {}
+
+    /** Opens or closes the options panel under the brightness row; its rows are built on the first open. */
+    fun setBrightnessOptionsOpen(open: Boolean) {
+        if (open == optionsOpen) return
+        optionsOpen = open
+        if (open) ensureRows()
+        val v = if (open) View.VISIBLE else View.GONE
+        optionsLine.visibility = v
+        optionsPanel.visibility = v
+        optionsButton.setImageResource(if (open) R.drawable.ic_expand_less else R.drawable.ic_expand_more)
+    }
+
+    fun setSwipeOption(on: Boolean, enabled: Boolean, subtitle: String) {
+        if (on == swipeOn && enabled == swipeEnabled && subtitle == swipeSubtitle) return
+        swipeOn = on
+        swipeEnabled = enabled
+        swipeSubtitle = subtitle
+        rows?.swipe?.bind(on, enabled, subtitle)
+    }
+
+    /** [kind] = LightController.ASK_NONE / ASK_WINDOW / ASK_DEVICE: the question row at the top of the panel. */
+    fun setLightAsk(kind: Int) {
+        if (kind == askKind) return
+        askKind = kind
+        rows?.bindAsk(kind)
+    }
+
+    fun setLightDevice(on: Boolean, subtitle: String, enabled: Boolean) {
+        if (on == deviceOn && enabled == deviceEnabled && subtitle == deviceSubtitle) return
+        deviceOn = on
+        deviceEnabled = enabled
+        deviceSubtitle = subtitle
+        rows?.device?.bind(on, enabled, subtitle)
+    }
+
+    /** Verdict NONE: one link "기기 조명 설정에서 조절 ›" replaces the auto button and the bar. */
+    fun setBrightnessUnavailable(unavailable: Boolean) {
+        if (unavailable == this.unavailable) return
+        this.unavailable = unavailable
+        if (unavailable) ensureUnavailableLink()
+        val bar = if (unavailable) View.GONE else View.VISIBLE
+        brightnessAuto.visibility = bar
+        brightnessBar.visibility = bar
+        unavailableLink?.visibility = if (unavailable) View.VISIBLE else View.GONE
+    }
+
+    /** The "기기 조명 설정 열기" row (a warm channel exists, or verdict NONE). */
+    fun setLightPanelRow(visible: Boolean, subtitle: String) {
+        if (visible == panelRowVisible && subtitle == panelSubtitle) return
+        panelRowVisible = visible
+        panelSubtitle = subtitle
+        rows?.bindPanel(visible, subtitle)
+    }
+
+    private fun ensureUnavailableLink() {
+        if (unavailableLink != null) return
+        val link = ctx.label(UNAVAILABLE_LINK, 15f, maxLines = 1).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            minHeight = ctx.dp(48)
+            setPadding(ctx.dp(12), 0, ctx.dp(8), 0)
+            compoundDrawablePadding = ctx.dp(8)
+            setCompoundDrawablesRelative(tinted(R.drawable.ic_brightness_medium, 24), null, tinted(R.drawable.ic_chevron_right, 18), null)
+            background = pressableBackground()
+            setOnClickListener { light.onOpenPanel() }
+        }
+        brightnessRow.addView(link, 0, lp(0, ctx.dp(48), 1f))
+        unavailableLink = link
+    }
+
+    private fun tinted(res: Int, sizeDp: Int): Drawable {
+        val d = ctx.getDrawable(res)!!.mutate()
+        val s = ctx.dp(sizeDp)
+        d.setBounds(0, 0, s, s)
+        d.setTintList(ColorStateList.valueOf(Ink.BLACK))
+        return d
+    }
+
+    // ------------------------------------------------------------------ options panel rows (lazy)
+
+    private fun ensureRows() {
+        if (rows != null) return
+        val r = OptionRows()
+        rows = r
+        r.swipe.bind(swipeOn, swipeEnabled, swipeSubtitle)
+        r.device.bind(deviceOn, deviceEnabled, deviceSubtitle)
+        r.bindAsk(askKind)
+        r.bindPanel(panelRowVisible, panelSubtitle)
+    }
+
+    /** The panel's rows in order: question (while asked), swipe switch, device switch, device light settings link. */
+    private inner class OptionRows {
+        private val askRow: LinearLayout
+        private val askLine: View
+        private val askText: TextView
+        val swipe: ToggleRow
+        val device: ToggleRow
+        private val panelLine: View
+        private val panelRow: LinearLayout
+        private val panelSub: TextView
+
+        init {
+            askRow = ctx.horizontal {
+                minimumHeight = ctx.dp(56)
+                setPadding(ctx.dp(20), ctx.dp(4), ctx.dp(8), ctx.dp(4))
+                visibility = View.GONE
+            }
+            askText = ctx.label("", 15f, maxLines = 2).keepAll()
+            askRow.addView(askText, lp(0, WRAP_CONTENT, 1f))
+            askRow.addView(answer("예", true))
+            askRow.addView(answer("아니요", false))
+            optionsPanel.addView(askRow, lp())
+            askLine = lightLine().apply { visibility = View.GONE }
+            optionsPanel.addView(askLine)
+
+            swipe = ToggleRow(SWIPE_TITLE) { on -> light.onSwipeSwitch(on) }
+            optionsPanel.addView(swipe.row, lp())
+            optionsPanel.addView(lightLine())
+            device = ToggleRow(DEVICE_TITLE) { on -> light.onDeviceSwitch(on) }
+            optionsPanel.addView(device.row, lp())
+
+            panelLine = lightLine().apply { visibility = View.GONE }
+            optionsPanel.addView(panelLine)
+            panelRow = ctx.horizontal {
+                minimumHeight = ctx.dp(56)
+                setPadding(ctx.dp(20), ctx.dp(8), ctx.dp(16), ctx.dp(8))
+                background = pressableBackground()
+                setOnClickListener { light.onOpenPanel() }
+                visibility = View.GONE
+            }
+            val texts = ctx.vertical()
+            texts.addView(ctx.label(PANEL_TITLE, 15f, maxLines = 1))
+            panelSub = subtitle(PANEL_SUBTITLE)
+            texts.addView(panelSub)
+            panelRow.addView(texts, lp(0, WRAP_CONTENT, 1f))
+            panelRow.addView(ctx.icon(R.drawable.ic_chevron_right, 24, Ink.GRAY))
+            optionsPanel.addView(panelRow, lp())
+        }
+
+        private fun answer(text: String, yes: Boolean): TextView = ctx.label(text, 15f, bold = true, maxLines = 1).apply {
+            gravity = Gravity.CENTER
+            minWidth = ctx.dp(56)
+            minHeight = ctx.dp(48)
+            setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
+            background = pressableBackground()
+            setOnClickListener { light.onAnswer(yes) }
+        }
+
+        fun bindAsk(kind: Int) {
+            val text = when (kind) {
+                LightController.ASK_WINDOW -> ASK_WINDOW_TEXT
+                LightController.ASK_DEVICE -> ASK_DEVICE_TEXT
+                else -> null
+            }
+            val v = if (text == null) View.GONE else View.VISIBLE
+            if (text != null && askText.text.toString() != text) askText.text = text
+            if (askRow.visibility != v) askRow.visibility = v
+            if (askLine.visibility != v) askLine.visibility = v
+        }
+
+        fun bindPanel(visible: Boolean, subtitle: String) {
+            if (panelSub.text.toString() != subtitle) panelSub.text = subtitle
+            val v = if (visible) View.VISIBLE else View.GONE
+            if (panelRow.visibility != v) panelRow.visibility = v
+            if (panelLine.visibility != v) panelLine.visibility = v
+        }
+    }
+
+    /**
+     * One switch row: title 15 sp, subtitle 13 sp GRAY (max 2 lines), the [InkToggle] ending at W − 16 dp. Tapping
+     * anywhere toggles; the row is the one accessibility unit (checkable, checked = the toggle, text = both lines).
+     */
+    private inner class ToggleRow(private val titleText: String, private val onSwitch: (Boolean) -> Unit) {
+        val row: LinearLayout
+        private val titleView: TextView
+        private val sub: TextView
+        private val toggle = InkToggle(ctx).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+
+        init {
+            row = ctx.horizontal {
+                minimumHeight = ctx.dp(56)
+                setPadding(ctx.dp(20), ctx.dp(8), ctx.dp(16), ctx.dp(8))
+                background = pressableBackground()
+                isFocusable = true
+                setOnClickListener { if (isEnabled) flip() }
+            }
+            val texts = ctx.vertical()
+            titleView = ctx.label(titleText, 15f, maxLines = 1)
+            texts.addView(titleView)
+            sub = subtitle("")
+            texts.addView(sub)
+            row.addView(texts, lp(0, WRAP_CONTENT, 1f))
+            row.addView(toggle)
+            row.accessibilityDelegate = object : View.AccessibilityDelegate() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.isCheckable = true
+                    info.isChecked = toggle.isChecked
+                    info.text = "$titleText, ${sub.text}"
+                    info.className = "android.widget.Switch"
+                }
+            }
+        }
+
+        /** A user tap: the toggle flips at once (one update), then the controller is told; it re-binds if it refuses. */
+        private fun flip() {
+            val on = !toggle.isChecked
+            toggle.isChecked = on
+            if (this === rows?.swipe) swipeOn = on else deviceOn = on
+            onSwitch(on)
+        }
+
+        fun bind(on: Boolean, enabled: Boolean, subtitle: String) {
+            if (toggle.isChecked != on) toggle.isChecked = on
+            if (sub.text.toString() != subtitle) sub.text = subtitle
+            if (row.isEnabled != enabled) {
+                row.isEnabled = enabled
+                toggle.isEnabled = enabled
+                // Disabled = GRAY (#555, survives every waveform) plus the subtitle's own wording, never grey alone.
+                titleView.setTextColor(if (enabled) Ink.BLACK else Ink.GRAY)
+            }
+        }
+    }
+
+    private fun subtitle(text: String): TextView = ctx.label(text, 13f, color = Ink.GRAY, maxLines = 2).apply {
+        keepAll()
+        setPadding(0, ctx.dp(2), 0, 0)
+    }
+
+    /** A light separator inside a band group: 1 px, inset 20 dp left and 16 dp right. */
+    private fun lightLine(): View = View(ctx).apply {
+        setBackgroundColor(Ink.LINE_LIGHT)
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 1).apply {
+            marginStart = ctx.dp(20)
+            marginEnd = ctx.dp(16)
+        }
+    }
 
     val bottomHeight: Int get() = bottom.height
+
+    private companion object {
+        const val PAGE_LABEL = "페이지 이동"
+        const val PIN_SET = "이 페이지 고정"
+        const val PIN_MOVE = "이 페이지로 고정 옮기기"
+        const val PIN_RELEASE = "고정 해제"
+        const val AUTO_FOLLOW = "시스템 밝기 따르기"
+        const val AUTO_MANUAL = "직접 밝기 조절"
+        const val OPTIONS = "밝기 옵션"
+        const val UNAVAILABLE_LINK = "기기 조명 설정에서 조절"
+        const val SWIPE_TITLE = "스와이프로 밝기 조절"
+        const val SWIPE_SUBTITLE = "화면 왼쪽 가장자리를 위아래로 밀어 밝기를 바꿉니다"
+        const val DEVICE_TITLE = "기기 밝기 직접 조절"
+        const val DEVICE_SUBTITLE_OFF = "전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다"
+        const val PANEL_TITLE = "기기 조명 설정 열기"
+        const val PANEL_SUBTITLE = "색온도(따뜻한 빛)는 기기 조명에서 바꿉니다"
+        const val ASK_WINDOW_TEXT = "전면광 밝기가 바뀌었나요?"
+        const val ASK_DEVICE_TEXT = "막대를 움직여 보세요. 전면광이 바뀌나요?"
+    }
 }
