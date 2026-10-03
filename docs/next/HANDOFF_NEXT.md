@@ -10,6 +10,12 @@ RC-A 세 파트와 최신 모든 레인을 합치고, 연결 누락을 보완했
 - 설정 색 견본 크기, 이동한 인용의 노트 점프 경로, 목차·선택 메뉴의 인용 처리 공통화.
 - 레인 rcaNotes 검토. 스텁/merge 표시 0줄.
 
+## 2026-10-04 CI 진행 (리드 세션)
+- CI 27: BackupJsonTest 3건(Maven org.json 키 순서) → 1886f33에서 BackupJson.write 머리 순서를 고정, 로컬 도구도 CI와 같은 classpath.
+- 독립 리뷰 20건 수정(0f5e845), 대화상자 NPE 크래시 수정(3f42e03), CI 29·30 스크립트 점검(930cc74, 9d92bed).
+- CI 31: 크래시 0, PASS 79, FAIL 2(51 재시도·덤프 보강, 57은 57_repeat 진단 추가). 상세: RC_A_INTEGRATION_STATUS.md.
+- 남은 일: 다음 [screens] 결과로 51·57 확인, 코멧 실기기 PLAN 5.4/5.5.
+
 ## 다음 순서
 1. 이번 `[screens]` 커밋의 Actions 결과 확인. APK 빌드 성공과 screenshots 성공을 각각 확인한다.
 2. `ci-screens` 릴리스의 steps.txt를 열어 모든 `CHECK … FAIL`을 검증·수정한다. 썸네일 직접 열기/탭 전환, 노트 후 스크롤 위치 저장, 숨은 메뉴의 돌아가기 표시도 화면에서 확인한다.

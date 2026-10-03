@@ -783,8 +783,15 @@ status_page() { # 51: 설정 → 넘김·화면 설정 at the 상태 표시줄 s
   scroll_find "상태 표시줄" || return 1
   align "상태 표시줄" 260
   shot 51_status_page 2
-  dump; if has "위 · 왼쪽" contains && has "아래 · 오른쪽" contains; then check 51 0 "slot rows shown"
-  else check 51 1 "slot rows (위 · 왼쪽 … 아래 · 오른쪽) missing"; fi
+  dump
+  # CI 31 missed the rows once with no app change since a passing run: look again lower before failing, and keep
+  # the dump for the next diagnosis.
+  if ! { has "위 · 왼쪽" contains && has "아래 · 오른쪽" contains; }; then
+    log "51: slot rows not in the dump; dragging the list up once more"
+    drag 100 1100 700; sleep 2; dump
+  fi
+  if has "위 · 왼쪽" contains && has "아래 · 오른쪽" contains; then check 51 0 "slot rows shown"
+  else cp /tmp/ui.xml shots/ui_fail_51_status_page.xml 2>/dev/null; check 51 1 "slot rows (위 · 왼쪽 … 아래 · 오른쪽) missing"; fi
 }
 stats_page() { # 50b: drawer → 읽기 기록 (T1-6)
   restart_library
@@ -1010,6 +1017,15 @@ dialog_no_reflow() { # 57 (H4): the 페이지 이동 dialog leaves the page pixe
   perf_mark 57_after
   raw_check 57 57_before 57_after 360 1100
   no_relayout 57 57_before 57_after
+  # CI 31: 57_still EQUAL but 57 DIFF 3457 in the text column, no RELAYOUT: the page drawn again after the dialog (the
+  # panel-closed refresh invalidates it) differs from the cold-opened first frame. 57_repeat runs the same dialog
+  # once more: EQUAL means every redraw is identical and only the first frame's rasterization differs (an emulator
+  # GPU glyph-cache effect, not a moved or re-laid-out page); DIFF means each redraw changes the text pixels.
+  tap_label "페이지 이동" contains || return 0
+  sleep 2; back; sleep 2
+  if dump && has "이동" && has "5"; then back; sleep 2; fi
+  rawshot 57_after2
+  raw_check 57_repeat 57_after 57_after2 360 1100
 }
 
 # ------------------------------------------------------------------ W2 page thumbnails (92–93)
