@@ -3,8 +3,11 @@ package com.ggumtak.readeraplus.reader.extras
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
 import android.os.Handler
 import android.os.Looper
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -18,6 +21,7 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.engine.LineBreakMode
+import com.ggumtak.readeraplus.engine.PageBreakMode
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
@@ -27,18 +31,24 @@ import com.ggumtak.readeraplus.reader.VolumeMode
 import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.reader.withTxt
 import com.ggumtak.readeraplus.render.Covers
+import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.FontManager
+import com.ggumtak.readeraplus.settings.ReadMode
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
+import com.ggumtak.readeraplus.settings.SideMargin
+import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.settings.StylePreset
 import com.ggumtak.readeraplus.settings.TapZoneMode
 import com.ggumtak.readeraplus.settings.UserStyle
 import com.ggumtak.readeraplus.settings.UserStyles
+import com.ggumtak.readeraplus.settings.VerticalMargin
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
+import com.ggumtak.readeraplus.ui.kit.dpF
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.label
@@ -58,19 +68,21 @@ import kotlinx.coroutines.withContext
 import java.lang.ref.WeakReference
 
 /**
- * Compact reading-settings popup for the ~6" 360×720 dp e-ink screen: the screen's width but 4 dp on each side
- * (≤ 420 dp, [PopupGeometry.width]), at most 55% of the height (scrolls), at the top right. The reader's bars are
- * hidden while it opens (unless pinned; then it sits under the top bar) so the lower half of the page stays in view as
- * the preview. Plain 36 dp rows split by 1px lines, the value and its "− +" buttons on the label's row, no card boxes,
- * black on white, no animations: the main section ([PopupGeometry.MAIN_ROWS] rows) is 360 dp, half the screen, and
- * needs no scrolling.
+ * Compact reading-settings popup for the ~6" 360×720 dp e-ink screen (U §2.6, polish 7, 8, 18): centred, the screen's
+ * width but 8 dp on each side (≤ 400 dp, [PopupGeometry.width]), 8 dp under the status bar, at most 56% of the height
+ * (scrolls under 더보기 only). The reader's bars are always hidden while it opens (one e-ink update with the popup), so
+ * the lower part of the page stays in view as the preview. Plain 44 dp rows split by light lines, the value and its
+ * "− +" buttons on the label's row, joined segmented controls, black on white, no animations: the main section
+ * ([PopupGeometry.MAIN_ROWS] rows, 396 dp) needs no scrolling.
  *
- * Order: 스타일 ([웹소설] [전자책] [종이책] [내 스타일 ▾]; the matching one inverted), 글꼴, 글자 크기, 굵기, 줄 간격,
- * 문단 간격, 들여쓰기, 정렬, 줄바꿈, then a collapsed "더보기" with everything else (page turning, letter spacing,
- * margins, status bar, invert, TXT / EPUB options, 기본값 복원, 넘김·화면 설정).
+ * Main section (§1.6.3): 스타일 ([웹소설│전자책│종이책] [내 스타일 ▾]), 글꼴, 글자 크기, 굵기, 줄 간격, 문단 간격, 들여쓰기,
+ * 정렬 │ 줄바꿈 (one row), 더보기 ›. Under 더보기: 페이지 넘김 (넘기는 방식, 화면 터치, 볼륨 키), 글자 (글자 간격), 페이지 (좌우 /
+ * 상하 여백, 페이지 여백, 흑백 반전, 페이지 나눔, 외톨이 줄 방지), TXT 파일 / EPUB 파일 (the open book's format first),
+ * 상태 표시 (위 / 아래 slots, 진행 막대, 상태 글자 크기, fit note), then 기본값 복원 and 넘김·화면 설정.
  *
  * Every change but the TXT options is applied through [ReaderHost.applySettings] with the GLOBAL settings; steppers
- * are debounced (250 ms) so repeated taps cost one re-layout. The TXT options of a TXT book are this book's own
+ * are debounced (250 ms) so repeated taps cost one re-layout; switches, segments and status slots apply at once (a
+ * status change only repaints). The TXT options of a TXT book are this book's own
  * (T1-9, "TXT 파일 · 이 책에만 적용", through [TxtOverrideHost]): the rows show the effective values and a change
  * becomes the book's override after the reparse debounce (one re-parse of this book per burst of taps; the global
  * defaults and other books' indexes stay untouched). A host without [TxtOverrideHost] edits the global options.
@@ -95,10 +107,15 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     private var popup: PopupWindow? = null
     private lateinit var scroll: MaxHeightScrollView
     private var popupWidth = 0
-    /** The "스타일" toggles, re-marked after every change (a tweak can make the settings match / leave a preset). */
-    private val presetButtons = ArrayList<Pair<StylePreset, TextView>>()
+    /** The "스타일" presets, re-marked after every change (a tweak can make the settings match / leave a preset). */
+    private var presets: CompactSegments? = null
     /** "내 스타일 ▾": the matching saved style's name (inverted), else "내 스타일". */
     private var userButton: TextView? = null
+    /** "상태 표시" views that follow the settings (built with 더보기; null until then). */
+    private var statusSizeRow: View? = null
+    private var statusFitNote: View? = null
+    /** "외톨이 줄 방지" summary: its wording follows "페이지 나눔". */
+    private var widowSummary: TextView? = null
 
     fun show() {
         current?.get()?.dismiss()
@@ -108,20 +125,11 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         val screenW = root.width.takeIf { it > 0 } ?: dm.widthPixels
         val screenH = root.height.takeIf { it > 0 } ?: dm.heightPixels
         popupWidth = PopupGeometry.width(screenW, dm.density)
-        // The popup is a live preview: every change re-lays out the page, so as much of the page as possible must
-        // stay in view. Unless the bars are pinned (then the page is laid out between them and hiding them would
-        // re-lay it out), the reader's bars are hidden and the popup takes the top bar's place, leaving the lower
-        // half of the page visible instead of a strip between the popup and the bottom bar.
-        val hideBars = true
-        var anchorBottom = ctx.dp(56)
-        if (hideBars) {
-            anchorBottom = Overlay.topInset(root)
-        } else if (anchor.isAttachedToWindow && anchor.height > 0) {
-            val loc = IntArray(2)
-            anchor.getLocationInWindow(loc)
-            anchorBottom = loc[1] + anchor.height
-        }
-        val place = PopupGeometry.settings(screenH, anchorBottom, dm.density)
+        // The popup is a live preview: every change re-lays out (or repaints) the page, so as much of the page as
+        // possible must stay in view. The reader's bars are hidden (pinned chrome is gone, U §2.6: the page never
+        // changes size for them) and the popup sits 8 dp under the status bar, leaving the lower part of the page
+        // visible.
+        val place = PopupGeometry.settings(screenH, Overlay.topInset(root), dm.density)
 
         scroll = MaxHeightScrollView(ctx, place.height).apply { isVerticalScrollBarEnabled = true }
         scroll.addView(buildContent(), FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
@@ -139,24 +147,33 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                 flush()
                 flushTxt()
                 scope.cancel()
-                presetButtons.clear()
-                userButton = null
-                txtActionLabels.clear()
+                clearViews()
                 if (current?.get() === this@ReadingSettingsPopup) current = null
             }
         }
         popup = pw
         try {
             // Same UI message as the popup: one e-ink update for both.
-            if (hideBars) runCatching { host.setChromeVisible(false) }
-            pw.showAtLocation(root, Gravity.TOP or Gravity.END, ctx.dp(4), place.top)
+            runCatching { host.setChromeVisible(false) }
+            pw.showAtLocation(root, Gravity.TOP or Gravity.CENTER_HORIZONTAL, 0, place.top)
             PanelRegistry.popup(ctx, pw)
         } catch (e: RuntimeException) {
             // BadTokenException / IllegalStateException: the reader window is going away.
             popup = null
             scope.cancel()
+            clearViews()
             if (current?.get() === this) current = null
         }
+    }
+
+    /** Drops the references to the popup's views (it is gone; nothing may update them any more). */
+    private fun clearViews() {
+        presets = null
+        userButton = null
+        statusSizeRow = null
+        statusFitNote = null
+        widowSummary = null
+        txtActionLabels.clear()
     }
 
     fun dismiss() {
@@ -173,6 +190,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         cur = new
         dirty = true
         refreshPresets()
+        refreshStatus()
         handler.removeCallbacks(applyRunnable)
         when {
             reparse -> handler.postDelayed(applyRunnable, PARSE_DEBOUNCE_MS)
@@ -249,10 +267,24 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     }
 
     private fun refreshPresets() {
-        if (presetButtons.isEmpty()) return
-        val sel = StyleChoice.selected(cur)
-        for ((p, v) in presetButtons) setCompactToggle(v, p == sel)
+        val segs = presets ?: return
+        segs.select(StyleChoice.selected(cur)?.ordinal ?: -1)
         userButton?.let { markUserButton(it, StyleChoice.selectedUser(cur, Settings.userStyles)) }
+    }
+
+    /** The "상태 표시" rows that depend on other settings: 상태 글자 크기 and the fit note (margins, size, slots). */
+    private fun refreshStatus() {
+        statusSizeRow?.let { setShown(it, StatusUi.showsSize(cur)) }
+        statusFitNote?.let { setShown(it, StatusUi.showsFitNote(cur)) }
+        widowSummary?.let { v ->
+            val text = StatusUi.widowSummary(cur.pageBreak)
+            if (v.text.toString() != text) v.text = text
+        }
+    }
+
+    private fun setShown(v: View, shown: Boolean) {
+        val vis = if (shown) View.VISIBLE else View.GONE
+        if (v.visibility != vis) v.visibility = vis
     }
 
     /** Applies saved style [u] (a pending stepper change first), like a preset: one re-layout. */
@@ -270,8 +302,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     // ------------------------------------------------------------------ content
 
     private fun buildContent(): LinearLayout {
-        presetButtons.clear()
-        txtActionLabels.clear()
+        clearViews()
         val root = ctx.vertical { setBackgroundColor(Ink.WHITE) }
         root.addView(styleRow(), lp())
         addTypography(root)
@@ -287,21 +318,23 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         row.addView(ctx.label("스타일", Compact.LABEL_SP, maxLines = 1).apply {
             setAutoSizeTextTypeUniformWithConfiguration(9, Compact.LABEL_SP.toInt(), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }, lp(0, WRAP_CONTENT, 1f))
-        val sel = StyleChoice.selected(cur)
-        for (p in StylePreset.entries) {
-            val b = ctx.compactToggle(p.label, p == sel) { applyPreset(p) }
-            b.minWidth = ctx.dp(40)
-            b.setAutoSizeTextTypeUniformWithConfiguration(9, Compact.TOGGLE_SP.toInt(), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
-            b.contentDescription = "${p.label}: ${p.description}"
-            b.setOnLongClickListener { ctx.toast(p.description); true }
-            presetButtons += p to b
-            row.addView(b, LinearLayout.LayoutParams(ctx.dp(52), WRAP_CONTENT).apply { leftMargin = ctx.dp(4) })
+        val segs = CompactSegments(ctx, StylePreset.entries.map { it.label }, StyleChoice.selected(cur)?.ordinal ?: -1) { i ->
+            applyPreset(StylePreset.entries[i])
         }
+        StylePreset.entries.forEachIndexed { i, p ->
+            segs.cell(i).apply {
+                setAutoSizeTextTypeUniformWithConfiguration(9, Compact.TOGGLE_SP.toInt(), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+                contentDescription = "${p.label}: ${p.description}"
+                setOnLongClickListener { ctx.toast(p.description); true }
+            }
+        }
+        presets = segs
+        row.addView(segs.view, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = ctx.dp(4) })
         // The saved styles are read (parsed) here, on the popup's first use: never on the reader's cold start.
         val mine = ctx.label(StyleChoice.USER_LABEL, Compact.TOGGLE_SP, maxLines = 1).apply {
             setAutoSizeTextTypeUniformWithConfiguration(9, Compact.TOGGLE_SP.toInt(), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
             gravity = Gravity.CENTER
-            minHeight = ctx.dp(28)
+            minHeight = ctx.dp(Compact.TOGGLE_DP)
             setPadding(ctx.dp(6), 0, ctx.dp(2), 0)
             compoundDrawablePadding = 0
             ctx.getDrawable(R.drawable.ic_arrow_drop_down)?.mutate()?.let { d ->
@@ -314,7 +347,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         userButton = mine
         markUserButton(mine, StyleChoice.selectedUser(cur, Settings.userStyles))
         // Fixed width: a long style name is cut ("…"), and choosing a style never moves the presets.
-        row.addView(mine, LinearLayout.LayoutParams(ctx.dp(USER_BUTTON_DP), WRAP_CONTENT).apply { leftMargin = ctx.dp(4) })
+        row.addView(mine, LinearLayout.LayoutParams(ctx.dp(USER_BUTTON_DP), WRAP_CONTENT).apply { leftMargin = ctx.dp(6) })
         return row
     }
 
@@ -430,32 +463,48 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         root.addView(stepperRow("들여쓰기", cur.indentPct.toFloat(), 0f, 400f, 25f, { Fmt.em(it.toInt()) }) {
             update(cur.copy(indentPct = it.toInt()), debounce = true)
         })
-        root.addView(segmentRow("정렬", listOf("왼쪽" to Align.LEFT, "양쪽" to Align.JUSTIFY), cur.align) {
-            update(cur.copy(align = it))
-        })
-        root.addView(segmentRow("줄바꿈", listOf("어절" to LineBreakMode.WORD, "글자" to LineBreakMode.CHAR), cur.lineBreak) {
-            update(cur.copy(lineBreak = it))
-        })
+        root.addView(alignBreakRow())
     }
 
-    /** "더보기 ▾" / "접기 ▴": shows the rest of the settings (built on first expand; remembered for the process). */
+    /**
+     * "정렬 [왼쪽│양쪽]   줄바꿈 [어절│글자]" (U polish 8): both choices on one row, so the main section is 9 rows. Each
+     * label sits right before its control; the row is split in two equal halves so the controls never move.
+     */
+    private fun alignBreakRow(): LinearLayout {
+        val row = ctx.compactRow()
+        val aligns = listOf(Align.LEFT, Align.JUSTIFY)
+        val breaks = listOf(LineBreakMode.WORD, LineBreakMode.CHAR)
+        fun half(title: String, segs: CompactSegments, gap: Int): LinearLayout = ctx.horizontal {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(ctx.label(title, Compact.LABEL_SP, maxLines = 1), lp(0, WRAP_CONTENT, 1f))
+            addView(segs.view, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = ctx.dp(6); rightMargin = gap })
+        }
+        val align = CompactSegments(ctx, listOf("왼쪽", "양쪽"), aligns.indexOf(cur.align)) { update(cur.copy(align = aligns[it])) }
+        val brk = CompactSegments(ctx, listOf("어절", "글자"), breaks.indexOf(cur.lineBreak)) { update(cur.copy(lineBreak = breaks[it])) }
+        align.view.contentDescription = "정렬"
+        brk.view.contentDescription = "줄바꿈"
+        row.addView(half("정렬", align, ctx.dp(12)), lp(0, WRAP_CONTENT, 1f))
+        row.addView(half("줄바꿈", brk, ctx.dp(4)), lp(0, WRAP_CONTENT, 1f))
+        return row
+    }
+
+    /**
+     * "더보기 ›" / "접기": shows the rest of the settings (built on first expand; remembered for the process). Label and
+     * chevron only, under a black group line.
+     */
     private fun moreRow(more: LinearLayout): LinearLayout {
         lateinit var text: TextView
         lateinit var arrow: ImageView
-        val row = ctx.compactRow {
+        val row = ctx.compactRow(strongLine = true) {
             moreExpanded = !moreExpanded
             if (moreExpanded && more.childCount == 0) fillMore(more)
             more.visibility = if (moreExpanded) View.VISIBLE else View.GONE
             text.text = if (moreExpanded) "접기" else "더보기"
-            arrow.setImageResource(if (moreExpanded) R.drawable.ic_expand_less else R.drawable.ic_expand_more)
+            arrow.setImageResource(if (moreExpanded) R.drawable.ic_expand_less else R.drawable.ic_chevron_right)
         }
         text = ctx.label(if (moreExpanded) "접기" else "더보기", Compact.LABEL_SP, bold = true)
-        row.addView(text)
-        val kinds = if (showTxt()) "TXT · EPUB" else "EPUB"
-        row.addView(ctx.label("화면 터치 · 여백 · 상태 표시 · $kinds", Compact.SUMMARY_SP, color = Ink.GRAY, maxLines = 1).apply {
-            setPadding(ctx.dp(10), 0, ctx.dp(4), 0)
-        }, lp(0, WRAP_CONTENT, 1f))
-        arrow = ctx.icon(if (moreExpanded) R.drawable.ic_expand_less else R.drawable.ic_expand_more, 22)
+        row.addView(text, lp(0, WRAP_CONTENT, 1f))
+        arrow = ctx.icon(if (moreExpanded) R.drawable.ic_expand_less else R.drawable.ic_chevron_right, 22)
         row.addView(arrow)
         return row
     }
@@ -474,7 +523,9 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             addEpub(root)
             if (showTxt()) addTxt(root)
         }
+        addStatus(root)
         addFooter(root)
+        refreshStatus()
     }
 
     /**
@@ -486,6 +537,19 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     private fun addPageTurning(root: LinearLayout) {
         val app = Settings.app
         root.addView(ctx.compactHeader("페이지 넘김"), lp())
+        root.addView(dropdownRow("넘기는 방식", app.readMode.label) { row, value ->
+            val mode = Settings.app.readMode
+            list(row, ReadMode.entries.map { m ->
+                ListEntry(readModeLabel(m), checked = m == mode) {
+                    if (Settings.app.readMode == m) return@ListEntry
+                    // AppSettings only (never a relayout): the open book switches mode behind the popup.
+                    Settings.saveApp(Settings.app.copy(readMode = m))
+                    value.text = m.label
+                    // Resolve AUTO's e-ink / phone choice before the first scroll gesture (IO, result cached).
+                    if (m == ReadMode.SCROLL) DeviceClass.probeAsync(ctx.applicationContext) { }
+                }
+            })
+        })
         root.addView(dropdownRow("화면 터치", tapModeShort(app.tapZoneMode)) { row, value ->
             val mode = Settings.app.tapZoneMode
             list(row, TapZoneMode.entries.map { m ->
@@ -514,29 +578,106 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
     private fun addPage(root: LinearLayout) {
         root.addView(ctx.compactHeader("페이지"), lp())
-        val marginH = stepperRow("좌우 여백", cur.marginLeftDp.toFloat(), 0f, 80f, 2f, { "${it.toInt()}dp" }) {
-            update(cur.copy(marginLeftDp = it.toInt(), marginRightDp = it.toInt()), debounce = true)
+        // "0" = 40 dp (S §2.4, A §3.3); stored values stay actual dp. The value is a live region: TalkBack speaks "−10".
+        val marginH = stepperRow("좌우 여백", SideMargin.toUi(cur.marginLeftDp).toFloat(), SideMargin.UI_MIN.toFloat(),
+            SideMargin.UI_MAX.toFloat(), SideMargin.UI_STEP.toFloat(), { Fmt.signed(it.toInt()) }, liveRegion = true) {
+            val dp = SideMargin.toDp(it.toInt())
+            update(cur.copy(marginLeftDp = dp, marginRightDp = dp), debounce = true)
         }
-        val marginV = stepperRow("상하 여백", cur.marginTopDp.toFloat(), 0f, 80f, 2f, { "${it.toInt()}dp" }) {
-            update(cur.copy(marginTopDp = it.toInt(), marginBottomDp = it.toInt()), debounce = true)
+        val marginV = stepperRow("상하 여백", VerticalMargin.toUi(cur.marginTopDp).toFloat(), VerticalMargin.UI_MIN.toFloat(),
+            VerticalMargin.UI_MAX.toFloat(), VerticalMargin.UI_STEP.toFloat(), { Fmt.signed(it.toInt()) }, liveRegion = true) {
+            val dp = VerticalMargin.toDp(it.toInt())
+            update(cur.copy(marginTopDp = dp, marginBottomDp = dp), debounce = true)
         }
-        root.addView(switchRow("페이지 여백", cur.pageMargins) { v ->
-            update(cur.copy(pageMargins = v))
-            marginH.visibility = if (v) View.VISIBLE else View.GONE
-            marginV.visibility = if (v) View.VISIBLE else View.GONE
-        })
         marginH.visibility = if (cur.pageMargins) View.VISIBLE else View.GONE
         marginV.visibility = if (cur.pageMargins) View.VISIBLE else View.GONE
         root.addView(marginH)
         root.addView(marginV)
-
-        root.addView(stepperRow("상태 표시 글자 크기", cur.statusFontSizeSp, 8f, 16f, 0.5f, Fmt::number) {
-            update(cur.copy(statusFontSizeSp = it), debounce = true)
+        root.addView(switchRow("페이지 여백", cur.pageMargins) { v ->
+            marginH.visibility = if (v) View.VISIBLE else View.GONE
+            marginV.visibility = if (v) View.VISIBLE else View.GONE
+            update(cur.copy(pageMargins = v))
         })
         root.addView(switchRow("흑백 반전", cur.invert, "검은 바탕에 흰 글씨") { v -> update(cur.copy(invert = v)) })
-        root.addView(switchRow("외톨이 줄 방지", cur.widowOrphanControl, "문단의 첫 줄/마지막 줄이 홀로 남지 않게") { v ->
-            update(cur.copy(widowOrphanControl = v))
+        // A relayout (the page keeps its first character), applied at once: not debounced.
+        val breaks = listOf(PageBreakMode.LINE, PageBreakMode.PARAGRAPH)
+        root.addView(segmentRow("페이지 나눔", listOf("줄 단위", "문단 단위"), breaks.indexOf(cur.pageBreak)) {
+            update(cur.copy(pageBreak = breaks[it]))
         })
+        val widow = switchRow("외톨이 줄 방지", cur.widowOrphanControl, StatusUi.widowSummary(cur.pageBreak)) { v ->
+            update(cur.copy(widowOrphanControl = v))
+        }
+        widowSummary = ((widow.getChildAt(0) as? LinearLayout)?.getChildAt(1)) as? TextView
+        root.addView(widow)
+    }
+
+    /**
+     * "상태 표시" (U §5.5, A §2.7): 위 / 아래 [slot][slot][slot], 진행 막대, 상태 글자 크기 (only while a band has text),
+     * and the grey fit note while a band's margin is too small. Every change here only repaints the page.
+     */
+    private fun addStatus(root: LinearLayout) {
+        root.addView(ctx.compactHeader("상태 표시"), lp())
+        root.addView(slotRow(0))
+        root.addView(slotRow(1))
+        root.addView(switchRow("진행 막대", cur.progressBar, StatusUi.PROGRESS_SUMMARY) { v -> update(cur.copy(progressBar = v)) })
+        val size = stepperRow("상태 글자 크기", cur.statusFontSizeSp, 8f, 16f, 0.5f, Fmt::number) {
+            update(cur.copy(statusFontSizeSp = it), debounce = true)
+        }
+        statusSizeRow = size
+        root.addView(size)
+        val note = ctx.label(StatusUi.FIT_NOTE, Compact.SUMMARY_SP, color = Ink.GRAY).apply {
+            setPadding(ctx.dp(Compact.PAD_DP), ctx.dp(6), ctx.dp(Compact.PAD_DP), ctx.dp(8))
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        statusFitNote = note
+        root.addView(note, lp())
+    }
+
+    /** "위" / "아래" and its three slot buttons (44 dp touch targets, 36 dp boxes; dashed "없음" when empty). */
+    private fun slotRow(band: Int): LinearLayout {
+        val row = ctx.compactRow()
+        row.addView(ctx.label(StatusUi.bandWord(band), Compact.LABEL_SP, maxLines = 1), LinearLayout.LayoutParams(ctx.dp(40), WRAP_CONTENT))
+        for (pos in 0..2) {
+            val cell = ctx.label("", Compact.TOGGLE_SP, maxLines = 1).apply {
+                gravity = Gravity.CENTER
+                ellipsize = TextUtils.TruncateAt.END
+                minHeight = ctx.dp(Compact.ROW_DP)
+                setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
+            }
+            markSlot(cell, band, pos, cur.slot(band, pos))
+            cell.setOnClickListener { chooseSlot(cell, band, pos) }
+            row.addView(cell, lp(0, ctx.dp(Compact.ROW_DP), 1f).apply { if (pos > 0) leftMargin = ctx.dp(4) })
+        }
+        return row
+    }
+
+    private fun markSlot(cell: TextView, band: Int, pos: Int, item: StatusItem) {
+        val empty = item == StatusItem.NONE
+        cell.text = item.short
+        cell.setTextColor(if (empty) Ink.GRAY else Ink.BLACK)
+        val box = GradientDrawable().apply {
+            setColor(Ink.WHITE)
+            if (empty) setStroke(ctx.dp(1).coerceAtLeast(1), Ink.GRAY, ctx.dpF(3f), ctx.dpF(2f))
+            else setStroke(ctx.dp(1).coerceAtLeast(1), Ink.LINE)
+        }
+        cell.background = InsetDrawable(box, 0, ctx.dp(4), 0, ctx.dp(4))
+        cell.contentDescription = StatusUi.slotDescription(band, pos, item)
+    }
+
+    /** The item chooser of one slot: live samples from the reader ([StatusSampleHost]) or each item's example. */
+    private fun chooseSlot(cell: TextView, band: Int, pos: Int) {
+        val now = cur.slot(band, pos)
+        val samples = host as? StatusSampleHost
+        val entries = StatusItem.entries.map { item ->
+            val note = if (item == StatusItem.NONE) null else runCatching { samples?.statusSample(item) }.getOrNull() ?: item.example
+            ListEntry(item.label, checked = item == now, note = note) {
+                if (popup?.isShowing != true || cur.slot(band, pos) == item) return@ListEntry
+                markSlot(cell, band, pos, item)
+                update(cur.withSlot(band, pos, item))
+            }
+        }
+        CompactList.show(ctx, cell, entries, maxOf(ctx.dp(220), cell.width).coerceAtMost(popupWidth),
+            maxHeightFraction = PopupGeometry.TALL_LIST_FRACTION)
     }
 
     private fun addTxt(root: LinearLayout) {
@@ -562,8 +703,9 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         root.addView(switchRow("원본 들여쓰기 제거", txt.txtStripIndent, "파일의 앞 공백 대신 들여쓰기 설정 사용") { v ->
             updateTxt(txt.copy(txtStripIndent = v))
         })
-        root.addView(segmentRow("끊어진 줄 합치기", listOf(joinLabel(1) to 1, joinLabel(2) to 2, joinLabel(0) to 0), txt.txtJoinWrappedLines) {
-            updateTxt(txt.copy(txtJoinWrappedLines = it))
+        val joins = listOf(1, 2, 0)
+        root.addView(segmentRow("끊어진 줄 합치기", joins.map { joinLabel(it) }, joins.indexOf(txt.txtJoinWrappedLines)) {
+            updateTxt(txt.copy(txtJoinWrappedLines = joins[it]))
         })
         root.addView(switchRow("챕터 자동 인식", txt.txtDetectChapters, "목차 만들기 (1화, 제1장, 프롤로그 …)") { v ->
             updateTxt(txt.copy(txtDetectChapters = v))
@@ -707,7 +849,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         return row
     }
 
-    /** Label left, "−  value  +" right (36 dp buttons) on the same row. */
+    /** Label left, "−  value  +" right (44 dp buttons) on the same row. */
     private fun stepperRow(
         title: String,
         value: Float,
@@ -715,12 +857,17 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         max: Float,
         step: Float,
         format: (Float) -> String,
+        liveRegion: Boolean = false,
         onChange: (Float) -> Unit,
     ): LinearLayout {
         var v = value
         val row = ctx.compactRow()
         row.addView(ctx.compactLabelBlock(title), lp(0, WRAP_CONTENT, 1f))
-        val valueView = ctx.label(format(v), Compact.VALUE_SP, maxLines = 1).apply { gravity = Gravity.CENTER }
+        val valueView = ctx.label(format(v), Compact.VALUE_SP, maxLines = 1).apply {
+            gravity = Gravity.CENTER
+            // TalkBack speaks the new value after a tap ("−10") instead of nothing.
+            if (liveRegion) accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
         // Fixed width for the widest possible value (at least the common column width): the − / + buttons stay put
         // while tapping repeatedly, and line up with the other rows' buttons.
         valueView.lockWidthForValues(min, max, step, format, minPx = ctx.dp(Compact.STEP_VALUE_DP))
@@ -737,26 +884,15 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         return row
     }
 
-    /** Label left, one inverted toggle per option right (single choice). */
-    private fun <T> segmentRow(title: String, options: List<Pair<String, T>>, selected: T, onPick: (T) -> Unit): LinearLayout {
+    /** Label left, a joined segmented control right (single choice; [selected] is an index of [options]). */
+    private fun segmentRow(title: String, options: List<String>, selected: Int, onPick: (Int) -> Unit): LinearLayout {
         val row = ctx.compactRow()
         row.addView(ctx.compactLabelBlock(title), lp(0, WRAP_CONTENT, 1f))
-        val views = ArrayList<TextView>(options.size)
-        options.forEachIndexed { i, (text, value) ->
-            val b = ctx.compactToggle(text, value == selected) {
-                views.forEachIndexed { j, t -> setCompactToggle(t, j == i) }
-                onPick(value)
-            }
-            views += b
-            row.addView(b, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = ctx.dp(4) })
-        }
+        val segs = CompactSegments(ctx, options, selected, onPick)
+        segs.view.contentDescription = title
+        row.addView(segs.view, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = ctx.dp(8); rightMargin = ctx.dp(4) })
         return row
     }
-
-
-
-    /** "남은 시간" (T1-7): [끔] [이 화] [책], indented like the status items above and below it. */
-
 
     private fun footerButton(text: String, onClick: (View) -> Unit): TextView = ctx.label(text, Compact.LABEL_SP, bold = true).apply {
         gravity = Gravity.CENTER
@@ -834,6 +970,12 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             TapZoneMode.ALL_PREV -> "어디든 이전"
             TapZoneMode.TOP_BOTTOM -> "위아래"
             TapZoneMode.CUSTOM -> "사용자 지정"
+        }
+
+        /** The 넘기는 방식 list entries (S §1.2); the row value is [ReadMode.label]. */
+        fun readModeLabel(m: ReadMode): String = when (m) {
+            ReadMode.PAGED -> "페이지 넘김 (기본)"
+            ReadMode.SCROLL -> "스크롤 (위아래로 내려 읽기)"
         }
 
         fun alignLabel(a: Align): String = if (a == Align.LEFT) "왼쪽 정렬" else "양쪽 정렬"
