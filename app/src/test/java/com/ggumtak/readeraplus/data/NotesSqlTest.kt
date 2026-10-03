@@ -174,6 +174,10 @@ class NotesSqlTest {
         assertArgs(q)
         val one = NotesSql.bookPage(NotesQuery(NotesTab.QUOTES, NotesOrder.BOOK_RECENT), listOf(3L), 50, 0)
         assertTrue(one.sql.contains("q.book_id = ?"))
+        // L1 groups words first, then keeps the page's books.
+        val once = NotesSql.bookPage(NotesQuery(NotesTab.WORDS, NotesOrder.BOOK_TITLE, wordsOnce = true), listOf(1L, 2L), 50, 0)
+        assertTrue(once.sql, once.sql.contains("GROUP BY l.word_key) WHERE b IN (?, ?)"))
+        assertArgs(once)
     }
 
     @Test

@@ -76,9 +76,13 @@ internal object NotesSql {
      */
     internal fun arm(
         a: Arm, scan: Boolean, sb: StringBuilder, args: MutableList<String>,
-        book: List<Long>?, style: Int?, pats: List<String>,
+        book: List<Long>?, style: Int?, pats: List<String>, pageBooks: List<Long>? = null,
     ) {
         val x = a.alias
+        // L1 groups words before the page's books are picked: the latest lookup of a word stays the same row on
+        // every page (the book list counts it under that row's book).
+        val wrap = a == Arm.L1 && pageBooks != null
+        if (wrap) sb.append("SELECT k, id, b, t, s, o").append(if (scan) ", n, st" else "").append(" FROM (")
         sb.append("SELECT ").append(a.k).append(" AS k, ")
         when (a) {
             Arm.Q, Arm.QM -> sb.append("q.id AS id, q.book_id AS b, q.created_at AS t, q.section AS s, q.start_offset AS o")
@@ -134,6 +138,11 @@ internal object NotesSql {
             }
         }
         if (a == Arm.L1) sb.append(" GROUP BY l.word_key")
+        if (pageBooks != null) {
+            if (wrap) sb.append(") WHERE b") else sb.append(" AND ").append(x).append(if (a == Arm.R) ".id" else ".book_id")
+            if (pageBooks.size == 1) sb.append(" = ?") else inList(sb, pageBooks.size)
+            for (id in pageBooks) args += id.toString()
+        }
     }
 
     private fun inList(sb: StringBuilder, n: Int) {
@@ -144,11 +153,11 @@ internal object NotesSql {
 
     private fun union(
         arms: List<Arm>, scan: Boolean, sb: StringBuilder, args: MutableList<String>,
-        book: List<Long>?, style: Int?, pats: List<String>,
+        book: List<Long>?, style: Int?, pats: List<String>, pageBooks: List<Long>? = null,
     ) {
         for (i in arms.indices) {
             if (i > 0) sb.append(" UNION ALL ")
-            arm(arms[i], scan, sb, args, book, style, pats)
+            arm(arms[i], scan, sb, args, book, style, pats, pageBooks)
         }
     }
 
@@ -213,14 +222,15 @@ internal object NotesSql {
      * book's inner offset). The outer SELECT is required: a compound SELECT's ORDER BY may not hold an expression.
      *
      * PLAN: `SEARCH q USING INDEX quotes_book (book_id=?)` (bookmarks_book, lookups_book; reviews by PK) per arm, then
-     * one temp B-tree over those books' rows.
+     * one temp B-tree over those books' rows. WORDS once (L1): `SCAN l USING INDEX lookups_word` (words are grouped over
+     * all books first, then filtered to the page's books) + the temp B-tree.
      */
     fun bookPage(q: NotesQuery, bookIds: List<Long>, limit: Int, offset: Int): SqlQuery {
         require(bookIds.isNotEmpty())
         val sb = StringBuilder(1024)
         val args = ArrayList<String>(bookIds.size * 5 + 4)
         sb.append("SELECT * FROM (")
-        union(arms(q), false, sb, args, bookIds, styleFilter(q), patterns(q.text))
+        union(arms(q), false, sb, args, q.bookId?.let { listOf(it) }, styleFilter(q), patterns(q.text), bookIds)
         sb.append(") ORDER BY CASE b")
         for (i in bookIds.indices) {
             sb.append(" WHEN ? THEN ").append(i)
