@@ -49,6 +49,8 @@ object NotesExport {
 
     /** Receives the text. [head] is committed together with the next [item] (a cap never leaves a bare heading). */
     internal abstract class Sink {
+        /** The file header: always kept. */
+        open fun lead(text: CharSequence) = head(text)
         abstract fun head(text: CharSequence)
         /** Returns false when the sink is full: nothing more is written. */
         abstract fun item(text: CharSequence): Boolean
@@ -67,6 +69,7 @@ object NotesExport {
         private val pending = StringBuilder()
         var full = false; private set
 
+        override fun lead(text: CharSequence) { this.text.append(text) }
         override fun head(text: CharSequence) { if (!full) pending.append(text) }
         override fun item(text: CharSequence): Boolean {
             if (full) return false
@@ -162,9 +165,9 @@ object NotesExport {
         val counts = "책 ${summary.books}권 · 인용문 ${c.quotes} · 메모 ${c.memos} · 북마크 ${c.bookmarks} · " +
             "리뷰 ${c.reviews} · 단어 ${c.words}"
         if (md) {
-            sink.head("# 독서 노트\n\n- 내보낸 날짜: ${time(now, cal)}\n- 범위: $scope\n- $counts\n")
+            sink.lead("# 독서 노트\n\n- 내보낸 날짜: ${time(now, cal)}\n- 범위: $scope\n- $counts\n")
         } else {
-            sink.head("독서 노트\n내보낸 날짜: ${time(now, cal)}\n범위: $scope\n$counts\n")
+            sink.lead("독서 노트\n내보낸 날짜: ${time(now, cal)}\n범위: $scope\n$counts\n")
         }
         var written = 0
         val sb = StringBuilder(1024)
@@ -374,7 +377,7 @@ object NotesExport {
     /**
      * Markdown escaping of book- and user-derived text (N §5.7, hub.md §10.1): normalised; every line's leading spaces
      * and tabs stripped (no indented code block); a backslash before `` \ ` * _ [ ] < > # | ~ = $ % & ``; at a line
-     * start also before `-`, `+` and the `.` / `)` of "N." / "N)".
+     * start also before `-`, `+` and the `.` / `)` of "N. " / "N)" (followed by a space or the line end).
      */
     internal fun md(text: String): String {
         val n = norm(text)
@@ -399,7 +402,8 @@ object NotesExport {
         } else {
             var d = i
             while (d < line.length && line[d] in '0'..'9') d++
-            if (d > i && d < line.length && (line[d] == '.' || line[d] == ')')) {
+            // "N." / "N)" open an ordered list only when a space or the line end follows ("1.5배" stays).
+            if (d > i && d < line.length && (line[d] == '.' || line[d] == ')') && (d + 1 == line.length || line[d + 1] == ' ')) {
                 sb.append(line, i, d).append('\\').append(line[d]); i = d + 1
             }
         }
