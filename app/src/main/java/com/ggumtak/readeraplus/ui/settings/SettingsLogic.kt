@@ -1,9 +1,12 @@
 package com.ggumtak.readeraplus.ui.settings
 
+import com.ggumtak.readeraplus.data.AutoBackup
+import com.ggumtak.readeraplus.engine.PageBreakMode
 import com.ggumtak.readeraplus.reader.extras.VoiceChoice
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.render.DeviceCleanInfo
+import com.ggumtak.readeraplus.render.StatusFit
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_MODE_FAST
 import com.ggumtak.readeraplus.settings.EINK_MODE_HD
@@ -14,7 +17,17 @@ import com.ggumtak.readeraplus.settings.EINK_REFRESH_AUTO
 import com.ggumtak.readeraplus.settings.EINK_REFRESH_CLEAN
 import com.ggumtak.readeraplus.settings.EINK_REFRESH_FLASH
 import com.ggumtak.readeraplus.settings.EINK_REFRESH_GC16
+import com.ggumtak.readeraplus.settings.HL_LOOK_AUTO
+import com.ggumtak.readeraplus.settings.HL_LOOK_COLOR
+import com.ggumtak.readeraplus.settings.HL_LOOK_INK
+import com.ggumtak.readeraplus.settings.LIST_PAGING_AUTO
+import com.ggumtak.readeraplus.settings.LIST_PAGING_PAGED
+import com.ggumtak.readeraplus.settings.LIST_PAGING_SCROLL
+import com.ggumtak.readeraplus.settings.LibraryListMode
+import com.ggumtak.readeraplus.settings.ReadMode
 import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.ScrollStyle
+import com.ggumtak.readeraplus.settings.StatusItem
 import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -294,6 +307,241 @@ object SettingsFormat {
         val f = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = tz }
         return f.format(Date(millis))
     }
+}
+
+/**
+ * The R3 rows of the settings pages (scroll SPEC §1.2 / §3.8, UI_SPEC §4.6 / §5.5, anchor §2.7 / §4.4, NOTES §11):
+ * choices, labels, summaries and notes. "자동" choices show what they resolve to on this device; an unknown device
+ * class (null, before the probe) resolves like a phone, the same rule the reader and the library apply.
+ */
+object R3Rows {
+    // ---- 넘기는 방식 (scroll SPEC §1.2)
+
+    val READ_MODES: List<ReadMode> = listOf(ReadMode.PAGED, ReadMode.SCROLL)
+
+    fun readMode(m: ReadMode): String = if (m == ReadMode.SCROLL) "스크롤" else "페이지 넘김 (기본)"
+
+    const val READ_MODE_NOTE =
+        "스크롤에서도 화면 터치 · 볼륨 키 · 페이지 키는 한 화면씩 넘깁니다. 화면 아래에서 잘린 줄이 다음 화면의 첫 줄이 됩니다."
+
+    val SCROLL_STYLES: List<ScrollStyle> = listOf(ScrollStyle.AUTO, ScrollStyle.SMOOTH, ScrollStyle.STEP)
+
+    /** "자동 (이 기기: e-ink → 손을 떼면 이동)" / "손가락을 따라 이동 (휴대폰)" / "손을 떼면 이동 (e-ink)". */
+    fun scrollStyle(s: ScrollStyle, eink: Boolean?): String = when (s) {
+        ScrollStyle.AUTO -> auto(if (eink == true) "e-ink → ${ScrollStyle.STEP.label}" else "휴대폰 → ${ScrollStyle.SMOOTH.label}")
+        ScrollStyle.SMOOTH -> "${s.label} (휴대폰)"
+        ScrollStyle.STEP -> "${s.label} (e-ink)"
+    }
+
+    const val SWIPE_TURN = "좌우로 밀어서 페이지 넘김 (오른쪽→왼쪽 = 다음)"
+    const val SWIPE_TURN_SCROLL = "좌우로 밀면 한 화면씩"
+    const val VERTICAL_SWIPE = "위로 밀면 다음 페이지, 아래로 밀면 이전 페이지"
+    const val VERTICAL_SWIPE_SCROLL = "스크롤 모드에서는 쓰지 않음 (위아래로 끌면 스크롤)"
+
+    /** "자동 (이 기기: …)". */
+    fun auto(resolved: String): String = "자동 (이 기기: $resolved)"
+
+    // ---- 인용문 색 표시 / 목록 넘기기 / 서재 보기 (NOTES §11, §10.2)
+
+    val HL_LOOKS: List<Int> = listOf(HL_LOOK_AUTO, HL_LOOK_COLOR, HL_LOOK_INK)
+
+    fun highlightLook(v: Int, eink: Boolean?): String = when (v) {
+        HL_LOOK_COLOR -> "색"
+        HL_LOOK_INK -> "흑백 무늬"
+        else -> auto(if (eink == true) "흑백 무늬" else "색")
+    }
+
+    /** What [AppSettings.highlightLook] draws with on this device (true = the e-ink looks). */
+    fun inkLook(v: Int, eink: Boolean?): Boolean = v == HL_LOOK_INK || (v != HL_LOOK_COLOR && eink == true)
+
+    const val HL_LOOK_NOTE = "e-ink 화면에서는 색이 비슷한 회색으로 보여 무늬로 구분합니다 (노랑 = 회색+밑줄, 초록 = 옅은 회색+점선, " +
+        "파랑 = 회색, 빨강 = 진한 회색+굵은 밑줄, 보라 = 테두리, 밑줄 = 밑줄만)"
+
+    val LIST_PAGINGS: List<Int> = listOf(LIST_PAGING_AUTO, LIST_PAGING_PAGED, LIST_PAGING_SCROLL)
+
+    fun listPaging(v: Int, eink: Boolean?): String = when (v) {
+        LIST_PAGING_PAGED -> "쪽 단위"
+        LIST_PAGING_SCROLL -> "스크롤"
+        else -> auto(if (eink == true) "쪽 단위" else "스크롤")
+    }
+
+    const val LIST_PAGING_NOTE = "서재와 독서 노트를 한 화면씩 넘깁니다 (e-ink 권장)"
+
+    fun listPagingSummary(v: Int, eink: Boolean?): String = "${listPaging(v, eink)} · $LIST_PAGING_NOTE"
+
+    /** The "서재 보기" chooser (NOTES §10.2). */
+    fun libraryViewChoice(m: LibraryListMode): String = when (m) {
+        LibraryListMode.LIST -> "전체 — 표지 · 정보 · 버튼"
+        LibraryListMode.COMPACT -> "요약 — 작은 표지와 한 줄 정보"
+        LibraryListMode.GRID -> "썸네일 — 표지 3열"
+        LibraryListMode.COVERS -> "그리드 — 작은 표지 4열"
+    }
+
+    // ---- 페이지 표시 (scroll SPEC §2.4, anchor §3.3 / §4.4)
+
+    const val MARGIN_NOTE = "0이 기본 여백입니다. −로 좁히고 +로 넓힙니다. 위 · 아래 정보와 진행 막대는 이 여백 안에 표시됩니다."
+
+    val PAGE_BREAKS: List<PageBreakMode> = listOf(PageBreakMode.LINE, PageBreakMode.PARAGRAPH)
+
+    fun pageBreak(m: PageBreakMode): String = if (m == PageBreakMode.PARAGRAPH) "문단 단위" else "줄 단위"
+
+    fun pageBreakChoice(m: PageBreakMode): String =
+        if (m == PageBreakMode.PARAGRAPH) {
+            "문단 단위 — 한 쪽에 들어가는 문단은 나누지 않습니다. 쪽 아래가 비기도 합니다."
+        } else {
+            "줄 단위 (기본) — 쪽을 끝까지 채웁니다. 문단이 다음 쪽으로 이어질 수 있습니다."
+        }
+
+    // ---- 상태 표시줄 (UI_SPEC §5.5, anchor §2.7)
+
+    const val STATUS_NOTE = "위 · 아래 줄의 왼쪽 · 가운데 · 오른쪽에 보일 정보를 고르세요. 한 줄이 모두 '없음'이면 그 줄은 나타나지 않습니다."
+    const val PROGRESS_SUMMARY = "화면 맨 아래에 읽은 위치를 가는 선과 점으로 표시"
+    const val FIT_NOTE = "여백이 좁아 위 · 아래 정보가 보이지 않습니다. 상하 여백을 늘리세요."
+
+    /** Margin used for the bands while "페이지 여백" is off (anchor §2.7). */
+    const val NO_MARGIN_DP = 4
+
+    /** "위 · 왼쪽" … "아래 · 오른쪽" ([band] 0 = top, [pos] 0..2 = left, centre, right). */
+    fun slotTitle(band: Int, pos: Int): String =
+        (if (band == 0) "위" else "아래") + " · " + when (pos) { 0 -> "왼쪽"; 1 -> "가운데"; else -> "오른쪽" }
+
+    /** A slot chooser entry: "쪽 번호  (3 / 167)", or the bare label for items without an example. */
+    fun slotChoice(item: StatusItem): String = item.label + (item.example?.let { "  ($it)" } ?: "")
+
+    /** "상태 표시 글자 크기" matters only while a band shows text. */
+    fun hasStatusText(r: ReaderSettings): Boolean = r.hasHeader || r.hasFooterText
+
+    /** False when a band with items has no room in its margin (anchor §2.7: the grey note shows; nothing is disabled). */
+    fun statusFits(r: ReaderSettings): Boolean {
+        val top = if (r.pageMargins) r.marginTopDp else NO_MARGIN_DP
+        val bottom = if (r.pageMargins) r.marginBottomDp else NO_MARGIN_DP
+        if (r.hasHeader && !StatusFit.fitsDp(r.statusFontSizeSp, top, 0f)) return false
+        if (r.hasFooterText && !StatusFit.fitsDp(r.statusFontSizeSp, bottom, if (r.progressBar) StatusFit.LANE_DP else 0f)) return false
+        return true
+    }
+
+    // ---- brightness (UI_SPEC §4.4 / §4.6, brightness.md §5.2)
+
+    const val SWIPE_BRIGHTNESS = "화면 좌측을 위아래로 스와이프하여 밝기를 조절합니다"
+
+    /** "스와이프로 밝기 조절" summary; [none] = verdict NONE (the row is disabled). */
+    fun brightnessSwipe(scroll: Boolean, none: Boolean): String = when {
+        none -> "이 기기에서는 밝기 스와이프를 쓸 수 없습니다"
+        scroll -> "화면 왼쪽 끝(10%)을 위아래로 끌면 밝기 · 나머지는 스크롤"
+        else -> SWIPE_BRIGHTNESS
+    }
+
+    /** "기기 밝기 직접 조절" subtitle. */
+    fun brightnessDevice(on: Boolean, restore: Boolean, canWrite: Boolean, none: Boolean): String = when {
+        none -> "이 기기는 앱이 전면광을 바꿀 수 없습니다"
+        on && !canWrite -> "'시스템 설정 수정' 권한이 필요합니다 · 눌러서 허용"
+        !on -> "전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다"
+        restore -> "기기 전체 밝기를 바꿉니다 · 리더를 나가면 원래대로"
+        else -> "기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지"
+    }
+
+    const val BRIGHTNESS_RESTORE = "켜 두면 다른 앱과 서재는 원래 밝기를 씁니다. 끄면 리더에서 바꾼 밝기가 기기 밝기로 남습니다."
+    const val BRIGHTNESS_RESTORE_OFF = "'기기 밝기 직접 조절'을 켜면 쓸 수 있습니다"
+    const val VERDICT_RESET = "다음에 밝기를 조절할 때 어떤 방식이 되는지 다시 묻습니다"
+    const val LIGHT_SETTINGS = "밝기 · 색온도를 기기 설정에서 조절"
+
+    /** brightness.md §5.3, verbatim. */
+    const val DEVICE_DIALOG = "이 기기의 전면광은 앱 화면 밝기를 따르지 않을 수 있습니다.\n" +
+        "'시스템 설정 수정'을 허용하면 리더가 기기 밝기 설정을 직접 바꿉니다.\n\n" +
+        "· 기기 전체 밝기가 바뀝니다. 다른 앱에서도 같은 밝기가 보일 수 있습니다.\n" +
+        "· 리더를 나가면 원래 밝기로 되돌립니다. (설정에서 바꿀 수 있어요)\n" +
+        "· 다음 화면에서 ReaderaPlus를 찾아 허용을 켠 뒤 돌아오세요."
+
+    const val ADB_GRANT = "adb shell appops set com.ggumtak.readeraplus WRITE_SETTINGS allow"
+
+    /** brightness.md §5.5. */
+    const val NO_PERMISSION_SCREEN = "이 기기에는 '시스템 설정 수정' 화면이 없습니다. PC에 연결해 다음 명령으로 허용할 수 있습니다.\n$ADB_GRANT"
+
+    // ---- 자동 백업 (scroll SPEC §3.8, NOTES §11)
+
+    /** The toggle's summary; [lastAt] 0 = nothing written yet. */
+    fun autoBackupSummary(fullAccess: Boolean, location: String, lastAt: Long, tz: TimeZone = TimeZone.getDefault()): String =
+        if (fullAccess) {
+            "앱을 지워도 남는 곳에 저장 · $location" + if (lastAt > 0) " · 마지막: ${SettingsFormat.dateTime(lastAt, tz)}" else ""
+        } else {
+            "모든 파일 접근 권한이 없어 ${location}에 저장합니다. 다시 설치한 뒤에는 권한을 허용해야 자동으로 찾습니다."
+        }
+
+    /** The status line after "지금 자동 백업하기". */
+    fun autoBackupOutcome(o: AutoBackup.Outcome, location: String): String = when (o) {
+        AutoBackup.Outcome.WROTE -> "자동 백업을 저장했습니다 · $location"
+        AutoBackup.Outcome.UNCHANGED -> "지난 자동 백업과 같아 새로 저장하지 않았습니다"
+        AutoBackup.Outcome.NOT_DUE -> "오늘 이미 자동 백업했습니다"
+        AutoBackup.Outcome.DISABLED -> "자동 백업이 꺼져 있습니다"
+        AutoBackup.Outcome.NO_LOCATION -> "저장할 곳($location)을 쓸 수 없습니다"
+        AutoBackup.Outcome.BUSY -> "책을 읽는 중이라 저장하지 않았습니다. 잠시 뒤 다시 해 보세요"
+        AutoBackup.Outcome.SKIPPED_EMPTY -> "저장할 읽기 기록이 없습니다"
+        AutoBackup.Outcome.FAILED -> "자동 백업 실패"
+    }
+
+    /** One restore choice: "2026-09-30 08:12 · 책 12권 (읽던 책 3권) · 북마크 4개 · 인용문 5개 · 자동". */
+    fun candidate(createdAt: Long, s: AutoBackup.Summary, auto: Boolean, tz: TimeZone = TimeZone.getDefault()): String =
+        "${SettingsFormat.dateTime(createdAt, tz)} · 책 ${s.books}권 (읽던 책 ${s.read}권) · 북마크 ${s.bookmarks}개 · " +
+            "인용문 ${s.quotes}개 · " + if (auto) "자동" else "직접 내보냄"
+
+    /** "자동 백업 파일 지우기" confirm; [others] = this install may delete other installs' files too. */
+    fun deleteAutoFiles(n: Int, others: Boolean): String =
+        if (others) {
+            "자동 백업 파일 ${n}개를 지울까요? 이전 설치의 파일도 함께 지웁니다."
+        } else {
+            "이 설치에서 만든 자동 백업 파일 ${n}개를 지울까요? 이전 설치의 파일은 '모든 파일 접근'을 허용해야 지울 수 있습니다."
+        }
+
+    const val BACKUP_PRIVACY = "백업에는 책 제목 · 경로 · 읽은 기록 · 북마크 · 인용문 · 메모 · 리뷰 · 단어장이 들어 있습니다. " +
+        "공용 저장소에 있으므로 USB로 연결한 PC나 '모든 파일 접근' 권한이 있는 앱(Android 10 이하에서는 저장소 권한이 있는 앱)이 " +
+        "읽을 수 있고, 다운로드 폴더를 동기화하도록 설정한 앱이 있으면 그 앱이 올릴 수 있습니다. 이 앱은 인터넷으로 보내지 않습니다."
+
+    const val BACKUP_MERGE = "다른 기기에서 만든 백업을 복원하면 두 기기의 인용문·메모·북마크·단어장이 합쳐지고, 읽던 위치는 더 최근 것이 " +
+        "남습니다. 지워지는 것은 없습니다. 이 기기에 없는 책의 노트는 휴지통에 '(파일 없음)'으로 보관됩니다."
+
+    // ---- 단어장 (NOTES §11)
+
+    const val RECORD_LOOKUPS = "선택한 글자를 사전·번역·웹 검색으로 찾으면 단어장에 문장과 함께 남깁니다. 기기 안에만 저장됩니다"
+
+    fun clearLookups(n: Int): String = "찾아본 단어 ${n}개를 모두 지울까요?"
+}
+
+/**
+ * "설정 초기화" (MainPage, K12): back to the defaults except what took the user work to set up or is a privacy or
+ * device choice. Reader settings go to [ReaderSettings] defaults (40/40/40/40 margins, 줄 단위, the default status
+ * slots) but keep the TXT cleanup defaults; app settings keep the scan folders, the assigned keys, the library sort
+ * and view, 목록 넘기기, 자동 백업, 찾아본 단어 기록 and 기기 밝기 직접 조절.
+ */
+object SettingsReset {
+    const val MESSAGE = "글꼴 · 글자 크기 · 간격 · 여백과 넘김 · 화면 설정을 기본값으로 되돌릴까요?\n" +
+        "TXT 정리 설정 · 스캔 폴더 · 지정한 키 · 서재 정렬과 보기 · 목록 넘기기 · 자동 백업 · 찾아본 단어 기록 · " +
+        "기기 밝기 직접 조절은 그대로 둡니다."
+
+    const val SUMMARY = "읽기 · 넘김 · 화면 설정을 기본값으로 (TXT 정리 설정 · 스캔 폴더 · 키 지정 · 서재 · 백업 · 단어장 · 기기 밝기 설정은 유지)"
+
+    fun app(old: AppSettings): AppSettings = AppSettings().copy(
+        scanFolders = old.scanFolders,
+        excludedFolders = old.excludedFolders,
+        nextPageKeys = old.nextPageKeys,
+        prevPageKeys = old.prevPageKeys,
+        keyBindings = old.keyBindings,
+        librarySort = old.librarySort,
+        libraryListMode = old.libraryListMode,
+        listPaging = old.listPaging,
+        autoBackup = old.autoBackup,
+        recordLookups = old.recordLookups,
+        brightnessDevice = old.brightnessDevice,
+    )
+
+    fun reader(old: ReaderSettings): ReaderSettings = ReaderSettings().copy(
+        txtBlankLines = old.txtBlankLines,
+        txtStripIndent = old.txtStripIndent,
+        txtJoinWrappedLines = old.txtJoinWrappedLines,
+        txtDetectChapters = old.txtDetectChapters,
+        txtChapterRegex = old.txtChapterRegex,
+        txtEmphasizeHeadings = old.txtEmphasizeHeadings,
+        txtReplaceRules = old.txtReplaceRules,
+    )
 }
 
 /** The e-ink rows of "넘김·화면 설정" (T1-3): choices, labels and the device readout. */

@@ -4,7 +4,11 @@ import android.content.Intent
 import android.net.Uri
 import android.view.View
 import android.widget.LinearLayout
+import com.ggumtak.readeraplus.data.Lookups
+import com.ggumtak.readeraplus.data.NotesTab
 import com.ggumtak.readeraplus.settings.Settings
+import com.ggumtak.readeraplus.ui.kit.confirm
+import com.ggumtak.readeraplus.ui.notes.NotesActivity
 import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.toast
@@ -13,11 +17,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** "사전 · 번역 · 웹 검색": web search engine for selected text + installed PROCESS_TEXT apps (info). */
+/**
+ * "사전 · 번역 · 웹 검색": web search engine for selected text + installed PROCESS_TEXT apps (info), and the 단어장
+ * (whether lookups are recorded, the hub's 단어 tab, clearing it).
+ */
 internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_LOOKUP, "사전 · 번역 · 웹 검색") {
     private val engineRows = ArrayList<View>()
     private var customRow: View? = null
     private lateinit var appsBox: LinearLayout
+    private var recordRow: View? = null
+    private var clearing = false
+    /** Left the stack: a count that arrives later shows no dialog. */
+    private var destroyed = false
+
+    override fun onDestroy() {
+        destroyed = true
+    }
 
     override fun build(): View {
         val body = ctx.pageBody()
@@ -44,11 +59,44 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         body.addView(ctx.note("선택 메뉴의 '사전·번역'은 아래 앱들로 보냅니다 (글자 처리 기능을 지원하는 앱). 파파고, 구글 번역, 사전 앱 등을 설치하면 여기에 나타납니다."))
         appsBox = ctx.vertical().also(body::addView)
         loadApps()
+
+        // ---- 단어장 (NOTES §11)
+        body.section("단어장")
+        recordRow = ctx.toggleRow("찾아본 단어 기록", R3Rows.RECORD_LOOKUPS, Settings.app.recordLookups) { v ->
+            editApp { it.copy(recordLookups = v) }
+        }.also(body::addView)
+        body.addView(ctx.navRow("단어장 열기", "독서 노트의 '단어' 탭에서 찾아본 단어와 문장을 봅니다") {
+            NotesActivity.open(activity, NotesTab.WORDS)
+        })
+        body.addView(ctx.row("단어장 비우기", "찾아본 단어 기록을 모두 지웁니다") { clearWords() })
         return ctx.pageScroll(body)
+    }
+
+    /** The count is a DB read (IO); the clear runs on IO too. */
+    private fun clearWords() {
+        if (clearing) return
+        activity.scope.launch {
+            val n = withContext(Dispatchers.IO) { runCatching { Lookups.count() }.getOrDefault(0) }
+            if (destroyed) return@launch
+            if (n <= 0) {
+                ctx.toast("단어장이 비어 있습니다")
+                return@launch
+            }
+            ctx.confirm("단어장 비우기", R3Rows.clearLookups(n), ok = "비우기") {
+                if (clearing) return@confirm
+                clearing = true
+                activity.scope.launch {
+                    val ok = withContext(Dispatchers.IO) { runCatching { Lookups.clearAll() }.isSuccess }
+                    clearing = false
+                    ctx.toast(if (ok) "단어장을 비웠습니다" else "단어장을 비우지 못했습니다")
+                }
+            }
+        }
     }
 
     override fun onShown() {
         updateRadios()
+        recordRow?.setToggleChecked(Settings.app.recordLookups)
     }
 
     private fun setEngine(url: String) {

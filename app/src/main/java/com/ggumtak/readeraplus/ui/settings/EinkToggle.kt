@@ -17,8 +17,9 @@ import com.ggumtak.readeraplus.ui.kit.row
 /**
  * On/off toggle drawn in pure black and white that changes state instantly. The platform `Switch` used by
  * `ui.kit.switchRow` slides its thumb for 250 ms, plays an animated-selector transition and has a borderless
- * ripple background, which leave ghosting on e-ink. Off = outlined track with a hollow knob on the left;
- * on = black track with a white knob on the right. Not clickable itself: the row toggles it.
+ * ripple background, which leave ghosting on e-ink. Off = outlined white track with a filled black knob on the left
+ * (UI_SPEC §1.6, the same look as the kit's `InkToggle`); on = black track with a white knob on the right. Not
+ * clickable itself: the row toggles it.
  */
 internal class EinkToggle(context: Context) : View(context), Checkable {
     private var checkedState = false
@@ -67,8 +68,8 @@ internal class EinkToggle(context: Context) : View(context), Checkable {
         val kr = r - context.dpF(4f)
         val cx = if (checkedState) track.right - r else track.left + r
         val cy = track.centerY()
+        knob.color = if (checkedState) Ink.WHITE else Ink.BLACK
         canvas.drawCircle(cx, cy, kr, knob)
-        if (!checkedState) canvas.drawCircle(cx, cy, kr, outline)
     }
 
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {

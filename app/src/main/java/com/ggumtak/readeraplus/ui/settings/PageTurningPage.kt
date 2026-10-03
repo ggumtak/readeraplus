@@ -13,18 +13,22 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Shelf
+import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.DeviceCleanInfo
 import com.ggumtak.readeraplus.render.Eink
 import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.reader.VolumeMode
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.KeyHold
+import com.ggumtak.readeraplus.settings.ReadMode
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
+import com.ggumtak.readeraplus.settings.SideMargin
+import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.settings.TapZoneMode
+import com.ggumtak.readeraplus.settings.VerticalMargin
 import com.ggumtak.readeraplus.ui.kit.Ink
-import com.ggumtak.readeraplus.ui.kit.InkToggle
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.confirm
@@ -41,11 +45,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * "넘김·화면 설정": tap-zone mode with a visual preview (3×3 editor in CUSTOM mode), swipes and the long-press time,
- * keys (key → action bindings with the "이 키로 할 동작" chooser, key hold, key test), the e-ink screen (page mode,
+ * "넘김·화면 설정" (PLAN §1.6.3): the read mode (page turning or scroll, and the scroll motion), tap-zone mode with a
+ * visual preview (3×3 editor in CUSTOM mode), swipes and the long-press time, keys (key → action bindings with the
+ * "이 키로 할 동작" chooser, key hold, key test), auto page turn, the book end, the page display (side and top/bottom
+ * margins, page breaks), the status bands (six slots, progress line, text size) and the e-ink screen (page mode,
  * refresh cadence by day and night, chapter / picture refreshes, the device's own ghost clearing, and a "고급" group
- * with the refresh method, flash length, the refresh test and diagnostics), auto page turn, the book end, and the
- * page status line. The reading-settings popup's "넘김·화면 설정" button opens this page; rows it shares with the
+ * with the refresh method, flash length, the refresh test and diagnostics). The reading-settings popup's "넘김·화면 설정" button opens this page; rows it shares with the
  * popup use its labels and ranges.
  */
 internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_PAGE_TURNING, "넘김·화면 설정") {
@@ -57,6 +62,16 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     private var keyTestRow: View? = null
     private var volumeRow: LinearLayout? = null
     private var volumeInvertRow: LinearLayout? = null
+    private var readModeRow: View? = null
+    private var scrollStyleRow: View? = null
+    private var swipeRow: View? = null
+    private var verticalSwipeRow: View? = null
+    /** 좌우 여백, 상하 여백 and their note (hidden while "페이지 여백" is off). */
+    private var marginViews: Array<View> = emptyArray()
+    /** The six slot rows, index band * 3 + pos. */
+    private val slotRows = arrayOfNulls<View>(6)
+    private var statusSizeRow: View? = null
+    private var fitNote: View? = null
     private var liveDialog: AlertDialog? = null
     /** The "키 지정" dialog while open (dismissed with the page). */
     private var keyDialog: AlertDialog? = null
@@ -75,8 +90,24 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         val app = Settings.app
         val body = ctx.pageBody()
 
+        // ---- read mode (scroll SPEC §1.2)
+        body.section("넘기는 방식", first = true)
+        readModeRow = ctx.valueRow("넘기는 방식", R3Rows.readMode(app.readMode)) {
+            val opts = R3Rows.READ_MODES
+            ctx.chooser("넘기는 방식", opts.map { R3Rows.readMode(it) }, opts.indexOf(Settings.app.readMode)) { i -> setReadMode(opts[i]) }
+        }.also(body::addView)
+        scrollStyleRow = ctx.valueRow("스크롤 움직임", R3Rows.scrollStyle(app.scrollStyle, DeviceClass.cached(ctx))) {
+            val opts = R3Rows.SCROLL_STYLES
+            val eink = DeviceClass.cached(ctx)
+            ctx.chooser("스크롤 움직임", opts.map { R3Rows.scrollStyle(it, eink) }, opts.indexOf(Settings.app.scrollStyle)) { i ->
+                editApp { it.copy(scrollStyle = opts[i]) }
+                updateReadModeUi()
+            }
+        }.also(body::addView)
+        body.addView(ctx.note(R3Rows.READ_MODE_NOTE))
+
         // ---- tap zones
-        body.section("화면 터치", first = true)
+        body.section("화면 터치")
         for (m in TapZoneMode.entries) {
             val r = ctx.radioRow(TapZoneModel.modeName(m), TapZoneModel.modeDescription(m), m == app.tapZoneMode) { setMode(m) }
             modeRows[m] = r
@@ -118,8 +149,10 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
 
         // ---- gestures
         body.section("스와이프 · 길게 누르기")
-        body.addView(ctx.toggleRow("스와이프로 넘김", "좌우로 밀어서 페이지 넘김 (오른쪽→왼쪽 = 다음)", app.swipeToTurn) { v -> editApp { it.copy(swipeToTurn = v) } })
-        body.addView(ctx.toggleRow("세로 스와이프", "위로 밀면 다음 페이지, 아래로 밀면 이전 페이지", app.verticalSwipe) { v -> editApp { it.copy(verticalSwipe = v) } })
+        swipeRow = ctx.toggleRow("스와이프로 넘김", R3Rows.SWIPE_TURN, app.swipeToTurn) { v -> editApp { it.copy(swipeToTurn = v) } }
+            .also(body::addView)
+        verticalSwipeRow = ctx.toggleRow("세로 스와이프", R3Rows.VERTICAL_SWIPE, app.verticalSwipe) { v -> editApp { it.copy(verticalSwipe = v) } }
+            .also(body::addView)
         body.addView(ctx.toggleRow("길게 눌러 텍스트 선택", "단어를 길게 누르면 선택 → 복사 · 인용 · 사전 · 검색", app.longPressSelect) { v -> editApp { it.copy(longPressSelect = v) } })
         var pressRow: View? = null
         pressRow = ctx.valueRow("길게 누르기 시간", SettingsFormat.longPress(app.longPressMs)) {
@@ -156,9 +189,6 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         keyTestRow = ctx.row("키 테스트", keyTestSummary()) { showKeyTest() }.also(body::addView)
         body.addView(ctx.note("Page Up/Down, 방향키, 스페이스, 미디어 다음/이전 키는 기본으로 페이지를 넘깁니다. 코멧의 사용자 키가 인식되지 않으면 기기 설정(KeyPack)에서 그 키를 '다음 페이지' 또는 볼륨 키로 지정한 뒤 여기서 확인하세요."))
 
-        // ---- e-ink
-        addEink(body, app)
-
         // ---- auto turn
         body.section("자동 넘김")
         body.addView(ctx.stepperRow("넘김 간격", app.autoTurnSeconds.coerceIn(5, 300).toFloat(), 5f, 300f, 5f, { SettingsFormat.seconds(it.toInt()) }) { v ->
@@ -175,23 +205,139 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         ) { v -> editApp { it.copy(autoMarkFinished = v) } })
 
         // ---- page display (reader settings; the popup's labels and ranges)
-        val r = Settings.reader
-        body.section("페이지 표시")
-        body.addView(ctx.stepperRow("상태 표시 글자 크기", r.statusFontSizeSp, 8f, 16f, 0.5f, { SettingsFormat.sp(it) }) { v ->
-            editReader { it.copy(statusFontSizeSp = v) }
-        })
-        body.addView(ctx.toggleRow("흑백 반전", "검은 바탕에 흰 글씨", r.invert) { v -> editReader { it.copy(invert = v) } })
-        body.addView(ctx.toggleRow("페이지 여백", "끄면 여백을 최소로 줄입니다", r.pageMargins) { v -> editReader { it.copy(pageMargins = v) } })
+        addPageDisplay(body)
+
+        // ---- status bands (UI_SPEC §5.5, anchor §2.7)
+        addStatusBar(body)
+
+        // ---- e-ink
+        addEink(body, app)
+        updateReadModeUi()
         return ctx.pageScroll(body)
     }
 
     override fun onShown() {
         updateVolumeUi()
+        updateReadModeUi()
         // Corner switches live on the main page; reflect them when coming back here.
         val app = Settings.app
         preview.bookmarkCorner = app.bookmarkByTouch
         preview.invertCorner = app.invertByTouch
         keyTestRow?.setSummary(keyTestSummary())
+    }
+
+    // ---------------------------------------------------------------- read mode (scroll SPEC §1.2)
+
+    private fun setReadMode(m: ReadMode) {
+        if (Settings.app.readMode != m) editApp { it.copy(readMode = m) }
+        // AUTO resolves by the device class; find it now (IO, once) so the first scroll gesture already knows it.
+        if (m == ReadMode.SCROLL && DeviceClass.cached(ctx) == null) {
+            DeviceClass.probeAsync(ctx) { if (view != null) updateReadModeUi() }
+        }
+        updateReadModeUi()
+    }
+
+    /** Rows that depend on the read mode: 스크롤 움직임 (SCROLL only), the swipe summaries, 세로 스와이프 (off in SCROLL). */
+    private fun updateReadModeUi() {
+        val app = Settings.app
+        val scroll = app.readMode == ReadMode.SCROLL
+        readModeRow?.setSummary(R3Rows.readMode(app.readMode))
+        scrollStyleRow?.let { row ->
+            row.setShown(scroll)
+            if (scroll) row.setSummary(R3Rows.scrollStyle(app.scrollStyle, DeviceClass.cached(ctx)))
+        }
+        swipeRow?.setSummary(if (scroll) R3Rows.SWIPE_TURN_SCROLL else R3Rows.SWIPE_TURN)
+        verticalSwipeRow?.let { row ->
+            row.setRowEnabled(!scroll)
+            row.setSummary(if (scroll) R3Rows.VERTICAL_SWIPE_SCROLL else R3Rows.VERTICAL_SWIPE)
+        }
+    }
+
+    // ---------------------------------------------------------------- page display (scroll SPEC §2.4, anchor §3.3 / §4.4)
+
+    private fun addPageDisplay(body: LinearLayout) {
+        val r = Settings.reader
+        body.section("페이지 표시")
+        val side = ctx.stepperRow(
+            "좌우 여백",
+            SideMargin.toUi(r.marginLeftDp).coerceIn(SideMargin.UI_MIN, SideMargin.UI_MAX).toFloat(),
+            SideMargin.UI_MIN.toFloat(), SideMargin.UI_MAX.toFloat(), SideMargin.UI_STEP.toFloat(),
+            { SideMargin.label(it.toInt()) },
+        ) { v ->
+            val dp = SideMargin.toDp(v.toInt())
+            editReader { it.copy(marginLeftDp = dp, marginRightDp = dp) }
+        }.liveStepperValue()
+        val vertical = ctx.stepperRow(
+            "상하 여백",
+            VerticalMargin.toUi(r.marginTopDp).coerceIn(VerticalMargin.UI_MIN, VerticalMargin.UI_MAX).toFloat(),
+            VerticalMargin.UI_MIN.toFloat(), VerticalMargin.UI_MAX.toFloat(), VerticalMargin.UI_STEP.toFloat(),
+            { VerticalMargin.label(it.toInt()) },
+        ) { v ->
+            val dp = VerticalMargin.toDp(v.toInt())
+            editReader { it.copy(marginTopDp = dp, marginBottomDp = dp) }
+            updateStatusUi()
+        }.liveStepperValue()
+        val note = ctx.note(R3Rows.MARGIN_NOTE)
+        marginViews = arrayOf(side, vertical, note)
+        for (v in marginViews) body.addView(v)
+        var breakRow: View? = null
+        breakRow = ctx.valueRow("페이지 나눔", R3Rows.pageBreak(r.pageBreak)) {
+            val opts = R3Rows.PAGE_BREAKS
+            ctx.chooser("페이지 나눔", opts.map { R3Rows.pageBreakChoice(it) }, opts.indexOf(Settings.reader.pageBreak)) { i ->
+                if (Settings.reader.pageBreak != opts[i]) editReader { it.copy(pageBreak = opts[i]) }
+                breakRow?.setSummary(R3Rows.pageBreak(opts[i]))
+            }
+        }.also(body::addView)
+        body.addView(ctx.toggleRow("흑백 반전", "검은 바탕에 흰 글씨", r.invert) { v -> editReader { it.copy(invert = v) } })
+        body.addView(ctx.toggleRow("페이지 여백", "끄면 여백을 최소로 줄입니다", r.pageMargins) { v ->
+            editReader { it.copy(pageMargins = v) }
+            updateMarginUi()
+            updateStatusUi()
+        })
+        updateMarginUi()
+    }
+
+    /** The two steppers and their note are hidden while "페이지 여백" is off (the popup's rule). */
+    private fun updateMarginUi() {
+        val on = Settings.reader.pageMargins
+        for (v in marginViews) v.setShown(on)
+    }
+
+    // ---------------------------------------------------------------- status bands (UI_SPEC §5.5, anchor §2.7)
+
+    private fun addStatusBar(body: LinearLayout) {
+        val r = Settings.reader
+        body.section("상태 표시줄")
+        body.addView(ctx.note(R3Rows.STATUS_NOTE))
+        for (band in 0..1) for (pos in 0..2) {
+            val title = R3Rows.slotTitle(band, pos)
+            val k = band * 3 + pos
+            slotRows[k] = ctx.valueRow(title, r.slot(band, pos).label) {
+                val all = StatusItem.entries
+                ctx.chooser(title, all.map { R3Rows.slotChoice(it) }, all.indexOf(Settings.reader.slot(band, pos))) { i ->
+                    if (Settings.reader.slot(band, pos) != all[i]) editReader { it.withSlot(band, pos, all[i]) }
+                    slotRows[k]?.setSummary(all[i].label)
+                    updateStatusUi()
+                }
+            }.also(body::addView)
+        }
+        body.addView(ctx.toggleRow("진행 막대", R3Rows.PROGRESS_SUMMARY, r.progressBar) { v ->
+            editReader { it.copy(progressBar = v) }
+            updateStatusUi()
+        })
+        statusSizeRow = ctx.stepperRow("상태 표시 글자 크기", r.statusFontSizeSp, 8f, 16f, 0.5f, { SettingsFormat.sp(it) }) { v ->
+            editReader { it.copy(statusFontSizeSp = v) }
+            updateStatusUi()
+        }.liveStepperValue().also(body::addView)
+        fitNote = ctx.note(R3Rows.FIT_NOTE).also(body::addView)
+        updateStatusUi()
+    }
+
+    /** The size row shows while a band has text; the fit note while a band with items has no room in its margin. */
+    private fun updateStatusUi() {
+        val r = Settings.reader
+        statusSizeRow?.setShown(R3Rows.hasStatusText(r))
+        fitNote?.setShown(!R3Rows.statusFits(r))
     }
 
     // ---------------------------------------------------------------- e-ink (T1-3)
@@ -466,12 +612,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     }
 
     private fun setVolumeChecked(row: LinearLayout, checked: Boolean) {
-        val toggle = row.getChildAt(1) as? InkToggle ?: return
-        if (toggle.isChecked == checked) return
-        val change = toggle.onChange
-        toggle.onChange = null
-        toggle.isChecked = checked
-        toggle.onChange = change
+        row.setToggleChecked(checked)
     }
 
     /** Live key tester: shows each key's code and what the reader does with it (consumes all keys but Back). */
@@ -530,7 +671,4 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         testDialog = null
     }
 
-    private companion object {
-        /** The "남은 시간" chooser's examples (the footer's wording). */
-    }
 }
