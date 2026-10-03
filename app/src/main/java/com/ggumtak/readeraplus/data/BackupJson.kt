@@ -259,22 +259,27 @@ internal object BackupJson {
     }
 
     /**
-     * Streams [data] to [out] book by book: the same text as `toJson(data).toString()` (keys in the same order),
-     * without ever holding the whole tree or the whole text (K11: a 1,000-book snapshot is a 10–20 MB tree).
-     * [checkpoint] runs after the header and after every book; it may throw to abort (the busy check).
+     * Streams [data] to [out] book by book: the same content as `toJson(data)`, with the header keys written in a fixed
+     * order (format, version, createdAt, origin, summary, …, books last) that [readHeader] relies on, whatever key order
+     * the org.json build keeps; without ever holding the whole tree or the whole text (K11: a 1,000-book snapshot is a
+     * 10–20 MB tree). [checkpoint] runs after the header and after every book; it may throw to abort (the busy check).
      */
     fun write(data: BackupData, out: java.io.Writer, checkpoint: () -> Unit = {}) {
-        val head = JSONObject()
-        head.put("format", FORMAT)
-        head.put("version", data.version)
-        head.put("createdAt", data.createdAt)
-        data.origin?.let { head.put("origin", originToJson(it)) }
-        data.summary?.let { head.put("summary", summaryToJson(it)) }
-        if (data.txtParseVersion > 0) head.put("txtParseVersion", data.txtParseVersion)
-        if (data.settings != null) head.put("settings", data.settings)
-        head.put("collections", JSONArray().also { a -> data.collections.forEach { a.put(it) } })
-        val h = head.toString()
-        out.write(h, 0, h.length - 1) // without the closing brace
+        var first = true
+        fun field(name: String, value: Any) {
+            val one = JSONObject().put(name, value).toString() // {"name":value}: a single key, so its form is fixed
+            out.write(if (first) "{" else ",")
+            out.write(one, 1, one.length - 2)
+            first = false
+        }
+        field("format", FORMAT)
+        field("version", data.version)
+        field("createdAt", data.createdAt)
+        data.origin?.let { field("origin", originToJson(it)) }
+        data.summary?.let { field("summary", summaryToJson(it)) }
+        if (data.txtParseVersion > 0) field("txtParseVersion", data.txtParseVersion)
+        if (data.settings != null) field("settings", data.settings)
+        field("collections", JSONArray().also { a -> data.collections.forEach { a.put(it) } })
         out.write(",\"books\":[")
         checkpoint()
         for ((i, b) in data.books.withIndex()) {

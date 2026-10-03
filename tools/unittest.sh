@@ -46,6 +46,9 @@ else
   done
 fi
 CP="$TC/android-all-15.jar:$TC/kotlinx-coroutines-core-jvm-1.9.0.jar:$TC/junit-4.13.2.jar:$TC/hamcrest-core-1.3.jar"
+# Gradle puts Maven org.json (testImplementation, declared first) ahead of android-all; mirror that when it is installed,
+# so a test that leans on the Android JSONObject's insertion order fails here as it does in CI.
+[ -f "$TC/json-20240303.jar" ] && CP="$TC/json-20240303.jar:$CP"
 status=0
 "$TC/kotlinc/bin/kotlinc" -nowarn -jvm-target 17 -Xjdk-release=17 -no-reflect -cp "$CP" -d "$OUT/classes" \
   "$OUT/src" "$OUT/test" "$OUT/gen" > "$OUT/compile.log" 2>&1 || status=$?

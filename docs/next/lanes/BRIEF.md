@@ -13,6 +13,7 @@ curl -sSfL -o android-all-15.jar $M/org/robolectric/android-all/15-robolectric-1
 curl -sSfL -o kotlinx-coroutines-core-jvm-1.9.0.jar $M/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.9.0/kotlinx-coroutines-core-jvm-1.9.0.jar && \
 curl -sSfL -o junit-4.13.2.jar $M/junit/junit/4.13.2/junit-4.13.2.jar && \
 curl -sSfL -o hamcrest-core-1.3.jar $M/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar && \
+curl -sSfL -o json-20240303.jar $M/org/json/json/20240303/json-20240303.jar && \
 curl -sSfL -o kotlinc.zip https://github.com/JetBrains/kotlin/releases/download/v2.1.0/kotlin-compiler-2.1.0.zip && \
 unzip -q -o kotlinc.zip && unzip -tq android-all-15.jar | tail -1
 ```

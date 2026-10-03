@@ -230,16 +230,37 @@ class BackupJsonTest {
         assertEquals(0, l.via)
     }
 
-    private fun header(data: BackupData): BackupHeader =
-        BackupJson.readHeader(java.io.StringReader(BackupJson.toJson(data).toString(1)))
+    /** A backup file as Backup and AutoBackup write it: the streamed form, whose key order is fixed. */
+    private fun streamed(data: BackupData): String = java.io.StringWriter().also { BackupJson.write(data, it) }.toString()
+
+    private fun header(data: BackupData): BackupHeader = BackupJson.readHeader(java.io.StringReader(streamed(data)))
+
+    /** Top-level keys in file order. JSONObject's own key order depends on the org.json build (the Android one keeps
+     *  insertion order, the Maven one on the Gradle test classpath does not), so the order is read from the text. */
+    private fun topKeys(text: String): List<String> {
+        val r = android.util.JsonReader(java.io.StringReader(text))
+        val keys = ArrayList<String>()
+        r.beginObject()
+        while (r.hasNext()) { keys += r.nextName(); r.skipValue() }
+        r.endObject()
+        return keys
+    }
+
+    /** A key-sorted rendering, so two JSON texts compare equal whatever map order the org.json build keeps. */
+    private fun canonical(v: Any?): String = when (v) {
+        is JSONObject -> v.keys().asSequence().sorted().joinToString(",", "{", "}") { JSONObject.quote(it) + ":" + canonical(v.opt(it)) }
+        is org.json.JSONArray -> (0 until v.length()).joinToString(",", "[", "]") { canonical(v.opt(it)) }
+        is String -> JSONObject.quote(v)
+        else -> v.toString()
+    }
 
     @Test
     fun headerFieldsAreWrittenBeforeBooksAndOptionalBothWays() {
         val origin = BackupOrigin("0badc0de11112222", true, "3.0", "Bigme Comet")
         val data = BackupData(1, 99, listOf(sample, v3), listOf("c"), JSONObject().put("x", 1), 5, origin,
             BackupJson.summaryOf(listOf(sample, v3)))
-        val text = BackupJson.toJson(data).toString()
-        val keys = JSONObject(text).keys().asSequence().toList()
+        val text = streamed(data)
+        val keys = topKeys(text)
         assertEquals(listOf("format", "version", "createdAt", "origin", "summary"), keys.take(5))
         assertEquals("books", keys.last())
         val back = BackupJson.parse(text)
@@ -291,7 +312,8 @@ class BackupJsonTest {
             val w = java.io.StringWriter()
             var checks = 0
             BackupJson.write(d, w) { checks++ }
-            assertEquals(BackupJson.toJson(d).toString(), w.toString())
+            assertEquals(canonical(JSONObject(BackupJson.toJson(d).toString())), canonical(JSONObject(w.toString())))
+            assertEquals("books", topKeys(w.toString()).last())
             assertEquals(1 + d.books.size, checks)
         }
     }
