@@ -34,7 +34,11 @@ internal fun ReaderActivity.showOverflowMenu(anchor: View) {
     val items = listOf(
         MenuItem("페이지 이동", R.drawable.ic_find_in_page) { guarded { ReaderPanels.showGoTo(this) } },
         MenuItem(if (bookmarked) "북마크 삭제" else "북마크 추가", R.drawable.ic_bookmark_add) { toggleBookmark() },
-        MenuItem(if (autoTurnOn) "자동 넘김 끄기" else "자동 넘김 켜기", R.drawable.ic_timer) { toggleAutoTurn() },
+        // S §1.2: the quick way into scroll mode and always the way back.
+        MenuItem(ScrollWiring.modeItem(scrollMode), if (scrollMode) R.drawable.ic_auto_stories else R.drawable.ic_view_list) {
+            toggleReadMode()
+        },
+        MenuItem(ScrollWiring.autoItem(scrollMode, autoTurnOn), R.drawable.ic_timer) { toggleAutoTurn() },
         // After the popup has disappeared from the panel, or its outline stays as ghosting.
         MenuItem("화면 새로고침", R.drawable.ic_refresh) { refreshAfterDraw(POPUP_GONE_MS) },
         MenuItem("내 리뷰", R.drawable.ic_rate_review) { guarded { ReaderPanels.showReview(this) } },
