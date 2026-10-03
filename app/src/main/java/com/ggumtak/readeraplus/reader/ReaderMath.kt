@@ -385,3 +385,61 @@ object TextPositions {
         return if (Math.abs(p - s.second) <= MAX_DRIFT) s.second else p
     }
 }
+
+/** S §1.10 / §1.2: the reader's pure scroll-mode decisions (mode switch, placement, menu texts, gates; pure). */
+internal object ScrollWiring {
+    /** [flushTurns] applies at most this many queued screen steps at once (S §1.10). */
+    const val MAX_FLUSH_STEPS = 10
+
+    /**
+     * The line put at the top when paged mode switches to scroll: the anchor itself when it lies on the page shown
+     * (after a paged turn it is that page's start; after a relayout or an earlier switch the exact line being read),
+     * else the start of the page shown. So scroll → paged → scroll puts the same line back at the top.
+     */
+    fun switchOffset(anchorSection: Int, anchorOffset: Int, section: Int, pageStart: Int, pageEnd: Int, lastPage: Boolean): Int =
+        if (anchorSection == section && anchorOffset >= pageStart &&
+            (anchorOffset < pageEnd || (lastPage && anchorOffset == pageEnd) || pageStart == pageEnd && anchorOffset == pageStart)
+        ) anchorOffset else pageStart
+
+    /** True when [offset] starts a line of [l] (or lies before the first line of its page / at the end): TOP placement. */
+    fun isLineStart(l: com.ggumtak.readeraplus.engine.SectionLayout, offset: Int): Boolean {
+        if (offset <= 0 || offset >= l.content.length) return true
+        val p = l.pages.getOrNull(l.pageForOffset(offset)) ?: return true
+        val lines = p.lines
+        if (lines.isEmpty() || offset <= lines[0].start) return true
+        for (i in lines.indices) if (lines[i].start == offset) return true
+        return false
+    }
+
+    /** JUMP to a mid-line offset (a search hit, a sentence, a fragment) goes 25 % down; everything else to the top. */
+    fun contextPlacement(jump: Boolean, lineStart: Boolean): Boolean = jump && !lineStart
+
+    /** AUTO = STEP on e-ink (and while the device class is unknown), SMOOTH on a known LCD; a forced choice wins. */
+    fun stepMotion(style: com.ggumtak.readeraplus.settings.ScrollStyle, eink: Boolean?): Boolean = when (style) {
+        com.ggumtak.readeraplus.settings.ScrollStyle.STEP -> true
+        com.ggumtak.readeraplus.settings.ScrollStyle.SMOOTH -> false
+        com.ggumtak.readeraplus.settings.ScrollStyle.AUTO -> eink != false
+    }
+
+    /** Queued turns [n] (signed) become this many instant screen steps. */
+    fun flushSteps(n: Int): Int = minOf(Math.abs(n), MAX_FLUSH_STEPS)
+
+    /** 다음 화 / 이전 화 without a TOC: a viewport not at its section's start counts as "inside" (C's fix). */
+    fun chapterPageIndex(virtualStart: Int, topPageIndex: Int): Int = if (virtualStart > 0) maxOf(1, topPageIndex) else 0
+
+    /** The ⋮ item that switches the mode: what choosing it does. */
+    fun modeItem(scroll: Boolean): String = if (scroll) "페이지로 보기" else "스크롤로 보기"
+
+    /** The ⋮ auto item: "자동 넘김" in paged mode, "자동 스크롤" in scroll mode. */
+    fun autoItem(scroll: Boolean, on: Boolean): String =
+        (if (scroll) "자동 스크롤" else "자동 넘김") + if (on) " 끄기" else " 켜기"
+
+    fun autoScrollOn(seconds: Int): String = "자동 스크롤 켜짐 (한 화면/${seconds}초)"
+
+    fun autoOff(scroll: Boolean): String = if (scroll) "자동 스크롤 꺼짐" else "자동 넘김 꺼짐"
+
+    /** A packed (section shl 32 | offset) position from ScrollReader. */
+    fun section(packed: Long): Int = (packed ushr 32).toInt()
+
+    fun offset(packed: Long): Int = (packed and 0xFFFFFFFFL).toInt()
+}
