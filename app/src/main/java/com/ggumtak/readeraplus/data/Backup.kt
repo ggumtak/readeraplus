@@ -174,6 +174,7 @@ object Backup {
         val data = BackupJson.parse(String(bytes, Charsets.UTF_8))
         val matches = resolveBooks(data.books)
         val remap = applyLibrary(data, matches)
+        // R3 merge(DA-C): call `Library.notesChanged()` here (after applyLibrary's commit; N §5.1 / §5.6 notesGen++).
         markTextPositions(context, remap)
         data.settings?.let { applySettings(it) }
         InstallState.settleOffer(context)
@@ -429,6 +430,7 @@ object Backup {
         }
         val merged = BackupJson.mergePrefs(current, b.prefs, r.haveRead, r.deviceNewer)
         if (merged == current) return
+        // Deleted only when nothing is left, return_mark included (PrefsRow.isEmpty covers it): no column is lost.
         if (merged == null) {
             db.exec(LibrarySql.DELETE_BOOK_PREFS_OF_BOOK, id)
         } else if (db.exec(BackupSql.SET_PREFS_ROW, merged.txtOverride, merged.finishedAt, merged.episodeLabel,
