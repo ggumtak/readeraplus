@@ -178,6 +178,10 @@ UPGRADE_SWEEP = K.get("UPGRADE_SWEEP")
 ADDED = [(c.args[0], c.args[1], c.args[2], c.args[3]) for c in K.get("ADDED_COLUMNS")]
 DB_VERSION = K.get("DB_VERSION")
 LIB_RETURN_ALTER = K.get("ADD_RETURN_MARK")
+# LibraryDb.NOTES_SWEEP (N §4.1 defence sweep of quotes / bookmarks, run after UPGRADE_SWEEP below v3).
+NOTES_SWEEP = ["DELETE FROM %s WHERE book_id NOT IN (SELECT id FROM books)" % t for t in ("quotes", "bookmarks")]
+_DB_SRC = open(os.path.join(DATA, "LibraryDb.kt"), encoding="utf-8").read()
+assert all(s in _DB_SRC for s in NOTES_SWEEP), "LibraryDb.NOTES_SWEEP changed: update check_sql.py"
 SQL = {n: v for n, v in K.strings().items()
        if v.lstrip().upper().startswith(("SELECT", "INSERT", "UPDATE", "DELETE", "PRAGMA"))}
 
@@ -258,7 +262,7 @@ def on_upgrade(db, old):
     for s in alters:
         db.execute(s)
     if old < 3:
-        for s in UPGRADE_SWEEP:
+        for s in UPGRADE_SWEEP + NOTES_SWEEP:
             db.execute(s)
     db.execute("PRAGMA user_version = %d" % DB_VERSION)
     db.execute("COMMIT")
@@ -297,6 +301,8 @@ def seed_books(db, n, first=1):
 # ---------------------------------------------------------------------------------------------------------------
 
 def check_sources():
+    old_syntax = [n for n, v in SQL.items() if re.search(r"ON CONFLICT|RETURNING|\bOVER \(|NULLS (FIRST|LAST)|IIF\(|UPSERT", v.upper())]
+    check(not old_syntax, "every statement is SQLite 3.18 syntax" + (" " + str(old_syntax) if old_syntax else ""))
     check(DB_VERSION == 3, "DB_VERSION is 3")
     v3_added = [a for a in ADDED if a[2] == 3]
     check(len(v3_added) == 9, "nine v3 ADDED_COLUMNS (%d)" % len(v3_added))
@@ -342,6 +348,19 @@ def check_v1_upgrade():
     check(again == [], "v1 -> v3 run twice: the column guard adds nothing")
 
 
+def check_v2_upgrade_quiet():
+    """The seeded v2 -> v3 file of [check_v2_upgrade] without its checks (for plan assertions)."""
+    global check
+    saved = check
+    check = lambda cond, what: None
+    try:
+        db = check_v2_upgrade()
+    finally:
+        check = saved
+    db.execute("ANALYZE")
+    return db
+
+
 def check_v2_upgrade():
     db = create(2)
     seed_books(db, 500)
@@ -377,11 +396,14 @@ def check_downgrade_roundtrip():
     for t in ("bookmarks", "quotes", "book_collections", "page_counts", "reading_log", "book_prefs"):
         db.execute("DELETE FROM %s WHERE book_id = 2" % t)
     db.execute("DELETE FROM books WHERE id = 2")
+    db.execute("INSERT INTO bookmarks(book_id, snippet, created_at) VALUES (2, 'orphan', 1)")
     check(db.execute("SELECT COUNT(*) FROM lookups WHERE book_id = 2").fetchone()[0] == 1, "v2 build leaves an orphan lookup")
     alters, _ = on_upgrade(db, 2)
     check(alters == [], "v3 -> v2 build -> v3: no duplicate ALTER")
     check(db.execute("SELECT book_id FROM lookups ORDER BY book_id").fetchall() == [(1,), (3,)],
           "re-upgrade sweep removes exactly the orphan lookups")
+    check(db.execute("SELECT COUNT(*) FROM bookmarks WHERE book_id = 2").fetchone()[0] == 0,
+          "re-upgrade sweep removes an orphan bookmark")
     check(db.execute("SELECT return_mark FROM book_prefs WHERE book_id = 1").fetchone() == ("mark",),
           "re-upgrade keeps the return mark")
     check(db.execute("SELECT COUNT(*) FROM quotes WHERE frac = 0.5").fetchone()[0] == 2, "re-upgrade keeps note places")
@@ -459,9 +481,38 @@ def check_dump(path):
 
     walk(root, "dump")
     check(not failed, "dump %s: %d statements prepare" % (os.path.basename(path), n) + (" " + str(failed[:10]) if failed else ""))
+    # The hub's statements (dump "notes", from DA-N's NotesSql): each entry may carry "expect" (plan substrings that
+    # must appear) and "forbid" (that must not; default "TEMP B-TREE FOR ORDER BY" for unfiltered date pages).
+    # Their plans are asserted on the seeded, upgraded file.
+    notes = root.get("notes")
+    if notes:
+        pdb = check_v2_upgrade_quiet()
+        entries = []
+
+        def collect(node, where):
+            if isinstance(node, dict):
+                if isinstance(node.get("sql"), str):
+                    entries.append((where, node))
+                    return
+                for k, v in node.items():
+                    collect(v, where + "." + k)
+            elif isinstance(node, list):
+                for i, v in enumerate(node):
+                    collect(v, "%s[%d]" % (where, i))
+
+        collect(notes, "notes")
+        bad = []
+        for where, e in entries:
+            if "expect" not in e and "forbid" not in e:
+                continue
+            p = plan(pdb, e["sql"], e.get("args"))
+            if not all(m in p for m in e.get("expect", [])) or any(m in p for m in e.get("forbid", [])):
+                bad.append("%s: %s" % (where, p))
+        check(not bad, "dump notes: %d statement plans as expected" % len(entries) + (" " + str(bad[:5]) if bad else ""))
     up = root.get("upgrade", {})
     if up:
-        check(up.get("v2", [])[-len(UPGRADE_SWEEP):] == UPGRADE_SWEEP and up.get("v3") == [],
+        sweep = UPGRADE_SWEEP + NOTES_SWEEP
+        check(up.get("v2", [])[-len(sweep):] == sweep and up.get("v3") == [],
               "dump: LibraryDb.upgradeTail matches (sweep last below v3, nothing at v3)")
 
 

@@ -27,8 +27,11 @@ internal object LibrarySql {
     const val SELECT_BOOK_BY_PATH = "SELECT $BOOK_COLUMNS FROM books WHERE path = ?"
     const val SELECT_LAST_OPENED =
         "SELECT $BOOK_COLUMNS FROM books WHERE last_read_at > 0 AND trashed = 0 ORDER BY last_read_at DESC, id DESC LIMIT 1"
-    /** Every book + its meta_locked flag (column index [BOOK_COLUMN_COUNT]); used by the backup. */
-    const val SELECT_ALL_BOOKS_FOR_BACKUP = "SELECT $BOOK_COLUMNS, meta_locked FROM books ORDER BY id"
+    /**
+     * Every book + its meta_locked flag (column index [BOOK_COLUMN_COUNT]) and review_at (v3, index
+     * [BOOK_COLUMN_COUNT] + 1); used by the backup.
+     */
+    const val SELECT_ALL_BOOKS_FOR_BACKUP = "SELECT $BOOK_COLUMNS, meta_locked, review_at FROM books ORDER BY id"
     /** Minimal state of every book for scan / import matching. */
     const val SELECT_SCAN_STATE =
         "SELECT id, path, size, mtime, trashed, file_name, last_read_at, missing_at FROM books"
@@ -101,6 +104,11 @@ internal object LibrarySql {
     const val CLEAR_MISSING = "UPDATE books SET trashed = 0, missing_at = 0 WHERE id = ? AND missing_at > 0"
     /** Args: review, review_at (0 when blank), id. */
     const val SET_REVIEW = "UPDATE books SET review = ?, review_at = ? WHERE id = ?"
+    /**
+     * Backup restore of a review that is newer than the device's (N §5.6 newer-wins by review_at; the caller decides).
+     * Args: review, review_at, id.
+     */
+    const val RESTORE_REVIEW = "UPDATE books SET review = ?, review_at = ? WHERE id = ?"
     /** 리뷰 지우기 (hub batch). Args: id. */
     const val CLEAR_REVIEW = "UPDATE books SET review = '', review_at = 0 WHERE id = ?"
     const val SET_ENCODING = "UPDATE books SET encoding = ? WHERE id = ?"

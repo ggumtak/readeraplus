@@ -220,5 +220,11 @@ class LibrarySqlTest {
         LibrarySql.INSERT_BOOK, LibrarySql.UPDATE_BOOK_FILE, LibrarySql.UPDATE_BOOK_META, LibrarySql.RESTORE_FLAGS,
         LibrarySql.SELECT_COLLECTIONS, LibrarySql.PRUNE_PAGE_COUNTS, LibrarySql.REPLACE_PAGE_COUNTS,
         LibrarySql.INSERT_MEMBERSHIP, LibrarySql.INSERT_IGNORED,
+        // v3 (N §5.2)
+        LibrarySql.INSERT_QUOTE, LibrarySql.INSERT_BOOKMARK, LibrarySql.UPDATE_QUOTE_STYLE, LibrarySql.UPDATE_QUOTE_PLACE,
+        LibrarySql.UPDATE_BOOKMARK_PLACE, LibrarySql.SET_MISSING, LibrarySql.CLEAR_MISSING, LibrarySql.UNTRASH,
+        LibrarySql.SET_REVIEW, LibrarySql.CLEAR_REVIEW, LibrarySql.RESTORE_REVIEW, LibrarySql.SELECT_IDS_WITH_NOTES,
+        LibrarySql.SELECT_MOVE_CANDIDATES, LibrarySql.SELECT_RETURN_MARK, LibrarySql.SET_PREFS_RETURN,
+        LibrarySql.INSERT_PREFS_RETURN, LibrarySql.CLEAR_RETURN_MARK, LibrarySql.PRUNE_BOOK_PREFS,
     )
 }

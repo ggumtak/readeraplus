@@ -146,7 +146,7 @@ class LibraryNotesWritesTest {
         val c = MatrixCursor(cols).apply { addRow(row); moveToFirst() }
         assertEquals(1234L, BookRows.book(c).missingAt)
         // The backup select appends meta_locked after BOOK_COLUMNS: index BOOK_COLUMN_COUNT.
-        assertTrue(LibrarySql.SELECT_ALL_BOOKS_FOR_BACKUP.contains("${LibrarySql.BOOK_COLUMNS}, meta_locked FROM books"))
+        assertTrue(LibrarySql.SELECT_ALL_BOOKS_FOR_BACKUP.contains("${LibrarySql.BOOK_COLUMNS}, meta_locked, review_at FROM books"))
     }
 
     @Test
@@ -155,12 +155,13 @@ class LibraryNotesWritesTest {
         val v1 = LibraryDb.upgradeTail(1, noColumns)
         val v2 = LibraryDb.upgradeTail(2, noColumns)
         val v3 = LibraryDb.upgradeTail(3) { error("not asked") }
-        assertEquals(LibrarySchema.UPGRADE_SWEEP, v2.takeLast(LibrarySchema.UPGRADE_SWEEP.size))
-        assertEquals(LibrarySchema.UPGRADE_SWEEP, v1.takeLast(LibrarySchema.UPGRADE_SWEEP.size))
+        val sweep = LibrarySchema.UPGRADE_SWEEP + LibraryDb.NOTES_SWEEP
+        assertEquals(sweep, v2.takeLast(sweep.size))
+        assertEquals(sweep, v1.takeLast(sweep.size))
         assertTrue(v1.contains(LibrarySchema.ADD_QUOTE_STYLE))
         assertFalse(v2.contains(LibrarySchema.ADD_QUOTE_STYLE))
-        assertEquals(10 + LibrarySchema.UPGRADE_SWEEP.size, v1.size)
-        assertEquals(9 + LibrarySchema.UPGRADE_SWEEP.size, v2.size)
+        assertEquals(10 + sweep.size, v1.size)
+        assertEquals(9 + sweep.size, v2.size)
         assertTrue(v3.isEmpty())
         // Constant cost: every statement is an ALTER or a set-based sweep, and each table is asked once.
         val asked = HashMap<String, Int>()
@@ -169,6 +170,6 @@ class LibraryNotesWritesTest {
         for (s in v1) assertTrue(s, s.startsWith("ALTER TABLE ") || s.startsWith("DELETE FROM "))
         // A file that already has the v3 columns (v3 → "v2 build" → v3) gets no ALTER, only the sweep.
         val all = setOf("style", "chapter", "frac", "sig", "review_at", "missing_at", "return_mark")
-        assertEquals(LibrarySchema.UPGRADE_SWEEP, LibraryDb.upgradeTail(2) { all })
+        assertEquals(sweep, LibraryDb.upgradeTail(2) { all })
     }
 }

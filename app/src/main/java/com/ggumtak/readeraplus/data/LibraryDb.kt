@@ -59,16 +59,28 @@ internal class LibraryDb(context: Context) :
         /**
          * What [onUpgrade] runs from [oldVersion] AFTER [LibrarySchema.CREATE_ALL], in order: the missing columns
          * ([LibrarySchema.upgradeStatements]; [columnsOf] = a table's columns after CREATE_ALL, asked at most once per
-         * table) and, below v3, [LibrarySchema.UPGRADE_SWEEP] after the ALTERs. Pure (JVM-tested; `tools/check_sql.py`
+         * table) and, below v3, [LibrarySchema.UPGRADE_SWEEP] + [NOTES_SWEEP] after the ALTERs. Pure (JVM-tested; `tools/check_sql.py`
          * runs the same order).
          */
         internal fun upgradeTail(oldVersion: Int, columnsOf: (String) -> Set<String>): List<String> {
             val cache = HashMap<String, Set<String>>()
             val out = ArrayList<String>(16)
             out += LibrarySchema.upgradeStatements(oldVersion) { t -> cache.getOrPut(t) { columnsOf(t) } }
-            if (oldVersion < 3) out += LibrarySchema.UPGRADE_SWEEP
+            if (oldVersion < 3) {
+                out += LibrarySchema.UPGRADE_SWEEP
+                out += NOTES_SWEEP
+            }
             return out
         }
+
+        /**
+         * N §4.1's defence sweep of quotes and bookmarks left without a book (the frozen [LibrarySchema.UPGRADE_SWEEP]
+         * covers lookups, book_prefs and reading_log). Set-based, one statement per table.
+         */
+        internal val NOTES_SWEEP = listOf(
+            "DELETE FROM quotes WHERE book_id NOT IN (SELECT id FROM books)",
+            "DELETE FROM bookmarks WHERE book_id NOT IN (SELECT id FROM books)",
+        )
     }
 }
 
