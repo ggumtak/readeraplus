@@ -1068,18 +1068,18 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 32 | `83_toc_quotes` | TOC → 인용문 | swatch column, chips "[전체 2] [● 1] [● 1]", link "모든 책의 노트" | N |
 | 33 | `84_lookup` | 사전·번역 cancel, then 웹 검색 | logged | N |
 | 34 | `85a_drawer`, `85_notes_hub` | drawer → 독서 노트 | "독서 노트 2", "단어장 1"; 전체 tab with day header, 2 quote rows, 1 word row | N |
-| 35 | `86_notes_quotes`, `87_notes_jump` + CHECK 87 | 인용문 tab; tap the first row | filter row; the reader at the quote with the mark; the chip "‹ N 페이지로" found | N |
+| 35 | `86_notes_quotes`, `87_notes_jump` + CHECK 87 | (before 85: sample-utf8.txt read 3 pages past the quotes, so its saved place is off the quote's page, §1.6.1) 인용문 tab; tap the first row | filter row; the reader at the quote with the mark; the chip "‹ N 페이지로" found | N |
 | 36 | `88_notes_select`, `89_notes_words` | long-press → 선택; 단어 tab | "1개 선택" bar; word row with 다시 찾기 and the word in bold | N |
-| 37 | `90_highlight_ink` | 인용문 색 표시 → 흑백 무늬 | grey band + thin line / lighter band + dashed; restore 자동 | N |
+| 37 | `90_highlight_ink` | 인용문 색 표시 → 흑백 무늬; open sample-utf8.txt, 3 pages back to the quotes | grey band + thin line / lighter band + dashed; restore 자동 | N |
 | 38 | `52_footer_toggle_same_text` | open sample TXT; popup → 아래 가운데 = 없음 (no footer: 10b had set it); close; `rawshot 52a`; popup → 아래 가운데 = 쪽 번호, 아래 오른쪽 = 시계 · 배터리, 위 가운데 = 없음; close; `rawshot 52b` | **`raw_equal 52a 52b` over the content rows: EQUAL**; only the bands differ (header gone, footer shown); **[Δ]** `no_relayout 52a 52b` | A |
 | 39 | `53_progress_toggle_same_text` | 진행 막대 off; rawshot | same crop EQUAL; **[Δ]** `no_relayout`; restore on | A |
 | 40 | `54_margin_v_exact` | **[Δ]** `perf_mark 54a`; 상하 여백 +10; `perf_mark 54b`; shot; then 상하 여백 back to 0 | **[Δ]** `first_is 54a 54b` (the exact first char; height-only change) | A |
 | 41 | `55_font_up_down` | 글자 크기 +1, then −1 | `raw_equal` with the shot before the change: EQUAL (content rows valid again: 54 restored "0") | A |
 | 42 | `56_page_break_paragraph` | **[Δ]** `perf_mark 56a`; 페이지 나눔 = 문단 단위; `perf_mark 56b`; next page | **[Δ]** `first_is 56a 56b`; the next page starts at a paragraph start (logged `o:` of the next `show TURN` is a block start: checked by eye from the shot); restore 줄 단위 | A |
-| 43 | `57_dialog_no_reflow` | fullscreen on; 페이지 이동 dialog, cancel | `raw_equal` before/after EQUAL; **[Δ]** `no_relayout` | A (H4) |
+| 43 | `57_dialog_no_reflow` | fullscreen on; `rawshot 57_open`, wait 3 s, `rawshot 57_before` (CHECK `57_still`: the two EQUAL with nothing touched); 페이지 이동 dialog (number pad seen), cancel (dialog gone, one more BACK if not); `rawshot 57_after` | `raw_equal 57_before 57_after` EQUAL; **[Δ]** `no_relayout` | A (H4) |
 | 44 | `92_thumbs`, `93_thumbs_next` (W2) | ⋮ → 페이지 썸네일; swipe | 4×3 (or 5×3) grid, current page framed, labels = footer numbers, marks; next grid page | N |
 | 45 | `70_before` … `78_closed_then_recents` | R §7 block (kill, force-stop, history intent `-f 0x10100000`, `install -r`, second book + kill, don't-keep-activities, Back control) | `top_is ReaderActivity` + `same` PASS for 71–77; 78: `top_is LibraryActivity` | R (H1) |
-| 46 | `95_restore_offer`, `96_restored`, `97_restored_margins`, `98_backup_page` | S §3.9 (crafted backup, `pm clear`, appops) — **last** | the offer dialog; the book as 읽고 있는 책; "좌우 여백 0" and "상하 여백 0" from a legacy 18/16 backup; the 자동 백업 section | S, A |
+| 46 | `95_restore_offer`, `96_restored`, `97_restored_margins`, `98_backup_page` | S §3.9 (crafted backup, `pm clear`, appops) — **last** | the offer dialog; 96: 8 s after 복원, drawer → 읽고 있는 책 shelf: toolbar title 읽고 있는 책, drawer closed, 샘플 EPUB listed; "좌우 여백 0" and "상하 여백 0" from a legacy 18/16 backup; the 자동 백업 section | S, A |
 
 Every shot: `logcat -b crash` is empty and there is no "draw failed".
 

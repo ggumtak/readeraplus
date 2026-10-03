@@ -185,14 +185,21 @@ step() { # step name function: one best-effort UI step in its own shell (5 minut
   return 0
 }
 scroll_find() { # scroll_find "label" [exact|contains]: scroll INSIDE the active scroll container (including popups)
-  local i y gesture
+  local i y gesture prev="" last=""
   XY=""
   for i in $(seq 1 14); do
     dump || return 1
+    [ "$i" -eq 9 ] && last=$(bottom_texts) # where the swipes down ended, for the NOT FOUND line
     XY=$(xy_of "$1" "${2:-exact}")
     if [ -n "$XY" ]; then
       y=${XY#* }
       [ "$y" -ge 150 ] && [ "$y" -le 1250 ] && return 0
+      # The end of the list: the last swipe down left the label below the window, where it was. It is on screen, so
+      # it is taken there (CI 30 50d: 고급, the last row of 넘김·화면 설정, rests just under y 1250 at the page's end).
+      if [ "$y" -gt 1250 ] && [ "$y" = "$prev" ] && [ "$i" -le 9 ]; then log "scroll_find: '$1' at the end of the list (y $y)"; return 0; fi
+      prev=$y
+    else
+      prev=""
     fi
     # Down first; past 8 swipes (the end of the list) back up, for a row above the first one shown.
     gesture=$(python3 - "$i" <<'PY'
@@ -215,7 +222,21 @@ PY
     )
     adb shell input swipe $gesture 1000; sleep 1
   done
-  log "NOT FOUND '$1' after scrolling"; XY=""; return 1
+  log "NOT FOUND '$1' after scrolling (lowest rows after the swipes down: $last)"; XY=""; return 1
+}
+bottom_texts() { # the 3 lowest texts of the last dump with their centre y ("text@y; ...")
+  python3 - <<'PY'
+import re, xml.etree.ElementTree as ET
+rows=[]
+try:
+  for n in ET.parse('/tmp/ui.xml').getroot().iter('node'):
+    t=(n.get('text') or '').replace('\u2060','')
+    m=re.fullmatch(r'\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]',n.get('bounds',''))
+    if t and m: rows.append(((int(m[2])+int(m[4]))//2,t[:24]))
+except Exception:
+  pass
+print('; '.join(f'{t}@{y}' for y,t in sorted(rows)[-3:]))
+PY
 }
 
 first_title_stamp() {
@@ -263,6 +284,8 @@ show_chrome() { # the reader's bars; the blind tap only while the reader is on t
   # drawer open, 68's tap at 360 720 hit its 작가 row, and every later library start opened on that saved shelf)
   chrome_open && return 0
   on_top ReaderActivity || { log "show_chrome: ReaderActivity not on top"; return 1; }
+  # Never a blind tap into a popup left open (CI 30 14d: the tap landed on the reading-settings popup's rows)
+  if popup_focused; then log "show_chrome: a popup has the focus, BACK first"; back; chrome_open && return 0; fi
   adb shell input tap 360 720; sleep 2; chrome_open
 }
 select_at() { # select_at x y: long-press a word; on blank space (leading, a blank line, the end of a short line) nothing is
@@ -300,7 +323,21 @@ open_popup() { # the reading-settings popup with 더보기 expanded (the process
     tap_xy "$XY"; sleep 2
   fi
 }
-close_popup() { back; sleep 2; hide_chrome; sleep 1; } # one BACK closes the popup (and the bars), then make sure
+popup_focused() { # a focusable PopupWindow (the reading-settings popup, its drop-down list, a menu) has the input focus
+  adb shell dumpsys window 2>/dev/null | grep -m1 -E 'mCurrentFocus=' | grep -q 'PopupWindow'
+}
+close_popup() { # one BACK closes the popup (and the bars); BACK again while a popup still has the focus, then the bars
+  # CI 30 14d: a BACK sent right after a drop-down entry was tapped reached the list being dismissed, the settings popup
+  # stayed open, and VOLUME_UP, the center tap and 15's 목차 all went to the popup.
+  local i
+  back; sleep 2
+  for i in 1 2; do
+    popup_focused || break
+    log "close_popup: a popup still has the focus, BACK again"
+    back; sleep 2
+  done
+  hide_chrome; sleep 1
+}
 margins_zero() { # margins_zero <n>: in the open popup, 좌우 여백 and 상하 여백 both read "0" (S §2.4, A)
   local l v
   scroll_find "상하 여백 늘리기" || { check "$1" 1 "no 상하 여백 stepper"; return 1; }
@@ -433,7 +470,10 @@ reading_settings() { # 14, 14b, 14c, then 10b (+rawshot, no_relayout): the foote
 # ------------------------------------------------------------------ reader steps: H3, TOC, go-to, end of book
 
 toc_shots() { # 15: 목차 (header: 지금 · 화 번호 · 검색, pager bar); 15b: one page on with the pager's [다음 ▶]
-  tap_label "목차" contains || { adb shell input tap 360 720; sleep 1; tap_label "목차" contains; } || return 1
+  # From a known state, whatever 14d left on screen (CI 30: its reading-settings popup, which took both 목차 lookups)
+  fresh_reader sample-cp949.txt text/plain
+  show_chrome || return 1
+  tap_label "목차" contains || return 1
   shot 15_toc 3
   tap_label "다음 페이지" || { adb shell input keyevent KEYCODE_PAGE_DOWN; log "15b: no pager button, sent PAGE_DOWN"; }
   shot 15b_toc_page2 2
@@ -478,16 +518,25 @@ choose_volume_mode() {
   else check 14d_list 1 "volume-key entries missing"; back; return 1; fi
   if [ "$1" = "위 = 다음 페이지 (방향 반전)" ]; then shot 14d_volume_mode 0; fi
   tap_label "$1" || return 1
+  sleep 2 # the list closes first: a BACK sent at once can reach the list being dismissed (CI 30)
   close_popup
+}
+volume_default() { # 아래 = 다음 again, also after a failed 14d: later steps turn with VOLUME_DOWN (CI 30: 14d stopped
+  # with 위 = 다음 set, and 56c's VOLUME_DOWN went back a page); a fresh reader when the popup can't be opened
+  if ! popup_focused && choose_volume_mode "아래 = 다음 페이지 (기본)"; then return 0; fi
+  log "14d: setting 아래 = 다음 again from a fresh reader"
+  fresh_reader sample-cp949.txt text/plain
+  choose_volume_mode "아래 = 다음 페이지 (기본)"
 }
 volume_mode() { # 14d (R U5): 위 = 다음 makes VOLUME_UP the next page without a relayout; then the default again
   fresh_reader sample-cp949.txt text/plain
   local n0 n1
   show_chrome && n0=$(page_no); hide_chrome
   perf_mark 14d_before
-  choose_volume_mode "위 = 다음 페이지 (방향 반전)" || return 1
+  choose_volume_mode "위 = 다음 페이지 (방향 반전)" || { volume_default; return 1; }
   perf_mark 14d_changed
   no_relayout 14d_norelayout 14d_before 14d_changed
+  popup_focused && log "14d: a popup still has the focus before VOLUME_UP"
   adb shell input keyevent KEYCODE_VOLUME_UP; sleep 2
   perf_mark 14d_turned
   local result
@@ -506,7 +555,7 @@ PY
   if [ -n "$n0" ] && [ -n "$n1" ] && [ "$n1" -eq $((n0 + 1)) ]; then check 14d_label 0 "label $n0 -> $n1"
   else check 14d_label 1 "label '$n0' -> '$n1' (expected one page further)"; fi
   hide_chrome
-  choose_volume_mode "아래 = 다음 페이지 (기본)" || return 1
+  volume_default || return 1
   [ "${result%% *}" = PASS ]
 }
 selection_shot() { # 17: one row of 5 (복사 · 인용 · 메모 · 사전·번역 · ⋮); the bar is read from an all-windows dump
@@ -822,7 +871,13 @@ print(*(best or (360,600)))
 PY
 }
 notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select, 89 단어
-  restart_library
+  # 87's chip offers the way back to the book's saved place, and only when that is not the quote's page (PLAN §1.6.1:
+  # if (!isOnCurrentPage(saved)) returnNav.onJump(saved)). 80–84 made the quotes on the page sample-utf8.txt was saved
+  # at (CI 30: no chip, correctly), so the book is read 3 pages on first; 90 turns back to the quotes.
+  local i
+  fresh_reader sample-utf8.txt text/plain
+  for i in 1 2 3; do adb shell input keyevent KEYCODE_PAGE_DOWN; sleep 1; done
+  restart_library # HOME first: onPause saves the place 3 pages after the quotes
   open_drawer || return 1
   dump; align "휴지통" 500 # 독서 노트 · 단어장 are below the fold of a 720 dp-high screen; the drawer scrolls
   shot 85a_drawer 1
@@ -840,7 +895,8 @@ notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select
   local xy; xy=$(first_row_xy)
   tap_xy "$xy"
   shot 87_notes_jump 5
-  dump; if has "페이지로" contains; then check 87 0 "the reader at the quote with the return chip"; else check 87 1 "no '페이지로' chip"; fi
+  dump; if has "페이지로" contains; then check 87 0 "the reader at the quote with the return chip"
+  else check 87 1 "no '페이지로' chip (on screen: $(grep -o 'text="[^"]*페이지[^"]*"' /tmp/ui.xml 2>/dev/null | head -2 | tr '\n' ' '))"; fi
   back; sleep 2 # to the hub
   dump; xy=$(first_row_xy); set -- $xy
   longpress "$1" "$2" 900
@@ -853,9 +909,13 @@ notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select
   dump; if has "다시 찾기"; then check 89 0 "word row with 다시 찾기"; else check 89 1 "no word row (or the empty state, no browser)"; fi
 }
 notes_ink() { # 90: 인용문 색 표시 → 흑백 무늬 on the quotes; then 자동 again
+  local i
   open_settings || return 1
   pick_setting "인용문 색 표시" "흑백 무늬" || return 1
   fresh_reader sample-utf8.txt text/plain
+  # 85_89 left the book 3 pages after the quotes' page (the hub's open is a peek: it saves nothing). Turns, not a
+  # jump: no return chip over the shot. On the first page a PAGE_UP does nothing.
+  for i in 1 2 3; do adb shell input keyevent KEYCODE_PAGE_UP; sleep 1; done
   shot 90_highlight_ink 2
   open_settings && pick_setting "인용문 색 표시" "자동"
 }
@@ -932,12 +992,20 @@ dialog_no_reflow() { # 57 (H4): the 페이지 이동 dialog leaves the page pixe
   fresh_reader sample-cp949.txt text/plain
   # Keep chrome visible in both captures; the dialog alone takes and returns focus.
   show_chrome || return 1
-  rawshot 57_before
+  # Control first: the same screen twice with nothing touched. CI 28-30 found DIFF 3457 / 4690 inside the text column
+  # (bbox 81,360-623,1072: no dialog border in it, and the dialog has no dim) with no RELAYOUT; 57_still tells whether
+  # the cold-opened page changes on its own, and 57 then compares against the settled screen.
+  rawshot 57_open
+  sleep 3; rawshot 57_before
+  raw_check 57_still 57_open 57_before 360 1100
   perf_mark 57_before
   tap_label "페이지 이동" contains || return 1
   sleep 2
+  dump && has "이동" && has "5" || log "57: no number pad on screen (the go-to dialog did not open?)"
   shot 57_dialog_no_reflow 0
   back; sleep 2
+  # The capture needs the dialog gone (its number pad): one more BACK if it is still up.
+  if dump && has "이동" && has "5"; then log "57: the go-to dialog is still open after BACK, BACK again"; back; sleep 2; fi
   rawshot 57_after
   perf_mark 57_after
   raw_check 57 57_before 57_after 360 1100
@@ -988,8 +1056,14 @@ restore_offer() {
   shot 95_restore_offer 8
   dump; if has "복원"; then check 95 0 "restore offer shown"; else check 95 1 "no restore offer (복원)"; return 1; fi
   tap_label "복원" || return 1
-  shot 96_restored 8
-  dump; if has "읽고 있는 책" contains; then check 96 0 "the book is under 읽고 있는 책"; else check 96 1 "no 읽고 있는 책"; fi
+  sleep 8 # restore on IO, then the library recreates itself
+  # 읽고 있는 책 is a shelf (the drawer's first row; last_read_at > 0, not finished), not a heading of 모든 책: the
+  # restored book must be listed on it (CI 30 looked for the words on 모든 책, where they never are).
+  open_drawer && drawer_tap "읽고 있는 책" && sleep 2
+  shot 96_restored 1
+  # The drawer closed (no 휴지통 row): 읽고 있는 책 is the toolbar title, and the list behind is that shelf's.
+  dump; if has "읽고 있는 책" && ! has "휴지통" && has "샘플 EPUB" contains; then check 96 0 "the book is listed on 읽고 있는 책"
+  else check 96 1 "샘플 EPUB not on the 읽고 있는 책 shelf (title 읽고 있는 책: $(has "읽고 있는 책" && echo yes || echo no))"; fi
   tap_label "샘플 EPUB" contains || return 1
   sleep 5
   open_popup || return 1
