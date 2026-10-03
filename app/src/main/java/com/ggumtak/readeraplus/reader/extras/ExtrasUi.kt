@@ -35,6 +35,7 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
+import com.ggumtak.readeraplus.data.Lookups
 import com.ggumtak.readeraplus.data.Quote
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.settings.Settings
@@ -51,7 +52,6 @@ import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
-import java.net.URLEncoder
 
 /*
  * Small UI building blocks shared by the extras (ReadEra-style cards, overlays over the reader, text actions).
@@ -310,12 +310,19 @@ internal object TextActions {
         start(ctx, Intent.createChooser(send, "공유"))
     }
 
-    fun webSearch(ctx: Context, text: String) {
-        val template = runCatching { Settings.app.webSearchUrl }.getOrNull()?.takeIf { it.contains("%s") }
-            ?: "https://www.google.com/search?q=%s"
-        val url = template.replace("%s", URLEncoder.encode(text.trim(), "UTF-8"))
-        start(ctx, Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    /**
+     * Opens the user's web search ([WebSearchTemplate], `AppSettings.webSearchUrl`) for [text]. [onDone] runs (main
+     * thread) only when the browser was started.
+     */
+    fun webSearch(ctx: Context, text: String, onDone: (() -> Unit)? = null) {
+        val url = WebSearchTemplate.url(webSearchTemplate(), text)
+        if (start(ctx, Intent(Intent.ACTION_VIEW, Uri.parse(url)))) onDone?.invoke()
     }
+
+    /** The site host a web lookup is recorded with ("www.google.com"). */
+    fun webSearchHost(): String = WebSearchTemplate.host(webSearchTemplate())
+
+    private fun webSearchTemplate(): String? = runCatching { Settings.app.webSearchUrl }.getOrNull()
 
     /** Installed ACTION_PROCESS_TEXT handlers (dictionaries, translators), last used first. */
     fun processTextApps(ctx: Context): List<ResolveInfo> {
@@ -335,19 +342,28 @@ internal object TextActions {
 
     private fun key(ri: ResolveInfo): String = ri.activityInfo.packageName + "/" + ri.activityInfo.name
 
-    /** Dictionary / translate: pick a PROCESS_TEXT app (list), or fall back to a web search. */
-    fun lookUp(activity: Activity, text: String) {
+    /**
+     * Dictionary / translate: pick a PROCESS_TEXT app (list), or fall back to a web search. [onPicked] (main thread)
+     * runs once the pick was started — an app ([Lookups.VIA_APP], its label), "웹 검색" ([Lookups.VIA_WEB], the site
+     * host) or the no-app fallback ([Lookups.VIA_WEB_FALLBACK], the site host) — and never when the chooser is
+     * cancelled or nothing could be started.
+     */
+    fun lookUp(activity: Activity, text: String, onPicked: ((via: Int, app: String) -> Unit)? = null) {
         val apps = processTextApps(activity)
         if (apps.isEmpty()) {
             activity.toast("사전·번역 앱이 없어 웹에서 검색합니다")
-            webSearch(activity, text)
+            webSearch(activity, text) { onPicked?.invoke(Lookups.VIA_WEB_FALLBACK, webSearchHost()) }
             return
         }
         val pm = activity.packageManager
         val labels = apps.map { it.loadLabel(pm).toString() } + "웹 검색"
         activity.alert().setTitle("사전 · 번역")
             .setItems(labels.toTypedArray()) { _, which ->
-                if (which >= apps.size) webSearch(activity, text) else launchProcessText(activity, apps[which], text)
+                if (which >= apps.size) {
+                    webSearch(activity, text) { onPicked?.invoke(Lookups.VIA_WEB, webSearchHost()) }
+                } else if (launchProcessText(activity, apps[which], text)) {
+                    onPicked?.invoke(Lookups.VIA_APP, labels[which])
+                }
             }
             .setNegativeButton("취소", null)
             .showNoAnim()
@@ -355,24 +371,28 @@ internal object TextActions {
             .also { d -> PanelRegistry.dialog(activity, d) }
     }
 
-    private fun launchProcessText(ctx: Context, ri: ResolveInfo, text: String) {
+    private fun launchProcessText(ctx: Context, ri: ResolveInfo, text: String): Boolean {
         runCatching { Settings.raw().edit().putString(PREF_LAST_DICT, key(ri)).apply() }
         val i = Intent(Intent.ACTION_PROCESS_TEXT)
             .setType("text/plain")
             .setComponent(ComponentName(ri.activityInfo.packageName, ri.activityInfo.name))
             .putExtra(Intent.EXTRA_PROCESS_TEXT, text)
             .putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
-        start(ctx, i)
+        return start(ctx, i)
     }
 
-    fun start(ctx: Context, intent: Intent) {
-        try {
+    /** Starts [intent]; false (with a message) when no app takes it or it may not be opened. */
+    fun start(ctx: Context, intent: Intent): Boolean {
+        return try {
             if (ctx !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(intent)
+            true
         } catch (_: ActivityNotFoundException) {
             ctx.toast("실행할 앱이 없습니다")
+            false
         } catch (_: SecurityException) {
             ctx.toast("앱을 열 수 없습니다")
+            false
         }
     }
 }

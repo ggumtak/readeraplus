@@ -1,0 +1,41 @@
+{
+  "lane": "EX-S",
+  "files": [
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/SelectionController.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/ExtrasUi.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/QuoteSwatch.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/QuotePalette.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/SelectionActions.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/LookupContext.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/QuoteExport.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/extras/SelectionActionsTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/extras/LookupContextTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/extras/QuoteExportTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/extras/PaletteGeometryTest.kt",
+    "docs/next/EX_S_STATUS.md",
+    "docs/next/lanes/EX-S.result.json"
+  ],
+  "summary": "Selection popup is one row of 5 (복사·인용·메모·사전·번역·⋮; existing quote: palette row above 복사·메모·인용 삭제·사전·번역·⋮) built from pure SelectionActions.split; overflow 색 골라 인용…·공유·문단·검색·웹 검색·여기서 읽기·문구 지우기(TXT). 인용 cell shows last-style QuoteSwatch + ▾, long-press/overflow opens QuotePalette; last style in raw pref extras.quoteStyle. Quoting applies an optimistic 'quotes' highlight list in the same main message as clear() (one e-ink update, no success toast, rollback + toast on failure); recolour of an existing quote is immediate with the popup kept open. Places via NotePlaceHost on save; lookups take a LookupSnapshot and record through Lookups.record only after a successful pick/start (TextActions.lookUp(onPicked)/webSearch(onDone)). New pure LookupContext, WebSearchTemplate, QuoteExport, QuoteHighlights, PaletteGeometry, SelectionOrigin; QuoteSwatch/QuotePalette implemented. Origin fallback uses LayoutKeys.geometry (no header term). TTS verified against the virtual page; TtsController unchanged.",
+  "checks": "Module mode (tools/typecheck.sh --own reader/extras; tools/unittest.sh --own reader/extras --own engine/EngineFixtures.kt --skip reader/extras/CleanupPacksPerfTest.kt — per-file --own list exceeds the output dir name length): typecheck OK, OK (164 tests). Full tree: typecheck OK, unittest OK (1,221 tests). Two independent reviews (spec, bugs) run; findings fixed.",
+  "contractRequests": [
+    "DA-C: Library.updateQuoteStyle must persist style; LibrarySql.SELECT_QUOTES/BookRows.quote must read style (and chapter/frac/sig); addQuote must store style and place. Until then every reload resets cached styles to 0.",
+    "EX-N: ContentsDialog.refreshQuoteHighlights should map Highlight(..., QUOTE, it.style) and apply the same stale-sig filter (QuoteHighlights.forSection(all, section, sig) can be reused); shareAllQuotes/quoteShareText can use QuoteExport.shareAll/single; write LastQuoteStyle.set(s) after a row palette pick.",
+    "DA-N: Lookups.record implementation (EX-S calls it on ReaderIo)."
+  ],
+  "rcaNotes": [
+    "ReaderActivity must implement NotePlaceHost.notePlace(pos) (main thread, O(log chapters); NotePlace.UNKNOWN without a session). SelectionController calls it on main in snapshot(), lookupSnapshot() and once per applyQuoteHighlights (for the session sig).",
+    "ReaderActivity.sameDecor must also compare Highlight.style (x.style != y.style), and reloadAnnotations must build Highlight(q.start, q.end, QUOTE, q.style) in Library.quotes order, leaving out quotes whose non-empty sig != the session sig. Otherwise recolour never repaints and the IO reload after an optimistic 인용 draws a second e-ink update.",
+    "Keep filling QuoteCache with the loaded quotes at book open (A12-4); the optimistic quote list is built from it (skipped while it is null).",
+    "Scroll mode: before calling selection.startAt(x, y) call scroll.focusAt(y) so currentLayout/currentPage is the section under the finger; freeze scrolling while selection.isActive; call selection.onPageChanged() on scroll settle (SPEC row 683). hitTest/glyphAt must use origin (contentLeft, contentTop) on the virtual page — the fallback origin equals that.",
+    "TTS vs virtual page (no TtsController change needed): call tts.onUserNavigated() at drag start and again at settle for DRAG/FLING; while scroll.userMoving() make nextPage()/prevPage() return true without moving and goTo(pos, remember=false) a no-op (or focus-only when the line is wholly visible) so follow never moves text under the finger; virtualPage() must return the settled snapshot during motion (onRange reads currentPage per word). Known minor: navRestart compares sections, so a sentence visible in the lower section of a seam still restarts reading from the virtual page top.",
+    "TextActions.start now returns Boolean (source-compatible)."
+  ],
+  "deviations": [
+    "Existing-quote ⋮ omits 색 골라 인용… (the palette row replaces it).",
+    "문구 지우기 on a multi-line selection is not greyed (kit popupMenu drops taps on disabled items); a tap shows the old explanation toast.",
+    "Recolour of an existing quote is applied optimistically (page + ring at once, IO after) instead of after IO, for one e-ink update; latest tap wins, failure reverts.",
+    "Rapid back-to-back saves of two new quotes can briefly hide the first one until its reload (not fixed in this run).",
+    "Inline palette row in the selection popup uses (W−16dp)/6 without the 48 dp floor so both rows are equally wide."
+  ],
+  "complete": true
+}
