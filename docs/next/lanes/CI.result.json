@@ -1,0 +1,30 @@
+{
+  "lane": "CI",
+  "files": [
+    "tools/ci/screenshots.sh",
+    "tools/ci/perf_log.py",
+    "tools/ci/test_ci_tools.py",
+    "tools/ci/find_node.py",
+    "tools/ci/make_samples.py",
+    ".github/workflows/build.yml",
+    "docs/next/CI_STATUS.md",
+    "docs/next/lanes/CI.result.json"
+  ],
+  "summary": "screenshots.sh extended to the PLAN §5.3 order and names (01 … 13b–13h, 14b/14c/10b, 14d, 60–69b, 30–32, 42–46, 50/51, 80–90, 52–57, guarded 92–93, 70–78, 95–98 last after pm clear). Every measurable expectation is a `CHECK <n> PASS|FAIL <reason>` line; a failed step logs `CHECK <step> FAIL step incomplete`; only the install rule fails the job. New pure tools/ci/perf_log.py (first_is, no_relayout, same_start, last, pv_bounds) parses the H4 `RAPerf show` lines; content rows pv+80…pv+1360 from dumpsys bounds. find_node.py gains class mode and --box; make_samples.py writes the S §3.9 crafted auto backup. List modes use the C29 labels 전체/요약/썸네일/그리드. Margin-changing steps restore 상하 여백 \"0\" (54 reads the stepper value back to 0) before the next raw_equal.",
+  "checks": "bash -n tools/ci/screenshots.sh OK; shellcheck -S warning clean; python3 -m py_compile tools/ci/*.py OK; python3 -m unittest tools/ci/test_ci_tools.py OK (31 tests). Kotlin checks not applicable (no Kotlin changes). The [screens] emulator run happens at integration (PLAN §5.1 step 8).",
+  "contractRequests": [
+    "RC-A/RC-S: a DEBUG `RAPerf show <kind> s:<section> o:<top line start> a:<anchor> g:<gen> <ms>ms` line from the scroll-mode settle path (same format as ReaderActivity.showPage), so CI 60/66/68/69 can become position CHECKs instead of log-only."
+  ],
+  "rcaNotes": [
+    "Keep the H4 DEBUG line `RAPerf show <OPEN|TURN|JUMP|RELAYOUT> s: o: a: g: Nms` exactly (perf_log.py parses it); every relayout must log kind RELAYOUT and every anchored relayout must show a page whose o: equals the kept anchor a: (CI 54, 56, 32).",
+    "Content descriptions the CI taps/reads (U §8.2, fixed): page label `페이지 이동, N / M` (centred), `이 페이지 고정` / `고정 해제`, `지우기`, `N 페이지로` chip/strip, `밝기 옵션`, popup slot buttons `<위|아래> <왼쪽|가운데|오른쪽>: <value>`, steppers `<title> 줄이기`/`<title> 늘리기`, reader ⋮ `더보기` with items `페이지로 보기` / `스크롤로 보기` / (W2) `페이지 썸네일`. The bottom bar's seek must be the last SeekBar in the chrome tree.",
+    "After 14c's single BACK the popup and the bars are both closed (10b shoots the bare page)."
+  ],
+  "deviations": [
+    "Pre-existing extra shots whose names collided with §5.3 were renamed: 42_multiselect → 46c_multiselect, 51_stats/52_wifi/53_eink_settings(+53b) → 50b_stats/50c_wifi/50d_eink_settings(+50e_eink_advanced); 41_library_compact and 14b_settings_more are replaced by §5.3's 42_library_compact and 14b_status_slots. 15b, 15c, 17b, 18 kept (unique).",
+    "60/66/68/69 position comparisons are logged, not CHECKed: scroll mode emits no RAPerf show line yet (contractRequest).",
+    "Screenshots job timeout-minutes 40 → 90 and STEPS_UNTIL default 1200 → 3000 s (95–98 get +600 s) for the longer run; the build job is untouched.",
+    "Layout values (88 dp rows, 3/4 columns, x = 688 trailing controls, 16 px popup gaps) are checked by eye from the shots, not by CHECK lines."
+  ],
+  "complete": true
+}
