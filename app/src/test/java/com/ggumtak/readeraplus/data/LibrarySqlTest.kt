@@ -201,8 +201,8 @@ class LibrarySqlTest {
         assertEquals(5, placeholders(LibrarySql.UPDATE_BOOK_META_USER))
         assertEquals(5, placeholders(LibrarySql.UPDATE_POSITION))
         assertEquals(9, placeholders(LibrarySql.RESTORE_FLAGS))
-        assertEquals(6, placeholders(LibrarySql.INSERT_BOOKMARK))
-        assertEquals(7, placeholders(LibrarySql.INSERT_QUOTE))
+        assertEquals(9, placeholders(LibrarySql.INSERT_BOOKMARK))
+        assertEquals(11, placeholders(LibrarySql.INSERT_QUOTE))
         assertEquals(4, placeholders(LibrarySql.REPLACE_PAGE_COUNTS))
         assertEquals(2, placeholders(LibrarySql.PRUNE_PAGE_COUNTS))
         assertTrue(LibrarySql.PRUNE_PAGE_COUNTS.contains("LIMIT ${LibrarySql.MAX_PAGE_COUNT_KEYS}"))
@@ -220,5 +220,11 @@ class LibrarySqlTest {
         LibrarySql.INSERT_BOOK, LibrarySql.UPDATE_BOOK_FILE, LibrarySql.UPDATE_BOOK_META, LibrarySql.RESTORE_FLAGS,
         LibrarySql.SELECT_COLLECTIONS, LibrarySql.PRUNE_PAGE_COUNTS, LibrarySql.REPLACE_PAGE_COUNTS,
         LibrarySql.INSERT_MEMBERSHIP, LibrarySql.INSERT_IGNORED,
+        // v3 (N §5.2)
+        LibrarySql.INSERT_QUOTE, LibrarySql.INSERT_BOOKMARK, LibrarySql.UPDATE_QUOTE_STYLE, LibrarySql.UPDATE_QUOTE_PLACE,
+        LibrarySql.UPDATE_BOOKMARK_PLACE, LibrarySql.SET_MISSING, LibrarySql.CLEAR_MISSING, LibrarySql.UNTRASH,
+        LibrarySql.SET_REVIEW, LibrarySql.CLEAR_REVIEW, LibrarySql.RESTORE_REVIEW, LibrarySql.SELECT_IDS_WITH_NOTES,
+        LibrarySql.SELECT_MOVE_CANDIDATES, LibrarySql.SELECT_RETURN_MARK, LibrarySql.SET_PREFS_RETURN,
+        LibrarySql.INSERT_PREFS_RETURN, LibrarySql.CLEAR_RETURN_MARK, LibrarySql.PRUNE_BOOK_PREFS,
     )
 }
