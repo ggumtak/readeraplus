@@ -56,6 +56,38 @@ class ScrollWindowTest {
         w.clear()
         assertEquals(0, w.count); assertTrue(w.layouts.all { it == null }); assertTrue(w.quotes.all { it.isEmpty() })
     }
+    @Test fun aLayoutStoredOutsideTheWindowLeavesItsStripsAsTheyWere() {
+        // ScrollReader.onSectionStored redraws only when rebuildWindow sees other strips (S §1.8): a neighbour prefetch
+        // (s ± 1 after the first page and every settle) is not asked for while the window does not reach it.
+        val l = layout(); val have = BooleanArray(3); val asked = ArrayList<Int>()
+        val source = object : StripSource {
+            override val sectionCount = 3
+            override fun layoutOf(section: Int): SectionLayout? { asked += section; return if (have[section]) l else null }
+            override fun unitGap(section: Int) = 11.1f
+        }
+        val w = ScrollWindow(); val pos = ScrollPos()
+        have[1] = true; pos.section = 1; pos.page = 1; pos.dy = 7f
+        w.fill(source, pos, 100f, 40f)
+        assertEquals(-1, w.blockedAt); assertEquals(1, w.first); assertEquals(1, w.last)
+        assertEquals(listOf(1), asked.distinct())
+        val count = w.count; val pages = w.pages.copyOf(count); val tops = w.tops.copyOf(count)
+        val gaps = w.gaps.copyOf(count); val bottom = w.wholeBottom
+        have[0] = true; have[2] = true
+        w.fill(source, pos, 100f, 40f)
+        assertEquals(count, w.count); assertEquals(-1, w.blockedAt); assertEquals(bottom, w.wholeBottom, 0f)
+        for (i in 0 until count) {
+            assertEquals(1, w.sections[i]); assertSame(l, w.layouts[i]); assertEquals(pages[i], w.pages[i])
+            assertEquals(tops[i], w.tops[i], 0f); assertEquals(gaps[i], w.gaps[i], 0f)
+        }
+        // A window that reaches an unstored section is blocked there; storing it changes the strips.
+        have[2] = false; pos.page = 4; pos.dy = 0f
+        w.fill(source, pos, 100f, 40f)
+        assertEquals(2, w.blockedAt); assertEquals(1, w.last)
+        val blockedCount = w.count
+        have[2] = true
+        w.fill(source, pos, 100f, 40f)
+        assertEquals(-1, w.blockedAt); assertEquals(2, w.last); assertTrue(w.count > blockedCount)
+    }
     @Test fun longEarlierHighlightsAreNeverLostBehindThousandsOfShorterRanges() {
         val quotes = ArrayList<Highlight>()
         quotes.add(Highlight(0, 100000, HighlightKind.QUOTE, 3))

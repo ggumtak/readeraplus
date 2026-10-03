@@ -104,4 +104,82 @@ class ThumbMapTest {
         assertTrue(rounds <= ThumbMap.MAX_ROUNDS)
         assertTrue(tried.values.all { it == 1 })
     }
+
+    /**
+     * PageThumbs.fillIn as the JVM sees it: [layOut] is session.layout (counts the section, stores it in a
+     * MAX_CACHED-entry LRU), [thumbs] is the thumbnail LRU keyed by (section, pageIndex). Returns the cells.
+     */
+    private fun coldFill(
+        m: ThumbMap, c: PageCounts, first: Int, count: Int, layouts: LinkedHashMap<Int, Int>,
+        thumbs: HashMap<Pair<Int, Int>, String>, layOut: (Int) -> Unit,
+    ): List<Pair<Int, Int>> {
+        val local = HashSet<Int>()
+        val ready: (Int) -> Boolean = { s -> s in local || (layouts[s] != null).also { if (it) local += s } }
+        ThumbMap.converge(m, c, first, count, ready) { s -> layOut(s); local += s }
+        for (s in m.missing(ready)) { layOut(s); local += s }
+        m.clampIndices { c.pages(it) }
+        return List(m.size) { i -> (m.sections[i] to m.indices[i]).also { thumbs[it] = "bitmap $it" } }
+    }
+
+    @Test
+    fun warmGridPageMapsWithoutLayoutsAfterTheyWereEvicted() {
+        // Many small chapters: one grid page touches more sections than the session keeps laid out.
+        val real = IntArray(16) { 1 + it % 3 }
+        val c = PageCounts(IntArray(real.size) { 1000 })
+        val layouts = object : LinkedHashMap<Int, Int>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, Int>?) = size > BookSession.MAX_CACHED
+        }
+        var layoutCalls = 0
+        val layOut: (Int) -> Unit = { s -> layoutCalls++; c.set(s, real[s], 1000); layouts[s] = real[s] }
+        val thumbs = HashMap<Pair<Int, Int>, String>()
+        val m = ThumbMap()
+        val cold = coldFill(m, c, 1, 12, layouts, thumbs, layOut)
+        assertTrue(layoutCalls >= 5)
+        assertTrue(cold.map { it.first }.distinct().size > BookSession.MAX_CACHED)
+        val labels = List(m.size) { c.globalPage(m.sections[it], m.indices[it]) }
+        // The reader turns on and prefetches its neighbours: none of the grid page's sections stays laid out.
+        for (s in 10 until 10 + BookSession.MAX_CACHED) layouts[s] = real[s]
+        assertTrue(cold.none { it.first in layouts })
+
+        // The second request for the same grid page: no layout at all, every cell a hit, the same cells and labels.
+        val before = layoutCalls
+        m.resolve(c, 1, 12)
+        val hits = arrayOfNulls<String>(m.size)
+        var lookups = 0
+        assertTrue(m.cached(c, hits) { s, idx -> lookups++; thumbs[s to idx] })
+        assertEquals(before, layoutCalls)
+        assertEquals(cold.size, m.size)
+        assertEquals(m.size, lookups)
+        assertEquals(m.size, hits.count { it != null })
+        for (i in 0 until m.size) {
+            assertEquals(cold[i], m.sections[i] to m.indices[i])
+            assertEquals("bitmap ${cold[i]}", hits[i])
+            assertEquals(labels[i], c.globalPage(m.sections[i], m.indices[i]))
+        }
+    }
+
+    @Test
+    fun anUncountedSectionOrAMissIsNotWarm() {
+        val c = PageCounts(intArrayOf(1000, 1000, 1000))
+        c.set(0, 3, 1000)
+        c.set(1, 2, 1000)
+        val m = ThumbMap()
+        val all = HashMap<Pair<Int, Int>, String>()
+        for (s in 0..2) for (p in 0 until 4) all[s to p] = "$s/$p"
+        // Section 2 is touched and uncounted: the mapping still needs its layout, and nothing is looked up.
+        m.resolve(c, 4, 4)
+        var lookups = 0
+        assertFalse(m.cached(c, arrayOfNulls<String>(m.size)) { s, idx -> lookups++; all[s to idx] })
+        assertEquals(0, lookups)
+        // Every touched section counted, one cell missing from the cache.
+        m.resolve(c, 1, 5)
+        assertTrue(m.cached(c, arrayOfNulls<String>(m.size)) { s, idx -> all[s to idx] })
+        all.remove(1 to 1)
+        assertFalse(m.cached(c, arrayOfNulls<String>(m.size)) { s, idx -> all[s to idx] })
+        // Nothing resolved (an empty book) is trivially warm, as the converge path completes it empty.
+        val none = PageCounts(IntArray(0))
+        val empty = ThumbMap()
+        empty.resolve(none, 1, 12)
+        assertTrue(empty.cached(none, arrayOfNulls<String>(0)) { _, _ -> null })
+    }
 }

@@ -65,6 +65,22 @@ internal class ThumbMap {
         for (i in 0 until size) indices[i] = clampIndex(indices[i], pageCount(sections[i]))
     }
 
+    /**
+     * The warm grid page (library.md §3.4): when every resolved cell's section has an exact count, the mapping needs
+     * no layout. Then each cell's (section, pageIndex clamped to the count) goes to [lookup] and the hit is put in
+     * [out]. True only when every cell is counted and found. False at the first uncounted section or miss: [out] and
+     * the clamped indices are then partial, and the caller maps through [converge] (which resolves again).
+     */
+    inline fun <T : Any> cached(counts: PageCounts, out: Array<T?>, lookup: (section: Int, pageIndex: Int) -> T?): Boolean {
+        for (i in 0 until size) if (!counts.isKnown(sections[i])) return false
+        for (i in 0 until size) {
+            val s = sections[i]
+            indices[i] = clampIndex(indices[i], counts.pages(s))
+            out[i] = lookup(s, indices[i]) ?: return false
+        }
+        return true
+    }
+
     companion object {
         const val MAX_ROUNDS = 3
 

@@ -40,7 +40,8 @@ import kotlin.math.roundToInt
  *
  * - **Mapping** (main): global pages → (section, pageIndex) with [ThumbMap]; sections not laid out go through
  *   [BookSession.layout] (the reader's layout thread and 4-entry LRU, so a tap into them is instant), then the mapping
- *   is resolved again, at most 3 rounds. Labels are `counts.globalPage`, the footer's own number.
+ *   is resolved again, at most 3 rounds. Labels are `counts.globalPage`, the footer's own number. A warm grid page
+ *   (every touched section counted, every cell in the LRU) needs neither `peek` nor a layout ([ThumbMap.cached]).
  * - **Rendering** (one shared "reader-thumbs" daemon thread, BACKGROUND priority, created on the first request): a
  *   [PageRenderer] per generation and paint version, built from `session.settings` at request time (day/night, colours
  *   and the weight stroke are repaints that keep the generation). Per cell `drawChrome` with
@@ -274,6 +275,33 @@ class PageThumbs(
             else -> scope.launch {
                 delay(PARTIAL_MS)
                 if (!finished) emit(false)
+            }
+        }
+
+        // 0: a warm grid page (every section counted, every cell in the LRU) maps without its layouts: thumbnail
+        // layouts and the reader's prefetch evict each other from the session's MAX_CACHED layouts. No peek, no layout.
+        val warm = lru
+        if (warm != null && valid()) {
+            val paint = source.paintVersion()
+            val look = QuoteLook.generation
+            val hits = arrayOfNulls<Entry>(map.size)
+            val all = map.cached(counts, hits) { s, idx ->
+                warm.get(ThumbKey(gen.id, s, idx, w, h, source.decorVersion(s), paint, look))
+            }
+            if (all) {
+                val n = map.size
+                for (i in 0 until n) {
+                    val e = hits[i]!!
+                    bitmaps[i] = e.bitmap
+                    marks[i] = e.marks
+                }
+                labels = IntArray(n) { counts.globalPage(map.sections[it], map.indices[it]) }
+                finished = true
+                timer?.cancel()
+                if (onBatch != null) emit(true)
+                if (perf) Log.d(TAG, "${if (onBatch == null) "prefetch" else "grid"} p$first+$n: ${SystemClock.uptimeMillis() - t0} ms" +
+                    " (rounds 0, hits $n, rendered 0)")
+                return true
             }
         }
 

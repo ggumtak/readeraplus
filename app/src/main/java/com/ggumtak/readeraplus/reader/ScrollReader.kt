@@ -70,7 +70,9 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     private val imageLayouts = arrayOfNulls<SectionLayout>(ScrollMath.MAX_STRIPS * 3)
     private val imagePages = IntArray(imageLayouts.size)
     private var imageCount = 0
-    private val imageDone = Runnable { if (!frozen && !detached) view.invalidate() }
+    /** The last frame drew a placeholder for a visible image (S §1.8: only that is redrawn when a decode lands). */
+    private var lastMissing = false
+    private val imageDone = Runnable { if (!frozen && !detached && lastMissing) view.invalidate() }
     private val work = Runnable {
         workPosted = false
         if (!frozen && !detached) navigation.continueWork()
@@ -230,7 +232,13 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         if (deferredBlock == section) deferredBlock = -1
         if (navigation.pending) {
             if (!workPosted) { workPosted = true; view.post(work) }
-        } else { rebuildWindow(); virtualDirty = true; invalidate(true) }
+        } else {
+            // S §1.8: only a frame that changed (a visible or blocked section) redraws; an off-window neighbour
+            // prefetch (s ± 1 after the first page and after every settle) is not an e-ink update.
+            val v = frameVersion
+            rebuildWindow(); virtualDirty = true
+            if (frameVersion != v) invalidate(true)
+        }
     }
     fun onGenerationChanged() {
         stopMotion(); frozen = true
@@ -365,6 +373,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
             missing = r.drawBody(canvas, l, window.pages[i], cl,
                 round(ct + window.tops[i] + window.gaps[i]), ct, bottom, window.quotes[i]) || missing
         }
+        lastMissing = missing
         canvas.restoreToCount(save)
         r.drawOverlay(canvas, decor, cl, ct, cw, width)
         if (!frozen && !detached) {
