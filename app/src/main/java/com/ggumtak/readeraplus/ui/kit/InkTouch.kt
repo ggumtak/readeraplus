@@ -120,18 +120,33 @@ class ListPager(val list: AbsListView,val bar: InkPagerBar,private val cols: Int
     var onPaged: ((first: Int,last: Int)->Unit)?=null
     private val count: Int get()=list.adapter?.count ?: 0
     init {
-        bar.prev.setOnClickListener { page(-1) };bar.next.setOnClickListener { page(1) };bar.label.setOnClickListener { openNumPad() }
+        bindBar()
         list.setOnScrollListener(object : AbsListView.OnScrollListener {
             override fun onScrollStateChanged(view: AbsListView,state: Int) {}
-            override fun onScroll(view: AbsListView,first: Int,visible: Int,total: Int) { update();onPaged?.invoke(first,(first+visible-1).coerceAtLeast(first)) }
+            override fun onScroll(view: AbsListView,first: Int,visible: Int,total: Int) {
+                // A hidden bar (scroll mode) needs no label on every scroll frame; showing it lays the list out again.
+                if (bar.visibility!=View.VISIBLE) return
+                update();onPaged?.invoke(first,(first+visible-1).coerceAtLeast(first))
+            }
         })
+    }
+    /** Points the bar's ◀ / ▶ / "3 / 27" at this pager (one bar can serve two lists; the shown one binds it). */
+    fun bindBar() {
+        bar.prev.setOnClickListener { page(-1) };bar.next.setOnClickListener { page(1) };bar.label.setOnClickListener { openNumPad() }
     }
     private fun fully(): Int {
         var n=0
         for (i in 0 until list.childCount) { val c=list.getChildAt(i);if (c.top>=list.paddingTop && c.bottom<=list.height-list.paddingBottom) n++ }
         return n.coerceAtLeast(1)
     }
-    private fun step(): Int = if (rowsPerPage>0) rowsPerPage else PagerMath.step((list.childCount/cols.coerceAtLeast(1)).coerceAtLeast(1))*cols.coerceAtLeast(1)
+    /**
+     * Rows one page moves. Fixed rows: [rowsPerPage]. Measured (rows of unequal height): the whole rows on screen, so
+     * the cut row, if any, leads the next page and an exactly filled page repeats nothing.
+     */
+    private fun step(): Int = if (rowsPerPage>0) rowsPerPage else {
+        val c=cols.coerceAtLeast(1)
+        (fully()/c).coerceAtLeast(1)*c
+    }
     private fun end(): Boolean = count==0 || list.childCount>0 && list.lastVisiblePosition>=count-1 && list.getChildAt(list.childCount-1).bottom<=list.height-list.paddingBottom
     private fun total(): Int = if (rowsPerPage>0) ((count+rowsPerPage-1)/rowsPerPage).coerceAtLeast(1) else PagerMath.total(count,fully(),step())
     fun page(dir: Int): Boolean {

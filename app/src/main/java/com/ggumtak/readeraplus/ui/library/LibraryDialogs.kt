@@ -20,6 +20,9 @@ import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.BookCollection
 import com.ggumtak.readeraplus.data.BookFileProvider
 import com.ggumtak.readeraplus.data.Library
+import com.ggumtak.readeraplus.data.LibraryQuery
+import com.ggumtak.readeraplus.data.Notes
+import com.ggumtak.readeraplus.data.NotesTab
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
 import com.ggumtak.readeraplus.format.BookFormat
@@ -27,6 +30,7 @@ import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
 import com.ggumtak.readeraplus.render.Covers
 import com.ggumtak.readeraplus.settings.LibraryListMode
+import com.ggumtak.readeraplus.settings.LibrarySort
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.MenuItem
 import com.ggumtak.readeraplus.ui.kit.alert
@@ -42,6 +46,7 @@ import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
+import com.ggumtak.readeraplus.ui.notes.NotesActivity
 import com.ggumtak.readeraplus.ui.settings.ErrorLines
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -85,6 +90,7 @@ internal fun LibraryActivity.bookMenu(
     if (b.trashed) {
         item("복원", R.drawable.ic_restore_from_trash) { setTrashed(b, false) }
         item("책 정보", R.drawable.ic_info) { documentInfo(b) }
+        item("독서 노트", R.drawable.ic_format_quote) { NotesActivity.open(this, NotesTab.ALL, b.id) }
         item("영구 삭제", R.drawable.ic_delete_forever) { confirmDelete(b) }
     } else {
         item("읽기", R.drawable.ic_menu_book) { openBook(b) }
@@ -100,6 +106,7 @@ internal fun LibraryActivity.bookMenu(
             }
         }
         item("책 정보", R.drawable.ic_info) { documentInfo(b) }
+        item("독서 노트", R.drawable.ic_format_quote) { NotesActivity.open(this, NotesTab.ALL, b.id) }
         item("파일 공유", R.drawable.ic_share) { shareBook(b) }
         item("컬렉션에 추가", R.drawable.ic_library_books) { collectionsDialog(b) }
         item("책 정보 편집", R.drawable.ic_edit) { editBookInfo(b) }
@@ -226,42 +233,64 @@ private fun Context.checkList(labels: List<String>, checked: BooleanArray, onTog
     }
 }
 
-private fun LibraryActivity.confirmDelete(b: Book) {
-    val cb = deleteFileCheckBox()
-    val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
-    alert().setTitle("영구 삭제")
-        .setMessage("‘${b.title}’을(를) 서재에서 삭제합니다. 북마크와 인용문도 함께 지워집니다.")
-        .setView(box)
-        .setPositiveButton("삭제") { _, _ ->
-            val deleteFile = cb.isChecked
-            val app = applicationContext
-            io("삭제하지 못했습니다", {
-                Library.remove(b.id, deleteFile)
-                Covers.invalidate(app, b.id)
-            }) {
-                CoverLoader.forget(b.id)
-                changed(collections = true)
-            }
-        }
-        .setNegativeButton("취소", null)
-        .showNoAnim()
+/** Counts notes on IO, then [then] on main; a failed count shows the question without the notes line (0). */
+private fun LibraryActivity.notesCountThen(count: () -> Int, then: (Int) -> Unit) {
+    scope.launch {
+        val n = withContext(Dispatchers.IO) { runCatching(count).getOrDefault(0) }
+        if (!isFinishing && !isDestroyed) then(n)
+    }
 }
 
-internal fun LibraryActivity.confirmEmptyTrash() {
-    val cb = deleteFileCheckBox()
-    val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
-    alert().setTitle("휴지통 비우기")
-        .setMessage("휴지통의 모든 책을 서재에서 삭제합니다.")
-        .setView(box)
-        .setPositiveButton("비우기") { _, _ ->
-            val deleteFiles = cb.isChecked
-            io("비우지 못했습니다", { Library.emptyTrash(deleteFiles) }) {
-                toast("휴지통을 비웠습니다")
-                changed(collections = true)
+/**
+ * "영구 삭제" of one book. The book's notes are counted first (IO): when it has some, the question says so and offers
+ * [독서 노트] (the hub filtered to this book) to export them first (NOTES_SPEC §10.1).
+ */
+private fun LibraryActivity.confirmDelete(b: Book) {
+    notesCountThen({ Notes.countForBooks(listOf(b.id)) }) { notes ->
+        val cb = deleteFileCheckBox()
+        val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
+        val d = alert().setTitle("영구 삭제")
+            .setMessage(LibraryText.deleteMessage(b.title, notes))
+            .setView(box)
+            .setPositiveButton("삭제") { _, _ ->
+                val deleteFile = cb.isChecked
+                val app = applicationContext
+                io("삭제하지 못했습니다", {
+                    Library.remove(b.id, deleteFile)
+                    Covers.invalidate(app, b.id)
+                }) {
+                    CoverLoader.forget(b.id)
+                    changed(collections = true)
+                }
             }
-        }
-        .setNegativeButton("취소", null)
-        .showNoAnim()
+            .setNegativeButton("취소", null)
+        if (notes > 0) d.setNeutralButton("독서 노트") { _, _ -> NotesActivity.open(this, NotesTab.ALL, b.id) }
+        d.showNoAnim()
+    }
+}
+
+/** "휴지통 비우기": like [confirmDelete], for every trashed book ([독서 노트] opens the hub unfiltered). */
+internal fun LibraryActivity.confirmEmptyTrash() {
+    notesCountThen({
+        val ids = Library.books(LibraryQuery(Shelf.TRASH, null, ""), LibrarySort.RECENT).map { it.id }
+        if (ids.isEmpty()) 0 else Notes.countForBooks(ids)
+    }) { notes ->
+        val cb = deleteFileCheckBox()
+        val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
+        val d = alert().setTitle("휴지통 비우기")
+            .setMessage(LibraryText.emptyTrashMessage(notes))
+            .setView(box)
+            .setPositiveButton("비우기") { _, _ ->
+                val deleteFiles = cb.isChecked
+                io("비우지 못했습니다", { Library.emptyTrash(deleteFiles) }) {
+                    toast("휴지통을 비웠습니다")
+                    changed(collections = true)
+                }
+            }
+            .setNegativeButton("취소", null)
+        if (notes > 0) d.setNeutralButton("독서 노트") { _, _ -> NotesActivity.open(this) }
+        d.showNoAnim()
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ collections

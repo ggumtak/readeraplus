@@ -1,0 +1,34 @@
+{
+ "lane": "LIB",
+ "files": [
+  "app/src/main/java/com/ggumtak/readeraplus/ui/library/LibraryActivity.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/ui/library/LibraryViews.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/ui/library/LibraryDialogs.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/ui/library/LibraryText.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/ui/library/CoverLoader.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/ui/library/LibraryGridMath.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/ui/library/AutoRestorePrompt.kt",
+  "app/src/main/java/com/ggumtak/readeraplus/ui/kit/InkTouch.kt",
+  "app/src/test/java/com/ggumtak/readeraplus/ui/library/LibraryGridMathTest.kt",
+  "app/src/test/java/com/ggumtak/readeraplus/ui/library/LibraryTextTest.kt",
+  "docs/next/LIB_STATUS.md",
+  "docs/next/lanes/LIB.result.json"
+ ],
+ "summary": "Library: four views (전체/요약/썸네일/그리드, one GridView, LibraryGridMath), paged lists (ListPager + pager bar, no fast scroller; measured LIST/COMPACT, fixed-row grids), cover prefetch, no-query view switch, polish 14 cards, drawer 독서 노트·단어장 with lazy counts, book menu 독서 노트, notes-aware delete/empty-trash, trash 파일 없음, C35 onCreate order with restoreIfStale + probeAsync after first list, idle 10 s auto backup (AutoBackup.schedule), AutoRestorePrompt with scan hold, 다른 백업 보기, late-answer line, one-time status line.",
+ "checks": "module typecheck OK; module unittest OK (72 tests); full typecheck OK; full unittest OK (1208 tests). Two reviewer passes (spec + bugs); all findings fixed; no re-review after fixes.",
+ "contractRequests": [
+  "res: drawables ic_view_agenda (전체) and ic_apps (그리드) from library.md §2.2 do not exist; ic_article / ic_grid_view are used."
+ ],
+ "rcaNotes": [
+  "None required: the library wires everything itself. Depends on DA-C (AutoBackup.isDue/schedule/findCandidates/pickDefault/restore/lastWrittenAt/locationLabel, InstallState.ensure/offerPending/settleOffer), DA-N (Notes.drawerCounts/countForBooks), RU (DeviceLight.restoreIfStale) implementations."
+ ],
+ "deviations": [
+  "Trash book menu keeps 책 정보: 복원 · 책 정보 · 독서 노트 · 영구 삭제 (N §10.1 lists 복원 · 독서 노트 · 영구 삭제).",
+  "Book menu 독서 노트 follows 책 정보 (spec's '문서 속성'; CI looks for 책 정보).",
+  "Paged mode reserves the status strip's height as list padding (not a pure overlay) so no row under it counts as seen; the 2-line backup notice reserves 56 dp.",
+  "A candidate-search IO failure leaves the offer pending (asked next visit) instead of settling it.",
+  "Idle backup uses AutoBackup.schedule(ctx,0){busy} (runs runNow on the backup thread, single-flight) per S §3.2; busy() reports user activity as LIB.md asks.",
+  "GRID and COVERS share the ic_grid_view toolbar icon; LIST uses ic_article (new drawables absent)."
+ ],
+ "complete": true
+}
