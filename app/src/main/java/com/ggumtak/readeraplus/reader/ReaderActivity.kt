@@ -1249,6 +1249,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val sc = scroll ?: return
         sc.onGenerationChanged()
         scrollFrozen = true
+        stripJob?.cancel()
+        stripJob = null
+        stripSection = -1
     }
 
     // ================================================================== navigation core
@@ -1380,7 +1383,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val idx = top.toInt()
         val l = sc.layoutOf(sec) ?: return
         val a = sc.anchor()
-        val sectionChanged = sec != curSection || curLayout == null
+        // cur* already follow the top page (onScrollTopChanged): compare with the last settle instead.
+        val sectionChanged = scrollSettledTop < 0 || ScrollWiring.section(scrollSettledTop) != sec
         val pageChanged = top != scrollSettledTop || displayedGenId != gen.id
         curSection = sec
         curLayout = l
@@ -1447,9 +1451,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         stripJob?.cancel()
         stripSection = section
         scheduleLoadingText()
+        val genId = s.generation?.id
         stripJob = scope.launch {
             val l = s.layout(section)
-            if (session !== s) return@launch
+            // A rebuild (rotation, settings) completes waiting layouts with null: not a failure.
+            if (session !== s || s.generation?.id != genId || scrollFrozen) return@launch
             if (stripSection == section) {
                 stripSection = -1
                 cancelLoadingText()
@@ -1486,6 +1492,28 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             for (bm in bookmarks) if (bm.section == sec && bm.offset >= start && bm.offset < end) out += bm
         }
         return out
+    }
+
+    /** The ribbon flag of the scroll decor (top-page changes, settles): no allocation per call. */
+    private fun anyVisibleBookmark(sc: ScrollReader): Boolean {
+        if (bookmarks.isEmpty()) return false
+        bookmarkSeen = false
+        sc.visibleRanges(bookmarkVisitor)
+        return bookmarkSeen
+    }
+
+    private var bookmarkSeen = false
+    private val bookmarkVisitor: (Int, Int, Int) -> Unit = { sec, start, end ->
+        if (!bookmarkSeen) {
+            val list = bookmarks
+            for (i in list.indices) {
+                val bm = list[i]
+                if (bm.section == sec && bm.offset >= start && bm.offset < end) {
+                    bookmarkSeen = true
+                    break
+                }
+            }
+        }
     }
 
     private fun sameHighlights(a: List<Highlight>?, b: List<Highlight>?): Boolean {
@@ -1703,7 +1731,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
             else -> {
                 val off = offset.coerceIn(0, l.content.length)
-                val pageStart = kind == Nav.TURN || (kind == Nav.JUMP && scroll == null)
+                // The mode the page is shown in (showPage attaches / detaches the viewport for a pending switch).
+                val pageStart = kind == Nav.TURN || (kind == Nav.JUMP && !scrollWanted)
                 showPage(sec, l, l.pageForOffset(off), kind, anchorOffset = if (pageStart) -1 else off)
             }
         }
@@ -2009,10 +2038,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     private fun jumpChapter(next: Boolean) {
         if (scroll != null) {
-            val vp = vpage() ?: return
-            val pi = ScrollWiring.chapterPageIndex(vp.page.start, curPageIdx)
+            // One frame of reference: the virtual page, else (no wholly visible line) the top page.
+            val vp = vpage()
+            val tp = curLayout?.pages?.getOrNull(curPageIdx)
+            val sec = vp?.section ?: curSection
+            val start = vp?.page?.start ?: tp?.start ?: return
+            val end = vp?.page?.end ?: tp?.end ?: return
+            val pi = ScrollWiring.chapterPageIndex(start, vp?.pageIndex ?: curPageIdx)
             // A user action: the private jump, never the ReaderHost goTo that is held back during motion.
-            chapterTarget(curSection, pi, vp.page.start, vp.page.end, next)?.let { jumpTo(it.section, it.offset, -1) }
+            chapterTarget(sec, pi, start, end, next)?.let { jumpTo(it.section, it.offset, -1) }
             return
         }
         val p = currentPage ?: return
@@ -2129,7 +2163,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     private fun isBookmarked(l: SectionLayout, p: PageInfo): Boolean {
-        scroll?.let { return visibleBookmarks(it).isNotEmpty() }
+        scroll?.let { return anyVisibleBookmark(it) }
         val last = curPageIdx == l.pageCount - 1
         return bookmarks.any { it.section == curSection && onPage(it.offset, p, last) }
     }
@@ -2239,11 +2273,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     override fun totalPagesKnown(): Boolean = session?.counts?.isComplete == true
 
     override fun setHighlights(owner: String, section: Int, highlights: List<Highlight>) {
-        scroll?.let { sc ->
-            // The strips cache per-page lists: the section the owner left and the one it marks are rebuilt.
-            val left = if (owner == OWNER_QUOTES) -1 else ownerHighlights[owner]?.first ?: -1
-            if (left >= 0 && left != section) sc.onHighlightsChanged(left)
-        }
+        // Scroll: the section this owner marked before (its strips are rebuilt once the maps are updated).
+        val left = if (scroll == null || owner == OWNER_QUOTES) -1 else ownerHighlights[owner]?.first ?: -1
         if (owner == OWNER_QUOTES) {
             val m = HashMap(quotesBySection)
             if (highlights.isEmpty()) m.remove(section) else m[section] = highlights
@@ -2253,7 +2284,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         } else {
             ownerHighlights[owner] = section to highlights
         }
-        scroll?.onHighlightsChanged(section)
+        scroll?.let { sc ->
+            if (left >= 0 && left != section) sc.onHighlightsChanged(left)
+            sc.onHighlightsChanged(section)
+        }
         refreshDecor(onlyIfChanged = true)
     }
 
@@ -2357,7 +2391,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 val target = if (s.sectionCount == oldCount) pos else s.counts.locateFraction(ratio)
                 val sec = target.section.coerceIn(0, s.sectionCount - 1)
                 val (vw, vh) = pageTargetSize()
-                s.setViewport(vw, vh, AnchorSpec(sec, target.offset, needle))
+                // The needle is text of the old anchor's section: searched only where that section still is.
+                s.setViewport(vw, vh, AnchorSpec(sec, target.offset, if (target === pos && sec == pos.section) needle else null))
                 val l = s.layout(sec)
                 if (l != null) {
                     val at = if (l.anchorBreak >= 0) l.anchorBreak else target.offset.coerceIn(0, l.content.length)
@@ -2636,6 +2671,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         override fun onTouchStarted() {
             keeper.poke()
             if (autoTurnOn) stopAutoTurn(showToast = true)
+            // A drag that ended without a settle (at a book edge, or cancelled in STEP) leaves nothing behind.
+            if (scroll != null) {
+                scrollGesture = false
+                scrollCloseAtSettle = false
+            }
         }
 
         override fun isSelectionActive(): Boolean = safely { selection?.isActive } == true
@@ -2654,8 +2694,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             // Scroll: the selection works on the wholly visible lines of the section under the finger.
             val sc = scroll
             if (sc != null) {
+                // Held for the selection only once it exists (vpage() returns an unheld focus to the anchor).
+                scrollFocusHeld = false
                 if (!sc.focusAt(y)) return false
-                scrollFocusHeld = true
             }
             // Only with the finger on a glyph: a press on a margin, in the leading between lines or paragraphs, on the
             // blank end of a short line or below the text selects nothing (and its release turns no page).
@@ -2667,6 +2708,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 sc?.let { releaseFocus(it) }
                 return false
             }
+            if (sc != null) scrollFocusHeld = true
             // Only once something is selected: a long press that selects nothing leaves the menu as it was.
             if (chromeVisible) setChromeVisible(false)
             return true
@@ -2721,6 +2763,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      * (its virtual page is what [hitTest] indexes, not the top page), then the focus returns to the anchor.
      */
     private fun scrollLinkTap(sc: ScrollReader, x: Float, y: Float): Boolean {
+        scrollFocusHeld = false
         if (!sc.focusAt(y)) return false
         var link: String? = null
         var section = -1
@@ -3189,7 +3232,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     internal fun currentBookOrNull(): Book? = bookRef
 
     internal fun isCurrentPageBookmarked(): Boolean {
-        scroll?.let { return visibleBookmarks(it).isNotEmpty() }
+        scroll?.let { return anyVisibleBookmark(it) }
         val l = curLayout ?: return false
         val p = currentPage ?: return false
         return isBookmarked(l, p)
