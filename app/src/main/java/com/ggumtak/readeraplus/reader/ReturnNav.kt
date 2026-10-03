@@ -113,7 +113,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     /** Hides the chip VIEW (the offer is kept: closing the menu brings it back) and binds the strip. */
     fun onChromeShown() {
         setChipShown(false)
-        bind()
+        bindDock()
     }
 
     /** Hides the strip with the chrome and shows the chip iff it has an offer whose place is off screen. */
@@ -376,7 +376,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         }
         val visible = target != null && ReturnPoints.chipVisible(
             if (PIN_FLOATS && state.offer == ReturnPoints.Chip.NONE) ReturnPoints.Chip.MARK else state.offer,
-            chromeVisible || host.chromeVisible, host.isOnCurrentPage(target),
+            chromeVisible, host.isOnCurrentPage(target),
         )
         if (!visible) {
             setChipShown(false)
