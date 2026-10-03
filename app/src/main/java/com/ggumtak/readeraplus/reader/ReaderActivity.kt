@@ -1499,7 +1499,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (kind == Nav.TURN) lastTurnAt = now
     }
 
-    /** A page turn the reader made (not auto turn / TTS): enough of them after a jump retire the return chip. */
+    /** A page turn the reader made (not auto turn / TTS): two of them after a jump retire the return chip. */
     private fun onManualTurn() = returnNav.onManualTurn()
 
     private fun imageCoverage(layout: SectionLayout, pageIndex: Int): Float = try {
@@ -1541,7 +1541,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
     }
 
-    // ================================================================== decor (header, footer, highlights)
+    // ================================================================== decor (highlights, bookmark, status slots)
 
     /**
      * The decor of the page on screen: its highlights (a list only when one overlaps), the bookmark ribbon and the
@@ -1732,7 +1732,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             clock24 = DateFormat.is24HourFormat(this)
         }
         val now = System.currentTimeMillis()
-        return Math.floorMod((now + zone.getOffset(now)) / 60_000L, 1440L).toInt()
+        return StatusClock.minuteOfDay(now, zone.getOffset(now))
     }
 
     /** Battery percent from the sticky broadcast, read at most once a minute (on page turns only). */
@@ -2808,7 +2808,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         startOpen(i)
     }
 
-    // ================================================================== return chip
+    // ================================================================== return point
 
     /**
      * The floating return chip's place (C24): above the progress lane and the extras' bottom bars (search results,
