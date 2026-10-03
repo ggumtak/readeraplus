@@ -180,8 +180,10 @@ internal class ThumbsTab(private val host: ReaderHost, private val close: () -> 
     private fun open(cell: ThumbCell) {
         if (cell.section < 0) return
         val jump = host as? PageJumpHost ?: return
-        close()
+        // The jump's layout request goes first: the dismiss's neighbour prefetch (cancelThumbs) must not get ahead of it
+        // on the single layout thread.
         jump.goToPage(cell.section, cell.pageIndex, remember = true)
+        close()
     }
 
     private fun askPage() {

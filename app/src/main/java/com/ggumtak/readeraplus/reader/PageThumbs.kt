@@ -110,7 +110,7 @@ class PageThumbs(
     /** Created on the first request; read by the render thread. */
     @Volatile private var lru: LruCache<ThumbKey, Entry>? = null
     @Volatile private var lruGen = -1
-    private var lruPaint = Int.MIN_VALUE
+    @Volatile private var lruPaint = Int.MIN_VALUE
     @Volatile private var closed = false
     private var lastFirst = 0
     private var direction = 1
@@ -267,12 +267,10 @@ class PageThumbs(
             }
         }
 
+        // Phones show placeholders only once a cell actually has to be rendered (a warm grid page is one update).
+        var placeholders = !progressive || onBatch == null
         val timer = when {
-            onBatch == null -> null
-            progressive -> {
-                emit(false) // placeholders at once
-                null
-            }
+            onBatch == null || progressive -> null
             else -> scope.launch {
                 delay(PARTIAL_MS)
                 if (!finished) emit(false)
@@ -330,6 +328,10 @@ class PageThumbs(
                 Decor.NONE
             }
             marks[i] = decor.marks
+            if (!placeholders) {
+                placeholders = true
+                emit(false)
+            }
             val task = Task(key, gen, settings, layout, decor.highlights, decor.marks)
             val e = withContext(dispatcher()) { renderOnThread(task) }
             scope.ensureActive()
@@ -341,7 +343,7 @@ class PageThumbs(
         finished = true
         timer?.cancel()
         if (onBatch != null) {
-            if (progressive) {
+            if (progressive && lastEmit > 0L) {
                 val wait = PROGRESS_MS - (SystemClock.uptimeMillis() - lastEmit)
                 if (wait > 0) delay(wait)
                 if (!valid()) return false
@@ -381,7 +383,7 @@ class PageThumbs(
             c.restoreToCount(save)
             c.setBitmap(null)
             val e = Entry(bmp, t.marks)
-            if (!closed && lruGen == t.key.genId) lru?.put(t.key, e)
+            if (!closed && lruGen == t.key.genId && lruPaint == t.key.paintVersion) lru?.put(t.key, e)
             e
         } catch (e: Throwable) {
             Log.w(TAG, "thumbnail failed for ${t.key.section}/${t.key.pageIndex}", e)
