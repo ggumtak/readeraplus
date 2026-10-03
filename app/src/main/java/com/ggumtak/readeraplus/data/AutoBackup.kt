@@ -629,6 +629,29 @@ object AutoBackup {
         return n
     }
 
+    /** Blocking (IO). How many files [deleteFiles] with the same [others] would delete (the confirm's {n}). */
+    fun countFiles(context: Context, others: Boolean): Int {
+        val ctx = context.applicationContext ?: context
+        Settings.init(ctx)
+        InstallState.verify(ctx)
+        val id8 = InstallState.id8(ctx)
+        return try {
+            if (canWriteFiles(ctx)) {
+                backupDir().list().orEmpty().count { n ->
+                    val owner = parseAutoName(n)?.first
+                    owner != null && (others || owner == id8)
+                }
+            } else if (Build.VERSION.SDK_INT >= 29) {
+                storeRows(ctx, id8).size
+            } else {
+                0
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "count failed: $t")
+            0
+        }
+    }
+
     fun lastWrittenAt(context: Context): Long {
         Settings.init(context)
         return readState(Settings.raw(), InstallState.installId(context)).writtenAt
