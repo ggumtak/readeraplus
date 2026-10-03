@@ -997,35 +997,34 @@ page_break_paragraph() { # 56: 페이지 나눔 = 문단 단위 keeps the first 
 }
 dialog_no_reflow() { # 57 (H4): the 페이지 이동 dialog leaves the page pixel-identical, no relayout
   fresh_reader sample-cp949.txt text/plain
-  # Keep chrome visible in both captures; the dialog alone takes and returns focus.
+  # Keep chrome visible in all captures; the dialog alone takes and returns focus.
   show_chrome || return 1
-  # Control first: the same screen twice with nothing touched. CI 28-30 found DIFF 3457 / 4690 inside the text column
-  # (bbox 81,360-623,1072: no dialog border in it, and the dialog has no dim) with no RELAYOUT; 57_still tells whether
-  # the cold-opened page changes on its own, and 57 then compares against the settled screen.
+  # 57_still: the same screen twice with nothing touched (the page does not change on its own).
   rawshot 57_open
-  sleep 3; rawshot 57_before
-  raw_check 57_still 57_open 57_before 360 1100
+  sleep 3; rawshot 57_still_b
+  raw_check 57_still 57_open 57_still_b 360 1100
+  # CI 28-32: the cold-opened first frame and every later redraw differ by 3457 px inside the text column only
+  # (bbox 81,360-617,1056), with no RELAYOUT, while all redraws are pixel-identical to each other (CI 32 57_repeat):
+  # a first-frame rasterization effect, not a moved page. So 57 compares redrawn states: one warm-up dialog first.
+  goto_dialog_open_close warmup || return 1
+  rawshot 57_before
+  log "57_firstframe (info, not a CHECK): $(python3 tools/ci/raw_equal.py shots/57_open.raw shots/57_before.raw 360 1100) 57_open vs 57_before rows 360..1100"
   perf_mark 57_before
-  tap_label "페이지 이동" contains || return 1
-  sleep 2
-  dump && has "이동" && has "5" || log "57: no number pad on screen (the go-to dialog did not open?)"
-  shot 57_dialog_no_reflow 0
-  back; sleep 2
-  # The capture needs the dialog gone (its number pad): one more BACK if it is still up.
-  if dump && has "이동" && has "5"; then log "57: the go-to dialog is still open after BACK, BACK again"; back; sleep 2; fi
+  goto_dialog_open_close 57 || return 1
   rawshot 57_after
   perf_mark 57_after
   raw_check 57 57_before 57_after 360 1100
   no_relayout 57 57_before 57_after
-  # CI 31: 57_still EQUAL but 57 DIFF 3457 in the text column, no RELAYOUT: the page drawn again after the dialog (the
-  # panel-closed refresh invalidates it) differs from the cold-opened first frame. 57_repeat runs the same dialog
-  # once more: EQUAL means every redraw is identical and only the first frame's rasterization differs (an emulator
-  # GPU glyph-cache effect, not a moved or re-laid-out page); DIFF means each redraw changes the text pixels.
-  tap_label "페이지 이동" contains || return 0
-  sleep 2; back; sleep 2
-  if dump && has "이동" && has "5"; then back; sleep 2; fi
-  rawshot 57_after2
-  raw_check 57_repeat 57_after 57_after2 360 1100
+}
+goto_dialog_open_close() { # opens 페이지 이동 from the shown bars and cancels it (shot only for "57")
+  tap_label "페이지 이동" contains || return 1
+  sleep 2
+  dump && has "이동" && has "5" || log "57: no number pad on screen (the go-to dialog did not open?)"
+  [ "$1" = 57 ] && shot 57_dialog_no_reflow 0
+  back; sleep 2
+  # The capture needs the dialog gone (its number pad): one more BACK if it is still up.
+  if dump && has "이동" && has "5"; then log "57: the go-to dialog is still open after BACK, BACK again"; back; sleep 2; fi
+  return 0
 }
 
 # ------------------------------------------------------------------ W2 page thumbnails (92–93)
