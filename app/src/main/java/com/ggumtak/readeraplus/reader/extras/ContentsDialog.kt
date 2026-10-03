@@ -1016,10 +1016,12 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             (host as? NotePlaceHost)?.let { h -> runCatching { h.notePlace(host.currentPosition()).sig }.getOrNull() }
 
         /**
-         * Whether [q]'s text is still at its offset (`JumpAnchor.matches`, ≤ 24 visible chars), when its section is
-         * the one laid out; null when that text is not at hand.
+         * Whether [q]'s text is still at its offset (`JumpAnchor.matches`, ≤ 24 visible chars): the reader's own check
+         * on any section it has laid out ([NotePlaceHost.quoteAnchorMatch], the set the page draws), else when its
+         * section is the one laid out; null when that text is not at hand.
          */
         fun anchorMatch(host: ReaderHost, q: Quote): Boolean? {
+            (host as? NotePlaceHost)?.let { h -> runCatching { h.quoteAnchorMatch(q) }.getOrNull()?.let { return it } }
             val layout = runCatching { host.currentLayout?.takeIf { host.currentPosition().section == q.section } }.getOrNull()
                 ?: return null
             val text = layout.content.text

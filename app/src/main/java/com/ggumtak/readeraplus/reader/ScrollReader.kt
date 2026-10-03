@@ -41,6 +41,8 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     private var direction = 1
     private var top = -1L
     private var focus = -1
+    /** A finger is down in a drag (from the drag's start to its release / cancel), also in STEP where nothing moves. */
+    private var held = false
     private var virtual: VirtualPage? = null
     private var virtualDirty = true
     private var window = ScrollWindow()
@@ -273,6 +275,18 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         return virtualPage() != null
     }
     fun clearFocus() { if (focus >= 0) { focus = -1; virtualDirty = true } }
+    /**
+     * S §1.10: TTS reads a line wholly on screen in [section] (e.g. below a seam): that section is the virtual page
+     * until the next settle. No redraw. False while the user moves, or when [section] is not on screen.
+     */
+    fun focusSection(section: Int): Boolean {
+        if (userMoving() || frozen) return false
+        var inWindow = false
+        for (i in 0 until window.count) if (window.sections[i] == section) inWindow = true
+        if (!inWindow) return false
+        if (focus != section) { focus = section; virtualDirty = true }
+        return true
+    }
     fun lineWhollyVisible(section: Int, offset: Int): Boolean =
         window.whollyVisible(section, offset, geometry?.contentTop?.toFloat() ?: 0f, clip)
     fun visibleRanges(visit: (section: Int, start: Int, end: Int) -> Unit) {
@@ -292,7 +306,9 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         }
         if (s >= 0) visit(s, start, end)
     }
-    fun userMoving(): Boolean = navigation.moving
+    /** A step waits for its section: further steps are the host's to queue (S §1.10 turn / flushTurns). */
+    val pending: Boolean get() = navigation.pending
+    fun userMoving(): Boolean = navigation.moving || held
     fun detach() {
         stopMotion(); detached = true
         view.removeCallbacks(afterDraw); afterPosted = false
@@ -317,25 +333,28 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     }
     override fun isMoving(): Boolean = userMoving()
     override fun stopMotion(): Boolean {
+        held = false
         view.removeCallbacks(work); workPosted = false
         return navigation.cancel()
     }
+    override fun beginDrag() { held = true }
     override fun dragBy(dy: Float) {
         if (!frozen && !detached && live) { direction = if (dy >= 0f) 1 else -1; navigation.drag(dy) }
     }
     override fun release(totalDy: Float, velocityY: Float) {
+        held = false
         if (!frozen && !detached) navigation.release(totalDy, velocityY,
             ViewConfiguration.get(view.context).scaledMinimumFlingVelocity.toFloat())
     }
-    override fun cancelDrag() { if (live) stopMotion() }
+    override fun cancelDrag() { held = false; if (live) stopMotion() }
     override fun a11yStep(next: Boolean): Boolean {
         if (frozen || detached || session == null) return false
         view.accessibilityStep(next); return true
     }
     override fun computeScroll() { /* No animator, inertia or timed interpolation. */ }
-    override fun draw(canvas: Canvas, width: Int, height: Int) {
-        val r = renderer ?: return
-        val g = geometry ?: return
+    override fun draw(canvas: Canvas, width: Int, height: Int): Boolean {
+        val r = renderer ?: return false
+        val g = geometry ?: return false
         val cl = g.contentLeft.toFloat(); val ct = g.contentTop.toFloat(); val cw = g.contentWidth.toFloat()
         r.drawChrome(canvas, decor, cl, ct, cw, this.height, width, height)
         val bottom = ct + clip
@@ -355,6 +374,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
                 afterPosted = true; view.post(afterDraw)
             }
         }
+        return true
     }
     private fun prefetchLayouts() {
         val s = session ?: return

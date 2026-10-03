@@ -93,6 +93,16 @@ class ScrollWiringTest {
     }
 
     @Test
+    fun flushKeepsTheStepsNotAppliedWhenOneWaitsForItsSection() {
+        // Step 3 of 10 waits in the viewport: steps 4..9 go back to the backlog; a dropped step 3 goes back too.
+        assertEquals(6, ScrollWiring.flushLeft(10, 3, waiting = true))
+        assertEquals(7, ScrollWiring.flushLeft(10, 3, waiting = false))
+        assertEquals(0, ScrollWiring.flushLeft(1, 0, waiting = true))
+        assertEquals(1, ScrollWiring.flushLeft(1, 0, waiting = false))
+        assertEquals(0, ScrollWiring.flushLeft(10, 9, waiting = true))
+    }
+
+    @Test
     fun chapterPageIndexTreatsAMidSectionViewportAsInside() {
         assertEquals(0, ScrollWiring.chapterPageIndex(0, 0))
         assertEquals(1, ScrollWiring.chapterPageIndex(15, 0))

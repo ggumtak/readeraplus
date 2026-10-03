@@ -50,28 +50,45 @@ class ScrollNavigationTest {
             assertFalse(e.later); assertFalse(nav.moving)
         }
     }
-    @Test fun unknownSectionKeepsTheRealFrameAndReplaysAllRapidCommandsInOrder() {
+    @Test fun stepsWhileASectionLoadsAreLeftToTheHostAndNeverReplayedFramePerFrame() {
         val src = Source(mutableListOf(section(4), null))
         val e = Events(); val nav = start(src, e)
         nav.step(true)
         val anchor = nav.anchor; val frames = e.frames; val settles = e.settled.size
         assertEquals(Step.NEED_SECTION, nav.step(true))
         assertEquals(1, e.blocked); assertEquals(anchor, nav.anchor); assertEquals(frames, e.frames)
-        val order = listOf(true, false, true, true, false, true)
-        for (next in order) assertEquals(Step.NEED_SECTION, nav.step(next))
+        assertTrue(nav.pending)
+        // S §1.10: further steps are the host's to queue (backlog, one flush): the viewport takes none of them.
+        for (next in listOf(true, false, true, true, false, true)) assertEquals(Step.NEED_SECTION, nav.step(next))
+        assertEquals(frames, e.frames)
         src.values[1] = section(80)
         nav.continueWork(); drain(nav, e)
         assertFalse(nav.moving)
-        assertEquals(settles + 1 + order.size, e.settled.size)
+        // Only the step that waited arrives: one frame, one settle.
+        assertEquals(frames + 1, e.frames)
+        assertEquals(settles + 1, e.settled.size)
         val referenceEvents = Events()
         val referenceSource = Source(mutableListOf(section(4), null))
         val reference = start(referenceSource, referenceEvents)
         reference.step(true)
         referenceSource.values[1] = section(80)
         reference.step(true)
-        for (next in order) reference.step(next)
         assertEquals(reference.anchor, nav.anchor)
         assertEquals(reference.pos.dy, nav.pos.dy, 0f)
+    }
+    @Test fun openAtANoteWithContextPlacementAnchorsTheFirstHalfVisibleLine() {
+        val l = section(); val src = Source(mutableListOf(l)); val e = Events(); val nav = start(src, e)
+        // Offset 75 is mid-line (lines are 10 chars): CONTEXT puts that line about 25 % down.
+        nav.place(0, l, 75, Placement.CONTEXT, SettleKind.OPEN)
+        val first = ScrollMath.anchor(src, nav.pos, nav.height)
+        assertEquals(first, nav.anchor)
+        assertTrue(nav.anchor.toInt() < 70)
+        // The anchor line and the top page describe the same page (footer label, chrome, progress agree).
+        assertEquals(nav.topPage.toInt(), l.pageForOffset(nav.anchor.toInt()))
+        assertEquals(listOf(SettleKind.OPEN), e.settled)
+        // TOP placement still keeps its exact offset (restore, relayout, switch).
+        nav.place(0, l, 75, Placement.TOP, SettleKind.RELAYOUT)
+        assertEquals(75L, nav.anchor)
     }
     @Test fun boundedEmptyWalkNeverPublishesAnEmptyFrameOrSavesItsAnchor() {
         val src = Source((listOf(section(4)) + List(200) { section(0) } + section(8)).toMutableList())
@@ -159,17 +176,5 @@ class ScrollNavigationTest {
         }
         nav.step(true)
         assertEquals(70L, nav.anchor)
-    }
-    @Test fun commandQueueRetainsAlternatingDirectionsAcrossGrowthAndWraparound() {
-        val queue = ScrollCommands()
-        val expected = java.util.ArrayDeque<Boolean>()
-        repeat(100000) { i ->
-            val next = i % 3 == 0
-            queue.add(next); expected.add(next)
-            if (i % 5 != 0) assertEquals(expected.remove(), queue.remove())
-        }
-        while (expected.isNotEmpty()) assertEquals(expected.remove(), queue.remove())
-        assertEquals(0, queue.size)
-        queue.add(true); queue.clear(); assertEquals(0, queue.size)
     }
 }

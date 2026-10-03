@@ -135,24 +135,3 @@ internal class ScrollHighlights(val source: List<Highlight>) {
         return out ?: emptyList()
     }
 }
-
-/** No tap is dropped while a foreground section is loading. Growth is confined to command input. */
-internal class ScrollCommands {
-    private var values = BooleanArray(16)
-    private var first = 0
-    var size = 0
-        private set
-    fun add(next: Boolean) {
-        if (size == values.size) {
-            val grown = BooleanArray(values.size * 2)
-            for (i in 0 until size) grown[i] = values[(first + i) % values.size]
-            values = grown; first = 0
-        }
-        values[(first + size) % values.size] = next; size++
-    }
-    fun remove(): Boolean {
-        check(size > 0)
-        val next = values[first]; first = (first + 1) % values.size; size--; return next
-    }
-    fun clear() { first = 0; size = 0 }
-}

@@ -262,7 +262,11 @@ internal object PanelRegistry {
 /** Optional main-thread status samples; never parses or allocates during a page turn. */
 interface StatusSampleHost { fun statusSample(item: com.ggumtak.readeraplus.settings.StatusItem): String? }
 /** Optional reader-only place capture. The notes hub never opens a book file. */
-interface NotePlaceHost { fun notePlace(pos: com.ggumtak.readeraplus.format.DocPosition): com.ggumtak.readeraplus.data.NotePlace }
+interface NotePlaceHost {
+    fun notePlace(pos: com.ggumtak.readeraplus.format.DocPosition): com.ggumtak.readeraplus.data.NotePlace
+    /** The reader's K2 anchor check of [q] on its section's laid-out text (any section it has); null = not at hand. */
+    fun quoteAnchorMatch(q: com.ggumtak.readeraplus.data.Quote): Boolean? = null
+}
 interface NoteJumpHost { fun openNote(jump: com.ggumtak.readeraplus.reader.ReaderJump) }
 interface PageThumbsHost {
     val thumbnailsShown: Boolean get() = true

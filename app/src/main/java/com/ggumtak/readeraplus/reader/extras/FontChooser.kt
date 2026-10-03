@@ -15,6 +15,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
+import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.FontInfo
 import com.ggumtak.readeraplus.render.FontManager
@@ -103,8 +104,14 @@ internal object FontChooser {
             rows += ListEntry(font.name, checked = font.id == currentId, typeface = tf, note = note) { onPick(font.id) }
         }
         rows += ListEntry("글꼴 추가…", action = true) { FontImportFragment.start(activity, onPick) }
-        rows += ListEntry("글꼴 관리", action = true) { SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS) }
+        rows += ListEntry("글꼴 관리", action = true) { openFonts(activity) }
         CompactList.show(activity, anchor, rows, widthPx, rightInsetPx)
+    }
+
+    /** 글꼴 관리: our own settings page, through the reader when it is one (its device light treats it as ours, U §4.2). */
+    private fun openFonts(activity: Activity) {
+        (activity as? ReaderActivity)?.openAppSettings(SettingsActivity.PAGE_FONTS)
+            ?: SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS)
     }
 
     private fun showDialog(activity: Activity, entries: List<Pair<FontInfo, Typeface?>>, currentId: String, onPick: (String) -> Unit) {
@@ -141,7 +148,7 @@ internal object FontChooser {
                 onPick(entries[which].first.id)
             }
             .setNeutralButton("글꼴 추가…") { _, _ -> FontImportFragment.start(activity, onPick) }
-            .setPositiveButton("글꼴 관리") { _, _ -> SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS) }
+            .setPositiveButton("글꼴 관리") { _, _ -> openFonts(activity) }
             .setNegativeButton("닫기", null)
             .showNoAnim()
         PanelRegistry.dialog(activity, dialog)

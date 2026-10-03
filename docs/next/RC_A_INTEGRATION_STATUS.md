@@ -26,3 +26,34 @@ scroll SPEC 1.10 중 모드 전환, 가상 페이지, selection.focusAt, TTS 이
 검사 로그: rca-gate-typecheck.log / rca-gate-tests.log (실행 워크스페이스). 별도 출력 디렉터리에서 완주한 최종 검사이며, 이전 임시 검사 출력은 판정에 사용하지 않았다.
 [screens] CI로 실제 Android 빌드·에뮬레이터 화면 검증이 필요하다. steps.txt CHECK FAIL과 실제 썸네일/밝기/선택 동작은 결과가 나온 뒤 확인할 것.
 코멧 기기는 연결되지 않아 PLAN 5.4 성능/5.5 기기 점검 미실시. 모든 화면 갱신 횟수와 위치 고정은 실제 화면 검증이 남아 있다.
+
+## 독립 리뷰 (2026-10-04)
+독립 검증을 거친 리뷰 지적 20건을 모두 반영했다. 건너뛴 항목은 없다.
+
+### 열기 (open-1~6)
+- 노트 열기에서 첫 measure가 노트 위치에 고정된 generation을 만들지 않도록 했다. startOpen이 첫 viewport를 직접 잡는 동안(`openOwnsViewport`) onViewSizeChanged는 재배치하지 않는다(C16 자연 페이지 유지).
+- 포커스 복귀 때의 주석 재로드는 afterOpen의 첫 로드 뒤에만 실행된다. 닫을 때 `annotationsLoadedAt = 0`으로 되돌려 첫 페이지 전 DB 읽기·backfill 쓰기를 막는다.
+- afterOpen은 세션 단위가 아니라 열기 단위로 한 번 실행된다(`afterOpenPending`, 공용 `afterFirstPage`). 재파싱이 세션을 바꾸면 다시 건다.
+- showPage/showScroll이 Boolean을 돌려준다. 렌더러가 실패하면 jump 소비, peek, intent strip, afterOpen 예약을 하지 않으므로 [다시 시도]가 노트로 연다. ScrollReader.draw가 본문을 그리지 못한 프레임은 첫 프레임으로 치지 않는다.
+- closeCurrentBook에서 restoredPlace를 비운다. 다른 책의 place가 이 책의 노트 jump를 막지 않는다.
+- goTo는 remember=false(TTS)일 때만 turnedInBackground를 세운다. 노트 허브에서 같은 책으로 jump해도 resume 때 전체 새로고침이 한 번 더 일어나지 않는다(wiring-note-jump-background-refresh와 같은 수정).
+
+### 스크롤 (scroll-*)
+- 섹션을 기다리는 동안 들어온 단계를 viewport 안에 쌓지 않는다(ScrollCommands 제거). 이 단계들은 turn에서 backlog로 가고, 기다리던 단계의 STEP settle이 같은 프레임 안에서 flush한다. 최대 10단계, EDGE면 edgeReached, 중간 NEED_SECTION이면 남은 단계를 backlog.restore(ScrollWiring.flushLeft, 테스트 추가)한다. 기다리는 단계를 멈추는 터치와 레이아웃 실패에서는 backlog를 비운다.
+- flush의 중간 단계는 위치만 갱신하고, 마지막 화면에 대해 trackPage/cadence/save/bind/selection을 한 번만 실행한다(scrollBookkeeping).
+- CONTEXT 배치(노트에서 열기, JUMP)의 anchor는 처음 절반 이상 보이는 줄이다. TOP 배치만 정확한 offset을 유지한다(테스트 추가).
+- STEP 드래그 중 손가락이 닿아 있는 동안 userMoving()이 true다(`held`, ScrollInput.beginDrag). release/cancelDrag/stopMotion에서 해제한다.
+- TTS goTo가 화면에 다 보이는 줄로 갈 때 ScrollReader.focusSection으로 그 구간을 가상 페이지로 삼는다. 다시 그리지 않는다.
+- 움직이는 동안 fillStatus는 anchor 대신 실시간 top page를 쓴다.
+- 키/탭 넘김은 사용자가 움직이고 있지 않을 때 남아 있는 scrollGesture/scrollCloseAtSettle 플래그를 지운다.
+
+### 연결 (wiring-*)
+- setHighlights("quotes")는 DB를 다시 읽지 않는다. QuoteCache에서 quoteRows를 바로 다시 만들고, 호출자의 낙관적 목록을 유지한다. reloadAnnotations는 시작 뒤에 인용이 바뀌면 인용 결과를 버리고, QuoteCache.put을 main에서 한다.
+- K2 판정이 하나가 되도록 NotePlaceHost.quoteAnchorMatch(기본값 null)를 추가했다. ContentsDialog.anchorMatch는 리더가 배치한 모든 구간에 대해 이 검사를 쓴다. 지적의 대안안을 택한 것으로, 삽입 중인 인용은 아직 QuoteCache에 없어서 캐시만으로 다시 계산할 수 없기 때문이다.
+- 돌아갈 위치 clamp는 실제 길이(배치된 구간)로만 offset을 자른다. EPUB 추정 길이 때문에 pin이 앞당겨지지 않는다.
+- InstallState.ensure를 afterOpen 2단계에서 main 동기 호출로 바꿨다. 4단계 probe의 설정 쓰기보다 항상 먼저 실행된다.
+- 읽기 설정 팝업의 화면 터치 사용자 지정 두 곳과 글꼴 관리 두 곳이 ReaderActivity.openAppSettings(page)를 거쳐 markOwnLaunch를 남긴다.
+- 북마크 삽입 완료 시 사용자가 지운 임시 북마크(`removedTemps`)만 DB에서 삭제한다. 책을 닫았거나 바꿨으면 저장된 행을 그대로 둔다.
+
+### 검사
+tools/typecheck.sh 종료 0, tools/unittest.sh OK (1506 tests). 애니메이션 추가 없음, 첫 페이지 전 새 작업 없음. 실제 화면 갱신 횟수는 CI 화면과 코멧 실기기에서 확인해야 한다.

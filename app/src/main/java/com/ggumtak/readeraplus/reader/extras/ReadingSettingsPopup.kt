@@ -25,6 +25,7 @@ import com.ggumtak.readeraplus.engine.PageBreakMode
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
+import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.reader.VolumeMode
@@ -245,6 +246,11 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
     /** The reader still shows the book this popup was opened for. */
     private fun sameBook(): Boolean = runCatching { host.book.id }.getOrNull() == book.id
+
+    /** Our own settings page through the reader, so its device light treats it as ours (U §4.2). */
+    private fun openSettings(page: String) {
+        (ctx as? ReaderActivity)?.openAppSettings(page) ?: SettingsActivity.open(ctx, page)
+    }
 
     private fun rebuild() {
         val y = scroll.scrollY
@@ -556,7 +562,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                 ListEntry(tapModeLabel(m), checked = m == mode) {
                     Settings.saveApp(Settings.app.copy(tapZoneMode = m))
                     value.text = tapModeShort(m)
-                    if (m == TapZoneMode.CUSTOM) SettingsActivity.open(ctx, SettingsActivity.PAGE_PAGE_TURNING)
+                    if (m == TapZoneMode.CUSTOM) openSettings(SettingsActivity.PAGE_PAGE_TURNING)
                 }
             })
         })
@@ -802,7 +808,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             flush()
             flushTxt()
             popup?.dismiss()
-            SettingsActivity.open(ctx, SettingsActivity.PAGE_PAGE_TURNING)
+            openSettings(SettingsActivity.PAGE_PAGE_TURNING)
         }, lp(0, WRAP_CONTENT, 1f))
         root.addView(row, lp())
     }

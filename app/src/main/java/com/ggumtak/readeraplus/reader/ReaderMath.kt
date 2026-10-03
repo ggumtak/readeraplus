@@ -424,6 +424,12 @@ internal object ScrollWiring {
     /** Queued turns [n] (signed) become this many instant screen steps. */
     fun flushSteps(n: Int): Int = minOf(Math.abs(n), MAX_FLUSH_STEPS)
 
+    /**
+     * Steps of a flush of [steps] still to apply when step [index] (0-based) returned NEED_SECTION: that step itself
+     * is not among them when it waits in the viewport for its section ([waiting]); a step dropped there is.
+     */
+    fun flushLeft(steps: Int, index: Int, waiting: Boolean): Int = (steps - index - if (waiting) 1 else 0).coerceAtLeast(0)
+
     /** 다음 화 / 이전 화 without a TOC: a viewport not at its section's start counts as "inside" (C's fix). */
     fun chapterPageIndex(virtualStart: Int, topPageIndex: Int): Int = if (virtualStart > 0) maxOf(1, topPageIndex) else 0
 

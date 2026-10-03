@@ -48,9 +48,13 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         val live: Boolean
         /** Apply a pending device/style choice only at the beginning of a new gesture. */
         fun onDown() {}
+        /** A drag started: the finger is down until [release] / [cancelDrag] (also in STEP, where nothing moves). */
+        fun beginDrag() {}
         fun isMoving(): Boolean; fun stopMotion(): Boolean; fun dragBy(dy: Float)
         fun release(totalDy: Float, velocityY: Float); fun cancelDrag()
-        fun a11yStep(next: Boolean): Boolean; fun computeScroll(); fun draw(canvas: Canvas, width: Int, height: Int)
+        fun a11yStep(next: Boolean): Boolean; fun computeScroll()
+        /** False when nothing of the body was painted (no renderer or geometry yet): not a first frame. */
+        fun draw(canvas: Canvas, width: Int, height: Int): Boolean
     }
 
     interface Callbacks {
@@ -165,17 +169,17 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val scrolling = scroll
         if (scrolling != null) {
-            try {
-                scrolling.draw(canvas, width, height)
-                drawFailed = false
+            val painted = try {
+                scrolling.draw(canvas, width, height).also { drawFailed = false }
             } catch (t: Throwable) {
                 if (!drawFailed) Log.w(TAG, "scroll draw failed", t)
                 drawFailed = true
                 canvas.drawColor(Color.WHITE)
                 canvas.drawText("페이지를 그리지 못했습니다.", 12f * resources.displayMetrics.density,
                     errorPaint.textSize * 2f, errorPaint)
+                false
             }
-            finishFirstFrame()
+            if (painted) finishFirstFrame()
         if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces()
             return
         }
@@ -385,7 +389,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                     removeCallbacks(longPress)
                     if (ScrollMath.isVertical(dx, dy)) {
                         if (brightnessMode) { brightnessDragging = true; brightnessFrom = cb.brightnessStart() }
-                        else { scrollDragging = true; cb.onScrollStart() }
+                        else { scrollDragging = true; input.beginDrag(); cb.onScrollStart() }
                     }
                     scrollLastY = y
                     if (brightnessDragging) cb.onBrightness(Gestures.brightness(brightnessFrom, dy, height), false)
