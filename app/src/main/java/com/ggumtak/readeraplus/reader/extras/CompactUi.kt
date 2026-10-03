@@ -58,16 +58,17 @@ internal object Compact {
 }
 
 /**
- * Row background: white (gray while pressed when [pressable]) with a 1 px line along the top when [topLine]: light and
- * inset 12 dp for an ordinary row, black and full width when [strongLine] (a group starts: section headers, 더보기).
+ * Row background: white (gray while pressed when [pressable]) with a 1 px line along the top when [topLine]: black
+ * and full width (a group starts: section headers, 더보기, other dialogs' bars), or light and inset 12 dp when
+ * [light] (an ordinary popup row).
  */
-internal fun Context.compactRowBackground(pressable: Boolean, topLine: Boolean, strongLine: Boolean = false): Drawable {
+internal fun Context.compactRowBackground(pressable: Boolean, topLine: Boolean, light: Boolean = false): Drawable {
     val base: Drawable = if (pressable) pressableBackground(Ink.WHITE) else ColorDrawable(Ink.WHITE)
     if (!topLine) return base
-    return LayerDrawable(arrayOf(base, ColorDrawable(if (strongLine) Ink.LINE else Ink.LINE_LIGHT))).apply {
+    return LayerDrawable(arrayOf(base, ColorDrawable(if (light) Ink.LINE_LIGHT else Ink.LINE))).apply {
         setLayerGravity(1, Gravity.TOP or Gravity.FILL_HORIZONTAL)
         setLayerHeight(1, 1)
-        if (!strongLine) setLayerInset(1, dp(Compact.LINE_INSET_DP), 0, dp(Compact.LINE_INSET_DP), 0)
+        if (light) setLayerInset(1, dp(Compact.LINE_INSET_DP), 0, dp(Compact.LINE_INSET_DP), 0)
     }
 }
 
@@ -78,14 +79,14 @@ internal fun Context.compactRowBackground(pressable: Boolean, topLine: Boolean, 
 internal fun Context.compactRow(topLine: Boolean = true, strongLine: Boolean = false, onClick: ((View) -> Unit)? = null): LinearLayout = horizontal {
     minimumHeight = dp(Compact.ROW_DP)
     setPadding(dp(Compact.PAD_DP), 0, dp(Compact.PAD_DP - 4), 0)
-    background = compactRowBackground(onClick != null, topLine, strongLine)
+    background = compactRowBackground(onClick != null, topLine, light = !strongLine)
     if (onClick != null) setOnClickListener(onClick)
 }
 
 /** 13 sp bold section header ("글자", "페이지", "TXT 파일" …) under a black group line. */
 internal fun Context.compactHeader(text: String): TextView = label(text, Compact.HEADER_SP, bold = true, color = Ink.GRAY).apply {
     setPadding(dp(Compact.PAD_DP), dp(10), dp(Compact.PAD_DP), dp(4))
-    background = compactRowBackground(pressable = false, topLine = true, strongLine = true)
+    background = compactRowBackground(pressable = false, topLine = true)
 }
 
 /** The 15 sp row label (left side), optionally with a 12 sp gray summary under it. */
@@ -209,6 +210,7 @@ internal object CompactList {
         val screenW = decor.width.takeIf { it > 0 } ?: dm.widthPixels
         val width = widthPx.coerceIn(1, screenW)
 
+        val noteMaxPx = (width * 0.45f).toInt()
         lateinit var popup: PopupWindow
         val list = activity.vertical { setBackgroundColor(Ink.WHITE) }
         var checkedRow: View? = null
@@ -216,7 +218,7 @@ internal object CompactList {
             val row = activity.horizontal {
                 minimumHeight = activity.dp(Compact.LIST_ROW_DP)
                 setPadding(activity.dp(Compact.PAD_DP), activity.dp(2), activity.dp(10), activity.dp(2))
-                background = activity.compactRowBackground(pressable = true, topLine = i > 0 && (e.action && !entries[i - 1].action), strongLine = true)
+                background = activity.compactRowBackground(pressable = true, topLine = i > 0 && (e.action && !entries[i - 1].action))
                 setOnClickListener {
                     popup.dismiss()
                     e.onClick()
@@ -228,8 +230,11 @@ internal object CompactList {
                 if (e.typeface != null) typeface = if (e.checked == true) Typeface.create(e.typeface, Typeface.BOLD) else e.typeface
             }
             row.addView(text, lp(0, WRAP_CONTENT, 1f))
+            // A live sample (a chapter / book title) is cut at 45% of the row: the item's own name always stays visible.
             if (e.note != null) row.addView(activity.label(e.note, Compact.SUMMARY_SP, color = Ink.GRAY, maxLines = 1).apply {
                 setPadding(activity.dp(6), 0, activity.dp(4), 0)
+                ellipsize = TextUtils.TruncateAt.END
+                maxWidth = noteMaxPx
             })
             if (e.checked != null) {
                 row.addView(activity.icon(if (e.checked) R.drawable.ic_radio_button_checked else R.drawable.ic_radio_button_unchecked, 18).apply {
