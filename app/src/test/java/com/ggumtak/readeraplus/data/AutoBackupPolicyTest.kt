@@ -85,6 +85,20 @@ class AutoBackupPolicyTest {
     }
 
     @Test
+    fun rotationNeverDeletesTheFileJustWritten() {
+        val tz = TimeZone.getDefault()
+        val a = AutoBackup.autoName("0badc0de", now, tz)
+        val b = AutoBackup.autoName("0badc0de", now - 24 * hour, tz)
+        val c = AutoBackup.autoName("0badc0de", now - 48 * hour, tz)
+        // Normal: the new file is the newest; one other kept.
+        assertEquals(listOf(c), AutoBackup.toRotateAfter(listOf(a, b, c), a))
+        // The clock went back: the new file's name time is the oldest, it still stays.
+        val back = AutoBackup.autoName("0badc0de", now - 72 * hour, tz)
+        assertEquals(listOf(b, c), AutoBackup.toRotateAfter(listOf(a, b, c, back), back))
+        assertTrue(AutoBackup.toRotateAfter(listOf(a), a).isEmpty())
+    }
+
+    @Test
     fun autoNameRoundTripAndTimeZone() {
         val seoul = TimeZone.getTimeZone("Asia/Seoul")
         val utc = TimeZone.getTimeZone("UTC")
@@ -111,11 +125,14 @@ class AutoBackupPolicyTest {
         val newer = AutoBackup.autoName("12345678", now - 24 * hour, tz)
         // lastModified says the opposite (a copy resets it): the name's time decides.
         val auto = listOf(older to now, newer to 0L, mine to now, "garbage.json" to now)
-        val manual = listOf("readeraplus-backup-20260901.json" to now - 36 * hour, "other.json" to now)
+        val manual = listOf("/sdcard/Download/readeraplus-backup-20260901.json" to now - 36 * hour,
+            "/sdcard/Documents/readeraplus-backup-20260901.json" to now - 40 * hour, "/sdcard/Download/other.json" to now)
         val l = AutoBackup.listed(auto, manual, "aaaaaaaa", includeOwn = false)
-        assertEquals(listOf(newer, "readeraplus-backup-20260901.json", older), l.map { it.name })
-        assertEquals(listOf(true, false, true), l.map { it.auto })
-        assertEquals(listOf("12345678", null, "0badc0de"), l.map { it.id8 })
+        // The same export name in Download/ and Documents/: two entries, each its own file.
+        assertEquals(listOf(newer, "/sdcard/Download/readeraplus-backup-20260901.json",
+            "/sdcard/Documents/readeraplus-backup-20260901.json", older), l.map { it.name })
+        assertEquals(listOf(true, false, false, true), l.map { it.auto })
+        assertEquals(listOf("12345678", null, null, "0badc0de"), l.map { it.id8 })
         // BackupPage's list includes this install's own files.
         assertEquals(mine, AutoBackup.listed(auto, manual, "aaaaaaaa", includeOwn = true).first().name)
     }

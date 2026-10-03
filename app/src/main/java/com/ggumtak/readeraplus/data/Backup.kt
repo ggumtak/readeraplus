@@ -220,13 +220,24 @@ object Backup {
             byNameSize.getOrPut(nameSizeKey(r.fileName, r.size)) { ArrayList(1) } += r
         }
         val used = HashSet<Long>()
-        val placeholderPaths = HashSet<String>()
-        val out = ArrayList<Match>(books.size)
-        for (b in books) {
-            val path = if (b.path.isNotEmpty()) Library.normalizePath(b.path) else ""
-            var row = byPath[path]?.takeIf { it.id !in used }
-            if (row == null && b.fileName.isNotEmpty() && b.size >= 0) {
-                row = byNameSize[nameSizeKey(b.fileName, b.size)]?.firstOrNull { it.id !in used }
+        // Paths a placeholder must not take: every row's, the files added below, earlier placeholders.
+        val taken = HashSet<String>(byPath.keys)
+        val paths = books.map { if (it.path.isNotEmpty()) Library.normalizePath(it.path) else "" }
+        val out = arrayOfNulls<Match>(books.size)
+        // Pass 1: exact paths, so a name + size fallback of another entry can't take a row whose own entry follows.
+        for ((i, b) in books.withIndex()) {
+            val row = byPath[paths[i]]?.takeIf { paths[i].isNotEmpty() && it.id !in used } ?: continue
+            used += row.id
+            out[i] = Match(row.id, b, b.missingAt > 0 && fileExists(row.path))
+        }
+        // Pass 2: file name + size, then the file itself if it exists (added), else a placeholder.
+        for ((i, b) in books.withIndex()) {
+            if (out[i] != null) continue
+            val path = paths[i]
+            val row = if (b.fileName.isNotEmpty() && b.size >= 0) {
+                byNameSize[nameSizeKey(b.fileName, b.size)]?.firstOrNull { it.id !in used }
+            } else {
+                null
             }
             var id = row?.id
             var found = row != null && b.missingAt > 0 && fileExists(row.path)
@@ -238,6 +249,7 @@ object Backup {
                     Log.w(TAG, "could not add ${b.fileName}: $t")
                     null
                 }
+                if (added != null) taken += added.path
                 if (added != null && added.id !in used) {
                     id = added.id
                     found = true
@@ -245,16 +257,16 @@ object Backup {
             }
             if (id == null) {
                 // Its notes would be lost silently: keep them under a placeholder (N §5.6). A path already taken by a
-                // row (used by another entry) or by an earlier placeholder can't hold another one.
-                if (BackupMerge.needsPlaceholder(b) && path.isNotEmpty() && path !in byPath && placeholderPaths.add(path)) {
-                    out += Match(-1, b.copy(path = path), fileFound = false, placeholder = true)
+                // row or by an earlier placeholder can't hold another one.
+                if (BackupMerge.needsPlaceholder(b) && path.isNotEmpty() && taken.add(path)) {
+                    out[i] = Match(-1, b.copy(path = path), fileFound = false, placeholder = true)
                 }
                 continue
             }
             used += id
-            out += Match(id, b, found)
+            out[i] = Match(id, b, found)
         }
-        return out
+        return out.filterNotNull()
     }
 
     private fun fileExists(path: String): Boolean = try {
@@ -265,20 +277,21 @@ object Backup {
 
     private fun nameSizeKey(fileName: String, size: Long): String = "$fileName\u0000$size"
 
-    /** A placeholder row for [b] (title, author, format from the backup); its id, or null when none could be made. */
+    /** A new placeholder row for [b] (title, author, format from the backup); its id, or null when the path is taken. */
     private fun SQLiteDatabase.insertPlaceholder(b: BackupBook, now: Long): Long? {
         val format = BookFormat.entries.firstOrNull { it.name == b.format } ?: BookFormat.forFile(b.fileName)
             ?: BookFormat.TXT
         val fileName = b.fileName.ifEmpty { b.path.substringAfterLast('/') }
         val series = b.series?.let { MetaInfo.clean(it, 500) }?.ifEmpty { null }
-        insertRow(
+        val id = insertRow(
             BackupSql.INSERT_PLACEHOLDER,
             b.path, fileName, b.path.substringBeforeLast('/', ""),
             MetaInfo.clean(b.title, DataLimits.TITLE), MetaInfo.clean(b.author, DataLimits.AUTHOR),
             series, if (series == null) null else b.seriesIndex,
             format.name, b.size.coerceAtLeast(0L), b.mtime, if (b.addedAt > 0) b.addedAt else now, b.language,
         )
-        return queryFirst(LibrarySql.SELECT_ID_BY_PATH, args(b.path)) { it.getLong(0) }
+        // -1: the path is in the library after all (added since the resolve); never trash that real book.
+        return id.takeIf { it > 0 }
     }
 
     /** Restores [matches]; returns (book id, progress) of the restored positions to find again by fraction. */
@@ -297,7 +310,13 @@ object Backup {
             for (n in data.collections) collection(n)
             for (m in matches) {
                 val b = m.backup
-                val id = if (m.placeholder) insertPlaceholder(b, now) ?: continue else m.id
+                // A placeholder whose path turned up in the library meanwhile merges into that row like a match.
+                val placeholderId = if (m.placeholder) insertPlaceholder(b, now) else null
+                val id = when {
+                    !m.placeholder -> m.id
+                    placeholderId != null -> placeholderId
+                    else -> queryFirst(LibrarySql.SELECT_ID_BY_PATH, args(b.path)) { it.getLong(0) } ?: continue
+                }
                 val cur = queryFirst(BackupSql.SELECT_BOOK_STATE, args(id)) { c ->
                     BackupMerge.BookState(
                         lastReadAt = c.getLong(0), favorite = c.getInt(1) != 0, toRead = c.getInt(2) != 0,
@@ -305,7 +324,7 @@ object Backup {
                         reviewAt = c.getLong(6), encoding = c.getString(7) ?: "", missingAt = c.getLong(8),
                     )
                 } ?: continue
-                val r = BackupMerge.book(cur, b, m.fileFound, if (m.placeholder) now else 0L)
+                val r = BackupMerge.book(cur, b, m.fileFound, if (placeholderId != null) now else 0L)
                 if (b.metaLocked && b.title.isNotBlank()) {
                     val series = b.series?.let { MetaInfo.clean(it, 500) }?.ifEmpty { null }
                     exec(

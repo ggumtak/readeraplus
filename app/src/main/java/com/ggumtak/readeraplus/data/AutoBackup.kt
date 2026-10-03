@@ -140,7 +140,8 @@ object AutoBackup {
     /**
      * Pure: the files to read headers from, newest first: auto files of the backup folder ([autoDir], name →
      * lastModified) of other installs (and this one's when [includeOwn]), ordered by the time in the name (a copy or
-     * a move resets `lastModified`); manual exports (`readeraplus-backup-*.json`) of [manual] by `lastModified`.
+     * a move resets `lastModified`); manual exports (`readeraplus-backup-*.json`; [manual] = full path →
+     * lastModified) by `lastModified`. [Listed.name] is the auto file's name or the manual export's path.
      */
     internal fun listed(autoDir: List<Pair<String, Long>>, manual: List<Pair<String, Long>>, myId8: String,
                         includeOwn: Boolean): List<Listed> {
@@ -151,7 +152,8 @@ object AutoBackup {
             out += Listed(name, true, id8, t, true)
         }
         for ((name, modified) in manual) {
-            if (!name.startsWith(MANUAL_PREFIX) || !name.endsWith(".json")) continue
+            val base = name.substringAfterLast('/')
+            if (!base.startsWith(MANUAL_PREFIX) || !base.endsWith(".json")) continue
             out += Listed(name, false, null, modified, false)
         }
         out.sortWith(compareByDescending<Listed> { it.time }.thenBy { it.name })
@@ -279,7 +281,7 @@ object AutoBackup {
         write(ctx, loc, name, Backup.headed(snap.data, now, Backup.origin(ctx, auto = true)), busy)
 
         // 5. Rotate (only after a successful write), then record.
-        rotate(ctx, loc, id8)
+        rotate(ctx, loc, id8, name)
         prefs.edit()
             .putLong(PREF_WRITTEN_AT, now)
             .putLong(PREF_CHECKED_AT, now)
@@ -412,6 +414,11 @@ object AutoBackup {
     @TargetApi(29)
     private fun storeWrite(ctx: Context, name: String, data: BackupData, busy: () -> Boolean) {
         val r = ctx.contentResolver
+        // A second write in the same minute: MediaStore would name the new row "… (1).json", which no rotation or
+        // delete recognises. Replace the earlier row of that name instead.
+        parseAutoName(name)?.first?.let { id8 ->
+            for ((uri, n) in storeRows(ctx, id8)) if (n == name) r.delete(uri, null, null)
+        }
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, JSON_MIME)
@@ -458,12 +465,24 @@ object AutoBackup {
         return out
     }
 
-    private fun rotate(ctx: Context, loc: Location, id8: String) {
+    /**
+     * Pure: own files to delete after writing [written]: it is always kept (its name time may be older than the
+     * others' when the clock went back), with the newest [KEEP_OWN] − 1 of the others.
+     */
+    internal fun toRotateAfter(ownNames: List<String>, written: String): List<String> {
+        val others = ownNames.filter { it != written }.mapNotNull { n -> parseAutoName(n)?.let { n to it.second } }
+            .sortedWith(compareByDescending<Pair<String, Long>> { it.second }.thenByDescending { it.first })
+        return others.drop(KEEP_OWN - 1).map { it.first }
+    }
+
+    private fun rotate(ctx: Context, loc: Location, id8: String, written: String) {
         try {
             when (loc) {
                 is Location.Files -> {
                     val names = loc.dir.list().orEmpty()
-                    for (n in toRotate(names.filter { parseAutoName(it)?.first == id8 })) File(loc.dir, n).delete()
+                    for (n in toRotateAfter(names.filter { parseAutoName(it)?.first == id8 }, written)) {
+                        File(loc.dir, n).delete()
+                    }
                     // Leftovers of a run killed mid-write.
                     for (n in names) {
                         if (n.endsWith(".json.tmp") && parseAutoName(n.removeSuffix(".tmp"))?.first == id8) {
@@ -473,7 +492,7 @@ object AutoBackup {
                 }
                 Location.Store -> if (Build.VERSION.SDK_INT >= 29) {
                     val rows = storeRows(ctx, id8)
-                    val drop = toRotate(rows.map { it.second }).toSet()
+                    val drop = toRotateAfter(rows.map { it.second }, written).toSet()
                     for ((uri, name) in rows) if (name in drop) ctx.contentResolver.delete(uri, null, null)
                 }
             }
@@ -503,14 +522,16 @@ object AutoBackup {
                 val autoFiles = dir.listFiles()?.filter { it.isFile }.orEmpty()
                 val manualFiles = listOf(Environment.DIRECTORY_DOWNLOADS, Environment.DIRECTORY_DOCUMENTS)
                     .flatMap { File(primaryRoot(), it).listFiles()?.filter { f -> f.isFile }.orEmpty() }
-                val byName = HashMap<String, File>()
-                autoFiles.forEach { byName["a/" + it.name] = it }
-                manualFiles.forEach { byName.putIfAbsent("m/" + it.name, it) }
+                // Keyed by what [listed] returns: the name in the backup folder, the full path of a manual export
+                // (the same name may be in Download/ and Documents/).
+                val byKey = HashMap<String, File>()
+                autoFiles.forEach { byKey[it.name] = it }
+                manualFiles.forEach { byKey[it.absolutePath] = it }
                 val list = listed(autoFiles.map { it.name to it.lastModified() },
-                    manualFiles.map { it.name to it.lastModified() }, mine, includeOwn)
+                    manualFiles.map { it.absolutePath to it.lastModified() }, mine, includeOwn)
                 for (l in list) {
                     if (out.size >= MAX_CANDIDATES) break
-                    val f = byName[(if (l.inAutoDir) "a/" else "m/") + l.name] ?: continue
+                    val f = byKey[l.name] ?: continue
                     if (f.length() > Backup.MAX_BYTES) continue
                     val h = try {
                         f.inputStream().use(::readHeader)
@@ -583,6 +604,8 @@ object AutoBackup {
     fun deleteFiles(context: Context, others: Boolean): Int {
         val ctx = context.applicationContext ?: context
         Settings.init(ctx)
+        // An id copied from an earlier install must not delete that install's files as "own".
+        InstallState.verify(ctx)
         val id8 = InstallState.id8(ctx)
         var n = 0
         try {
