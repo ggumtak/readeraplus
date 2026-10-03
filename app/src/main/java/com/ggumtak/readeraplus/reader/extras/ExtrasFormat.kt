@@ -1,9 +1,12 @@
 package com.ggumtak.readeraplus.reader.extras
 
 import com.ggumtak.readeraplus.data.TxtOverride
+import com.ggumtak.readeraplus.engine.PageBreakMode
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.ReaderFormat
+import com.ggumtak.readeraplus.render.StatusFit
 import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.settings.StylePreset
 import com.ggumtak.readeraplus.settings.UserStyle
 import com.ggumtak.readeraplus.settings.UserStyles
@@ -91,6 +94,13 @@ internal object Fmt {
         val sign = if (pm > 0) "+" else "-"
         val a = abs(pm)
         return if (a % 10 == 0) "$sign${a / 10}%" else "$sign${a / 10}.${a % 10}%"
+    }
+
+    /** Signed whole number for the margin steppers: "0", "+4", "−10" (U+2212, read as "minus" by TalkBack). */
+    fun signed(v: Int): String = when {
+        v > 0 -> "+$v"
+        v < 0 -> "\u2212${-v}"
+        else -> "0"
     }
 
     /** Font weight as a plain number ("500"): short and constant-width, so steppers never shift. */
@@ -341,17 +351,21 @@ internal object SearchText {
 
 /**
  * Size / placement maths of the compact reading-settings popup and the drop-down lists it opens (px in the reader
- * window). Sized for the ~6" 360×720 dp e-ink screen: the whole width but a 4 dp gap on each side (≤ 420 dp, A9: a
- * narrower popup left a strip of clipped page text beside it) and at most 55% of the height, so the lower half of the
- * page stays in view as the preview.
+ * window). Sized for the ~6" 360×720 dp e-ink screen (U polish 7): centred, the whole width but 8 dp on each side
+ * (≤ 400 dp), 8 dp under the status-bar inset, and at most 56% of the height, so the lower part of the page stays in
+ * view as the preview while the main section ([MAIN_ROWS] × [Compact.ROW_DP] = 396 dp) never scrolls.
  */
 internal object PopupGeometry {
-    /** Rows of the popup's main section: 스타일, 글꼴, 글자 크기, 굵기, 줄 간격, 문단 간격, 들여쓰기, 정렬, 줄바꿈, 더보기. */
-    const val MAIN_ROWS = 10
-    /** Space left beside the popup, both sides together (dp): it sits 4 dp inside the right edge. */
-    const val SIDE_GAP_DP = 8
-    const val MAX_WIDTH_DP = 420
-    const val HEIGHT_FRACTION = 0.55f
+    /** Rows of the popup's main section: 스타일, 글꼴, 글자 크기, 굵기, 줄 간격, 문단 간격, 들여쓰기, 정렬 │ 줄바꿈, 더보기. */
+    const val MAIN_ROWS = 9
+    /** Space left beside the popup, both sides together (dp): it is centred, 8 dp from each edge. */
+    const val SIDE_GAP_DP = 16
+    const val MAX_WIDTH_DP = 400
+    const val HEIGHT_FRACTION = 0.56f
+    /** Drop-down lists of the popup that have many entries (the status slot chooser: 12 rows × 40 dp). */
+    const val TALL_LIST_FRACTION = 0.8f
+    /** Gap between the status-bar inset and the popup's top edge (dp). */
+    const val TOP_GAP_DP = 8
     /** Smallest useful height (dp) when the space under the anchor is short (landscape / split screen). */
     const val MIN_HEIGHT_DP = 160
     /** Gap kept to the window edges (dp). */
@@ -360,18 +374,19 @@ internal object PopupGeometry {
     /** Top and maximum (or actual, for a list) height. */
     class Placement(val top: Int, val height: Int)
 
-    /** Popup width: min([screenW] − 8 dp, 420 dp), never wider than the screen. */
+    /** Popup width: min([screenW] − 16 dp, 400 dp), never wider than the screen. */
     fun width(screenW: Int, density: Float): Int =
         minOf(screenW - (SIDE_GAP_DP * density).roundToInt(), (MAX_WIDTH_DP * density).roundToInt(), screenW).coerceAtLeast(1)
 
     /**
-     * The settings popup under the top bar whose bottom edge is at [anchorBottom]: its top and max height
-     * (55% of [screenH], and never past the bottom edge; moved up when less than [MIN_HEIGHT_DP] is left).
+     * The settings popup [TOP_GAP_DP] under [topInset] (the status bar / cutout; the reader's bars are hidden while it
+     * is open): its top and max height (56% of [screenH], and never past the bottom edge; moved up when less than
+     * [MIN_HEIGHT_DP] is left).
      */
-    fun settings(screenH: Int, anchorBottom: Int, density: Float): Placement {
+    fun settings(screenH: Int, topInset: Int, density: Float): Placement {
         val edge = (EDGE_DP * density).roundToInt()
         val cap = (screenH * HEIGHT_FRACTION).toInt().coerceAtLeast(1)
-        val top = anchorBottom.coerceIn(0, screenH)
+        val top = (topInset.coerceAtLeast(0) + (TOP_GAP_DP * density).roundToInt()).coerceIn(0, screenH)
         val room = screenH - top - edge
         val min = minOf(cap, (MIN_HEIGHT_DP * density).roundToInt())
         if (room >= min) return Placement(top, minOf(cap, room))
@@ -381,11 +396,18 @@ internal object PopupGeometry {
 
     /**
      * A drop-down list [contentHeight] px tall for a row spanning [anchorTop]..[anchorBottom]: height capped at
-     * 55% of [screenH]; placed under the row when it fits, else above it, else as low as fits on screen.
+     * [maxHeightFraction] of [screenH]; placed under the row when it fits, else above it, else as low as fits on screen.
      */
-    fun dropdown(screenH: Int, anchorTop: Int, anchorBottom: Int, contentHeight: Int, density: Float): Placement {
+    fun dropdown(
+        screenH: Int,
+        anchorTop: Int,
+        anchorBottom: Int,
+        contentHeight: Int,
+        density: Float,
+        maxHeightFraction: Float = HEIGHT_FRACTION,
+    ): Placement {
         val edge = (EDGE_DP * density).roundToInt()
-        val h = minOf(contentHeight, (screenH * HEIGHT_FRACTION).toInt(), screenH - 2 * edge).coerceAtLeast(1)
+        val h = minOf(contentHeight, maxHeight(screenH, maxHeightFraction), screenH - 2 * edge).coerceAtLeast(1)
         val top = when {
             anchorBottom + h <= screenH - edge -> anchorBottom
             anchorTop - h >= edge -> anchorTop - h
@@ -394,9 +416,53 @@ internal object PopupGeometry {
         return Placement(top, h)
     }
 
+    /** The list's height cap: [fraction] (clamped to 0.1..1) of [screenH]. */
+    fun maxHeight(screenH: Int, fraction: Float): Int = (screenH * fraction.coerceIn(0.1f, 1f)).toInt().coerceAtLeast(1)
+
     /** Left edge of a [width]-px list whose right edge lines up with [anchorRight], kept inside [screenW]. */
     fun dropdownLeft(screenW: Int, anchorRight: Int, width: Int): Int =
         (anchorRight - width).coerceIn(0, (screenW - width).coerceAtLeast(0))
+}
+
+/**
+ * The popup's "상태 표시" block (U §5.5, A §2.7): slot wording, which rows show, and the fit note. A status change only
+ * repaints the page (the bands live in the margins), so none of this touches the layout.
+ */
+internal object StatusUi {
+    const val FIT_NOTE = "여백이 좁아 위 · 아래 정보가 보이지 않습니다. 상하 여백을 늘리세요."
+    const val PROGRESS_SUMMARY = "화면 맨 아래 가는 선"
+    /** Margin of a page whose "페이지 여백" switch is off (LayoutKeys.TINY_MARGIN_DP). */
+    const val TINY_MARGIN_DP = 4
+
+    /** "위" / "아래". */
+    fun bandWord(band: Int): String = if (band == 0) "위" else "아래"
+
+    /** "왼쪽" / "가운데" / "오른쪽". */
+    fun posWord(pos: Int): String = when (pos) {
+        0 -> "왼쪽"
+        1 -> "가운데"
+        else -> "오른쪽"
+    }
+
+    /** The slot button's content description: "아래 오른쪽: 시계" (CI reads it). */
+    fun slotDescription(band: Int, pos: Int, item: StatusItem): String = "${bandWord(band)} ${posWord(pos)}: ${item.label}"
+
+    /** "상태 글자 크기" shows only while some band has text. */
+    fun showsSize(s: ReaderSettings): Boolean = s.hasHeader || s.hasFooterText
+
+    /** The grey [FIT_NOTE]: a band with items whose margin is too small to draw it. Nothing is disabled. */
+    fun showsFitNote(s: ReaderSettings): Boolean {
+        val top = if (s.pageMargins) s.marginTopDp else TINY_MARGIN_DP
+        val bottom = if (s.pageMargins) s.marginBottomDp else TINY_MARGIN_DP
+        val headerHidden = s.hasHeader && !StatusFit.fitsDp(s.statusFontSizeSp, top, 0f)
+        val footerHidden = s.hasFooterText &&
+            !StatusFit.fitsDp(s.statusFontSizeSp, bottom, if (s.progressBar) StatusFit.LANE_DP else 0f)
+        return headerHidden || footerHidden
+    }
+
+    /** "외톨이 줄 방지" summary: in 문단 단위 only paragraphs taller than a page are split. */
+    fun widowSummary(mode: PageBreakMode): String =
+        if (mode == PageBreakMode.PARAGRAPH) "한 쪽보다 긴 문단에만 적용" else "문단의 첫 줄/마지막 줄이 홀로 남지 않게"
 }
 
 /**

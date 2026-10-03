@@ -72,75 +72,7 @@ class CompactSettingsTest {
         assertFalse(counting.contains('~'))
     }
 
-    // ------------------------------------------------------------------ popup size maths
-
-    @Test
-    fun popupWidthIsTheScreenLess8dpCappedAt420dp() {
-        // A9: the Comet, 720 px wide at 2.0 (360 dp): 352 dp, a 4 dp gap on each side (no clipped page text beside it).
-        assertEquals(704, PopupGeometry.width(720, 2f))
-        // 1600 px at 2.0 (800 dp): capped at 420 dp.
-        assertEquals(840, PopupGeometry.width(1600, 2f))
-        // 1080 px at 3.0 (360 dp).
-        assertEquals(1056, PopupGeometry.width(1080, 3f))
-        // 840 px at 2.0 (420 dp): 412 dp, still the gap rule.
-        assertEquals(824, PopupGeometry.width(840, 2f))
-        assertTrue(PopupGeometry.width(100, 2f) <= 100)
-        assertEquals(1, PopupGeometry.width(0, 2f))
-        assertEquals(1, PopupGeometry.width(10, 2f))
-    }
-
-    @Test
-    fun settingsPopupAtMost55PercentTall() {
-        // 360×720 dp at 2.0 under a 56 dp top bar: 55% of 1440 = 792 px (396 dp).
-        val p = PopupGeometry.settings(1440, 112, 2f)
-        assertEquals(112, p.top)
-        assertEquals(792, p.height)
-        // Little room under the anchor (landscape): at least 160 dp, moved up to stay on screen.
-        val q = PopupGeometry.settings(600, 500, 2f)
-        assertEquals(320, q.height)
-        assertEquals(600 - 16 - 320, q.top)
-        // Tiny window: never taller than 55%.
-        val r = PopupGeometry.settings(400, 380, 2f)
-        assertTrue(r.height <= 220)
-        assertTrue(r.top >= 0 && r.top + r.height <= 400)
-    }
-
-    @Test
-    fun mainSectionFitsTheCometWithoutScrollingAndLeavesHalfThePage() {
-        // Comet: 720×1440 px at 2.0 (360×720 dp); the bars are hidden while the popup is open (immersive: inset 0).
-        val density = 2f
-        val screenH = 1440
-        val place = PopupGeometry.settings(screenH, 0, density)
-        assertEquals(0, place.top)
-        val main = Math.round(PopupGeometry.MAIN_ROWS * Compact.ROW_DP * density)
-        // No scrolling needed for 스타일 … 더보기 (the old 40 dp rows made 400 dp > the 396 dp cap).
-        assertTrue("main section $main px > cap ${place.height} px", main <= place.height)
-        // The popup (main section + 1 px border each side) covers at most the top half: the page below is the preview.
-        assertTrue("popup ${main + 2} px", place.top + main + 2 <= screenH / 2 + 2)
-        // Stepper buttons make rows no taller than the others.
-        assertTrue(Compact.STEP_DP <= Compact.ROW_DP)
-    }
-
-    @Test
-    fun dropdownPlacement() {
-        // Fits under the row.
-        val below = PopupGeometry.dropdown(1440, 300, 380, 400, 2f)
-        assertEquals(380, below.top)
-        assertEquals(400, below.height)
-        // No room below: above the row.
-        val above = PopupGeometry.dropdown(1440, 1000, 1080, 500, 2f)
-        assertEquals(500, above.top)
-        assertEquals(500, above.height)
-        // Taller than 55%: capped (scrolls); no room either side → as low as fits.
-        val tall = PopupGeometry.dropdown(1440, 600, 680, 2000, 2f)
-        assertEquals(792, tall.height)
-        assertEquals(1440 - 16 - 792, tall.top)
-        // Right-aligned to the anchor, kept on screen.
-        assertEquals(100, PopupGeometry.dropdownLeft(720, 700, 600))
-        assertEquals(0, PopupGeometry.dropdownLeft(720, 500, 600))
-        assertEquals(120, PopupGeometry.dropdownLeft(720, 800, 600))
-        assertEquals(0, PopupGeometry.dropdownLeft(500, 500, 600))
-    }
+    // popup size maths: PopupGeometryTest
 
     // ------------------------------------------------------------------ style presets
 
