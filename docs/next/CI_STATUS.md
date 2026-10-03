@@ -28,8 +28,15 @@
   `42_multiselect` → `46c_multiselect`, `51_stats` / `52_wifi` / `53_eink_settings`(+53b) → `50b_stats` /
   `50c_wifi` / `50d_eink_settings`(+`50e_eink_advanced`), `14b_settings_more` → §5.3의 `14b_status_slots`.
   15b, 15c, 17b, 18은 이름이 겹치지 않아 그대로 둔다.
-- 68(`first_is 67 68`), 60(`first_is 60a 60b`), 69(`same_start 67 69`)의 위치 검사는 스크롤 모드가 show 줄을
-  남길 때만 의미가 있다. 남기지 않으면 FAIL로 기록될 뿐 작업은 계속된다.
+- 스크롤 모드는 아직 `RAPerf show` 줄을 남기지 않는다(`showPage`만 남긴다). 그래서 60·66·68·69의 위치 비교는
+  CHECK가 아니라 기록(log only)으로 두고 샷을 눈으로 본다. 61은 픽셀로 검사한다: 머리띠(pv..pv+80)와
+  바닥띠(pv+1360..)는 EQUAL, 본문 행은 달라야 한다. RC-A/RC-S에 스크롤 쪽 DEBUG show 줄을 요청했다.
+- `first_is`는 두 표시 사이의 show 줄 **모두**(스테퍼의 여러 relayout 포함)가 기준 위치에서 시작해야 PASS다.
+  `no_relayout`은 B에 show 줄이 하나도 없으면(DEBUG 로그 꺼짐) FAIL이다.
+- 17b/18이 TXT 책을 짧은 마지막 쪽에 남기므로, 그 뒤와 52 시작에서 `goto_page 3`으로 본문이 찬 쪽으로 간다.
+- 실패한 단계는 `CHECK <단계> FAIL step incomplete`를 남겨, 뒤의 기대값이 조용히 빠지지 않는다.
+- 페이지 라벨은 설명 "페이지 이동, N / M"으로 읽는다(13 가운데 x = 360 ± 2, 13d 8 → 3, 14d 한 쪽 다음).
+  여백 값(14m, 97)은 "좌우 여백"·"상하 여백" 스테퍼의 값 글자가 "0"인지 본다. 54는 값을 읽으며 "0"까지 되돌린다(54r).
 - 13 / 13b의 고정 버튼은 U가 정한 "이 페이지 고정"으로 찾고, 지금 트리의 "이 쪽 고정"을 대체 경로로 둔다.
 - 단계 수가 늘어 `STEPS_UNTIL` 기본값을 1200 → 3000초로, screenshots 작업의 `timeout-minutes`를 40 → 90으로
   늘렸다. 95–98은 시간 한도에 600초를 더 받아 항상 마지막에 실행된다. build 작업은 그대로다.
@@ -38,7 +45,7 @@
 
 - `bash -n tools/ci/screenshots.sh`: 성공. `shellcheck -S warning`: 경고 없음.
 - `python3 -m py_compile tools/ci/*.py`: 성공.
-- `python3 -m unittest tools/ci/test_ci_tools.py`: **29개 전부 통과** (perf_log 파싱·구간·first_is·no_relayout·
+- `python3 -m unittest tools/ci/test_ci_tools.py`: **31개 전부 통과** (perf_log 파싱·구간·first_is·no_relayout·
   same_start·pv_bounds·CLI, find_node 상자/클래스, raw_equal 12/16바이트 헤더, 복원용 백업 파일).
 - Kotlin 검사는 이 레인에 해당 없음(파일 변경 없음).
 
@@ -47,3 +54,6 @@
 - 통합 뒤 `[screens]` 실행에서 각 CHECK 줄과 샷을 눈으로 확인(PLAN §5.1 8). 라벨은 각 레인이 스펙대로 만든다는
   전제다. 찾지 못한 라벨은 `NOT FOUND`로 남고, `ui_fail_<step>.xml`이 저장된다.
 - 92–93은 W2 병합 뒤 다시 실행.
+- 독립 리뷰 2건(스펙 완전성, 버그)의 실제 지적은 모두 반영했다: 13g가 밝기 막대를 끌던 문제(마지막 SeekBar 사용),
+  02의 오래된 dump, 툴바 ⋮를 `"메뉴" exact`로 찾기, 50의 좌표 탭 제거, CHECK id 중복 정리 등.
+  42–44의 열 수·행 높이 같은 배치 값은 샷으로 눈 확인한다.
