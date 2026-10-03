@@ -45,4 +45,11 @@ class ReaderRestoreTest {
     @Test fun negativeOffsetsAreClampedAtTheSavedStateBoundary() {
         assertEquals(0, ReaderRestore.Place.from(7L, 3, -9, 1_000L)!!.offset)
     }
+
+    @Test fun aRestoredPeekKeepsThePeekedPageOverTheOlderRow() {
+        // N §6.2 + R §10: peeking saved nothing, so the DB row is older than the instance state.
+        val start = ReaderRestore.start(place, 7L, rowWrittenAt = 500L, remapped = false)!!
+        assertEquals(3, start.section)
+        assertEquals(42, start.offset)
+    }
 }
