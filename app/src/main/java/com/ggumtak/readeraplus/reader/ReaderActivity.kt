@@ -1346,6 +1346,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         scrollFrozen = false
         if (kind != Nav.RELAYOUT) scrollScreens.reset()
+        // A section a scroll was waiting for no longer matters: this show replaces the viewport.
+        stripJob?.cancel()
+        stripJob = null
+        stripSection = -1
         sc.showAt(section, layout, off, if (context) Placement.CONTEXT else Placement.TOP, settle)
         if (kind == Nav.OPEN) page.traceOpen(bookRef?.id ?: -1L, openStartedAt)
         if (ReaderPerf.turns) {
@@ -1378,7 +1382,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         displayedGenId = gen.id
         anchor = DocPosition(ScrollWiring.section(a), ScrollWiring.offset(a))
         scrollSettledTop = top
-        cancelLoadingText()
+        // A drag that stopped at a section still being laid out keeps its "불러오는 중…".
+        if (stripSection < 0) cancelLoadingText()
         if (errorPanel.visibility != View.GONE) errorPanel.visibility = View.GONE
         val gesture = scrollGesture
         scrollGesture = false
