@@ -251,6 +251,8 @@ object FileScanner {
         val mtime: Long,
         val trashed: Boolean,
         val fileName: String,
+        /** > 0: trashed by a scan because the file vanished while the book had notes (revived when it is back). */
+        val missingAt: Long = 0,
     )
 
     internal class SyncPlan(
@@ -260,18 +262,30 @@ object FileScanner {
         val gone: List<Long>,
         /** "Removed from library" marks whose files are gone. */
         val deadIgnored: List<String>,
+        /** Vanished (not moved) entries with notes: moved to the trash as missing ([LibrarySql.SET_MISSING]). */
+        val trash: List<Long> = emptyList(),
+        /** Missing entries whose file is back, at its path or moved: out of the trash ([LibrarySql.CLEAR_MISSING]). */
+        val revive: List<Long> = emptyList(),
     ) {
         /** Whether applying this plan changes any book row (the "removed" marks are not shown anywhere). */
-        val changesBooks: Boolean get() = todo.isNotEmpty() || gone.isNotEmpty()
+        val changesBooks: Boolean
+            get() = todo.isNotEmpty() || gone.isNotEmpty() || trash.isNotEmpty() || revive.isNotEmpty()
     }
 
     /**
-     * Decides what a scan changes (pure; IO comes in through [vanished] and [userDataIds]).
-     * - Trashed entries are kept until the trash is emptied.
+     * Decides what a scan changes (pure; IO comes in through [vanished], [userDataIds] and [noteIds]). Notes are never
+     * lost silently (N §5.5):
+     * - Trashed entries are kept until the trash is emptied; a user's own 휴지통 entry (`missingAt = 0`) is never
+     *   revived, re-pointed or marked missing.
      * - A vanished entry whose file name and size match a new file was moved: it is re-pointed (history kept).
-     * - Other vanished entries are dropped.
+     * - Other vanished entries with notes ([noteIds]) go to the trash as missing ([SyncPlan.trash]); the rest are
+     *   dropped.
+     * - A missing entry (`missingAt > 0`) whose file is found again at its path, or matched as moved, is revived
+     *   ([SyncPlan.revive]); while its file stays away it is left as it is.
      * - Existing files under an excluded folder are dropped unless the entry carries user data
      *   ([userDataIds], only queried when needed): excluding a folder must not destroy bookmarks / quotes.
+     * [userDataIds] and [noteIds] are only called when some entry needs them, so a scan that finds nothing gone runs
+     * no extra statement.
      */
     internal fun plan(
         known: Collection<Known>,
@@ -280,16 +294,25 @@ object FileScanner {
         excluded: List<String>,
         vanished: (String) -> Boolean,
         userDataIds: () -> Set<Long>,
+        noteIds: () -> Set<Long> = { emptySet() },
     ): SyncPlan {
         val vanishedBooks = ArrayList<Known>()
         val excludedBooks = ArrayList<Known>()
+        val revive = ArrayList<Long>()
         val byPath = HashMap<String, Known>(known.size * 2)
         for (k in known) {
             byPath[k.path] = k
-            if (k.trashed || found.containsKey(k.path)) continue
+            val missing = k.missingAt > 0
+            if (found.containsKey(k.path)) {
+                if (missing && k.path !in ignored) revive += k.id
+                continue
+            }
+            if (k.trashed && !missing) continue
             when {
                 // First: a file moved out of an excluded folder is still a move.
                 vanished(k.path) -> vanishedBooks += k
+                // A missing entry stays as it is (trashed, with its notes) until its file is back.
+                missing -> {}
                 excluded.any { DataPaths.isUnder(k.path, it) } -> excludedBooks += k
             }
         }
@@ -306,26 +329,42 @@ object FileScanner {
                 continue
             }
             val from = movable[moveKey(f.name, f.size)]?.removeFirstOrNull()
-            if (from != null) moved += from.id
+            if (from != null) {
+                moved += from.id
+                if (from.missingAt > 0) revive += from.id
+            }
             todo += f to from
         }
         todo.sortBy { it.first.path }
 
         val gone = ArrayList<Long>()
-        for (k in vanishedBooks) if (k.id !in moved) gone += k.id
+        val trash = ArrayList<Long>()
+        var withNotes: Set<Long>? = null
+        for (k in vanishedBooks) {
+            if (k.id in moved) continue
+            // Already in the trash as missing: nothing to do until the file is back. (Missing but not trashed: an R2
+            // build's 복원 left it so; it is judged again like any vanished entry.)
+            if (k.missingAt > 0 && k.trashed) continue
+            val notes = withNotes ?: noteIds().also { withNotes = it }
+            if (k.id in notes) trash += k.id else gone += k.id
+        }
         if (excludedBooks.isNotEmpty()) {
             val keep = userDataIds()
             for (k in excludedBooks) if (k.id !in keep) gone += k.id
         }
         val deadIgnored = ignored.filter { !found.containsKey(it) && vanished(it) }
-        return SyncPlan(todo, gone, deadIgnored)
+        revive.sort()
+        return SyncPlan(todo, gone, deadIgnored, trash, revive)
     }
 
     /** Applies the scan to the library; returns [SyncPlan.changesBooks]. */
     private fun sync(context: Context, walk: WalkResult, excluded: List<String>, stopWhen: () -> Boolean): Boolean {
         val db = Library.db()
         val known = db.queryList(LibrarySql.SELECT_SCAN_STATE, null) { c ->
-            Known(c.getLong(0), c.getString(1) ?: "", c.getLong(2), c.getLong(3), c.getInt(4) != 0, c.getString(5) ?: "")
+            Known(
+                c.getLong(0), c.getString(1) ?: "", c.getLong(2), c.getLong(3), c.getInt(4) != 0, c.getString(5) ?: "",
+                c.getLong(7),
+            )
         }
         val ignored = HashSet<String>(db.queryList(LibrarySql.SELECT_IGNORED, null) { it.getString(0) ?: "" })
 
@@ -340,9 +379,12 @@ object FileScanner {
             val parent = File(path).parentFile ?: return false
             return parent.isDirectory && !File(path).exists()
         }
-        val plan = plan(known, walk.found, ignored, excluded, ::vanished) {
-            db.queryList(LibrarySql.SELECT_IDS_WITH_USER_DATA, null) { it.getLong(0) }.toHashSet()
-        }
+        val plan = plan(
+            known, walk.found, ignored, excluded, ::vanished,
+            userDataIds = { db.queryList(LibrarySql.SELECT_IDS_WITH_USER_DATA, null) { it.getLong(0) }.toHashSet() },
+            noteIds = { db.queryList(LibrarySql.SELECT_IDS_WITH_NOTES, null) { it.getLong(0) }.toHashSet() },
+        )
+        val reviving = plan.revive.toHashSet()
 
         // New, moved or changed files: metadata read outside transactions, writes in small batches.
         val todo = plan.todo
@@ -371,17 +413,29 @@ object FileScanner {
                     } else {
                         Library.writeFile(this, info, meta ?: Library.readMeta(File(f.path)), k?.id)
                     }
+                    // Revived with its (re-pointed / refreshed) file, in the same transaction.
+                    if (k != null && k.id in reviving) exec(LibrarySql.CLEAR_MISSING, k.id)
                 }
             }
+            Library.notesChanged()
             i = end
         }
 
-        if (plan.gone.isNotEmpty() || plan.deadIgnored.isNotEmpty()) {
+        // Missing entries back unchanged at their own path (no todo entry): revive them now.
+        val written = HashSet<Long>()
+        for ((_, k) in todo) if (k != null) written += k.id
+        val reviveOnly = plan.revive.filter { it !in written }
+        val now = System.currentTimeMillis()
+        if (plan.gone.isNotEmpty() || plan.deadIgnored.isNotEmpty() || plan.trash.isNotEmpty() || reviveOnly.isNotEmpty()) {
             if (stopWhen()) throw Stopped()
             db.inTransaction {
+                for (id in reviveOnly) exec(LibrarySql.CLEAR_MISSING, id)
+                // Notes are never lost silently: a vanished book with notes goes to the trash as missing.
+                for (id in plan.trash) exec(LibrarySql.SET_MISSING, now, id)
                 for (id in plan.gone) Library.deleteBookRows(this, id)
                 for (p in plan.deadIgnored) exec(LibrarySql.DELETE_IGNORED, p)
             }
+            if (plan.gone.isNotEmpty() || plan.trash.isNotEmpty() || reviveOnly.isNotEmpty()) Library.notesChanged()
             for (id in plan.gone) Library.invalidateCover(id)
         }
         return plan.changesBooks

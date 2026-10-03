@@ -18,9 +18,9 @@ internal object LibrarySql {
     /** Column list mapped by [BookRows]; the order is part of the contract with [BookRows]. */
     const val BOOK_COLUMNS = "id, path, file_name, title, author, series, series_index, format, size, mtime, " +
         "added_at, last_read_at, pos_section, pos_offset, progress, favorite, to_read, have_read, trashed, " +
-        "review, encoding, language, reading_seconds"
+        "review, encoding, language, reading_seconds, missing_at"
 
-    const val BOOK_COLUMN_COUNT = 23
+    const val BOOK_COLUMN_COUNT = 24
 
     // ---- books: reads ----
     const val SELECT_BOOK_BY_ID = "SELECT $BOOK_COLUMNS FROM books WHERE id = ?"
@@ -30,7 +30,8 @@ internal object LibrarySql {
     /** Every book + its meta_locked flag (column index [BOOK_COLUMN_COUNT]); used by the backup. */
     const val SELECT_ALL_BOOKS_FOR_BACKUP = "SELECT $BOOK_COLUMNS, meta_locked FROM books ORDER BY id"
     /** Minimal state of every book for scan / import matching. */
-    const val SELECT_SCAN_STATE = "SELECT id, path, size, mtime, trashed, file_name, last_read_at FROM books"
+    const val SELECT_SCAN_STATE =
+        "SELECT id, path, size, mtime, trashed, file_name, last_read_at, missing_at FROM books"
     const val SELECT_TRASHED_IDS = "SELECT id, path FROM books WHERE trashed = 1"
     /**
      * "다음 권" by series (T1-2): the next indexes of a series, nearest first (the first whose file exists wins).
@@ -41,11 +42,11 @@ internal object LibrarySql {
     const val SELECT_PATH_BY_ID = "SELECT path FROM books WHERE id = ?"
     const val SELECT_ID_BY_PATH = "SELECT id FROM books WHERE path = ?"
     /**
-     * Entries a newly opened file may have been moved from (same name and size, not trashed), most recently
-     * read first. Args: file_name, size.
+     * Entries a newly opened file may have been moved from (same name and size; not trashed, or trashed by the
+     * scanner because the file vanished), most recently read first. Args: file_name, size.
      */
-    const val SELECT_MOVE_CANDIDATES = "SELECT id, path, mtime FROM books WHERE file_name = ? AND size = ? AND trashed = 0 " +
-        "ORDER BY last_read_at DESC, id DESC"
+    const val SELECT_MOVE_CANDIDATES = "SELECT id, path, mtime FROM books WHERE file_name = ? AND size = ? " +
+        "AND (trashed = 0 OR missing_at > 0) ORDER BY last_read_at DESC, id DESC"
     /**
      * Books carrying anything the user made (reading history, flags, edits, review, bookmarks, quotes,
      * collections): the scanner never drops these just because their folder was excluded.
@@ -53,7 +54,13 @@ internal object LibrarySql {
     const val SELECT_IDS_WITH_USER_DATA = "SELECT id FROM books WHERE last_read_at > 0 OR favorite = 1 OR to_read = 1 " +
         "OR have_read = 1 OR review <> '' OR encoding <> '' OR meta_locked = 1 OR reading_seconds > 0 " +
         "UNION SELECT book_id FROM bookmarks UNION SELECT book_id FROM quotes UNION SELECT book_id FROM book_collections " +
-        "UNION SELECT book_id FROM book_prefs UNION SELECT book_id FROM reading_log"
+        "UNION SELECT book_id FROM book_prefs UNION SELECT book_id FROM reading_log UNION SELECT book_id FROM lookups"
+    /**
+     * Books with notes the hub shows (quotes, bookmarks, a review, lookups): a scan moves such a book to the trash
+     * as missing ([SET_MISSING]) instead of dropping it when its file vanishes.
+     */
+    const val SELECT_IDS_WITH_NOTES = "SELECT book_id FROM quotes UNION SELECT book_id FROM bookmarks " +
+        "UNION SELECT id FROM books WHERE review <> '' UNION SELECT book_id FROM lookups"
     const val COUNT_LIBRARY = "SELECT COUNT(*) FROM books WHERE trashed = 0"
 
     // ---- books: writes ----
@@ -83,7 +90,19 @@ internal object LibrarySql {
     /** Run [CLEAR_FINISHED_AT] and [PRUNE_BOOK_PREFS] with it (a finish time belongs to a finished book only). */
     const val SET_HAVE_READ_OFF = "UPDATE books SET have_read = 0 WHERE id = ?"
     const val SET_TRASHED = "UPDATE books SET trashed = ? WHERE id = ?"
-    const val SET_REVIEW = "UPDATE books SET review = ? WHERE id = ?"
+    /** 복원 (out of the trash): a scanner-trashed book is no longer missing either. Args: id. */
+    const val UNTRASH = "UPDATE books SET trashed = 0, missing_at = 0 WHERE id = ?"
+    /**
+     * The scanner found the file gone and the book has notes: trash it as missing. Never a book the user put in
+     * 휴지통 themselves (`trashed = 0`): that one must never become revivable. Args: missing_at, id.
+     */
+    const val SET_MISSING = "UPDATE books SET trashed = 1, missing_at = ? WHERE id = ? AND trashed = 0"
+    /** The file of a missing book is back (same path, or moved): out of the trash again. Args: id. */
+    const val CLEAR_MISSING = "UPDATE books SET trashed = 0, missing_at = 0 WHERE id = ? AND missing_at > 0"
+    /** Args: review, review_at (0 when blank), id. */
+    const val SET_REVIEW = "UPDATE books SET review = ?, review_at = ? WHERE id = ?"
+    /** 리뷰 지우기 (hub batch). Args: id. */
+    const val CLEAR_REVIEW = "UPDATE books SET review = '', review_at = 0 WHERE id = ?"
     const val SET_ENCODING = "UPDATE books SET encoding = ? WHERE id = ?"
     const val RESET_PROGRESS = "UPDATE books SET last_read_at = 0, pos_section = 0, pos_offset = 0, progress = 0, " +
         "have_read = 0, to_read = 0, reading_seconds = 0 WHERE id = ?"
@@ -97,27 +116,41 @@ internal object LibrarySql {
         "added_at = MIN(added_at, ?) WHERE id = ?"
 
     // ---- bookmarks ----
-    const val SELECT_BOOKMARKS = "SELECT id, book_id, section, char_offset, snippet, created_at, note FROM bookmarks " +
-        "WHERE book_id = ? ORDER BY section, char_offset, id"
-    const val SELECT_ALL_BOOKMARKS = "SELECT id, book_id, section, char_offset, snippet, created_at, note FROM bookmarks " +
-        "ORDER BY book_id, section, char_offset, id"
-    /** Args: book_id, section, char_offset, snippet, note, created_at. */
-    const val INSERT_BOOKMARK =
-        "INSERT INTO bookmarks(book_id, section, char_offset, snippet, note, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    /** Columns mapped by [BookRows.bookmark] (place columns 7..9). */
+    private const val BOOKMARK_COLUMNS = "id, book_id, section, char_offset, snippet, created_at, note, chapter, frac, sig"
+    const val SELECT_BOOKMARKS = "SELECT $BOOKMARK_COLUMNS FROM bookmarks WHERE book_id = ? ORDER BY section, char_offset, id"
+    const val SELECT_ALL_BOOKMARKS = "SELECT $BOOKMARK_COLUMNS FROM bookmarks ORDER BY book_id, section, char_offset, id"
+    /**
+     * Args: book_id, section, char_offset, snippet, note, created_at, chapter, frac, sig. The place arguments may be
+     * left unbound (NULL): they then store the "unknown" defaults ('' / -1 / ''), so a caller binding only the first
+     * six (an R2-era restore) still inserts.
+     */
+    const val INSERT_BOOKMARK = "INSERT INTO bookmarks(book_id, section, char_offset, snippet, note, created_at, " +
+        "chapter, frac, sig) VALUES (?, ?, ?, ?, ?, ?, IFNULL(?, ''), IFNULL(?, -1), IFNULL(?, ''))"
+    /** Backfill of a legacy bookmark's place (only while unknown). Args: chapter, frac, id. */
+    const val UPDATE_BOOKMARK_PLACE = "UPDATE bookmarks SET chapter = ?, frac = ? WHERE id = ? AND frac < 0"
     const val DELETE_BOOKMARK = "DELETE FROM bookmarks WHERE id = ?"
     const val UPDATE_BOOKMARK_NOTE = "UPDATE bookmarks SET note = ? WHERE id = ?"
     const val DELETE_BOOKMARKS_OF_BOOK = "DELETE FROM bookmarks WHERE book_id = ?"
 
     // ---- quotes ----
-    const val SELECT_QUOTES = "SELECT id, book_id, section, start_offset, end_offset, quote_text, note, created_at " +
-        "FROM quotes WHERE book_id = ? ORDER BY section, start_offset, end_offset, id"
-    const val SELECT_ALL_QUOTES = "SELECT id, book_id, section, start_offset, end_offset, quote_text, note, created_at " +
-        "FROM quotes ORDER BY book_id, section, start_offset, end_offset, id"
-    /** Args: book_id, section, start_offset, end_offset, quote_text, note, created_at. */
-    const val INSERT_QUOTE = "INSERT INTO quotes(book_id, section, start_offset, end_offset, quote_text, note, created_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?)"
+    /** Columns mapped by [BookRows.quote] (style 8, place 9..11). */
+    private const val QUOTE_COLUMNS =
+        "id, book_id, section, start_offset, end_offset, quote_text, note, created_at, style, chapter, frac, sig"
+    const val SELECT_QUOTES = "SELECT $QUOTE_COLUMNS FROM quotes WHERE book_id = ? ORDER BY section, start_offset, end_offset, id"
+    const val SELECT_ALL_QUOTES = "SELECT $QUOTE_COLUMNS FROM quotes ORDER BY book_id, section, start_offset, end_offset, id"
+    /**
+     * Args: book_id, section, start_offset, end_offset, quote_text, note, created_at, style, chapter, frac, sig. As with
+     * [INSERT_BOOKMARK], unbound (NULL) style / place arguments store the defaults (0 / '' / -1 / '').
+     */
+    const val INSERT_QUOTE = "INSERT INTO quotes(book_id, section, start_offset, end_offset, quote_text, note, created_at, " +
+        "style, chapter, frac, sig) VALUES (?, ?, ?, ?, ?, ?, ?, IFNULL(?, 0), IFNULL(?, ''), IFNULL(?, -1), IFNULL(?, ''))"
     const val DELETE_QUOTE = "DELETE FROM quotes WHERE id = ?"
     const val UPDATE_QUOTE_NOTE = "UPDATE quotes SET note = ? WHERE id = ?"
+    /** Args: style (already clamped to 0..DataLimits.QUOTE_STYLE_MAX), id. */
+    const val UPDATE_QUOTE_STYLE = "UPDATE quotes SET style = ? WHERE id = ?"
+    /** Backfill of a legacy quote's place (only while unknown). Args: chapter, frac, id. */
+    const val UPDATE_QUOTE_PLACE = "UPDATE quotes SET chapter = ?, frac = ? WHERE id = ? AND frac < 0"
     const val DELETE_QUOTES_OF_BOOK = "DELETE FROM quotes WHERE book_id = ?"
     const val DELETE_LOOKUPS_OF_BOOK = "DELETE FROM lookups WHERE book_id = ?"
 
@@ -201,11 +234,13 @@ internal object LibrarySql {
     const val SELECT_FINISHED_BETWEEN = "SELECT p.book_id, p.finished_at FROM book_prefs p " +
         "JOIN books b ON b.id = p.book_id WHERE p.finished_at >= ? AND p.finished_at < ? AND p.finished_at > 0 " +
         "AND b.trashed = 0 AND b.have_read = 1 ORDER BY p.finished_at DESC, p.book_id DESC"
+    /** The book's pinned return point (U §3.3; ReturnMarkCodec text), NULL = none. */
+    const val SELECT_RETURN_MARK = "SELECT return_mark FROM book_prefs WHERE book_id = ?"
     /** txt_override, finished_at, episode_label of one book. */
     const val SELECT_BOOK_PREFS = "SELECT txt_override, finished_at, episode_label FROM book_prefs WHERE book_id = ?"
-    /** Every row, for the backup: book_id, txt_override, finished_at, episode_label. */
-    const val SELECT_ALL_BOOK_PREFS = "SELECT book_id, txt_override, finished_at, episode_label FROM book_prefs " +
-        "ORDER BY book_id"
+    /** Every row, for the backup: book_id, txt_override, finished_at, episode_label, return_mark. */
+    const val SELECT_ALL_BOOK_PREFS = "SELECT book_id, txt_override, finished_at, episode_label, return_mark " +
+        "FROM book_prefs ORDER BY book_id"
     /** One-column writes: UPDATE first; when no row changed, the matching INSERT (for an existing book only). */
     const val SET_PREFS_TXT = "UPDATE book_prefs SET txt_override = ? WHERE book_id = ?"
     const val INSERT_PREFS_TXT = "INSERT INTO book_prefs(book_id, txt_override) SELECT id, ? FROM books WHERE id = ?"
@@ -213,6 +248,10 @@ internal object LibrarySql {
     const val INSERT_PREFS_FINISHED = "INSERT INTO book_prefs(book_id, finished_at) SELECT id, ? FROM books WHERE id = ?"
     const val SET_PREFS_EPISODE = "UPDATE book_prefs SET episode_label = ? WHERE book_id = ?"
     const val INSERT_PREFS_EPISODE = "INSERT INTO book_prefs(book_id, episode_label) SELECT id, ? FROM books WHERE id = ?"
+    const val SET_PREFS_RETURN = "UPDATE book_prefs SET return_mark = ? WHERE book_id = ?"
+    const val INSERT_PREFS_RETURN = "INSERT INTO book_prefs(book_id, return_mark) SELECT id, ? FROM books WHERE id = ?"
+    /** "읽은 기록 초기화": the pinned return point goes with the position (U §3.3). Prune the row afterwards. */
+    const val CLEAR_RETURN_MARK = "UPDATE book_prefs SET return_mark = NULL WHERE book_id = ?"
     /** Backup restore of a whole row. Args: txt_override, finished_at, episode_label, book_id. */
     const val SET_PREFS_ROW = "UPDATE book_prefs SET txt_override = ?, finished_at = ?, episode_label = ? WHERE book_id = ?"
     const val INSERT_PREFS_ROW = "INSERT INTO book_prefs(book_id, txt_override, finished_at, episode_label) " +
@@ -220,7 +259,7 @@ internal object LibrarySql {
     const val CLEAR_FINISHED_AT = "UPDATE book_prefs SET finished_at = 0 WHERE book_id = ?"
     /** Drops a row that no longer holds anything (keeps the table as small as the set of books with prefs). */
     const val PRUNE_BOOK_PREFS = "DELETE FROM book_prefs WHERE book_id = ? AND txt_override IS NULL AND finished_at = 0 " +
-        "AND episode_label IS NULL"
+        "AND episode_label IS NULL AND return_mark IS NULL"
     const val DELETE_BOOK_PREFS_OF_BOOK = "DELETE FROM book_prefs WHERE book_id = ?"
 
     // ---- ignored (removed-but-kept) files ----

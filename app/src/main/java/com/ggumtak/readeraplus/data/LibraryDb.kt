@@ -33,10 +33,16 @@ internal class LibraryDb(context: Context) :
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // Runs inside SQLiteOpenHelper's transaction: all or nothing. New tables / indexes first (idempotent), then
-        // the columns newer versions added to existing tables (skipped when a column is already there).
+        // the columns newer versions added to existing tables (skipped when a column is already there), then (v3) the
+        // orphan sweep of rows a downgraded build left behind. A constant number of statements, no per-row work: the
+        // v2 → v3 step stays within its 50 ms budget on 10k notes (it runs once, on "library-db-open").
+        val t0 = System.nanoTime()
         for (sql in LibrarySchema.CREATE_ALL) db.execSQL(sql)
-        for (sql in LibrarySchema.upgradeStatements(oldVersion) { table -> columnsOf(db, table) }) db.execSQL(sql)
-        if (oldVersion < 3) for (sql in LibrarySchema.UPGRADE_SWEEP) db.execSQL(sql)
+        // Asked only now: CREATE_ALL may just have made a table (with every column) that an ALTER would otherwise add.
+        val tail = upgradeTail(oldVersion) { table -> columnsOf(db, table) }
+        for (sql in tail) db.execSQL(sql)
+        Log.i(TAG, "upgrade v$oldVersion → v$newVersion: ${LibrarySchema.CREATE_ALL.size + tail.size} statements, " +
+            "${(System.nanoTime() - t0) / 1_000_000} ms")
     }
 
     /** Column names of [table] (`PRAGMA table_info`); empty when the table doesn't exist. */
@@ -49,6 +55,20 @@ internal class LibraryDb(context: Context) :
 
     companion object {
         const val TAG = "LibraryDb"
+
+        /**
+         * What [onUpgrade] runs from [oldVersion] AFTER [LibrarySchema.CREATE_ALL], in order: the missing columns
+         * ([LibrarySchema.upgradeStatements]; [columnsOf] = a table's columns after CREATE_ALL, asked at most once per
+         * table) and, below v3, [LibrarySchema.UPGRADE_SWEEP] after the ALTERs. Pure (JVM-tested; `tools/check_sql.py`
+         * runs the same order).
+         */
+        internal fun upgradeTail(oldVersion: Int, columnsOf: (String) -> Set<String>): List<String> {
+            val cache = HashMap<String, Set<String>>()
+            val out = ArrayList<String>(16)
+            out += LibrarySchema.upgradeStatements(oldVersion) { t -> cache.getOrPut(t) { columnsOf(t) } }
+            if (oldVersion < 3) out += LibrarySchema.UPGRADE_SWEEP
+            return out
+        }
     }
 }
 
