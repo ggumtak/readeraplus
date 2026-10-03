@@ -2385,7 +2385,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /** ReturnNav's view of the reader (U §3.5): positions, page numbers, the jump and the pin's storage. */
     private val returnHost = object : ReturnHost {
         override val chromeVisible: Boolean get() = this@ReaderActivity.chromeVisible
-        // Paged: the page start. R3 merge(RCA-S): scroll mode's virtual page start comes through currentPosition().
+        // Paged: the page start; scroll mode's virtual page start comes through ReaderHost.currentPosition().
+        // R3 merge(RCA-S): currentPosition() scroll branch (virtual page start)
         override fun currentPosition(): DocPosition = this@ReaderActivity.currentPosition()
         override fun isOnCurrentPage(pos: DocPosition): Boolean = this@ReaderActivity.isOnCurrentPage(pos)
         override fun globalPageOf(pos: DocPosition): Int = this@ReaderActivity.globalPageOf(pos)
