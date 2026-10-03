@@ -61,6 +61,11 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     private var shortForm = false
     private var fitRowW = -1
     private var leftFull = ""
+    private var leftLink = ""
+    private var rightShownBound = false
+    private var leftShownBound = false
+    /** reset() ran: a late restore() of the closed book is ignored until the next book shows a page or jumps. */
+    private var closed = false
     private var rightFull = ""
 
     // Chip views (built on the first show).
@@ -85,6 +90,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     /** Every remembered jump, called before the jump while [from] (the origin) is still the current page. */
     fun onJump(from: DocPosition) {
         val m = state.mark
+        closed = false
         state.jumped(from, m != null && host.isOnCurrentPage(m))
         pinChipHidden = false
         host.onReturnChanged()
@@ -126,16 +132,13 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
      * allocation-free when nothing changed, so the host may call it on every page shown.
      */
     fun bind() {
-        if (host.chromeVisible) {
-            setChipShown(false)
-            bindDock()
-        } else {
-            updateChip(false)
-        }
+        closed = false
+        refresh()
     }
 
     /** The persisted pin (ReturnMarkCodec text), loaded after the first page. */
     fun restore(saved: String?) {
+        if (closed) return
         val m = ReturnMarkCodec.decode(saved) ?: return
         if (state.pinned) return
         val sig = host.textSignature()
@@ -178,6 +181,9 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         leftPage = -1
         rightPage = -1
         chipPage = -1
+        rightShownBound = false
+        leftShownBound = false
+        closed = true
     }
 
     // ------------------------------------------------------------------ actions
@@ -214,7 +220,14 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         host.onReturnChanged()
     }
 
-    private fun refresh() = bind()
+    private fun refresh() {
+        if (host.chromeVisible) {
+            setChipShown(false)
+            bindDock()
+        } else {
+            updateChip(false)
+        }
+    }
 
     /** Stores the pin after a change: the mark when pinned, null when a pin was released. */
     private fun savePin(wasPinned: Boolean) {
@@ -243,13 +256,16 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             val page = host.globalPageOf(mark)
             val onMark = host.isOnCurrentPage(mark)
             if (page != leftPage || onMark != leftOnMark) {
-                if (page != leftPage) leftFull = "$page ${PAGE_WORD}"
+                if (page != leftPage) {
+                    leftFull = "$page ${PAGE_WORD}"
+                    leftLink = "$leftFull$TO"
+                }
                 leftPage = page
                 leftOnMark = onMark
                 labelsChanged = true
                 l.isClickable = !onMark
                 l.setTextColor(if (onMark) Ink.GRAY else Ink.BLACK)
-                l.contentDescription = if (onMark) ON_MARK_DESCRIPTION else "$leftFull$TO"
+                l.contentDescription = if (onMark) ON_MARK_DESCRIPTION else leftLink
             }
             show(l, true)
         } else {
@@ -266,6 +282,12 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             }
         }
         show(r, rightShown)
+        val leftShown = mark != null
+        if (rightShown != rightShownBound || leftShown != leftShownBound) {
+            rightShownBound = rightShown
+            leftShownBound = leftShown
+            labelsChanged = true
+        }
         val rowW = rowWidth()
         if (labelsChanged || rowW != fitRowW) {
             fitRowW = rowW
@@ -281,7 +303,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         val text = when {
             shortForm -> leftPage.toString()
             leftOnMark -> leftFull
-            else -> "$leftFull$TO"
+            else -> leftLink
         }
         if (l.text.toString() != text) l.text = text
         val start = if (leftOnMark) pinIcon else leftChevron
@@ -300,7 +322,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         val r = right!!
         val glyph = ctx.dp(18) + ctx.dp(2)
         val lw = if (leftPage < 0 || l.visibility != View.VISIBLE) 0f
-        else l.paint.measureText(if (leftOnMark) leftFull else "$leftFull$TO") + l.paddingStart + l.paddingEnd + glyph
+        else l.paint.measureText(if (leftOnMark) leftFull else leftLink) + l.paddingStart + l.paddingEnd + glyph
         val rw = if (rightPage < 0 || r.visibility != View.VISIBLE) 0f
         else r.paint.measureText(rightFull) + r.paddingStart + r.paddingEnd + glyph
         val c = centre!!
@@ -407,7 +429,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = ctx.borderBox(radiusDp = 0f)
+            background = ctx.borderBox(strokeDp = 0f, radiusDp = 0f)   // 1 physical px (borderBox keeps ≥ 1 px)
             isClickable = true
         }
         val lbl = ctx.label("", 15f, maxLines = 1).apply {
@@ -537,7 +559,12 @@ internal class ReturnPoints {
 
     fun restorePinned(pos: DocPosition) {
         if (pinned) return
-        if (mark != null) other = mark
+        if (mark != null) {
+            // The temporary origin becomes the other place; an offer of it (a jump made before the load) follows it.
+            other = mark
+            if (offer == Chip.MARK) offer = Chip.OTHER
+            if (chainOffer == Chip.MARK) chainOffer = Chip.OTHER
+        }
         mark = pos
         pinned = true
     }

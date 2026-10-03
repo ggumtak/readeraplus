@@ -30,6 +30,7 @@ import com.ggumtak.readeraplus.ui.kit.keepAll
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
+import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 
 /**
@@ -146,6 +147,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         actionsRow.addView(ctx.iconButton(R.drawable.ic_arrow_back, "뒤로") { actions.onBack() })
         actionsRow.addView(View(ctx), lp(0, 1, 1f))
         bookmark = ctx.iconButton(R.drawable.ic_bookmark, "북마크 추가") { actions.onBookmark() }
+        bookmark.setOnLongClickListener { v -> ctx.toast(v.contentDescription); true }   // the current description
         actionsRow.addView(bookmark)
         actionsRow.addView(ctx.iconButton(R.drawable.ic_volume_up, "TTS 읽기") { actions.onTts() })
         actionsRow.addView(ctx.iconButton(R.drawable.ic_search, "검색") { actions.onSearch() })
@@ -221,6 +223,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         rotation.setOnLongClickListener { actions.onRotationChooser(); true }
         cluster.addView(rotation)
         pin = ctx.iconButton(R.drawable.ic_push_pin, PIN_SET) { actions.onPinHere() }
+        pin.setOnLongClickListener { v -> ctx.toast(v.contentDescription); true }
         cluster.addView(pin)
         labelRow.addView(cluster, FrameLayout.LayoutParams(WRAP_CONTENT, ctx.dp(48), Gravity.END or Gravity.CENTER_VERTICAL).apply {
             marginEnd = ctx.dp(4)
@@ -321,8 +324,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
      * size or visibility change would force a second layout and draw (a second e-ink update on the first show).
      */
     private fun sizeForWidth() {
-        val r = root
-        val full = r?.width?.takeIf { it > 0 } ?: ctx.resources.displayMetrics.widthPixels
+        // The display width, not root.width: it is already the new one when a rotation reaches setInsets.
+        val full = root?.resources?.displayMetrics?.widthPixels ?: ctx.resources.displayMetrics.widthPixels
         val rowW = (full - insetLeft - insetRight).coerceAtLeast(0)
         if (rowW == sizedRowW) return
         sizedRowW = rowW
@@ -391,11 +394,9 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         if (bottom.paddingLeft != left || bottom.paddingRight != right || bottom.paddingBottom != bottomInset) {
             bottom.setPadding(left, 0, right, bottomInset)
         }
-        if (left != insetLeft || right != insetRight) {
-            insetLeft = left
-            insetRight = right
-            if (isVisible) sizeForWidth()
-        }
+        insetLeft = left
+        insetRight = right
+        if (isVisible) sizeForWidth()   // returns at once when the row width is unchanged (also after a rotation)
     }
 
     fun setTitle(text: CharSequence) {

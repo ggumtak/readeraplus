@@ -206,6 +206,19 @@ class ReturnPointsTest {
     }
 
     @Test
+    fun aPinLoadedAfterAnEarlyJumpStillOffersTheOrigin() {
+        val r = ReturnPoints()
+        r.jumped(p512, false)                                 // jump before the saved pin arrived
+        r.restorePinned(p10)
+        assertEquals(p10, r.mark)
+        assertEquals(p512, r.other)
+        assertEquals(Chip.OTHER, r.offer)                     // the chip still leads back to 512
+        r.jumped(p600, false)                                 // chain: same offer
+        assertEquals(Chip.OTHER, r.offer)
+        assertEquals(p512, r.other)
+    }
+
+    @Test
     fun reparsedKeepsOnlyThePin() {
         val r = ReturnPoints()
         r.pin(p10, false)
