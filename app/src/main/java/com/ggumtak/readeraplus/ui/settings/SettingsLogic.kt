@@ -25,6 +25,7 @@ import com.ggumtak.readeraplus.settings.LIST_PAGING_AUTO
 import com.ggumtak.readeraplus.settings.LIST_PAGING_PAGED
 import com.ggumtak.readeraplus.settings.LIST_PAGING_SCROLL
 import com.ggumtak.readeraplus.settings.LibraryListMode
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReadMode
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.ScrollStyle
@@ -396,6 +397,18 @@ object R3Rows {
         } else {
             "줄 단위 (기본) — 쪽을 끝까지 채웁니다. 문단이 다음 쪽으로 이어질 수 있습니다."
         }
+
+    // ---- 화면 색 (읽기 설정 → 스타일; 웹소설 = 마루뷰어, 2026-10-04)
+
+    val PAGE_THEMES: List<PageTheme> = listOf(PageTheme.PAPER, PageTheme.MARU)
+
+    /** The "화면 색" chooser: the theme's name and what it looks like. */
+    fun pageThemeChoice(t: PageTheme): String = when (t) {
+        PageTheme.PAPER -> "${t.label} (기본)"
+        PageTheme.MARU -> "${t.label} — 어두운 회색 바탕 · 밝은 글자 · 그림자"
+    }
+
+    const val PAGE_THEME_NOTE = "흑백 반전(넘김·화면 설정)을 켜 두면 화면 색과 상관없이 검은 바탕에 흰 글자로 보입니다."
 
     // ---- 상태 표시줄 (UI_SPEC §5.5, anchor §2.7)
 

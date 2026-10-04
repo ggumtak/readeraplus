@@ -32,8 +32,10 @@ data class ReaderSettings(
     val marginBottomDp: Int = 40,
     /** ReadEra's "페이지 여백" switch: false = use tiny margins. */
     val pageMargins: Boolean = true,
-    /** White-on-black (only other color scheme; default black on white). */
+    /** White on black (흑백 반전, 밤 모드). Wins over [pageTheme] while on. */
     val invert: Boolean = false,
+    /** Page colours ("화면 색"; default black on white). Like [invert], a change repaints and never re-lays out. */
+    val pageTheme: PageTheme = PageTheme.PAPER,
     /** Status line at the top: left / centre / right. All NONE = no header band. Default: chapter title centred. */
     val headerLeft: StatusItem = StatusItem.NONE,
     val headerCenter: StatusItem = StatusItem.CHAPTER,
@@ -89,32 +91,52 @@ data class ReaderSettings(
 }
 
 /**
- * One-tap typography presets (only typography fields change; margins, status bar and parse options stay).
- * The defaults of [ReaderSettings] are [MARU]. The enum names are stored nowhere but kept from the first release;
- * only the labels changed (R2: 웹소설 / 전자책 / 종이책, the same looks as before).
+ * One-tap presets: the typography and the page colours ([ReaderSettings.pageTheme]) change; font size, margins, the
+ * status bar, 흑백 반전 and parse options stay. The enum names are stored nowhere but kept from the first release; only
+ * the labels changed (R2: 웹소설 / 전자책 / 종이책).
+ *
+ * [MARU] (웹소설) is MaruViewer's page as measured on the user's screenshot (2026-10-04): 나눔명조 Regular, a 2 em
+ * line pitch, one empty line between paragraphs, ragged right, no indent, on the [PageTheme.MARU] colours. The
+ * defaults of [ReaderSettings] keep the earlier 웹소설 typography (weight 500, a 1 em paragraph gap) on white, so they
+ * match no preset ("직접 설정").
  */
 enum class StylePreset(val label: String, val description: String) {
-    MARU("웹소설", "나눔명조 · 왼쪽 정렬 · 어절 줄바꿈 · 넓은 줄/문단 간격 · 들여쓰기 없음"),
+    MARU("웹소설", "마루뷰어 · 나눔명조 · 어두운 회색 바탕 · 그림자 · 넓은 줄/문단 간격 · 왼쪽 정렬"),
     RIDI("전자책", "리디바탕 · 양쪽 정렬 · 글자 줄바꿈 · 1em 들여쓰기"),
     BOOK("종이책", "나눔명조 · 양쪽 정렬 · 글자 줄바꿈 · 문단 간격 없이 들여쓰기");
 
     fun applyTo(s: ReaderSettings): ReaderSettings = when (this) {
         MARU -> s.copy(
-            fontId = "nanummyeongjo", fontWeight = 500, lineHeightPct = 200, paragraphSpacingPct = 100,
+            fontId = "nanummyeongjo", fontWeight = 400, lineHeightPct = 200, paragraphSpacingPct = 200,
             indentPct = 0, letterSpacingPm = 0, align = Align.LEFT, lineBreak = LineBreakMode.WORD,
+            pageTheme = PageTheme.MARU,
         )
         RIDI -> s.copy(
             fontId = "ridibatang", fontWeight = 400, lineHeightPct = 170, paragraphSpacingPct = 50,
             indentPct = 100, letterSpacingPm = 0, align = Align.JUSTIFY, lineBreak = LineBreakMode.CHAR,
+            pageTheme = PageTheme.PAPER,
         )
         BOOK -> s.copy(
             fontId = "nanummyeongjo", fontWeight = 450, lineHeightPct = 170, paragraphSpacingPct = 0,
             indentPct = 100, letterSpacingPm = 0, align = Align.JUSTIFY, lineBreak = LineBreakMode.CHAR,
+            pageTheme = PageTheme.PAPER,
         )
     }
 
-    /** True when [s] currently matches this preset's typography. */
+    /** True when [s] currently matches this preset's typography and page colours. */
     fun matches(s: ReaderSettings): Boolean = applyTo(s) == s
+}
+
+/**
+ * Page colours ("화면 색", [ReaderSettings.pageTheme]); what they paint is `render/PagePalette`. 흑백 반전
+ * ([ReaderSettings.invert]) wins while on. Stored by name ("r.pageTheme"; unknown or missing = [PAPER]): never rename
+ * an entry, only append.
+ */
+enum class PageTheme(val label: String) {
+    /** Black on white: the e-ink default. */
+    PAPER("흰 바탕"),
+    /** MaruViewer's web-novel page: light grey text with a short shadow on a dark grey page (웹소설, 2026-10-04). */
+    MARU("마루뷰어"),
 }
 
 enum class TapZoneMode {

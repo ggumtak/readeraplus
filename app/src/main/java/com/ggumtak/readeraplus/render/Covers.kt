@@ -204,6 +204,7 @@ object Covers {
             align = Align.LEFT,
             lineBreak = LineBreakMode.CHAR,
             invert = false,
+            pageTheme = com.ggumtak.readeraplus.settings.PageTheme.PAPER,
             headerCenter = com.ggumtak.readeraplus.settings.StatusItem.NONE,
             progressBar = false,
             widowOrphanControl = false,

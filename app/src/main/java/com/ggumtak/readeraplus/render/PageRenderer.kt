@@ -2,7 +2,6 @@ package com.ggumtak.readeraplus.render
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
@@ -28,7 +27,8 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Draws a laid-out page. The page's content box is placed at (contentLeft, contentTop) in canvas coordinates.
- * Colours: black text on white, or white on black when settings.invert (pictures then drawn inverted too).
+ * Colours come from the settings' [PagePalette]: black text on white, white on black when settings.invert (pictures
+ * then drawn inverted too), or a theme's own (마루뷰어: light text with a short shadow on dark grey, gold status lines).
  *
  * Glyph positions come exclusively from [LineGeometry.charPositions]; text is drawn in segments split at
  * style changes and justification points, so selection/search/TTS geometry and drawing always agree.
@@ -42,9 +42,13 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
 
     private val settings = measurer.settings
     private val density = context.resources.displayMetrics.density.let { if (it > 0f) it else 1f }
-    private val invert = settings.invert
-    private val fg = if (invert) Color.WHITE else Color.BLACK
-    private val bg = if (invert) Color.BLACK else Color.WHITE
+    private val palette = PagePalette.of(settings)
+    private val fg = palette.text
+    private val bg = palette.background
+    /** Text shadow in px (radius 0 = none; Paint.setShadowLayer would drop a zero radius anyway). */
+    private val shadowRadius = if (palette.hasShadow) palette.shadowRadiusDp * density else 0f
+    private val shadowDx = palette.shadowDxDp * density
+    private val shadowDy = palette.shadowDyDp * density
     private val onePx = 1f
     private val em = measurer.emPx
 
@@ -55,7 +59,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             settings.statusFontSizeSp.let { if (it.isFinite() && it > 0f) it.coerceIn(6f, 40f) else 11f },
             context.resources.displayMetrics,
         )
-        color = fg
+        color = palette.status
         textLocale = Locale.KOREAN
         fontFeatureSettings = "tnum"
     }
@@ -96,9 +100,16 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         style = Paint.Style.STROKE
         strokeWidth = onePx
     }
+    /** The status lines' battery icon and progress line, in the palette's status colour. */
+    private val statusLine = Paint().apply { style = Paint.Style.FILL }
+    private val statusOutline = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = onePx
+    }
+    private val statusDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     /** Pictures; in night mode through the shared inverting filter (T1-3f): no white box glaring on a black page. */
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG).apply {
-        if (invert) colorFilter = nightImageFilter
+        if (palette.invertImages) colorFilter = nightImageFilter
     }
     private val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     /** Background-coloured edge that keeps the ribbon apart from glyphs it touches (tiny margins, no header). */
@@ -133,6 +144,9 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         line.color = fg
         ribbonPaint.color = fg
         ribbonHalo.color = bg
+        statusLine.color = palette.status
+        statusOutline.color = palette.status
+        statusDot.color = palette.status
     }
 
     /** Draws page [pageIndex] of [layout] (background, status lines, highlights, text, images, ribbon). */
@@ -366,15 +380,15 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val bodyTop = Math.round(baseline + digitMiddle * ts / statusPaint.textSize - bodyH / 2f).toFloat()
         val bodyBottom = bodyTop + bodyH
         rect.set(bodyLeft + 0.5f, bodyTop + 0.5f, bodyRight - 0.5f, bodyBottom - 0.5f)
-        canvas.drawRect(rect, outline)
+        canvas.drawRect(rect, statusOutline)
         val nubH = BatteryMath.nubHeight(ts)
         val nubTop = bodyTop + Math.round((bodyH - nubH) / 2f)
         val nubRight = bodyRight + BatteryMath.nubWidth(ts)
-        canvas.drawRect(bodyRight, nubTop, nubRight, nubTop + nubH, line)
+        canvas.drawRect(bodyRight, nubTop, nubRight, nubTop + nubH, statusLine)
         canvas.drawText(slot.batteryChars, 0, slot.batteryLength, nubRight + BatteryMath.gap(ts), baseline, paint)
         val inL = bodyLeft + 2f
         val fillR = BatteryMath.fillRight(inL, bodyRight - 2f, slot.battery)
-        if (fillR > inL) canvas.drawRect(inL, bodyTop + 2f, fillR, bodyBottom - 2f, line)
+        if (fillR > inL) canvas.drawRect(inL, bodyTop + 2f, fillR, bodyBottom - 2f, statusLine)
     }
 
     private fun drawProgress(canvas: Canvas, fraction: Float, viewW: Int, viewH: Int, lane: Float) {
@@ -382,12 +396,12 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val x0 = ProgressMath.x0(viewW, density).toFloat()
         val x1 = ProgressMath.x1(viewW, density).toFloat()
         val r = ProgressMath.rCap(lane, density)
-        canvas.drawRect(x0, y, x1, y + 1f, line)
-        canvas.drawCircle(x0, y + 0.5f, r, ribbonPaint)
-        canvas.drawCircle(x1, y + 0.5f, r, ribbonPaint)
+        canvas.drawRect(x0, y, x1, y + 1f, statusLine)
+        canvas.drawCircle(x0, y + 0.5f, r, statusDot)
+        canvas.drawCircle(x1, y + 0.5f, r, statusDot)
         if (fraction >= 0f && fraction.isFinite())
             canvas.drawCircle(ProgressMath.dotX(fraction, viewW, lane, density), y + 0.5f,
-                ProgressMath.rDot(lane, density), ribbonPaint)
+                ProgressMath.rDot(lane, density), statusDot)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -405,7 +419,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
                 if (value >= 0) quoteFill[s].color = grey(value)
                 quoteLine[s] = if (thumbnail) QuoteStyles.LINE_NONE else QuoteStyles.inkLine(s)
             } else {
-                val color = QuoteStyles.colorFill(s, invert)
+                val color = QuoteStyles.colorFill(s, palette.dark)
                 quoteHasFill[s] = color != 0
                 if (color != 0) quoteFill[s].color = color
                 quoteLine[s] = if (thumbnail) QuoteStyles.LINE_NONE else QuoteStyles.colorLine(s)
@@ -498,10 +512,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         }
     }
 
-    private fun grey(v: Int): Int {
-        val g = if (invert) 255 - v else v
-        return Color.rgb(g, g, g)
-    }
+    private fun grey(v: Int): Int = palette.grey(v)
 
     private fun fillRect(canvas: Canvas, l: Float, t: Float, r: Float, b: Float, color: Int) {
         fill.color = color
@@ -583,6 +594,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     ) {
         val paint = measurer.paintFor(style)
         paint.color = fg
+        // The measurer's paints belong to this renderer: only a palette with a shadow ever sets one.
+        if (shadowRadius > 0f) paint.setShadowLayer(shadowRadius, shadowDx, shadowDy, palette.shadowColor)
         val shift = when {
             style.baselineShift > 0 -> -0.35f * em
             style.baselineShift < 0 -> 0.2f * em

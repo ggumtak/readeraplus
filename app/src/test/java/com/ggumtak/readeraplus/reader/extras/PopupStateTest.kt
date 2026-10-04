@@ -4,6 +4,7 @@ import com.ggumtak.readeraplus.data.TxtOverride
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.reader.withTxt
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.StylePreset
 import com.ggumtak.readeraplus.settings.UserStyle
@@ -25,7 +26,8 @@ class PopupStateTest {
     @Test
     fun userStyleButtonShowsTheMatchingStyle() {
         val night = ReaderSettings(fontSizeSp = 26f, lineHeightPct = 220, marginLeftDp = 30, marginRightDp = 30)
-        val list = listOf(style("밤", night), style("TXT", ReaderSettings()))
+        val maru = StylePreset.MARU.applyTo(ReaderSettings())
+        val list = listOf(style("밤", night), style("TXT", maru))
         assertEquals("밤", StyleChoice.selectedUser(night, list)?.name)
         assertEquals("밤", StyleChoice.userLabel(StyleChoice.selectedUser(night, list)))
         // Not the typography: status bar / invert / TXT options don't matter.
@@ -35,9 +37,11 @@ class PopupStateTest {
         assertNull(StyleChoice.selectedUser(off, list))
         assertEquals("내 스타일", StyleChoice.userLabel(null))
         // A preset and a saved style may both match.
-        val maru = StylePreset.MARU.applyTo(ReaderSettings())
         assertEquals(StylePreset.MARU, StyleChoice.selected(maru))
         assertEquals("TXT", StyleChoice.selectedUser(maru, list)?.name)
+        // A saved style carries its 화면 색: the same typography on another page colour is not that style.
+        assertNull(StyleChoice.selectedUser(maru.copy(pageTheme = PageTheme.PAPER), list))
+        assertEquals(PageTheme.MARU, list[1].applyTo(ReaderSettings()).pageTheme)
     }
 
     @Test

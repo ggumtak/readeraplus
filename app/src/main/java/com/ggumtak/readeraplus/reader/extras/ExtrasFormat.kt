@@ -475,7 +475,7 @@ internal object StyleChoice {
     /** Label of the saved-styles button when no saved style matches. */
     const val USER_LABEL = "내 스타일"
 
-    /** The first preset whose typography equals [s] exactly, or null ("사용자 설정"). */
+    /** The first preset whose typography and page colours equal [s] exactly, or null ("직접 설정"). */
     fun selected(s: ReaderSettings): StylePreset? = StylePreset.entries.firstOrNull { it.matches(s) }
 
     /** The first saved style [s] looks exactly like, or null. */

@@ -10,6 +10,7 @@ import com.ggumtak.readeraplus.settings.LIST_PAGING_AUTO
 import com.ggumtak.readeraplus.settings.LIST_PAGING_PAGED
 import com.ggumtak.readeraplus.settings.LIST_PAGING_SCROLL
 import com.ggumtak.readeraplus.settings.LibraryListMode
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReadMode
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.ScrollStyle
@@ -183,6 +184,19 @@ class SettingsFormatTest {
         assertEquals("줄 단위 (기본) — 쪽을 끝까지 채웁니다. 문단이 다음 쪽으로 이어질 수 있습니다.", R3Rows.pageBreakChoice(PageBreakMode.LINE))
         assertEquals("문단 단위 — 한 쪽에 들어가는 문단은 나누지 않습니다. 쪽 아래가 비기도 합니다.", R3Rows.pageBreakChoice(PageBreakMode.PARAGRAPH))
         assertEquals(PageBreakMode.entries.toSet(), R3Rows.PAGE_BREAKS.toSet())
+    }
+
+    @Test
+    fun pageThemeChoices() {
+        // 읽기 설정 → 스타일 → 화면 색: every theme, the default first.
+        assertEquals(PageTheme.entries.toList(), R3Rows.PAGE_THEMES)
+        assertEquals(ReaderSettings().pageTheme, R3Rows.PAGE_THEMES.first())
+        assertEquals(
+            listOf("흰 바탕 (기본)", "마루뷰어 — 어두운 회색 바탕 · 밝은 글자 · 그림자"),
+            R3Rows.PAGE_THEMES.map { R3Rows.pageThemeChoice(it) },
+        )
+        assertEquals(listOf("흰 바탕", "마루뷰어"), R3Rows.PAGE_THEMES.map { it.label })
+        assertTrue(R3Rows.PAGE_THEME_NOTE.startsWith("흑백 반전(넘김·화면 설정)"))
     }
 
     @Test

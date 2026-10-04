@@ -33,9 +33,10 @@ import kotlinx.coroutines.withContext
 
 /**
  * "읽기 설정": every reading setting of the page in one place (the quick options' "전체 읽기 설정" opens it). 스타일
- * (presets, 내 스타일), 글자 (글꼴, 글자 크기, 굵기, 글자 간격), 문단 (줄 간격, 문단 간격, 들여쓰기, 정렬, 줄바꿈), 페이지
- * (여백, 페이지 여백, 페이지 나눔, 외톨이 줄 방지), 파일 (this book's TXT options, the TXT defaults, EPUB 출판사 스타일)
- * and 기본값 복원. Page turning, keys, 흑백 반전, the status bands and the e-ink screen are on "넘김·화면 설정" (linked).
+ * (presets, 내 스타일, 화면 색), 글자 (글꼴, 글자 크기, 굵기, 글자 간격), 문단 (줄 간격, 문단 간격, 들여쓰기, 정렬, 줄바꿈),
+ * 페이지 (여백, 페이지 여백, 페이지 나눔, 외톨이 줄 방지), 파일 (this book's TXT options, the TXT defaults, EPUB 출판사
+ * 스타일) and 기본값 복원. Page turning, keys, 흑백 반전, the status bands and the e-ink screen are on "넘김·화면 설정"
+ * (linked). A 화면 색 change is a repaint only (no re-layout).
  *
  * Every row edits the GLOBAL [ReaderSettings] (all books): the quick options' five rows edit the same fields with the
  * same steps and ranges. The reader applies what changed once, when it comes back to the front (one re-layout, the
@@ -46,6 +47,7 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     private var shown: ReaderSettings? = null
     private var styleRow: View? = null
     private var userRow: View? = null
+    private var themeRow: View? = null
     private var marginViews: Array<View> = emptyArray()
     private var widowRow: View? = null
 
@@ -58,6 +60,14 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         body.section("스타일")
         styleRow = ctx.valueRow("스타일", styleLabel(r)) { chooseStyle() }.also(body::addView)
         userRow = ctx.valueRow(StyleChoice.USER_LABEL, userLabel(r)) { userStylesMenu() }.also(body::addView)
+        // 흑백 반전 (넘김·화면 설정) wins over 화면 색 while on: the note says so.
+        themeRow = ctx.valueRow("화면 색", r.pageTheme.label) {
+            val opts = R3Rows.PAGE_THEMES
+            ctx.chooser("화면 색", opts.map { R3Rows.pageThemeChoice(it) }, opts.indexOf(Settings.reader.pageTheme)) { i ->
+                edit { it.copy(pageTheme = opts[i]) }
+            }
+        }.also(body::addView)
+        body.addView(ctx.note(R3Rows.PAGE_THEME_NOTE))
 
         body.section("글자")
         // The font's name is read off the main thread (a user font is a file read in a cold process).
@@ -316,6 +326,7 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         shown = Settings.reader
         styleRow?.setSummary(styleLabel(Settings.reader))
         userRow?.setSummary(userLabel(Settings.reader))
+        themeRow?.setSummary(Settings.reader.pageTheme.label)
     }
 
     /** The kit's stepper with "<title> 줄이기" / "<title> 늘리기" buttons and a value TalkBack speaks after a tap. */
@@ -325,7 +336,7 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     companion object {
         const val SCOPE_NOTE = "여기의 설정은 모든 책에 적용됩니다. TXT 정리 설정만 책마다 따로 정할 수 있습니다. 읽던 책으로 돌아가면 바뀐 설정으로 한 번 다시 배치합니다."
         const val CUSTOM_STYLE = "직접 설정"
-        const val RESET_SUMMARY = "이 페이지의 글자 · 문단 · 페이지 설정 (TXT 정리 · 흑백 반전 · 상태 표시는 그대로)"
+        const val RESET_SUMMARY = "이 페이지의 화면 색 · 글자 · 문단 · 페이지 설정 (TXT 정리 · 흑백 반전 · 상태 표시는 그대로)"
         const val RESET_MESSAGE = "이 페이지의 스타일 · 글자 · 문단 · 페이지 · EPUB 설정을 기본값으로 되돌릴까요? " +
             "TXT 정리 설정, 흑백 반전과 상태 표시(넘김·화면 설정)는 그대로입니다."
         private val ALIGNS = listOf(Align.LEFT, Align.JUSTIFY)
@@ -336,8 +347,9 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
 /** 읽기 설정's 기본값 복원. Pure, unit-tested. */
 internal object ReadingDefaults {
     /**
-     * [s] with this page's settings back to the defaults. Kept: the TXT options (resetting them would re-parse every
-     * TXT book on its next open), and what lives on 넘김·화면 설정 (흑백 반전, the status slots, 진행 막대, 상태 글자 크기).
+     * [s] with this page's settings back to the defaults (화면 색 back to 흰 바탕 too). Kept: the TXT options (resetting
+     * them would re-parse every TXT book on its next open), and what lives on 넘김·화면 설정 (흑백 반전, the status slots,
+     * 진행 막대, 상태 글자 크기).
      */
     fun reset(s: ReaderSettings): ReaderSettings = TxtEdits.withTxtFrom(ReaderSettings(), s).copy(
         invert = s.invert,

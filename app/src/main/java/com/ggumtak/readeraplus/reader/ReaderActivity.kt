@@ -74,6 +74,7 @@ import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
 import com.ggumtak.readeraplus.render.ImageCoverage
 import com.ggumtak.readeraplus.render.PageDecor
+import com.ggumtak.readeraplus.render.PagePalette
 import com.ggumtak.readeraplus.render.PageRenderer
 import com.ggumtak.readeraplus.render.ProgressMath
 import com.ggumtak.readeraplus.render.QuoteLook
@@ -424,8 +425,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var panelOpen = false
     /** Between onResume and onPause. */
     private var inFront = false
-    /** Background colour last set by [applyReaderColors] (null = none yet). */
-    private var readerBg: Int? = null
+    /** Page colours last set by [applyReaderColors] (null = none yet). */
+    private var readerPalette: PagePalette? = null
     /** The page on screen when the reader paused (-1 = none): TTS may turn pages with the screen off (T1-11). */
     private var pausedSection = -1
     private var pausedPageIdx = -1
@@ -877,7 +878,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         ReaderWindow.applyFullscreen(this, app.fullscreen)
         if (requestedOrientation != app.orientationLock) requestedOrientation = app.orientationLock
         keeper.enabled = app.keepScreenOn
-        applyCadence(Settings.reader.invert)
+        applyCadence(Settings.reader)
         cadence.onChapter = app.einkRefreshOnChapter
         // Read by Eink.fullRefresh (view) wherever it is called from; the reader's own refreshes pass them directly.
         Eink.configure(app.einkRefreshMethod, app.einkFlashMs)
@@ -1002,19 +1003,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (QuoteLook.generation != before) refreshDecor()
     }
 
-    /** The refresh cadence for the page's colours: 밤 모드 (inverted) has its own (T1-3b). */
-    private fun applyCadence(inverted: Boolean) {
-        cadence.every = EinkCadence.everyFor(app.einkRefreshEvery, app.einkRefreshEveryNight, inverted)
+    /** The refresh cadence for the page's colours: a dark page (밤 모드, the 마루뷰어 theme) has its own (T1-3b). */
+    private fun applyCadence(s: ReaderSettings) {
+        cadence.every = EinkCadence.everyFor(app.einkRefreshEvery, app.einkRefreshEveryNight, PagePalette.of(s).dark)
     }
 
+    /** The window and the blank page take the page's background ([PagePalette]: 흑백 반전, else the 화면 색). */
     private fun applyReaderColors(s: ReaderSettings) {
-        val bg = if (s.invert) Ink.BLACK else Ink.WHITE
+        val palette = PagePalette.of(s)
         // Unchanged colours: no background reset (it would redraw the window, an e-ink update).
-        if (bg == readerBg) return
+        if (palette === readerPalette) return
         thumbPaintVersion++
-        readerBg = bg
-        root.setBackgroundColor(bg)
-        page.blankColor = bg
+        readerPalette = palette
+        root.setBackgroundColor(palette.background)
+        page.blankColor = palette.background
     }
 
     /** "목차를 만드는 중…" while a big TXT is parsed in full (A5), else "불러오는 중…". */
@@ -3078,7 +3080,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // The book is about to be re-opened with a new encoding: a re-parse with the old one would be thrown away.
         if (recreatePending) return
         applyReaderColors(global)
-        applyCadence(global.invert)
+        applyCadence(global)
         val s = session
         val b = bookRef
         if (s == null || b == null) return

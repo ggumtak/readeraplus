@@ -5,6 +5,7 @@ import com.ggumtak.readeraplus.engine.LineBreakMode
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.epub.EpubPlanCache
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.engine.PageBreakMode
@@ -62,6 +63,10 @@ class LayoutKeysTest {
     @Test
     fun layoutChangeDetection() {
         assertFalse(LayoutKeys.layoutChanged(s, s.copy(invert = true)))
+        // 화면 색 is colours only, like 흑백 반전: a repaint, never a re-layout (the first character stays).
+        assertFalse(LayoutKeys.layoutChanged(s, s.copy(pageTheme = PageTheme.MARU)))
+        assertFalse(LayoutKeys.layoutChanged(s, s.copy(pageTheme = PageTheme.MARU), BookFormat.TXT))
+        assertFalse(LayoutKeys.layoutChanged(s, s.copy(pageTheme = PageTheme.MARU), BookFormat.EPUB))
         assertFalse(LayoutKeys.layoutChanged(s, s.copy(footerLeft = StatusItem.CLOCK, footerCenter = StatusItem.BATTERY, footerRight = StatusItem.CHAPTER_PAGES_LEFT)))
         // R2 footer items are text in the footer band too: a repaint, never a re-layout.
         assertFalse(LayoutKeys.layoutChanged(s, s.copy(footerLeft = StatusItem.EPISODE, footerCenter = StatusItem.TIME_LEFT_BOOK)))
@@ -88,6 +93,7 @@ class LayoutKeysTest {
         assertEquals(24, base.length)
         assertEquals(base, key())
         assertEquals(base, key(s.copy(invert = true)))
+        assertEquals(base, key(s.copy(pageTheme = PageTheme.MARU)))
         assertNotEquals(base, key(s.copy(fontSizeSp = 20.5f)))
         assertNotEquals(base, key(s.copy(letterSpacingPm = 10)))
         assertNotEquals(base, key(enc = "MS949"))

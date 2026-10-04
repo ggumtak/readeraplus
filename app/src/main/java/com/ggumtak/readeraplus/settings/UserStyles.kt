@@ -6,9 +6,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * A saved style ("내 스타일", T1-8): the typography of [ReaderSettings] plus the page margins. It never carries the
- * status bar, invert or TXT / EPUB options, so applying one changes only how the text looks (one re-layout, like a
- * built-in [StylePreset]). Immutable; the list is stored by [Settings.saveUserStyles].
+ * A saved style ("내 스타일", T1-8): the typography of [ReaderSettings] plus the page margins and the 화면 색
+ * ([pageTheme]). It never carries the status bar, invert or TXT / EPUB options, so applying one changes only how the
+ * page looks (one re-layout, like a built-in [StylePreset]). Immutable; the list is stored by
+ * [Settings.saveUserStyles].
  */
 data class UserStyle(
     /** Shown on the style button and in the chooser; at most [UserStyles.MAX_NAME] chars. */
@@ -27,6 +28,8 @@ data class UserStyle(
     val marginTopDp: Int,
     val marginBottomDp: Int,
     val pageMargins: Boolean,
+    /** 화면 색. A style saved before the themes has none and reads [PageTheme.PAPER], the page it was saved on. */
+    val pageTheme: PageTheme = PageTheme.PAPER,
 ) {
     /** [s] with this style's fields; everything else of [s] is kept. */
     fun applyTo(s: ReaderSettings): ReaderSettings = s.copy(
@@ -44,6 +47,7 @@ data class UserStyle(
         marginTopDp = marginTopDp,
         marginBottomDp = marginBottomDp,
         pageMargins = pageMargins,
+        pageTheme = pageTheme,
     )
 
     /** True when [s] currently looks exactly like this style (the style button then shows its name, inverted). */
@@ -67,6 +71,7 @@ data class UserStyle(
             marginTopDp = s.marginTopDp,
             marginBottomDp = s.marginBottomDp,
             pageMargins = s.pageMargins,
+            pageTheme = s.pageTheme,
         )
     }
 }
@@ -125,6 +130,7 @@ object UserStyles {
         .put("marginTopDp", u.marginTopDp)
         .put("marginBottomDp", u.marginBottomDp)
         .put("pageMargins", u.pageMargins)
+        .put("pageTheme", u.pageTheme.name)
 
     /** Styles from the prefs string; empty for null / blank / malformed text. */
     fun parse(text: String?): List<UserStyle> {
@@ -173,6 +179,7 @@ object UserStyles {
             marginTopDp = if (verticalLegacy) 40 else int(o, "marginTopDp", d.marginTopDp).coerceIn(0, 300),
             marginBottomDp = if (verticalLegacy) 40 else int(o, "marginBottomDp", d.marginBottomDp).coerceIn(0, 300),
             pageMargins = (o.opt("pageMargins") as? Boolean) ?: d.pageMargins,
+            pageTheme = PageTheme.entries.firstOrNull { it.name == o.optString("pageTheme") } ?: d.pageTheme,
         )
     }
 

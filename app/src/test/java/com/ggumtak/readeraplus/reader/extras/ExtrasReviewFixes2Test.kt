@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.reader.extras
 
+import com.ggumtak.readeraplus.render.PagePalette
 import com.ggumtak.readeraplus.ui.kit.Ink
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -86,9 +87,12 @@ class ExtrasReviewFixes2Test {
 
     @Test
     fun selectionHandlesFollowThePageColours() {
-        assertEquals(Ink.BLACK, HandleColors.fill(invert = false))
-        assertEquals(Ink.WHITE, HandleColors.outline(invert = false))
-        assertEquals(Ink.WHITE, HandleColors.fill(invert = true))
-        assertEquals(Ink.BLACK, HandleColors.outline(invert = true))
+        assertEquals(Ink.BLACK, HandleColors.fill(PagePalette.PAPER))
+        assertEquals(Ink.WHITE, HandleColors.outline(PagePalette.PAPER))
+        assertEquals(Ink.WHITE, HandleColors.fill(PagePalette.NIGHT))
+        assertEquals(Ink.BLACK, HandleColors.outline(PagePalette.NIGHT))
+        // 마루뷰어: the light grey text colour, outlined in the dark grey page.
+        assertEquals(0xFFDDDDDD.toInt(), HandleColors.fill(PagePalette.MARU))
+        assertEquals(0xFF323232.toInt(), HandleColors.outline(PagePalette.MARU))
     }
 }

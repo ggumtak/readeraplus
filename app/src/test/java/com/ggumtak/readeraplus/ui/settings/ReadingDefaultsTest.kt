@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.ui.settings
 
 import com.ggumtak.readeraplus.engine.Align
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.StatusItem
 import org.junit.Assert.assertEquals
@@ -13,7 +14,7 @@ class ReadingDefaultsTest {
         val mine = d.copy(
             fontSizeSp = 24f, fontWeight = 700, lineHeightPct = 200, paragraphSpacingPct = 80, indentPct = 200,
             align = if (d.align == Align.LEFT) Align.JUSTIFY else Align.LEFT, marginLeftDp = 10, marginRightDp = 10,
-            epubPublisherStyles = !d.epubPublisherStyles,
+            epubPublisherStyles = !d.epubPublisherStyles, pageTheme = PageTheme.MARU,
             invert = true, footerCenter = StatusItem.CLOCK, progressBar = !d.progressBar, statusFontSizeSp = 14f,
             txtBlankLines = 3, txtDetectChapters = !d.txtDetectChapters, txtReplaceRules = "a=>b",
         )
@@ -27,6 +28,8 @@ class ReadingDefaultsTest {
         assertEquals(d.align, out.align)
         assertEquals(d.marginLeftDp, out.marginLeftDp)
         assertEquals(d.epubPublisherStyles, out.epubPublisherStyles)
+        // 화면 색 is on this page (스타일): back to 흰 바탕.
+        assertEquals(PageTheme.PAPER, out.pageTheme)
         // 넘김·화면 설정's settings and the TXT options are kept.
         assertEquals(true, out.invert)
         assertEquals(StatusItem.CLOCK, out.footerCenter)

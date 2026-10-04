@@ -100,6 +100,7 @@ object LayoutKeys {
     /** Settings with every field that does NOT change the layout normalised away. */
     private fun layoutPart(s: ReaderSettings): ReaderSettings = s.copy(
         invert = false,
+        pageTheme = DEFAULTS.pageTheme,
         headerLeft = DEFAULTS.headerLeft, headerCenter = DEFAULTS.headerCenter, headerRight = DEFAULTS.headerRight,
         footerLeft = DEFAULTS.footerLeft, footerCenter = DEFAULTS.footerCenter, footerRight = DEFAULTS.footerRight,
         progressBar = DEFAULTS.progressBar, statusFontSizeSp = DEFAULTS.statusFontSizeSp,

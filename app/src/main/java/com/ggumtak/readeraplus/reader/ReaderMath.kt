@@ -81,8 +81,9 @@ class EinkCadence(var every: Int = 0, var onChapter: Boolean = false) {
         const val IMAGE_COVERAGE = 0.075f
 
         /**
-         * The cadence for the page's colours (T1-3b): [night] (AppSettings.einkRefreshEveryNight) while [inverted],
-         * unless it is negative ("낮과 같게"), else [day] (AppSettings.einkRefreshEvery).
+         * The cadence for the page's colours (T1-3b): [night] (AppSettings.einkRefreshEveryNight) while [inverted]
+         * (a dark page: 흑백 반전 or the 마루뷰어 화면 색, `PagePalette.dark`), unless it is negative ("낮과 같게"), else
+         * [day] (AppSettings.einkRefreshEvery).
          */
         fun everyFor(day: Int, night: Int, inverted: Boolean): Int =
             if (inverted && night >= 0) night else day

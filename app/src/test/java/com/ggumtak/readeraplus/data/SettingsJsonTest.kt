@@ -6,6 +6,7 @@ import com.ggumtak.readeraplus.engine.LineBreakMode
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.LibraryListMode
 import com.ggumtak.readeraplus.settings.LibrarySort
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.settings.TapZoneMode
@@ -56,6 +57,20 @@ class SettingsJsonTest {
     fun missingFieldsKeepBase() {
         assertEquals(reader, SettingsJson.readerFromJson(JSONObject(), reader))
         assertEquals(app, SettingsJson.appFromJson(JSONObject(), app))
+    }
+
+    @Test
+    fun pageThemeTravelsAndOldBackupsAreOnTheWhitePage() {
+        val maru = reader.copy(pageTheme = PageTheme.MARU)
+        val json = JSONObject(SettingsJson.readerToJson(maru).toString())
+        assertEquals("MARU", json.getString("r.pageTheme"))
+        assertEquals(maru, SettingsJson.readerFromJson(json, ReaderSettings()))
+        // A backup made before 화면 색 was taken on the white page: it restores 흰 바탕 even over a 마루뷰어 device.
+        json.remove("r.pageTheme")
+        assertEquals(maru.copy(pageTheme = PageTheme.PAPER), SettingsJson.readerFromJson(json, maru))
+        // A theme this build does not know: 흰 바탕 too.
+        assertEquals(PageTheme.PAPER, SettingsJson.readerFromJson(json.put("r.pageTheme", "SEPIA"), maru).pageTheme)
+        assertEquals(PageTheme.MARU, SettingsJson.readerFromJson(json.put("r.pageTheme", "maru"), reader).pageTheme)
     }
 
     @Test

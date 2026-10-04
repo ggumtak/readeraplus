@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.reader
 
 import com.ggumtak.readeraplus.format.BookFormat
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -59,6 +60,7 @@ class ReaderReviewFixesTest {
         assertNotEquals(key(s, BookFormat.TXT), key(s, BookFormat.TXT, "MS949"))
         // Colours / footer items never count.
         assertEquals(key(s, BookFormat.TXT), key(s.copy(invert = true), BookFormat.TXT))
+        assertEquals(key(s, BookFormat.EPUB), key(s.copy(pageTheme = PageTheme.MARU), BookFormat.EPUB))
         assertTrue(LayoutKeys.VERSION >= 2)
     }
 

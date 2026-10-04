@@ -11,6 +11,14 @@
 > 목차 · 북마크 · 인용문 목록과 스크롤 모드는 일반 목록처럼 손가락을 따라 움직이고 놓으면 관성으로 이어서 움직인다
 > (e-ink 포함; 스크롤 모드의 "자동"은 이제 손가락을 따라 이동, "손을 떼면 이동"은 선택으로 남음). 페이지 넘김 명령
 > (탭 · 키 · 자동 넘김)은 위 지시대로 계속 즉시 이동한다.
+>
+> **사용자 변경 지시 (2026-10-04): 웹소설 스타일 = 마루뷰어 화면 (색 포함).**
+> 스타일 "웹소설"(`StylePreset.MARU`)은 사용자가 보낸 마루뷰어 화면을 그대로 따른다: 나눔명조 Regular(400), 줄 간격
+> 200%, 문단 사이 빈 줄 한 줄(문단 간격 200%), 왼쪽 정렬 · 어절 줄바꿈 · 들여쓰기 없음 · 글자 간격 0, 그리고 새 화면 색
+> "마루뷰어"(`PageTheme.MARU`: #323232 바탕, #DDDDDD 글자, 오른쪽 아래로 짧은 검은 그림자, 상태 표시 금색 #F0D096).
+> 화면 색은 읽기 설정 → 스타일 → 화면 색에서도 따로 고른다. 기본값은 흰 바탕(e-ink 우선)이고, 흑백 반전이 켜져 있으면
+> 흑백 반전이 이긴다. 화면 색 변경은 다시 그리기만 하고 다시 배치하지 않는다. 글자 크기와 여백은 프리셋이 바꾸지 않는다
+> (마루뷰어 왼쪽 여백 ≈ 28–31 dp, 우리 기본 40 dp).
 
 
 Status: build plan, read-only against the repo. It was written on 2026-09-30 against HEAD `92be04f` ("WIP checkpoint: R2
@@ -259,14 +267,14 @@ lives in 설정 now; nothing was dropped.
 | Section | Rows in order |
 |---|---|
 | (note) | 여기의 설정은 모든 책에 적용 … 읽던 책으로 돌아가면 바뀐 설정으로 한 번 다시 배치합니다. |
-| 스타일 | 스타일 (preset chooser, "직접 설정" when none matches) · 내 스타일 (saved styles, 새 스타일로 저장…, 관리…) |
+| 스타일 | 스타일 (preset chooser, "직접 설정" when none matches; 웹소설 = the 마루뷰어 page incl. its colours, 2026-10-04) · 내 스타일 (saved styles, 새 스타일로 저장…, 관리…; a style carries its 화면 색) · **화면 색** (흰 바탕 (기본) / 마루뷰어 — 어두운 회색 바탕 · 밝은 글자 · 그림자; a repaint, no re-layout) · note (흑백 반전 on 넘김·화면 설정 wins while on) |
 | 글자 | 글꼴 · 글자 크기 · 굵기 · 글자 간격 |
 | 문단 | 줄 간격 · 문단 간격 · 들여쓰기 · 정렬 · 줄바꿈 |
 | 페이지 | **좌우 여백** · **상하 여백** · note (as before) · 페이지 여백 (hides the steppers when off) · **페이지 나눔** · 외톨이 줄 방지 |
 | TXT 파일 | 이 책의 TXT 정리 (only for the reader's TXT book) · TXT 기본 정리 설정 |
 | EPUB 파일 | 출판사 스타일 사용 |
 | 넘김 · 화면 | 넘김·화면 설정 › |
-| 기본값 | 기본값 복원 (TXT options kept) |
+| 기본값 | 기본값 복원 (TXT options, 흑백 반전 and the status bands kept; 화면 색 back to 흰 바탕) |
 
 **Settings → 이 책의 TXT 정리 (`BookTxtPage`):** 인코딩 · 빈 줄 처리 · 원본 들여쓰기 제거 · 끊어진 줄 합치기 · 챕터 자동
 인식 · 챕터 제목 강조 · 챕터 규칙 (정규식) · 치환 규칙 · 모든 TXT 기본값으로 저장 · 이 책 설정 지우기 (기본값 사용). Each

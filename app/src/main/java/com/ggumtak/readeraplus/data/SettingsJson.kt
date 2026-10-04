@@ -7,6 +7,7 @@ import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_MODE_SYSTEM
 import com.ggumtak.readeraplus.settings.EINK_REFRESH_AUTO
 import com.ggumtak.readeraplus.settings.EINK_REFRESH_FLASH
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.TapAction
@@ -75,6 +76,7 @@ internal object SettingsJson {
         .put("r.marginBottomDp", s.marginBottomDp)
         .put("r.pageMargins", s.pageMargins)
         .put("r.invert", s.invert)
+        .put("r.pageTheme", s.pageTheme.name)
         .put("r.headerLeft", s.headerLeft.name)
         .put("r.headerCenter", s.headerCenter.name)
         .put("r.headerRight", s.headerRight.name)
@@ -96,7 +98,11 @@ internal object SettingsJson {
         .put("r.txtReplaceRules", s.txtReplaceRules)
         .put("r.epubPublisherStyles", s.epubPublisherStyles)
 
-    /** Fields missing from [o] keep their value from [base] (as do fields this mapper doesn't name). */
+    /**
+     * Fields missing from [o] keep their value from [base] (as do fields this mapper doesn't name), except the 화면 색
+     * ([ReaderSettings.pageTheme]): a backup without it was made before the themes, on the white page, so it restores
+     * [PageTheme.PAPER] (as does a theme this build does not know).
+     */
     fun readerFromJson(o: JSONObject, base: ReaderSettings): ReaderSettings = base.copy(
         fontId = BackupJson.str(o, "r.fontId", base.fontId).trim().ifEmpty { base.fontId },
         fontSizeSp = BackupJson.float(o, "r.fontSizeSp", base.fontSizeSp)
@@ -114,6 +120,7 @@ internal object SettingsJson {
         marginBottomDp = BackupJson.int(o, "r.marginBottomDp", base.marginBottomDp).coerceIn(0, 300),
         pageMargins = BackupJson.bool(o, "r.pageMargins", base.pageMargins),
         invert = BackupJson.bool(o, "r.invert", base.invert),
+        pageTheme = enumOf(BackupJson.strOrNull(o, "r.pageTheme"), PageTheme.PAPER),
         headerLeft = enumOf(BackupJson.strOrNull(o, "r.headerLeft"), base.headerLeft),
         headerCenter = enumOf(BackupJson.strOrNull(o, "r.headerCenter"), base.headerCenter),
         headerRight = enumOf(BackupJson.strOrNull(o, "r.headerRight"), base.headerRight),

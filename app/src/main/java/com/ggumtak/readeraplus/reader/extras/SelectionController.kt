@@ -38,6 +38,7 @@ import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.reader.ReaderIo
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
+import com.ggumtak.readeraplus.render.PagePalette
 import com.ggumtak.readeraplus.render.QuoteLook
 import com.ggumtak.readeraplus.render.QuoteStyles
 import com.ggumtak.readeraplus.settings.Settings
@@ -884,9 +885,10 @@ class SelectionController(private val host: ReaderHost) {
 }
 
 /**
- * Selection handle: a teardrop in the page's text colour (black, or white on the inverted page) whose sharp corner
- * ([anchorX], [anchorY], parent coordinates) touches the selection's start (bottom-left) or end (bottom-right)
- * corner, at the bottom of the letters ([HandleAnchor]). The view is larger than the drawing (touch target).
+ * Selection handle: a teardrop in the page's text colour ([PagePalette]: black, or white on the inverted page) whose
+ * sharp corner ([anchorX], [anchorY], parent coordinates) touches the selection's start (bottom-left) or end
+ * (bottom-right) corner, at the bottom of the letters ([HandleAnchor]). The view is larger than the drawing (touch
+ * target).
  */
 @SuppressLint("ViewConstructor")
 internal class HandleView(context: Context, val start: Boolean) : View(context) {
@@ -923,10 +925,11 @@ internal class HandleView(context: Context, val start: Boolean) : View(context) 
     }
 
     override fun onDraw(canvas: Canvas) {
-        // Page colours: black handles on the white page, white handles (black outline) on the inverted page.
-        val invert = runCatching { Settings.reader.invert }.getOrDefault(false)
-        paint.color = HandleColors.fill(invert)
-        outline.color = HandleColors.outline(invert)
+        // Page colours: black handles on the white page, white handles (black outline) on the inverted page, light
+        // grey ones (dark grey outline) on the 마루뷰어 page.
+        val palette = runCatching { PagePalette.of(Settings.reader) }.getOrDefault(PagePalette.PAPER)
+        paint.color = HandleColors.fill(palette)
+        outline.color = HandleColors.outline(palette)
         canvas.drawPath(path, outline)
         canvas.drawPath(path, paint)
     }
@@ -965,11 +968,11 @@ internal object HandleAnchor {
 
 /** Selection handle colours for the page's colour scheme (pure; unit-tested). */
 internal object HandleColors {
-    /** Fill: the page's text colour (PageRenderer draws white on black when inverted). */
-    fun fill(invert: Boolean): Int = if (invert) Ink.WHITE else Ink.BLACK
+    /** Fill: the page's text colour (what PageRenderer draws the text in). */
+    fun fill(palette: PagePalette): Int = palette.text
 
     /** Outline: the page's background colour, so the handle stands out over text. */
-    fun outline(invert: Boolean): Int = if (invert) Ink.BLACK else Ink.WHITE
+    fun outline(palette: PagePalette): Int = palette.background
 }
 
 /**

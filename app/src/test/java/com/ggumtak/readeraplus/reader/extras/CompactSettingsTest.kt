@@ -4,6 +4,7 @@ import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.engine.LineBreakMode
 import com.ggumtak.readeraplus.reader.ReaderFormat
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.StylePreset
 import org.junit.Assert.assertEquals
@@ -77,28 +78,64 @@ class CompactSettingsTest {
     // ------------------------------------------------------------------ style presets
 
     @Test
-    fun defaultsAreMaruViewerStyle() {
+    fun defaultsKeepTheEarlierWebNovelTypographyOnWhite() {
         val d = ReaderSettings()
-        assertEquals(StylePreset.MARU, StyleChoice.selected(d))
+        // 웹소설 became the MaruViewer page (2026-10-04); the defaults stayed e-ink first: no preset ("직접 설정").
+        assertNull(StyleChoice.selected(d))
+        assertEquals(PageTheme.PAPER, d.pageTheme)
         assertEquals("nanummyeongjo", d.fontId)
+        assertEquals(500, d.fontWeight)
+        assertEquals(200, d.lineHeightPct)
+        assertEquals(100, d.paragraphSpacingPct)
         assertEquals(Align.LEFT, d.align)
         assertEquals(LineBreakMode.WORD, d.lineBreak)
         assertEquals(0, d.indentPct)
     }
 
     @Test
-    fun selectedPresetFollowsTypographyOnly() {
+    fun webNovelPresetIsTheMaruViewerPage() {
+        val d = ReaderSettings(fontSizeSp = 18f, marginLeftDp = 30, marginRightDp = 30)
+        val m = StylePreset.MARU.applyTo(d)
+        assertEquals("웹소설", StylePreset.MARU.label)
+        assertTrue(StylePreset.MARU.description.startsWith("마루뷰어 · 나눔명조"))
+        // Measured on the MaruViewer screenshot: 나눔명조 Regular, 2 em line pitch, one empty line between paragraphs,
+        // ragged right with breaks between words, no indent, default letter spacing, the dark grey page.
+        assertEquals("nanummyeongjo", m.fontId)
+        assertEquals(400, m.fontWeight)
+        assertEquals(200, m.lineHeightPct)
+        assertEquals(200, m.paragraphSpacingPct)
+        assertEquals(0, m.indentPct)
+        assertEquals(0, m.letterSpacingPm)
+        assertEquals(Align.LEFT, m.align)
+        assertEquals(LineBreakMode.WORD, m.lineBreak)
+        assertEquals(PageTheme.MARU, m.pageTheme)
+        // The user's font size and margins stay; 흑백 반전 is not a preset's business.
+        assertEquals(18f, m.fontSizeSp, 0f)
+        assertEquals(30, m.marginLeftDp)
+        assertFalse(m.invert)
+        assertTrue(StylePreset.MARU.applyTo(d.copy(invert = true)).invert)
+        // The other presets keep their typography on the white page.
+        assertEquals(PageTheme.PAPER, StylePreset.RIDI.applyTo(m).pageTheme)
+        assertEquals(PageTheme.PAPER, StylePreset.BOOK.applyTo(m).pageTheme)
+        assertEquals(StylePreset.RIDI.applyTo(d), StylePreset.RIDI.applyTo(m))
+    }
+
+    @Test
+    fun selectedPresetFollowsTypographyAndPageColours() {
         val d = ReaderSettings()
         for (p in StylePreset.entries) {
             val s = p.applyTo(d)
             assertEquals(p, StyleChoice.selected(s))
             // Exactly one preset is marked.
             assertEquals(1, StylePreset.entries.count { it.matches(s) })
-            // Font size, margins and status bar are not part of a style.
+            // Font size, margins, status bar and 흑백 반전 are not part of a style.
             assertEquals(p, StyleChoice.selected(s.copy(fontSizeSp = 24f, marginLeftDp = 30, footerLeft = StatusItem.NONE)))
+            assertEquals(p, StyleChoice.selected(s.copy(invert = true)))
         }
-        // A typography tweak leaves every preset ("사용자 설정": nothing inverted).
-        assertNull(StyleChoice.selected(d.copy(lineHeightPct = 205)))
+        // A typography tweak or another 화면 색 leaves every preset ("직접 설정": nothing inverted).
+        assertNull(StyleChoice.selected(StylePreset.MARU.applyTo(d).copy(lineHeightPct = 205)))
+        assertNull(StyleChoice.selected(StylePreset.MARU.applyTo(d).copy(pageTheme = PageTheme.PAPER)))
+        assertNull(StyleChoice.selected(StylePreset.RIDI.applyTo(d).copy(pageTheme = PageTheme.MARU)))
         assertNull(StyleChoice.selected(StylePreset.RIDI.applyTo(d).copy(align = Align.LEFT)))
         // Applying a preset keeps non-typography fields.
         val custom = d.copy(fontSizeSp = 23.5f, marginTopDp = 40, txtBlankLines = 2, invert = true)

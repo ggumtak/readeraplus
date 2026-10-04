@@ -109,6 +109,20 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun pageThemeIsStoredByName() {
+        val p = fresh()
+        // Prefs of the releases before 화면 색: the white page.
+        assertEquals(PageTheme.PAPER, Settings.reader.pageTheme)
+        Settings.saveReader(ReaderSettings(pageTheme = PageTheme.MARU))
+        assertEquals("MARU", p.map["r.pageTheme"])
+        Settings.initForTest(p)
+        assertEquals(ReaderSettings(pageTheme = PageTheme.MARU), Settings.reader)
+        // A name this build does not know (a newer build's theme): the white page.
+        fresh(hashMapOf("r.pageTheme" to "SEPIA"))
+        assertEquals(PageTheme.PAPER, Settings.reader.pageTheme)
+    }
+
+    @Test
     fun ttsVoiceFallsBackToTheLegacyKey() {
         fresh(hashMapOf("extras.ttsVoice" to "old-voice"))
         assertEquals("old-voice", Settings.app.ttsVoice)

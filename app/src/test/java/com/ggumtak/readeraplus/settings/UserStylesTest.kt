@@ -16,6 +16,7 @@ class UserStylesTest {
         fontId = "user:MyFont.ttf", fontSizeSp = 23.5f, fontWeight = 650, lineHeightPct = 185, paragraphSpacingPct = 40,
         indentPct = 150, letterSpacingPm = -15, align = Align.JUSTIFY, lineBreak = LineBreakMode.CHAR,
         marginLeftDp = 10, marginRightDp = 12, marginTopDp = 20, marginBottomDp = 22, pageMargins = false,
+        pageTheme = PageTheme.MARU,
     )
 
     @Test
@@ -25,7 +26,10 @@ class UserStylesTest {
         val other = ReaderSettings(invert = true, footerCenter = StatusItem.NONE, footerLeft = StatusItem.EPISODE, txtBlankLines = ParseOptions.BLANK_KEEP)
         val applied = u.applyTo(other)
         assertTrue(u.matches(applied))
-        // Status bar, invert and TXT options are not part of a style.
+        // The 화면 색 is part of a style (2026-10-04) ...
+        assertEquals(PageTheme.MARU, applied.pageTheme)
+        assertFalse(u.matches(applied.copy(pageTheme = PageTheme.PAPER)))
+        // ... status bar, invert and TXT options are not.
         assertEquals(true, applied.invert)
         assertEquals(StatusItem.NONE, applied.footerCenter)
         assertEquals(StatusItem.EPISODE, applied.footerLeft)
@@ -40,8 +44,8 @@ class UserStylesTest {
     fun presetLabelsAreTheNewNames() {
         assertEquals(listOf("웹소설", "전자책", "종이책"), StylePreset.entries.map { it.label })
         assertEquals(listOf("MARU", "RIDI", "BOOK"), StylePreset.entries.map { it.name })
-        // The defaults are still the 웹소설 look.
-        assertTrue(StylePreset.MARU.matches(ReaderSettings()))
+        // Since 웹소설 is the MaruViewer page (2026-10-04) the defaults (the earlier 웹소설 on white) match no preset.
+        assertFalse(StylePreset.entries.any { it.matches(ReaderSettings()) })
     }
 
     @Test
@@ -49,6 +53,17 @@ class UserStylesTest {
         val list = listOf(UserStyle.from("밤 독서", look), UserStyle.from("낮", ReaderSettings()))
         assertEquals(list, UserStyles.fromJson(JSONArray(UserStyles.toJson(list).toString())))
         assertEquals(list, UserStyles.parse(UserStyles.toJson(list).toString()))
+        assertEquals("MARU", UserStyles.toJson(list[0]).getString("pageTheme"))
+    }
+
+    @Test
+    fun aStyleSavedBeforeTheThemesIsOnTheWhitePage() {
+        val old = UserStyles.toJson(UserStyle.from("옛 스타일", look)).apply { remove("pageTheme") }
+        val u = UserStyles.fromJson(old)!!
+        assertEquals(PageTheme.PAPER, u.pageTheme)
+        assertEquals(UserStyle.from("옛 스타일", look.copy(pageTheme = PageTheme.PAPER)), u)
+        // A theme this build does not know reads as the white page too.
+        assertEquals(PageTheme.PAPER, UserStyles.fromJson(old.put("pageTheme", "SEPIA"))!!.pageTheme)
     }
 
     @Test

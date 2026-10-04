@@ -85,6 +85,7 @@ object Settings {
             putInt("r.marginBottomDp", s.marginBottomDp)
             putBoolean("r.pageMargins", s.pageMargins)
             putBoolean("r.invert", s.invert)
+            putString("r.pageTheme", s.pageTheme.name)
             putString("r.headerLeft", s.headerLeft.name)
             putString("r.headerCenter", s.headerCenter.name)
             putString("r.headerRight", s.headerRight.name)
@@ -204,6 +205,7 @@ object Settings {
             marginBottomDp = if (verticalLegacy) VerticalMargin.ZERO_DP else p.getInt("r.marginBottomDp", d.marginBottomDp),
             pageMargins = p.getBoolean("r.pageMargins", d.pageMargins),
             invert = p.getBoolean("r.invert", d.invert),
+            pageTheme = enumOr(p.getString("r.pageTheme", null), d.pageTheme),
             headerLeft = mig?.headerLeft ?: enumOr(p.getString("r.headerLeft", null), d.headerLeft),
             headerCenter = mig?.headerCenter ?: enumOr(p.getString("r.headerCenter", null), d.headerCenter),
             headerRight = mig?.headerRight ?: enumOr(p.getString("r.headerRight", null), d.headerRight),
