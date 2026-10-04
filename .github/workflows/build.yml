@@ -24,6 +24,8 @@ jobs:
     env:
       # versionCode = run number: every build is a newer version of the same app.
       BUILD_NUMBER: ${{ github.run_number }}
+      # Google Drive copy of the APK: on only when the RCLONE_CONF secret exists (see the upload step).
+      GDRIVE_ON: ${{ secrets.RCLONE_CONF != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -128,6 +130,29 @@ jobs:
             --prerelease \
             --title "ReaderaPlus build ${GITHUB_RUN_NUMBER}" \
             --notes "Automatic build from ${GITHUB_REF_NAME} @ ${GITHUB_SHA} · signing certificate SHA-256 ${{ steps.cert.outputs.sha }}"
+
+      # A copy of the APK in the user's Google Drive (easy to install on the e-reader from the Drive app). Needs the
+      # repository secret RCLONE_CONF: the text of an rclone config with one Google Drive remote (made once on a PC
+      # with `rclone config`, scope drive.file). The folder is the repository variable GDRIVE_FOLDER (default
+      # ReaderaPlus); only the newest ReaderaPlus-<build>.apk is kept there. A Drive failure never fails the build.
+      - name: Upload APK to Google Drive
+        if: env.GDRIVE_ON == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        env:
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+          GDRIVE_FOLDER: ${{ vars.GDRIVE_FOLDER || 'ReaderaPlus' }}
+        run: |
+          sudo apt-get -qq update >/dev/null && sudo apt-get -qq install -y rclone >/dev/null
+          mkdir -p ~/.config/rclone
+          printf '%s\n' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
+          remote="$(rclone listremotes | head -n 1)"
+          [ -n "$remote" ] || { echo "RCLONE_CONF has no remote"; exit 1; }
+          apk="ReaderaPlus-${GITHUB_RUN_NUMBER}.apk"
+          rclone copy "dist/$apk" "${remote}${GDRIVE_FOLDER}" -q
+          # Older builds out, the new one stays.
+          rclone delete "${remote}${GDRIVE_FOLDER}" --filter "- $apk" --filter "+ ReaderaPlus-*.apk" --filter "- *" -q || true
+          echo "Uploaded $apk to Google Drive: ${GDRIVE_FOLDER}"
+          rm -f ~/.config/rclone/rclone.conf
 
   # Scheduled only: touches the cached signing key so it is never evicted between builds.
   keep-signing-key:
