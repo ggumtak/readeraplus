@@ -511,8 +511,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         outState.putBoolean(STATE_PEEK, peekUntilTurn)
     }
 
+    /** finish() ran: the reader was closed by the user (or by the app for them), not by an outside launch. */
+    private var userFinished = false
+
     /** No close animation back to the library (the platform default would slide over several e-ink frames). */
     override fun finish() {
+        userFinished = true
         ResumeState.clear()
         super.finish()
         @Suppress("DEPRECATION")
@@ -672,6 +676,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // N §6.2: no save while peeking at a note (savePositionNow checks it too).
         if (!peekUntilTurn) savePositionNow(persistText = true)
         if (bookRef != null) ResumeState.paused()
+        // Paused because the system is finishing it (an outside launch cleared the task): known before the library
+        // that launch starts is created (ResumeState.dropped). The user's own closes went through finish().
+        if (isFinishing && !userFinished && !isChangingConfigurations) ResumeState.dropped(this)
         if (curLayout != null) {
             pausedSection = curSection
             pausedPageIdx = curPageIdx
@@ -684,7 +691,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     override fun onDestroy() {
-        if (isFinishing && !isChangingConfigurations) ResumeState.clear()
+        // finish() (every close by the user) already cleared it; a finish by the system (an outside launch that
+        // cleared the task) leaves the book for the library to reopen (ResumeState.takeInterrupted).
+        if (isFinishing && !isChangingConfigurations && !userFinished) ResumeState.dropped(this)
         light.onDestroy(isFinishing)
         detachScroll()
         anchorJob?.cancel()
@@ -1280,7 +1289,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val id = bookRef?.id ?: return
         val appCtx = applicationContext
         // PLAN §1.6.2, in this order; every IO step is launched, never awaited.
-        ResumeState.opened(id)                                                          // 1 (R)
+        ResumeState.opened(id, this)                                                    // 1 (R)
         // 2 (S): on main (apply(): in memory at once), so it sees the settings prefs before step 4's probe thread
         // can write "deviceClass" there (DA-B: a fresh install's restore offer is decided on untouched prefs).
         try {
@@ -2849,7 +2858,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (!s.settings.progressBar) return 0
         val g = s.generation?.geometry ?: return 0
         val density = resources.displayMetrics.density
-        val lane = StatusFit.lane((g.viewHeight - g.contentTop - l.config.height).toFloat(), density)
+        val lane = StatusFit.lane((g.viewHeight - StatusFit.edgePx(density) - g.contentTop - l.config.height).toFloat(), density)
         return if (lane > 0f) ProgressMath.trackPx(g.viewWidth, lane, density) else 0
     }
 
@@ -4251,6 +4260,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
         override fun onEndLibrary() {
             endPanel?.hide()
+            // Closed by the user before the library's new intent is delivered (it must not reopen this book).
+            userFinished = true
+            ResumeState.clear()
             // The library below this reader when it was opened from there, else a new one (never the open-last start:
             // the intent has no MAIN action).
             startActivity(
@@ -4294,7 +4306,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (!::returnNav.isInitialized) return
         val chip = returnNav.chip
         val lp = chip.layoutParams as? FrameLayout.LayoutParams ?: return
-        var bottom = insets[3] + dp(ReaderSettings.PROGRESS_LANE_DP) + dp(4)
+        var bottom = insets[3] + StatusFit.edgePx(resources.displayMetrics.density) + dp(ReaderSettings.PROGRESS_LANE_DP) + dp(4)
         val bars = overlayBarsHeight()
         if (bars > 0) bottom = maxOf(bottom, bars + dp(6))
         val left = insets[0] + dp(8)

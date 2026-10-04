@@ -430,7 +430,7 @@ object R3Rows {
         val top = if (r.pageMargins) r.marginTopDp else NO_MARGIN_DP
         val bottom = if (r.pageMargins) r.marginBottomDp else NO_MARGIN_DP
         if (r.hasHeader && !StatusFit.fitsDp(r.statusFontSizeSp, top, 0f)) return false
-        if (r.hasFooterText && !StatusFit.fitsDp(r.statusFontSizeSp, bottom, if (r.progressBar) StatusFit.LANE_DP else 0f)) return false
+        if (r.hasFooterText && !StatusFit.footerFitsDp(r.statusFontSizeSp, bottom, r.progressBar)) return false
         return true
     }
 

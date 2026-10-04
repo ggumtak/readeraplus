@@ -458,7 +458,7 @@ internal object StatusUi {
         val bottom = if (s.pageMargins) s.marginBottomDp else TINY_MARGIN_DP
         val headerHidden = s.hasHeader && !StatusFit.fitsDp(s.statusFontSizeSp, top, 0f)
         val footerHidden = s.hasFooterText &&
-            !StatusFit.fitsDp(s.statusFontSizeSp, bottom, if (s.progressBar) StatusFit.LANE_DP else 0f)
+            !StatusFit.footerFitsDp(s.statusFontSizeSp, bottom, s.progressBar)
         return headerHidden || footerHidden
     }
 

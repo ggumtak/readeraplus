@@ -17,6 +17,7 @@ import android.provider.DocumentsContract
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -132,6 +133,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         private const val PREF_BACKUP_NOTICE = "backupAuto.noticeShown"
         /** Longest the launch splash is held while looking up the book to reopen (a stuck database shows the library). */
         private const val OPEN_LAST_MAX_WAIT_MS = 2000L
+        private const val TAG = "Library"
     }
 
     internal val scope = MainScope()
@@ -302,6 +304,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         }
         hasAccess = hasStorageAccess()
         val i = intent
+        // An outside launch (an e-reader's task manager or launcher) that cleared the task above the library has just
+        // finished the reader the user was reading: open that book again instead of showing the library.
+        val interrupted = if (savedInstanceState == null) ResumeState.takeInterrupted() else -1L
+        if (interrupted > 0) {
+            Log.i(TAG, "reopen the interrupted reader: book $interrupted, action ${i?.action}, flags 0x${Integer.toHexString(i?.flags ?: 0)}")
+            startOpenLast(resumeId = interrupted)
+            return
+        }
         val first = ResumeState.activitiesCreated == 1
         val pending = if (first) ResumeState.pending() else null
         when (LibraryText.startMode(app.openLastOnStart, savedInstanceState != null, i?.action, i?.flags ?: 0,
@@ -309,7 +319,11 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         ) {
             LibraryText.StartMode.RESUME -> startOpenLast(resumeId = pending!!.bookId)
             LibraryText.StartMode.OPEN_LAST -> startOpenLast()
-            LibraryText.StartMode.LIBRARY -> ensureUi()
+            LibraryText.StartMode.LIBRARY -> {
+                // The reader that launch finished may report it only after this start (its destroy comes later).
+                if (savedInstanceState == null) ResumeState.awaitDrop { id -> reopenInterrupted(id, i) }
+                ensureUi()
+            }
         }
     }
 
@@ -457,6 +471,21 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // As in onCreate: a launch with CLEAR_TOP | SINGLE_TOP from outside finished the reader above this library.
+        val interrupted = ResumeState.takeInterrupted()
+        if (interrupted > 0) reopenInterrupted(interrupted, intent)
+        else ResumeState.awaitDrop { id -> reopenInterrupted(id, intent) }
+    }
+
+    /** The reader the user was reading was finished by an outside launch that brought this library up: reopen it. */
+    private fun reopenInterrupted(bookId: Long, i: Intent?) {
+        if (isFinishing || isDestroyed) return
+        Log.i(TAG, "reopen the interrupted reader: book $bookId, action ${i?.action}, flags 0x${Integer.toHexString(i?.flags ?: 0)}")
+        try {
+            ReaderActivity.open(this, bookId)
+        } catch (t: Throwable) {
+            Log.w(TAG, "reopen failed", t)
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -477,6 +506,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     override fun onPause() {
+        ResumeState.stopWaiting()
         resumed = false
         resumedForBackup = false
         refreshOnFocus = false

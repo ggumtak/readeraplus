@@ -1450,6 +1450,14 @@ adb shell input keyevent KEYCODE_HOME; sleep 2
 overview_back; shot 77_dont_keep 0; top_is ReaderActivity 77_dont_keep; same 75_second_book 77_dont_keep
 adb shell settings put global always_finish_activities 0
 
+log "U1-H: a task manager or launcher that clears the task above the library (e-reader, 2026-10-04): the book comes back"
+adb shell input keyevent KEYCODE_HOME; sleep 2
+adb shell am start -W -f 0x14000000 $launcher_intent | tee -a shots/steps.txt   # NEW_TASK | CLEAR_TOP
+sleep 5; shot 79_clear_top 0; top_is ReaderActivity 79_clear_top; same 75_second_book 79_clear_top
+adb shell input keyevent KEYCODE_HOME; sleep 2
+adb shell am start -W -f 0x10008000 $launcher_intent | tee -a shots/steps.txt   # NEW_TASK | CLEAR_TASK
+sleep 5; shot 79b_clear_task 0; top_is ReaderActivity 79b_clear_task; same 75_second_book 79b_clear_task
+
 log "U1-G (control): the user closed the book with BACK: the library must come back"
 back; sleep 2; top_is LibraryActivity 78_closed
 adb shell input keyevent KEYCODE_HOME; sleep 1; adb shell am force-stop $PKG

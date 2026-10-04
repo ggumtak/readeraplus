@@ -296,7 +296,9 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Float, cw: Float, ch: Float,
                            viewWidth: Int, viewHeight: Int, ribbonH: Float) {
         val st = decor.status ?: return
-        val bottom = viewHeight - (top + ch)
+        // The bottom status keeps StatusFit.EDGE_DP of paper above the screen edge (the bezel may cover the last rows).
+        val edgeBottom = viewHeight - StatusFit.edgePx(density)
+        val bottom = edgeBottom - (top + ch)
         val lane = if (st.lane) StatusFit.lane(bottom, density) else 0f
         if (!st.header.isEmpty) {
             val ts = bandSize(0, top)
@@ -310,9 +312,9 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         if (!st.footer.isEmpty) {
             val ts = bandSize(1, bottom - lane)
             if (ts > 0f) drawBand(canvas, st, st.footer, left, cw,
-                centredBaseline(top + ch, viewHeight - lane, ts), 1, ts, 0f)
+                centredBaseline(top + ch, edgeBottom - lane, ts), 1, ts, 0f)
         }
-        if (lane > 0f) drawProgress(canvas, st.progress, viewWidth, viewHeight, lane)
+        if (lane > 0f) drawProgress(canvas, st.progress, viewWidth, edgeBottom, lane)
     }
 
     private fun bandSize(band: Int, room: Float): Float {
@@ -396,7 +398,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     }
 
     private fun drawProgress(canvas: Canvas, fraction: Float, viewW: Int, viewH: Int, lane: Float) {
-        val y = ProgressMath.yc(viewH, lane).toFloat()
+        val y = ProgressMath.yc(viewH, lane, density).toFloat()
         val x0 = ProgressMath.x0(viewW, density).toFloat()
         val x1 = ProgressMath.x1(viewW, density).toFloat()
         val r = ProgressMath.rCap(lane, density)

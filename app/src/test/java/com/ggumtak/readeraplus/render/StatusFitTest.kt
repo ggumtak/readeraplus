@@ -12,12 +12,18 @@ class StatusFitTest {
 
     @Test
     fun defaultMarginsHoldEveryStatusSize() {
-        // 40 dp margins = 80 px; footer text band = 80 - 24 (lane) = 56 px. Status sizes 8..16 sp all fit unscaled.
+        // 40 dp margins = 80 px. Header: all 80 px; status sizes 8..16 sp all fit unscaled.
         for (sp in 8..16) {
             val px = sp * d
             assertEquals(px, StatusFit.size(px, 80f, 1.45f, pad, min), 0f)
-            assertEquals(px, StatusFit.size(px, 80f - StatusFit.lane(80f, d), 1.45f, pad, min), 0f)
         }
+        // Footer with the progress bar: 80 - 8 (edge gap) - 24 (lane) = 48 px: 8..13 sp unscaled, 14..16 sp a little
+        // smaller (≈ 13.8 sp), never hidden. Without the bar (72 px) every size fits.
+        val room = 80f - StatusFit.edgePx(d) - StatusFit.lane(80f - StatusFit.edgePx(d), d)
+        assertEquals(48f, room, 0f)
+        for (sp in 8..13) assertEquals(sp * d, StatusFit.size(sp * d, room, 1.45f, pad, min), 0f)
+        for (sp in 14..16) assertTrue(StatusFit.size(sp * d, room, 1.45f, pad, min) in 27f..sp * d)
+        for (sp in 8..16) assertEquals(sp * d, StatusFit.size(sp * d, 80f - StatusFit.edgePx(d), 1.45f, pad, min), 0f)
     }
 
     @Test
@@ -36,5 +42,11 @@ class StatusFitTest {
         assertTrue(StatusFit.fitsDp(11f, 40, 12f))
         assertFalse(StatusFit.fitsDp(11f, 20, 12f))
         assertFalse(StatusFit.fitsDp(11f, 4, 0f))
+        // The footer keeps the 4 dp edge gap too.
+        assertEquals(8, StatusFit.edgePx(d))
+        assertTrue(StatusFit.footerFitsDp(11f, 40, progressBar = true))
+        assertFalse(StatusFit.footerFitsDp(11f, 30, progressBar = true))
+        assertTrue(StatusFit.footerFitsDp(11f, 20, progressBar = false))
+        assertFalse(StatusFit.footerFitsDp(11f, 16, progressBar = false))
     }
 }
