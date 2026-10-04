@@ -180,7 +180,7 @@ interface TxtOverrideHost {
  * (EXTRAS_TOOLS) calls it when speech reaches the end of the book, as "next" on the last page does. Main thread only.
  */
 interface ReaderEndHost {
-    /** Shows the end panel ("다 읽었습니다", 다음 권, 완독 처리, …), marking the book finished when so configured. */
+    /** Shows the end panel ("다 읽었습니다", 다음 권, 다 읽은 책으로 표시, …), marking the book finished when so configured. */
     fun showBookEnd()
 }
 

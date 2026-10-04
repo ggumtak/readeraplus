@@ -735,7 +735,7 @@ class BookSession(
 
     /**
      * Characters from (section, offset) to where the next TOC entry starts, or to the end of the book after the last
-     * one (T1-7 "이 화 3분"). The chapter around the position is looked up once ([ChapterIndex] scans the TOC) and
+     * one (T1-7 "챕터 3분"). The chapter around the position is looked up once ([ChapterIndex] scans the TOC) and
      * reused while later queries stay inside it, so a page turn within a chapter costs O(1); anchors resolved by a
      * layout or the counter invalidate it. Main thread.
      */

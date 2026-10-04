@@ -148,7 +148,7 @@ internal class LightController(private val host: LightHost) {
             }
         }
         if (backFromOwn && ready) {
-            // Our settings page may have reset the verdict ("밝기 방식 다시 확인").
+            // Our settings page may have reset the verdict ("밝기 방식 다시 묻기").
             backFromOwn = false
             ReaderIo.launch {
                 val v = DeviceLight.verdict(c)
@@ -474,13 +474,7 @@ internal class LightController(private val host: LightHost) {
         if (a.isFinishing || a.isDestroyed) return
         a.alert()
             .setTitle("기기 밝기 직접 조절")
-            .setMessage(
-                "이 기기의 전면광은 앱 화면 밝기를 따르지 않을 수 있습니다.\n" +
-                    "'시스템 설정 수정'을 허용하면 리더가 기기 밝기 설정을 직접 바꿉니다.\n\n" +
-                    "· 기기 전체 밝기가 바뀝니다. 다른 앱에서도 같은 밝기가 보일 수 있습니다.\n" +
-                    "· 리더를 나가면 원래 밝기로 되돌립니다. (설정에서 바꿀 수 있어요)\n" +
-                    "· 다음 화면에서 ReaderaPlus를 찾아 허용을 켠 뒤 돌아오세요."
-            )
+            .setMessage(LightPolicy.DEVICE_DIALOG)
             .setNegativeButton("취소") { _, _ -> bind() }
             .setPositiveButton("허용하러 가기") { _, _ -> requestWriteSettings() }
             .showNoAnim()
@@ -538,12 +532,12 @@ internal class LightController(private val host: LightHost) {
         val a = host.activity
         if (a.isFinishing || a.isDestroyed) return
         a.alert()
-            .setTitle("앱에서 조명을 바꿀 수 없어요")
+            .setTitle("앱에서 조명을 바꿀 수 없습니다")
             .setMessage(
-                "이 기기는 다른 앱이 전면광을 바꾸는 방법을 열어 두지 않았습니다. 원래 밝기로 되돌렸습니다.\n" +
-                    "밝기와 색온도는 화면 위에서 아래로 내려 기기 조명에서 조절해 주세요."
+                "이 기기는 다른 앱이 조명을 바꾸는 방법을 열어 두지 않았습니다. 원래 밝기로 되돌렸습니다.\n" +
+                    "밝기와 색온도는 화면 위에서 아래로 내려 기기 조명에서 조절하세요."
             )
-            .setNegativeButton("확인", null)
+            .setNegativeButton("닫기", null)
             .setPositiveButton("기기 설정 열기") { _, _ -> onOpenPanel() }
             .showNoAnim()
     }
@@ -554,8 +548,8 @@ internal class LightController(private val host: LightHost) {
         if (a.isFinishing || a.isDestroyed) return
         val cmd = "adb shell appops set ${a.packageName} WRITE_SETTINGS allow"
         a.alert()
-            .setTitle("권한 화면을 찾을 수 없어요")
-            .setMessage("이 기기에는 '시스템 설정 수정' 화면이 없습니다. PC에 연결해 다음 명령으로 허용할 수 있습니다.\n\n$cmd")
+            .setTitle("권한 화면을 열 수 없습니다")
+            .setMessage("${LightPolicy.NO_PERMISSION_SCREEN}\n\n$cmd")
             .setNegativeButton("닫기", null)
             .setPositiveButton("명령 복사") { _, _ ->
                 try {

@@ -98,7 +98,7 @@ internal object InfoDialogs {
         val box = activity.vertical { setPadding(activity.dp(24), activity.dp(8), activity.dp(24), activity.dp(8)) }
         fun field(key: String, value: String?) {
             if (value.isNullOrBlank()) return
-            val keyLabel = activity.label(key, 13f, bold = true, color = Ink.GRAY).apply { setPadding(0, activity.dp(10), 0, activity.dp(2)) }
+            val keyLabel = activity.label(key, 14f, bold = true, color = Ink.GRAY).apply { setPadding(0, activity.dp(10), 0, activity.dp(2)) }
             box.addView(keyLabel)
             val restoreKey = Runnable { keyLabel.text = key }
             // Not selectable text: a full-width selectable label started a selection from a long press on blank paper.
@@ -116,6 +116,7 @@ internal object InfoDialogs {
                 }
             }, lp(WRAP_CONTENT, WRAP_CONTENT))
         }
+        // Reading first (where am I, how long), then what the user wrote, then the file.
         field("제목", book.title)
         field("작가", book.author.ifBlank { meta?.authors?.joinToString(", ") ?: "" }.ifBlank { "알 수 없음" })
         val series = book.series ?: meta?.series
@@ -123,39 +124,32 @@ internal object InfoDialogs {
             val idx = book.seriesIndex ?: meta?.seriesIndex
             field("시리즈", if (idx != null) "$series #${Fmt.number(idx)}" else series)
         }
-        field("형식", book.format.label)
-        field("크기", Fmt.fileSize(book.sizeBytes))
-        field("경로", book.path)
-        if (book.format == BookFormat.TXT) {
-            val detected = meta?.encoding
-            field("인코딩", when {
-                book.encoding.isNotBlank() -> "${book.encoding} (직접 지정)"
-                detected != null -> "$detected (자동 감지)"
-                else -> "자동 감지"
-            })
-        }
-        field("언어", book.language ?: meta?.language)
-        field("출판사", meta?.publisher)
-        field("추가한 날짜", Fmt.dateTime(book.addedAt))
-        field("마지막으로 읽은 날짜", if (book.lastReadAt > 0) Fmt.dateTime(book.lastReadAt) else "읽지 않음")
         field("진행률", Fmt.percent(book.progress))
+        // The reader showing this book knows the reading speed and the position (T1-7).
+        val insights = if (document == null) null else (activity as? BookInsightsHost)
+            ?.takeIf { runCatching { (activity as ReaderHost).book.id == book.id }.getOrDefault(false) }
+        if (insights != null) {
+            val bookMin = runCatching { insights.minutesLeft(true) }.getOrNull()
+            val episodeMin = runCatching { insights.minutesLeft(false) }.getOrNull()
+            field("남은 시간", InfoText.timeLeft(bookMin, episodeMin))
+        }
         field("읽은 시간", if (book.readingSeconds > 0) ReaderFormat.durationOfSeconds(book.readingSeconds) else "없음")
         if (document != null) {
-            field("목차 항목 수", "${document.toc.size}개")
             var chars = 0L
             for (s in document.sections) chars += s.approxChars.coerceAtLeast(0)
-            // The reader showing this book knows the reading speed and the position (T1-7).
-            val insights = (activity as? BookInsightsHost)
-                ?.takeIf { runCatching { (activity as ReaderHost).book.id == book.id }.getOrDefault(false) }
             field("분량", InfoText.volume(chars, insights?.let { runCatching { it.charsPerMinute() }.getOrNull() }))
-            if (insights != null) {
-                val bookMin = runCatching { insights.minutesLeft(true) }.getOrNull()
-                val episodeMin = runCatching { insights.minutesLeft(false) }.getOrNull()
-                field("남은 시간", InfoText.timeLeft(bookMin, episodeMin))
-            }
+            field("목차", "${document.toc.size}개")
         }
+        field("최근 읽은 날", if (book.lastReadAt > 0) Fmt.dateTime(book.lastReadAt) else "읽지 않음")
+        field("추가한 날", Fmt.dateTime(book.addedAt))
         if (book.review.isNotBlank()) field("내 리뷰", book.review)
         meta?.description?.let { d -> field("설명", Fmt.plainText(d)) }
+        field("형식", book.format.label)
+        field("크기", Fmt.fileSize(book.sizeBytes))
+        if (book.format == BookFormat.TXT) field("인코딩", InfoText.encoding(book.encoding, meta?.encoding))
+        field("언어", InfoText.language(book.language ?: meta?.language))
+        field("출판사", meta?.publisher)
+        field("경로", book.path)
 
         PanelRegistry.dialog(activity, activity.alert().setTitle("책 정보")
             .setView(activity.einkScroll(box))
@@ -255,7 +249,7 @@ internal object InfoDialogs {
                 setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
             }, lp())
             val row = ctx.horizontal { setPadding(0, ctx.dp(12), 0, ctx.dp(8)) }
-            listOf("페이지", "%", "화").forEachIndexed { k, name ->
+            listOf("쪽", "%", "화").forEachIndexed { k, name ->
                 val v = segment(ctx, name).apply { setOnClickListener { select(k) } }
                 segments[k] = v
                 row.addView(v, lp(0, WRAP_CONTENT, 1f).apply { if (k > 0) leftMargin = ctx.dp(8) })
@@ -375,7 +369,7 @@ internal object InfoDialogs {
 
     private fun segment(ctx: Activity, text: String): TextView = ctx.label(text, 16f, bold = true).apply {
         gravity = Gravity.CENTER
-        minHeight = ctx.dp(44)
+        minHeight = ctx.dp(48)
     }
 
     private fun setSegment(v: TextView, selected: Boolean, enabled: Boolean) {
@@ -447,7 +441,7 @@ internal object InfoDialogs {
 /** Texts of 책 정보 (pure, unit-tested). */
 internal object InfoText {
     /**
-     * "약 312만 자 · 예상 약 104시간": the book's length ("약 9,600자" under 10,000, "약 1.6만 자" under 100,000) and,
+     * "약 312만 자 (약 104시간)": the book's length ("약 9,600자" under 10,000, "약 1.6만 자" under 100,000) and,
      * with a reading speed ([charsPerMinute], T1-7), the time to read it all. Null for an empty book.
      */
     fun volume(chars: Long, charsPerMinute: Int?): String? {
@@ -461,13 +455,27 @@ internal object InfoText {
             else -> "약 ${(chars + 5_000) / 10_000}만 자"
         }
         if (charsPerMinute == null || charsPerMinute <= 0) return size
-        return "$size · 예상 ${approx(ReaderFormat.minutesFor(chars, charsPerMinute))}"
+        return "$size (${approx(ReaderFormat.minutesFor(chars, charsPerMinute))})"
     }
 
-    /** "약 7시간 20분 (이 화 3분)" from the book's and the episode's minutes left; null when the book's is unknown. */
+    /** "CP949 (직접 지정)", "UTF-8 (자동 감지)" or "자동 감지": the short names the encoding chooser uses. */
+    fun encoding(chosen: String, detected: String?): String = when {
+        chosen.isNotBlank() -> "${ReadingSettingsPopup.encodingShort(chosen)} (직접 지정)"
+        !detected.isNullOrBlank() -> "${ReadingSettingsPopup.encodingShort(detected)} (자동 감지)"
+        else -> "자동 감지"
+    }
+
+    /** "한국어" for a language code ("ko", "ko-KR", "en_US"); the code itself when it names no language. */
+    fun language(code: String?): String? {
+        val c = code?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val name = runCatching { Locale.forLanguageTag(c.replace('_', '-')).getDisplayLanguage(Locale.KOREAN) }.getOrNull()
+        return if (name.isNullOrBlank()) c else name
+    }
+
+    /** "약 7시간 20분 (챕터 3분)" from the book's and the chapter's minutes left; null when the book's is unknown. */
     fun timeLeft(bookMinutes: Int?, episodeMinutes: Int?): String? {
         if (bookMinutes == null) return null
-        val episode = episodeMinutes?.let { " (이 화 ${ReaderFormat.duration(it)})" }.orEmpty()
+        val episode = episodeMinutes?.let { " (챕터 ${ReaderFormat.duration(it)})" }.orEmpty()
         return approx(bookMinutes) + episode
     }
 

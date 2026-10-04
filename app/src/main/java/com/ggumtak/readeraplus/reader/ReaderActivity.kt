@@ -191,7 +191,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private lateinit var errorText: TextView
     private lateinit var errorDetailText: TextView
     private lateinit var errorEncoding: TextView
-    /** The TXT book whose file could not be read or parsed: [인코딩 선택] reopens it with another encoding. */
+    /** The TXT book whose file could not be read or parsed: [인코딩 바꾸기] reopens it with another encoding. */
     private var failedBook: Book? = null
 
     private lateinit var keeper: ScreenOnKeeper
@@ -805,7 +805,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             gravity = Gravity.CENTER
             setPadding(0, dp(10), 0, 0)
         }
-        errorDetailText = label("", 13f, color = Ink.GRAY).apply {
+        errorDetailText = label("", 14f, color = Ink.GRAY).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(6), 0, 0)
             visibility = View.GONE
@@ -822,7 +822,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         errorPanel.addView(errorDetailText, lp())
         // Stacked, not side by side: three labels in one row do not fit 360 dp at large font scales.
         errorPanel.addView(errorButton("다시 시도") { retryOpen() }, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(20) })
-        errorEncoding = errorButton("인코딩 선택") { failedBook?.let { chooseEncodingAndRetry(it) } }
+        errorEncoding = errorButton("인코딩 바꾸기") { failedBook?.let { chooseEncodingAndRetry(it) } }
         errorPanel.addView(errorEncoding, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(8) })
         errorPanel.addView(errorButton("닫기") { finish() }, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(8) })
         root.addView(errorPanel, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
@@ -1055,14 +1055,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     /**
-     * The error panel: [message] (from [ReaderFormat.openError] or our own), an optional grey [detail] line, and
-     * [다시 시도] / [인코딩 선택] / [닫기]. [book] is a TXT book whose file could not be read or parsed, the only failure
-     * another encoding can fix (not a missing file, nor a layout failure): it offers [인코딩 선택].
+     * The error panel: [message] (from [ReaderFormat.openError] or our own; left out when it only repeats the title),
+     * an optional grey [detail] line, and [다시 시도] / [인코딩 바꾸기] / [닫기]. [book] is a TXT book whose file could
+     * not be read or parsed, the only failure another encoding can fix (not a missing file, nor a layout failure): it
+     * offers [인코딩 바꾸기].
      */
     private fun showError(message: String, detail: String? = null, book: Book? = null) {
         cancelLoadingText()
         setChromeVisible(false)
         errorText.text = message
+        errorText.visibility = if (message == ReaderFormat.OPEN_FAILED) View.GONE else View.VISIBLE
         errorDetailText.text = detail ?: ""
         errorDetailText.visibility = if (detail.isNullOrEmpty()) View.GONE else View.VISIBLE
         failedBook = book
@@ -1079,7 +1081,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         startOpen(intent)
     }
 
-    /** [인코딩 선택] (TXT): saves the chosen encoding for [b], then opens it again with it. */
+    /** [인코딩 바꾸기] (TXT): saves the chosen encoding for [b], then opens it again with it. */
     private fun chooseEncodingAndRetry(b: Book) {
         val options = listOf("") + TxtDocuments.ENCODINGS
         val labels = options.map { ReaderFormat.encodingLabel(it) }
@@ -1127,14 +1129,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         openJob = scope.launch {
             var doc: BookDocument? = null
-            // The book while its file is read and parsed: a failure there may be the TXT encoding's ([인코딩 선택]).
+            // The book while its file is read and parsed: a failure there may be the TXT encoding's ([인코딩 바꾸기]).
             var parsing: Book? = null
             var adopted = false
             try {
                 val opened = withContext(Dispatchers.IO) {
                     val b = IntentFiles.resolveBook(this@ReaderActivity, intent)
                     val f = File(b.path)
-                    if (!f.isFile) throw DocumentException("파일을 찾을 수 없습니다.\n${b.path}")
+                    if (!f.isFile) throw DocumentException("파일을 찾을 수 없습니다\n${b.path}")
                     parsing = b
                     // T1-9: the book's own TXT options, one primary-key read on the connection resolveBook just used.
                     val over = if (b.format == BookFormat.TXT) txtOverrideOf(b.id) else null
@@ -1143,7 +1145,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     openingPath = b.path
                     val d = Documents.open(f, eff.parseOptions(b.encoding))
                     doc = d
-                    if (d.sections.isEmpty()) throw DocumentException("내용이 없는 파일입니다.")
+                    if (d.sections.isEmpty()) throw DocumentException("내용이 없는 책입니다")
                     parsing = null
                     // A12-2: a user font's catalogue (a folder scan) is read here rather than by the renderer on the
                     // main thread; after the parse, when the font warm-up has usually scanned already.
@@ -1207,7 +1209,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 s.startCounting(COUNT_DELAY_MS)
                 val l = s.layout(sec)
                 if (l == null) {
-                    if (session === s && !s.isClosed) showError("페이지를 배치하지 못했습니다.")
+                    if (session === s && !s.isClosed) showError("페이지를 나누지 못했습니다")
                     return@launch
                 }
                 val off = start.offset.coerceIn(0, l.content.length)
@@ -1318,10 +1320,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // Every long press selects the word of the glyph under the finger, also while a selection shows (a press on
         // blank paper or a space keeps that selection).
         selection?.glyphAt = { x, y -> glyphAtView(x, y, dpF(GLYPH_SLOP_DP)) }
-        // Created up front (cheap: the engine starts on start()) so the selection popup's "여기서 읽기" finds
+        // Created up front (cheap: the engine starts on start()) so the selection popup's "여기부터 듣기" finds
         // this host's controller, and BACK / volume keys see the same TTS session whoever started it.
         if (tts == null) tts = safely { TtsController(this) }
-        // N §6.2: "여기서 읽기" reads from the selection and ends a peek.
+        // N §6.2: "여기부터 듣기" reads from the selection and ends a peek.
         selection?.onReadAloud = { p ->
             endPeek(PeekRule.Event.READ_HERE)
             (tts ?: safely { TtsController(this) }?.also { tts = it })?.let { t -> safely { t.startFrom(p) } }
@@ -1684,7 +1686,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     private fun endPeek(e: PeekRule.Event) {
         if (!peek.on(e)) return
-        // The note's anchor search must not move a page the user now reads (TTS, auto turn, 여기서 읽기).
+        // The note's anchor search must not move a page the user now reads (TTS, auto turn, 여기부터 듣기).
         anchorJob?.cancel()
         if (curLayout == null) return
         schedulePositionSave()
@@ -2330,7 +2332,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (s.isClosed) return
         if (curLayout == null || layoutStale()) {
             // Nothing valid on screen to fall back to.
-            showError("페이지를 배치하지 못했습니다.")
+            showError("페이지를 나누지 못했습니다")
         } else {
             // The old page stays: the return chip / strip (a return jump binds them with its page) match it again.
             if (chromeVisible) bindChrome() else returnNav.bind()
@@ -2783,6 +2785,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val c = s.counts
         // U §5.6: scroll mode reads the anchor line (the first half-visible one, set at settle): the real paged page
         // holding it, its char progress (1 at atBookEnd()) and whether it starts the chapter. Paged: the page shown.
+        var lay = l
         var sec = curSection
         var pageIdx = curPageIdx
         var at = p.start
@@ -2793,6 +2796,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             val a = sc.anchor()
             val asec = ScrollWiring.section(a)
             sc.layoutOf(asec)?.let { al ->
+                lay = al
                 sec = asec
                 at = ScrollWiring.offset(a).coerceIn(0, al.content.length)
                 pageIdx = al.pageForOffset(at)
@@ -2818,7 +2822,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             if (episodeShown) fillEpisode(s, idx, inp)
         }
         if (all || st.shows(StatusItem.BOOK_TITLE)) inp.bookTitle = bookRef?.title
-        if (all || st.shows(StatusItem.CHAPTER_PAGES_LEFT)) inp.chapterPagesLeft = chapterPagesLeft(s, l, p)
+        if (all || st.shows(StatusItem.CHAPTER_PAGES_LEFT)) chapterPage(s, lay, sec, pageIdx, inp)
         if (all || st.shows(StatusItem.TIME_LEFT_EPISODE)) inp.minutesEpisode = minutesLeftOrNone(false)
         if (all || st.shows(StatusItem.TIME_LEFT_BOOK)) inp.minutesBook = minutesLeftOrNone(true)
         val clockShown = all || st.shows(StatusItem.CLOCK) || st.shows(StatusItem.CLOCK_BATTERY)
@@ -2928,23 +2932,34 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun onPage(offset: Int, p: PageInfo, lastPage: Boolean): Boolean =
         offset >= p.start && (offset < p.end || (lastPage && offset == p.end) || p.start == p.end && offset == p.start)
 
-    private fun chapterPagesLeft(s: BookSession, l: SectionLayout, p: PageInfo): Int {
+    /**
+     * R2 "2/32": page [pageIdx] of [sec] (laid out as [l]) within its chapter, the chapter of the page's first
+     * character. Before the first TOC entry the front matter counts from page 1; without a TOC both stay −1 (an
+     * empty slot). Cached layouts and the page estimates only: no IO, O(C) like the chapter title.
+     */
+    private fun chapterPage(s: BookSession, l: SectionLayout, sec: Int, pageIdx: Int, inp: StatusInputs) {
+        inp.chapterPage = -1
+        inp.chapterPages = -1
+        val ch = s.chapters
+        val start = l.pages.getOrNull(pageIdx)?.start ?: return
+        if (ch.size == 0) return
         val c = s.counts
-        val next = s.chapters.nextAfter(curSection, p.start)
-        if (next < 0) return (c.total() - c.globalPage(curSection, curPageIdx)).coerceAtLeast(0)
-        val ns = s.chapters.section(next)
-        val no = s.chapters.offset(next)
-        val target = if (ns == curSection) l else s.peek(ns)
-        val tIdx: Int
-        val atStart: Boolean
-        if (target != null) {
-            tIdx = target.pageForOffset(no)
-            atStart = target.pages.getOrNull(tIdx)?.start == no
-        } else {
-            tIdx = if (no == 0) 0 else c.estimatePageIndex(ns, no)
-            atStart = no == 0
-        }
-        return c.pagesLeftUntil(curSection, curPageIdx, l.pageCount, ns, tIdx, atStart)
+        val idx = ch.indexAt(sec, start)
+        val next = ch.nextAfter(sec, start)
+        val first = if (idx < 0) 1 else chapterStart(s, l, sec, idx)
+        val end = if (next < 0) c.total() + 1 else chapterStart(s, l, sec, next)
+        inp.setChapterPage(c.globalPage(sec, pageIdx), first, end)
+    }
+
+    /** [PageCounts.chapterStart] of TOC entry [i]: its section's layout when cached, else the estimate. */
+    private fun chapterStart(s: BookSession, l: SectionLayout, sec: Int, i: Int): Int {
+        val c = s.counts
+        val ns = s.chapters.section(i)
+        val no = s.chapters.offset(i)
+        val target = if (ns == sec) l else s.peek(ns)
+        if (target == null) return c.chapterStart(ns, if (no == 0) 0 else c.estimatePageIndex(ns, no), no == 0)
+        val tIdx = target.pageForOffset(no)
+        return c.chapterStart(ns, tIdx, target.pages.getOrNull(tIdx)?.start == no)
     }
 
     /**
@@ -3171,7 +3186,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 val d = withContext(Dispatchers.IO) {
                     Documents.open(File(b.path), newSettings.parseOptions(b.encoding)).also { doc = it }
                 }
-                if (d.sections.isEmpty()) throw DocumentException("내용이 없는 파일입니다.")
+                if (d.sections.isEmpty()) throw DocumentException("내용이 없는 책입니다")
                 // Layout-only changes made while parsing (same parse options) are taken along.
                 val use = readerTarget?.takeIf { !LayoutKeys.parseChanged(newSettings, it, d.format, b.encoding) } ?: newSettings
                 val s = BookSession(this@ReaderActivity, b, d, use)
@@ -3250,7 +3265,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 if (session === old) readerTarget = old.settings
                 reopenDone.clear()
                 val why = ReaderFormat.openError(t)
-                toast(if (why == ReaderFormat.OPEN_FAILED) "책을 다시 불러오지 못했습니다" else "책을 다시 불러오지 못했습니다: $why")
+                toast(if (why == ReaderFormat.OPEN_FAILED) "책을 다시 불러오지 못했습니다" else why)
             } finally {
                 if (openJob === job) reopening = false
                 if (!adopted) {

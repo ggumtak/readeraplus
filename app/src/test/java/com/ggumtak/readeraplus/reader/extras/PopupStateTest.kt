@@ -180,28 +180,30 @@ class PopupStateTest {
 
     @Test
     fun sleepTimerChoices() {
-        assertEquals(listOf("끔", "15분", "30분", "45분", "1시간", "1시간 30분", "이 화 끝까지", "2화 끝까지"), SleepChoice.OPTIONS.map { it.label })
+        assertEquals(listOf("끔", "15분", "30분", "45분", "1시간", "1시간 30분", "이 챕터 끝까지", "다음 챕터 끝까지"), SleepChoice.OPTIONS.map { it.label })
         assertEquals(0, SleepChoice.indexOf(0, 0))
         assertEquals(2, SleepChoice.indexOf(30, 0))
-        // Episodes win over minutes.
+        // Chapters win over minutes.
         assertEquals(6, SleepChoice.indexOf(30, 1))
         assertEquals(7, SleepChoice.indexOf(0, 2))
         // An older build's 10 / 120 minutes: no option checked.
         assertEquals(-1, SleepChoice.indexOf(10, 0))
         assertEquals("30분", SleepChoice.summary(30, 0))
-        assertEquals("이 화 끝까지", SleepChoice.summary(30, 1))
-        assertEquals("2화 끝까지", SleepChoice.summary(0, 2))
+        assertEquals("이 챕터 끝까지", SleepChoice.summary(30, 1))
+        assertEquals("다음 챕터 끝까지", SleepChoice.summary(0, 2))
+        assertEquals("챕터 3개 끝까지", SleepChoice.summary(0, 3))
         assertEquals("끔", SleepChoice.summary(0, 0))
     }
 
     @Test
     fun sleepNoteOnTheControlBar() {
         assertEquals("", SleepChoice.barNote(0L, 0))
-        assertEquals("1분 후 멈춤", SleepChoice.barNote(1L, 0))
-        assertEquals("1분 후 멈춤", SleepChoice.barNote(60_000L, 0))
-        assertEquals("2분 후 멈춤", SleepChoice.barNote(60_001L, 0))
-        assertEquals("30분 후 멈춤", SleepChoice.barNote(30 * 60_000L, 0))
-        assertEquals("이 화 끝나면 멈춤", SleepChoice.barNote(0L, 1))
-        assertEquals("다음 화 끝나면 멈춤", SleepChoice.barNote(0L, 2))
+        assertEquals("1분 뒤 멈춤", SleepChoice.barNote(1L, 0))
+        assertEquals("1분 뒤 멈춤", SleepChoice.barNote(60_000L, 0))
+        assertEquals("2분 뒤 멈춤", SleepChoice.barNote(60_001L, 0))
+        assertEquals("30분 뒤 멈춤", SleepChoice.barNote(30 * 60_000L, 0))
+        assertEquals("이 챕터 끝나면 멈춤", SleepChoice.barNote(0L, 1))
+        assertEquals("다음 챕터 끝나면 멈춤", SleepChoice.barNote(0L, 2))
+        assertEquals("챕터 3개 뒤 멈춤", SleepChoice.barNote(0L, 3))
     }
 }

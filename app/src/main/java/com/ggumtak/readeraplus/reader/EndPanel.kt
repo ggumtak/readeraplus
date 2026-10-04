@@ -5,6 +5,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -34,7 +35,7 @@ internal class EndInfo(
 
 /**
  * The end-of-book panel (T1-2): "다 읽었습니다", the title, the reading time, [다음 권 읽기 ›] with the next file's name
- * (only when one was found), the 완독 toggle, and [서재로] [처음부터] [리뷰 쓰기]. A white box with a 1px border over
+ * (only when one was found), the 다 읽음 check box, and [서재로] [처음부터] [리뷰 쓰기]. A white box with a 1px border over
  * the page, no animation, filled before it is shown: one e-ink update. A tap anywhere but on a button closes it (the
  * reader stays on the last page), like BACK or "previous". Built when a book first ends in the reader, then reused.
  * Main thread only.
@@ -59,7 +60,6 @@ internal class EndPanel(private val ctx: Context, private val actions: Actions) 
     private val nextBlock: LinearLayout
     private val nextName: TextView
     private val finishedIcon: ImageView
-    private val finishedLabel: TextView
     private var nextFile: File? = null
     private var finished = false
 
@@ -82,7 +82,7 @@ internal class EndPanel(private val ctx: Context, private val actions: Actions) 
 
         nextBlock = ctx.vertical { setPadding(0, ctx.dp(14), 0, 0) }
         nextBlock.addView(button("다음 권 읽기 ›") { nextFile?.let { actions.onEndNextPart(it) } }, lp())
-        nextName = ctx.label("", 13f, color = Ink.GRAY, maxLines = 2).apply { setPadding(0, ctx.dp(6), 0, 0) }
+        nextName = ctx.label("", 14f, color = Ink.GRAY, maxLines = 2).apply { setPadding(0, ctx.dp(6), 0, 0) }
         nextBlock.addView(nextName, lp())
         box.addView(nextBlock, lp())
 
@@ -93,11 +93,18 @@ internal class EndPanel(private val ctx: Context, private val actions: Actions) 
                 setFinished(!finished)
                 actions.onEndFinished(finished)
             }
+            // The label stays the same: the box shows the state, and TalkBack reads it as a check box.
+            accessibilityDelegate = object : View.AccessibilityDelegate() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.isCheckable = true
+                    info.isChecked = finished
+                }
+            }
         }
         finishedIcon = ctx.icon(R.drawable.ic_check_box_outline_blank, 24)
         finishedRow.addView(finishedIcon)
-        finishedLabel = ctx.label("", 16f).apply { setPadding(ctx.dp(10), 0, 0, 0) }
-        finishedRow.addView(finishedLabel, lp(0, WRAP_CONTENT, 1f))
+        finishedRow.addView(ctx.label(FINISHED_LABEL, 16f).apply { setPadding(ctx.dp(10), 0, 0, 0) }, lp(0, WRAP_CONTENT, 1f))
         box.addView(finishedRow, lp().apply { topMargin = ctx.dp(8) })
 
         val buttons = ctx.horizontal { setPadding(0, ctx.dp(8), 0, 0) }
@@ -162,11 +169,10 @@ internal class EndPanel(private val ctx: Context, private val actions: Actions) 
     private fun setFinished(on: Boolean) {
         finished = on
         finishedIcon.setImageResource(if (on) R.drawable.ic_check_box else R.drawable.ic_check_box_outline_blank)
-        finishedLabel.text = finishedLabel(on)
     }
 
     companion object {
-        /** The 완독 toggle's label: the state when on (tap undoes it), the action when off. */
-        fun finishedLabel(finished: Boolean): String = if (finished) "완독 처리됨" else "완독으로 표시"
+        /** The 다 읽음 check box's label, the same in both states (the box shows which). */
+        const val FINISHED_LABEL = "다 읽은 책으로 표시"
     }
 }

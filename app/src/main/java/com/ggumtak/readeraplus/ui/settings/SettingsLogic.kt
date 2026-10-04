@@ -469,44 +469,32 @@ object R3Rows {
 
     // ---- brightness (UI_SPEC §4.4 / §4.6, brightness.md §5.2)
 
-    const val SWIPE_BRIGHTNESS = "화면 좌측을 위아래로 스와이프하여 밝기를 조절합니다"
-
-    /** "스와이프로 밝기 조절" summary; [none] = verdict NONE (the row is disabled). */
+    /** "스와이프로 밝기 조절" summary (the reader's own wording, [LightPolicy]); [none] = verdict NONE (the row is disabled). */
     fun brightnessSwipe(scroll: Boolean, none: Boolean): String = when {
-        none -> "이 기기에서는 밝기 스와이프를 쓸 수 없습니다"
-        scroll -> "화면 왼쪽 끝(10%)을 위아래로 끌면 밝기 · 나머지는 스크롤"
-        else -> SWIPE_BRIGHTNESS
+        none -> LightPolicy.SWIPE_SUBTITLE_NONE
+        scroll -> "왼쪽 가장자리만 밝기 · 나머지는 스크롤"
+        else -> LightPolicy.SWIPE_SUBTITLE
     }
 
     /**
-     * "기기 밝기 직접 조절" subtitle. [origAuto]: the original mode is automatic, which leaving the reader turns back on
-     * even when the level stays (UI_SPEC §4.3 fix 2): the reader's options panel says the same (LightPolicy).
+     * "기기 밝기 직접 조절" subtitle: the reader's options panel's ([LightPolicy.deviceSubtitle]). [origAuto]: the
+     * original mode is automatic, which leaving the reader turns back on even when the level stays (UI_SPEC §4.3 fix 2).
      */
-    fun brightnessDevice(on: Boolean, restore: Boolean, canWrite: Boolean, none: Boolean, origAuto: Boolean = false): String = when {
-        none -> "이 기기는 앱이 전면광을 바꿀 수 없습니다"
-        on && !canWrite -> "‘시스템 설정 수정’ 권한이 필요합니다 · 눌러서 허용"
-        !on -> "전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다"
-        restore -> "기기 전체 밝기를 바꿉니다 · 리더를 나가면 원래대로"
-        origAuto -> LightPolicy.DEVICE_ON_KEEP_AUTO
-        else -> "기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지"
-    }
+    fun brightnessDevice(on: Boolean, restore: Boolean, canWrite: Boolean, none: Boolean, origAuto: Boolean = false): String =
+        LightPolicy.deviceSubtitle(on, restore, noPermission = on && !canWrite, none = none, origAuto = origAuto)
 
     /** "나갈 때 원래 밝기로" (shown only while 기기 밝기 직접 조절 is on). */
     const val BRIGHTNESS_RESTORE = "끄면 바꾼 밝기가 그대로 남습니다"
     const val VERDICT_RESET = "다음에 밝기를 바꿀 때 묻습니다"
-    const val LIGHT_SETTINGS = "밝기 · 색온도를 기기 설정에서 조절"
+    const val LIGHT_SETTINGS = LightPolicy.PANEL_SUBTITLE
 
-    /** brightness.md §5.3 (합니다체, ‘’ quotes). */
-    const val DEVICE_DIALOG = "이 기기의 전면광은 앱 화면 밝기를 따르지 않을 수 있습니다.\n" +
-        "‘시스템 설정 수정’을 허용하면 리더가 기기 밝기 설정을 직접 바꿉니다.\n\n" +
-        "· 기기 전체 밝기가 바뀝니다. 다른 앱에서도 같은 밝기가 보일 수 있습니다.\n" +
-        "· 리더를 나가면 원래 밝기로 되돌립니다. 설정에서 바꿀 수 있습니다.\n" +
-        "· 다음 화면에서 ReaderaPlus를 찾아 허용을 켠 뒤 돌아오세요."
+    /** brightness.md §5.3: the reader's dialog. */
+    const val DEVICE_DIALOG = LightPolicy.DEVICE_DIALOG
 
     const val ADB_GRANT = "adb shell appops set com.ggumtak.readeraplus WRITE_SETTINGS allow"
 
     /** brightness.md §5.5. */
-    const val NO_PERMISSION_SCREEN = "이 기기에는 ‘시스템 설정 수정’ 화면이 없습니다. PC에 연결해 다음 명령으로 허용할 수 있습니다.\n$ADB_GRANT"
+    const val NO_PERMISSION_SCREEN = "${LightPolicy.NO_PERMISSION_SCREEN}\n\n$ADB_GRANT"
 
     // ---- 자동 백업 (scroll SPEC §3.8, NOTES §11)
 

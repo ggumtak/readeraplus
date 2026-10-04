@@ -40,7 +40,7 @@ class QuoteRowsTest {
         assertEquals(listOf(2L, 3L), QuoteRows.filter(all, 1).map { it.id })
         assertEquals("인용문", QuoteRows.tabLabel(0, 0, false))
         assertEquals("인용문 12", QuoteRows.tabLabel(12, 12, false))
-        assertEquals("인용문 5 / 12", QuoteRows.tabLabel(5, 12, true))
+        assertEquals("인용문 5", QuoteRows.tabLabel(5, 12, true))
     }
 
     @Test

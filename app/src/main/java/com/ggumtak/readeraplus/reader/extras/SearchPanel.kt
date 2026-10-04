@@ -288,7 +288,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         val doc = host.document
         if (doc == null || doc !== doc0) {
             // No document, or another one than this dialog was opened for (the book changed underneath).
-            status.text = "책을 여는 중입니다. 잠시 후 다시 검색하세요."
+            status.text = "책을 여는 중입니다 · 잠시 뒤 다시 검색하세요"
             return
         }
         job?.cancel()
@@ -371,7 +371,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         val st = state
         empty.visibility = when {
             st == null -> View.VISIBLE.also { empty.text = "찾을 단어나 문장을 입력하세요" }
-            st.complete && st.hits.isEmpty() -> View.VISIBLE.also { empty.text = "'${st.query}'을(를) 찾을 수 없습니다" }
+            st.complete && st.hits.isEmpty() -> View.VISIBLE.also { empty.text = SearchText.noHits(st.query) }
             else -> View.GONE
         }
     }
@@ -404,7 +404,8 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
             background = pressableBackground()
             val r = ctx.horizontal { setPadding(ctx.dp(16), ctx.dp(12), ctx.dp(12), ctx.dp(12)) }
             r.addView(ctx.label("", 16f, maxLines = 3).apply { tag = "snippet"; setLineSpacing(0f, 1.2f) }, lp(0, WRAP_CONTENT, 1f))
-            r.addView(ctx.label("", 17f).apply { tag = "page"; gravity = Gravity.END; minWidth = ctx.dp(56) })
+            // As the 목차's page column: the hit's text is what the eye looks for.
+            r.addView(ctx.label("", 15f, color = Ink.GRAY).apply { tag = "page"; gravity = Gravity.END; minWidth = ctx.dp(44) })
             addView(r, lp())
             addView(ctx.hairline())
         }
@@ -429,7 +430,7 @@ internal object SearchNavBar {
         val texts = ctx.vertical { gravity = Gravity.CENTER_VERTICAL }
         texts.addView(ctx.label("‘${state.query}’", 15f, bold = true, maxLines = 1))
         val more = if (state.complete) "" else "+"
-        texts.addView(ctx.label("${index + 1} / ${state.hits.size}$more  ·  ${SearchPanel.pageOf(host, state.hits[index])}쪽", 13f, color = Ink.GRAY))
+        texts.addView(ctx.label("${index + 1} / ${state.hits.size}$more · ${SearchPanel.pageOf(host, state.hits[index])}쪽", 14f, color = Ink.GRAY))
         row.addView(texts, lp(0, WRAP_CONTENT, 1f).apply { leftMargin = ctx.dp(4) })
         row.addView(ctx.flatIcon(R.drawable.ic_view_list, "검색 결과 목록") {
             remove()
@@ -437,10 +438,10 @@ internal object SearchNavBar {
         })
         row.addView(ctx.flatIcon(R.drawable.ic_chevron_left, "이전 결과") {
             if (index > 0) SearchPanel.jumpTo(host, state, index - 1, remember = false)
-        }.apply { alpha = if (index > 0) 1f else 0.3f })
+        }.apply { visibility = if (index > 0) View.VISIBLE else View.INVISIBLE })
         row.addView(ctx.flatIcon(R.drawable.ic_chevron_right, "다음 결과") {
             if (index < state.hits.size - 1) SearchPanel.jumpTo(host, state, index + 1, remember = false)
-        }.apply { alpha = if (index < state.hits.size - 1) 1f else 0.3f })
+        }.apply { visibility = if (index < state.hits.size - 1) View.VISIBLE else View.INVISIBLE })
         row.setPadding(row.paddingLeft, row.paddingTop, row.paddingRight, Overlay.bottomInset(host.pageView))
         parent.addView(row, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
         barRef = WeakReference(row)

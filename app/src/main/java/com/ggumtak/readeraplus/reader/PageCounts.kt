@@ -151,7 +151,7 @@ class PageCounts(approxChars: IntArray) {
 
     /**
      * Characters from (fromSection, fromOffset) up to (toSection, toOffset), 0 when the target is not after the start
-     * (T1-7 "이 화 3분": up to where the next chapter starts, however many sections lie between). Offsets are clamped to
+     * (T1-7 "챕터 3분": up to where the next chapter starts, however many sections lie between). Offsets are clamped to
      * their sections; a [toSection] past the last section means the end of the book. O(1).
      */
     fun charsBetween(fromSection: Int, fromOffset: Int, toSection: Int, toOffset: Int): Long {
@@ -291,25 +291,12 @@ class PageCounts(approxChars: IntArray) {
     }
 
     /**
-     * Pages after the current page that still belong to the current chapter, given where the next chapter
-     * starts: [targetSection]/[targetPageIndex], and whether it starts exactly at that page's first char.
+     * Global page where a chapter begins whose TOC entry lies on page [pageIndex] of [section] (R2 "2/32"): that page
+     * when the entry is its first character ([atPageStart]), else the next one. A page belongs to the chapter of its
+     * first character, so a chapter starting mid-page begins on the next page.
      */
-    fun pagesLeftUntil(
-        curSection: Int,
-        curPageIndex: Int,
-        curSectionPages: Int,
-        targetSection: Int,
-        targetPageIndex: Int,
-        targetAtPageStart: Boolean,
-    ): Int {
-        val tail = if (targetAtPageStart) 0 else 1
-        if (targetSection <= curSection) {
-            return (targetPageIndex - curPageIndex - 1 + tail).coerceAtLeast(0)
-        }
-        var left = (curSectionPages - 1 - curPageIndex).coerceAtLeast(0)
-        for (s in curSection + 1 until targetSection.coerceAtMost(size)) left += pages(s)
-        return (left + targetPageIndex + tail).coerceAtLeast(0)
-    }
+    fun chapterStart(section: Int, pageIndex: Int, atPageStart: Boolean): Int =
+        globalPage(section, pageIndex) + if (atPageStart) 0 else 1
 
     /** Copy of the counts for the cache, -1 for the sections not counted yet (partial until [isComplete]). */
     fun toArray(): IntArray = counts.copyOf()

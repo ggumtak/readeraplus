@@ -118,7 +118,7 @@ class ScrollWiringTest {
         assertEquals("자동 넘김 끄기", ScrollWiring.autoItem(scroll = false, on = true))
         assertEquals("자동 스크롤 켜기", ScrollWiring.autoItem(scroll = true, on = false))
         assertEquals("자동 스크롤 끄기", ScrollWiring.autoItem(scroll = true, on = true))
-        assertEquals("자동 스크롤 켜짐 (한 화면/30초)", ScrollWiring.autoScrollOn(30))
+        assertEquals("자동 스크롤 켜짐 · 한 화면에 30초", ScrollWiring.autoScrollOn(30))
         assertEquals("자동 넘김 꺼짐", ScrollWiring.autoOff(false))
         assertEquals("자동 스크롤 꺼짐", ScrollWiring.autoOff(true))
     }

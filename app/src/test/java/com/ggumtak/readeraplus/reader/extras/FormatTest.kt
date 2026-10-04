@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.reader.extras
 
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.ui.settings.SettingsFormat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -97,7 +98,13 @@ class FormatTest {
     @Test
     fun dates() {
         assertEquals("-", Fmt.dateTime(0))
-        assertTrue(Fmt.dateTime(1_700_000_000_000L).matches(Regex("\\d{4}\\.\\d{2}\\.\\d{2} \\d{2}:\\d{2}")))
+        assertEquals("-", Fmt.date(0))
+        // The app's one wording (style guide 9): never "2026.09.30".
+        val now = System.currentTimeMillis()
+        assertEquals(SettingsFormat.dateTime(now), Fmt.dateTime(now))
+        assertEquals(SettingsFormat.date(now), Fmt.date(now))
+        assertTrue(Fmt.date(now).matches(Regex("\\d{1,2}월 \\d{1,2}일")))
+        assertTrue(Fmt.dateTime(1_700_000_000_000L).matches(Regex("2023년 11월 1[45]일 \\d{2}:\\d{2}")))
     }
 
     // ------------------------------------------------------------------ page labels

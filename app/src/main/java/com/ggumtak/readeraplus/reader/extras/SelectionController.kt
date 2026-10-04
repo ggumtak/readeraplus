@@ -69,7 +69,7 @@ import kotlin.math.hypot
 /**
  * Long-press text selection with two draggable handles and an action popup: one row of 복사 · 인용 · 메모 · 사전·번역 ·
  * ⋮ ([SelectionActions]; over an existing quote a colour row above 복사 · 메모 · 인용 삭제 · 사전·번역 · ⋮), the ⋮ menu
- * holding 색 골라 인용… · 공유 · 문단 · 검색 · 웹 검색 · 여기서 읽기 and, in a TXT book, 문구 지우기.
+ * holding 색 골라 인용… · 공유 · 문단 선택 · 책에서 검색 · 웹 검색 · 여기부터 듣기 and, in a TXT book, 문구 지우기.
  * The selection is limited to the current page of the current section; highlight owner "selection". A second long
  * press while a selection shows waits [AppSettings.longPressMs][com.ggumtak.readeraplus.settings.AppSettings.longPressMs],
  * like the page's own.
@@ -401,7 +401,7 @@ class SelectionController(private val host: ReaderHost) {
             SelectionActions.Id.READ_ALOUD -> readAloud()
             SelectionActions.Id.DELETE_PHRASE ->
                 // Rules apply per source line: a selection across a line break can't become one (T1-10).
-                if (selectionIsOneLine()) deletePhrase() else ctx.toast("여러 줄은 한 번에 지울 수 없습니다. 한 줄 안에서 고르세요")
+                if (selectionIsOneLine()) deletePhrase() else ctx.toast("여러 줄은 한 번에 지울 수 없습니다 · 한 줄 안에서 고르세요")
         }
     }
 
@@ -635,7 +635,7 @@ class SelectionController(private val host: ReaderHost) {
         if (phrase.isEmpty()) return
         val shown = if (phrase.length > PHRASE_SHOWN) phrase.take(PHRASE_SHOWN) + "…" else phrase
         val d = ctx.alert().setTitle("이 문구 지우기")
-            .setMessage("‘$shown’${Josa.eulReul(phrase)} 이 책에서 지웁니다.\n\n이 문구가 든 줄 전체를 지우거나 이 문구만 지울 수 있습니다. '치환 규칙'에서 되돌릴 수 있습니다.")
+            .setMessage("‘$shown’${Josa.eulReul(phrase)} 이 책에서 지웁니다.\n‘바꾸기 규칙’에서 되돌릴 수 있습니다.")
             .setPositiveButton("줄 전체 지우기") { _, _ -> addPhraseRule(h, bookId, phrase, wholeLine = true) }
             .setNeutralButton("이 문구만") { _, _ -> addPhraseRule(h, bookId, phrase, wholeLine = false) }
             .setNegativeButton("취소", null)
@@ -657,9 +657,9 @@ class SelectionController(private val host: ReaderHost) {
             if (runCatching { host.book.id }.getOrNull() != bookId) return@applyTxtOverride
             val text = host.currentLayout?.content?.text ?: return@applyTxtOverride
             if (text.indexOf(phrase) >= 0) {
-                ctx.toast("원본 줄과 모양이 달라 지우지 못했습니다 (줄 합치기·공백 정리 때문일 수 있음)")
+                ctx.toast("원문과 모양이 달라 지우지 못했습니다")
             } else {
-                ctx.toast("지웠습니다. '치환 규칙'에서 되돌릴 수 있습니다")
+                ctx.toast("지웠습니다 · ‘바꾸기 규칙’에서 되돌릴 수 있습니다")
             }
         }
     }
@@ -815,7 +815,7 @@ class SelectionController(private val host: ReaderHost) {
             return
         }
         hideActions()
-        ctx.multilinePrompt("메모", "", "선택한 문장에 대한 메모", minLines = 3) { note ->
+        ctx.multilinePrompt("인용문 메모", "", "메모", minLines = 3) { note ->
             if (active && section == snap.section && selStart == snap.start && selEnd == snap.end) clear()
             saveQuote(snap, note.trim(), LastQuoteStyle.get())
         }

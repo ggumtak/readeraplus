@@ -16,7 +16,7 @@ class StatusModelTest {
     private fun inputs() = StatusInputs().apply {
         page = 12; total = 3259; percent = 34; bar = 0.25f
         chapterTitle = "제3화 비밀"; bookTitle = "책 제목"
-        chapterPagesLeft = 5; minutesEpisode = 3; minutesBook = 440
+        chapterPage = 2; chapterPages = 32; minutesEpisode = 3; minutesBook = 440
         epNumbered = true; epNumber = 123; epMax = 540; tocIndex = 86; tocCount = 612
         minuteOfDay = 14 * 60 + 5; is24 = true; battery = 80
     }
@@ -44,8 +44,8 @@ class StatusModelTest {
     fun everyItemInEverySlot() {
         val expected = mapOf(
             StatusItem.CHAPTER to "제3화 비밀", StatusItem.BOOK_TITLE to "책 제목", StatusItem.PAGE to "12 / 3259",
-            StatusItem.PERCENT to "34%", StatusItem.CHAPTER_PAGES_LEFT to "챕터 5쪽 남음", StatusItem.EPISODE to "123/540화",
-            StatusItem.TIME_LEFT_EPISODE to "이 화 3분", StatusItem.TIME_LEFT_BOOK to "책 7시간 20분", StatusItem.CLOCK to "14:05",
+            StatusItem.PERCENT to "34%", StatusItem.CHAPTER_PAGES_LEFT to "2/32", StatusItem.EPISODE to "123/540화",
+            StatusItem.TIME_LEFT_EPISODE to "챕터 3분", StatusItem.TIME_LEFT_BOOK to "책 7시간 20분", StatusItem.CLOCK to "14:05",
         )
         for (band in 0..1) for (pos in 0..2) for ((item, text) in expected) {
             val m = StatusModel()
@@ -171,6 +171,37 @@ class StatusModelTest {
     }
 
     @Test
+    fun chapterPageNeedsATocPage() {
+        val m = StatusModel()
+        val inp = inputs().apply { chapterPage = -1; chapterPages = -1 }
+        assertNull(m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
+        inp.chapterPage = 32
+        assertEquals("32/32", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))     // the chapter's last page
+        inp.chapterPage = 1; inp.chapterPages = 1
+        assertEquals("1/1", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
+    }
+
+    @Test
+    fun chapterPageOfTheGlobalPage() {
+        val inp = StatusInputs()
+        inp.setChapterPage(cur = 41, first = 40, next = 72)
+        assertEquals(2, inp.chapterPage)
+        assertEquals(32, inp.chapterPages)
+        inp.setChapterPage(cur = 71, first = 40, next = 72)                      // the page before the next chapter
+        assertEquals(32, inp.chapterPage)
+        assertEquals(32, inp.chapterPages)
+        inp.setChapterPage(cur = 3, first = 1, next = 6)                          // front matter: from page 1
+        assertEquals(3, inp.chapterPage)
+        assertEquals(5, inp.chapterPages)
+        inp.setChapterPage(cur = 9, first = 10, next = 12)                        // estimates disagree: never page 0
+        assertEquals(1, inp.chapterPage)
+        assertEquals(2, inp.chapterPages)
+        inp.setChapterPage(cur = 15, first = 10, next = 12)                       // nor past the chapter's last page
+        assertEquals(6, inp.chapterPage)
+        assertEquals(6, inp.chapterPages)
+    }
+
+    @Test
     fun samples() {
         val m = StatusModel()
         val inp = inputs()
@@ -178,9 +209,9 @@ class StatusModelTest {
         assertEquals("책 제목", m.sample(StatusItem.BOOK_TITLE, inp))
         assertEquals("12 / 3259", m.sample(StatusItem.PAGE, inp))
         assertEquals("34%", m.sample(StatusItem.PERCENT, inp))
-        assertEquals("챕터 5쪽 남음", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
+        assertEquals("2/32", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
         assertEquals("123/540화", m.sample(StatusItem.EPISODE, inp))
-        assertEquals("이 화 3분", m.sample(StatusItem.TIME_LEFT_EPISODE, inp))
+        assertEquals("챕터 3분", m.sample(StatusItem.TIME_LEFT_EPISODE, inp))
         assertEquals("책 7시간 20분", m.sample(StatusItem.TIME_LEFT_BOOK, inp))
         assertEquals("14:05", m.sample(StatusItem.CLOCK, inp))
         assertEquals("80", m.sample(StatusItem.BATTERY, inp))
@@ -199,7 +230,7 @@ class StatusModelTest {
         )
         val a = inputs()
         val b = inputs().apply {
-            page = 13; percent = 35; bar = 0.26f; chapterPagesLeft = 4; minutesBook = 439; minuteOfDay = 14 * 60 + 6
+            page = 13; percent = 35; bar = 0.26f; chapterPage = 3; minutesBook = 439; minuteOfDay = 14 * 60 + 6
             battery = 79; epNumber = 124; chapterStartsHere = true
         }
         // Warm-up: the same loop as measured (the first pass also pays for interpreter/OSR transitions).

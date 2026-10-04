@@ -2,6 +2,7 @@ package com.ggumtak.readeraplus.reader.extras
 
 import android.view.KeyEvent
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.TapAction
 import org.junit.Assert.assertEquals
@@ -12,17 +13,21 @@ class TocTextTest {
 
     @Test
     fun summary() {
-        assertEquals("540화 · 지금 123화", TocText.summary(560, 130, 540, 123))
+        // As the status bar's 회차 reads (ReaderFormat.episodeLabel).
+        assertEquals("123/540화", TocText.summary(560, 130, 540, 123))
+        assertEquals(ReaderFormat.episodeLabel(true, 123, 540, 130, 560), TocText.summary(560, 130, 540, 123))
         assertEquals("540화", TocText.summary(560, -1, 540, -1))
-        assertEquals("목차 612개 · 지금 87번째", TocText.summary(612, 86, -1, -1))
+        assertEquals("87/612", TocText.summary(612, 86, -1, -1))
+        assertEquals(ReaderFormat.episodeLabel(false, -1, -1, 86, 612), TocText.summary(612, 86, -1, -1))
         assertEquals("목차 612개", TocText.summary(612, -1, -1, -1))
+        assertEquals("600/600화", TocText.summary(620, 610, 540, 600))       // never "600/540화"
     }
 
     @Test
     fun timeLeft() {
-        assertEquals("남은 시간  이 화 3분 · 책 7시간 20분", TocText.timeLeft(3, 440))
-        assertEquals("남은 시간  책 12시간", TocText.timeLeft(null, 12 * 60 + 5))
-        assertEquals("남은 시간  이 화 1분 미만", TocText.timeLeft(0, null))
+        assertEquals("남은 시간 · 챕터 3분 · 책 7시간 20분", TocText.timeLeft(3, 440))
+        assertEquals("남은 시간 · 책 12시간", TocText.timeLeft(null, 12 * 60 + 5))
+        assertEquals("남은 시간 · 챕터 1분 미만", TocText.timeLeft(0, null))
         assertNull(TocText.timeLeft(null, null))
     }
 
@@ -66,7 +71,7 @@ class TocTextTest {
     fun jumpTexts() {
         assertEquals("57화가 없어 58화로 이동했습니다", TocText.jumped(57, 58))
         assertEquals("541화가 없습니다", TocText.missing(541))
-        assertEquals("1–540화 · 지금 123화", TocText.episodeHint(1, 540, 123))
+        assertEquals("1–540화 · 현재 123화", TocText.episodeHint(1, 540, 123))
         assertEquals("0–12화", TocText.episodeHint(0, 12, -1))
     }
 
@@ -75,6 +80,7 @@ class TocTextTest {
         assertEquals(true, TocText.noBookmarks(true).contains("모서리"))
         assertEquals(false, TocText.noBookmarks(false).contains("모서리"))
         assertEquals(true, TocText.noBookmarks(false).startsWith("북마크가 없습니다"))
+        assertEquals("북마크가 없습니다\n\n‘북마크 추가’를 누르세요", TocText.noBookmarks(false))
     }
 
     @Test
@@ -134,20 +140,36 @@ class TocTextTest {
 
     @Test
     fun infoVolume() {
-        assertEquals("약 312만 자 · 예상 약 86시간", InfoText.volume(3_120_000, 600))
+        assertEquals("약 312만 자 (약 86시간)", InfoText.volume(3_120_000, 600))
         assertEquals("약 312만 자", InfoText.volume(3_120_000, null))
-        assertEquals("약 1.6만 자 · 예상 약 25분", InfoText.volume(15_500, 600))
+        assertEquals("약 1.6만 자 (약 25분)", InfoText.volume(15_500, 600))
         assertEquals("약 1만 자", InfoText.volume(10_000, 0))
-        assertEquals("약 9,600자 · 예상 약 15분", InfoText.volume(9_550, 600))
-        assertEquals("약 300자 · 예상 1분 미만", InfoText.volume(300, 600))
+        assertEquals("약 9,600자 (약 15분)", InfoText.volume(9_550, 600))
+        assertEquals("약 300자 (1분 미만)", InfoText.volume(300, 600))
         assertNull(InfoText.volume(0, 600))
     }
 
     @Test
+    fun infoEncodingAndLanguage() {
+        assertEquals("CP949 (직접 지정)", InfoText.encoding("MS949", "UTF-8"))
+        assertEquals("UTF-8 (자동 감지)", InfoText.encoding("", "UTF-8"))
+        assertEquals("EUC-KR (자동 감지)", InfoText.encoding(" ", "euc-kr"))
+        assertEquals("자동 감지", InfoText.encoding("", null))
+        assertEquals("한국어", InfoText.language("ko"))
+        assertEquals("한국어", InfoText.language("ko-KR"))
+        assertEquals("영어", InfoText.language("en_US"))
+        assertEquals("일본어", InfoText.language(" ja "))
+        assertNull(InfoText.language(""))
+        assertNull(InfoText.language(null))
+        // A code no language answers to stays as it is.
+        assertEquals("und", InfoText.language("und"))
+    }
+
+    @Test
     fun infoTimeLeft() {
-        assertEquals("약 7시간 20분 (이 화 3분)", InfoText.timeLeft(440, 3))
+        assertEquals("약 7시간 20분 (챕터 3분)", InfoText.timeLeft(440, 3))
         assertEquals("약 104시간", InfoText.timeLeft(104 * 60 + 12, null))
-        assertEquals("1분 미만 (이 화 1분 미만)", InfoText.timeLeft(0, 0))
+        assertEquals("1분 미만 (챕터 1분 미만)", InfoText.timeLeft(0, 0))
         assertNull(InfoText.timeLeft(null, 3))
     }
 }

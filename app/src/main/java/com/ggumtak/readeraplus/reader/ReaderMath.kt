@@ -443,7 +443,7 @@ internal object ScrollWiring {
     fun autoItem(scroll: Boolean, on: Boolean): String =
         (if (scroll) "자동 스크롤" else "자동 넘김") + if (on) " 끄기" else " 켜기"
 
-    fun autoScrollOn(seconds: Int): String = "자동 스크롤 켜짐 (한 화면/${seconds}초)"
+    fun autoScrollOn(seconds: Int): String = "자동 스크롤 켜짐 · 한 화면에 ${seconds}초"
 
     fun autoOff(scroll: Boolean): String = if (scroll) "자동 스크롤 꺼짐" else "자동 넘김 꺼짐"
 

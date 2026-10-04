@@ -282,7 +282,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             val onMark = host.isOnCurrentPage(mark)
             if (page != leftPage || onMark != leftOnMark) {
                 if (page != leftPage) {
-                    leftFull = "$page ${PAGE_WORD}"
+                    leftFull = "$page$PAGE_WORD"
                     leftLink = "$leftFull$TO"
                 }
                 leftPage = page
@@ -301,7 +301,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             val page = host.globalPageOf(other!!)
             if (page != rightPage) {
                 rightPage = page
-                rightFull = "$page ${PAGE_WORD}$TO"
+                rightFull = "$page$PAGE_WORD$TO"
                 r.contentDescription = rightFull
                 labelsChanged = true
             }
@@ -388,7 +388,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         }
         strip.addView(r, FrameLayout.LayoutParams(WRAP_CONTENT, MATCH_PARENT, Gravity.END or Gravity.CENTER_VERTICAL))
         val column = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        column.addView(strip, LinearLayout.LayoutParams(MATCH_PARENT, ctx.dp(44)))
+        column.addView(strip, LinearLayout.LayoutParams(MATCH_PARENT, ctx.dp(48)))
         column.addView(View(ctx).apply { setBackgroundColor(Ink.LINE_LIGHT) }, LinearLayout.LayoutParams(MATCH_PARENT, 1).apply {
             marginStart = ctx.dp(20)
             marginEnd = ctx.dp(16)
@@ -435,7 +435,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             chipPage = page
             chipOther = other
             val lbl = chipLabel!!
-            val text = "$page ${PAGE_WORD}$TO"
+            val text = "$page$PAGE_WORD$TO"
             lbl.text = text
             lbl.contentDescription = text
             if (other) lbl.setCompoundDrawablesRelative(null, null, chipChevronRight, null)
@@ -466,9 +466,9 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             background = pressableBackground()
             setOnClickListener { if (state.offer == ReturnPoints.Chip.OTHER) useOther() else useMark() }
         }
-        box.addView(lbl, LinearLayout.LayoutParams(WRAP_CONTENT, ctx.dp(44)))
+        box.addView(lbl, LinearLayout.LayoutParams(WRAP_CONTENT, ctx.dp(48)))
         box.addView(ctx.hairline(vertical = true))
-        val close = ctx.iconButton(R.drawable.ic_close, CLOSE, sizeDp = 44) { closeChip() }
+        val close = ctx.iconButton(R.drawable.ic_close, CLOSE, sizeDp = 48) { closeChip() }
         box.addView(close)
         chipFrame.addView(box, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         chipChevronLeft = icon(R.drawable.ic_chevron_left, 18, Ink.BLACK)
@@ -494,11 +494,12 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     companion object {
         /** U §3.1 / §9 R13: true shows the pinned link on the page whenever the menu is hidden (one constant). */
         const val PIN_FLOATS = false
-        private const val PAGE_WORD = "페이지"
-        private const val TO = "로"
+        /** "3쪽", "‹ 3쪽으로" (style guide 6: the unit after a number is 쪽, attached). */
+        private const val PAGE_WORD = "쪽"
+        private const val TO = "으로"
         private const val CLEAR = "지우기"
         private const val CLOSE = "닫기"
-        private const val ON_MARK_DESCRIPTION = "지금 보는 쪽이 고정한 쪽입니다"
+        private const val ON_MARK_DESCRIPTION = "지금 보는 페이지가 고정한 페이지입니다"
     }
 }
 
@@ -617,7 +618,7 @@ internal class ReturnPoints {
  * Exact in-section page indexes of the return places, per layout generation ([ReturnHost.globalPageOf]). BookSession
  * keeps only [BookSession.MAX_CACHED] sections laid out; once a place's section has left that cache its index would be a
  * char-proportional estimate, which lands a page short right after a chapter's heading page (CI 29 13g: page 3 =
- * s:1 o:210 read "2 페이지로" after two far seeks). Each place is remembered while its section is laid out and kept
+ * s:1 o:210 read "2쪽으로" after two far seeks). Each place is remembered while its section is laid out and kept
  * until the layout changes. [SLOTS] places, least recently asked replaced first (the strip asks for the mark and the
  * other place on every bind, so the live ones stay). Pure; allocates nothing.
  */

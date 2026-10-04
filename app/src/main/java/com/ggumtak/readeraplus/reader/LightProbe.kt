@@ -71,9 +71,9 @@ internal object LightProbe {
         val cold = coldNode()
         val warm = warmNode()
         if (cold == null && warm == null) {
-            lines.add("전면광 노드: 없음")
+            lines.add("조명 노드: 없음")
         } else {
-            for (f in arrayOf(cold, warm)) if (f != null) lines.add("전면광 노드: " + nodeLine(f.path, read(f)))
+            for (f in arrayOf(cold, warm)) if (f != null) lines.add("조명 노드: " + nodeLine(f.path, read(f)))
         }
         lines.add(xrzLine())
         return lines

@@ -38,6 +38,7 @@ import com.ggumtak.readeraplus.data.Quote
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.JumpAnchor
 import com.ggumtak.readeraplus.reader.ReaderHost
@@ -75,6 +76,7 @@ import com.ggumtak.readeraplus.ui.kit.toolbar
 import com.ggumtak.readeraplus.ui.kit.vertical
 import com.ggumtak.readeraplus.ui.library.LibraryText
 import com.ggumtak.readeraplus.ui.notes.NotesActivity
+import com.ggumtak.readeraplus.ui.settings.SettingsActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
@@ -85,9 +87,9 @@ import kotlinx.coroutines.withContext
 
 /**
  * Full-screen 목차 · 북마크 · 인용문 dialog. Every list scrolls and flings like any list ([SCROLLS]) under its pager
- * bar ([InkPager]: "3 / 27", ◀ / ▶ and the page keys jump a page). The TOC tab (T1-1) has a header — "540화 · 지금 123화" with [지금] [화 번호] [검색], the
- * time left (T1-7) and, for a confidently numbered TOC, "빠진 화 3개 · 중복 1개 ›" — and marks the entries before the
- * current one in gray.
+ * bar ([InkPager]: "3 / 27", ◀ / ▶ and the page keys jump a page). The TOC tab (T1-1) has a header — "123/540화" with
+ * [현재 위치] [화 번호] [검색], the time left (T1-7) and, for a confidently numbered TOC, "빠진 화 3개 · 중복 1개 ›" — and
+ * marks the entries before the current one in gray.
  */
 internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private val ctx = host.activity
@@ -110,7 +112,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private var onFirstShown: (() -> Unit)? = null
     private fun thumbsShown(): Boolean = (host as? PageThumbsHost)?.thumbnailsShown == true
     private lateinit var shareAll: View
-    /** "모든 책의 노트" (북마크 and 인용문 tabs): the notes hub. */
+    /** "독서 노트 (모든 책)" (북마크 and 인용문 tabs): the notes hub. */
     private lateinit var hubLink: View
     /** The book's quotes in reading order, as last loaded. */
     private var allQuotes: List<Quote> = emptyList()
@@ -150,7 +152,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         val root = ctx.vertical { setBackgroundColor(Ink.WHITE) }
         // toolbar: the kit's (title 20 sp bold, U polish 10)
         val bar = ctx.toolbar(book.title, R.drawable.ic_arrow_back, onNav = { dialog.dismiss() }, actions = listOf(
-            ToolbarAction(R.drawable.ic_open_in_new, "모든 책의 노트") { openHub() },
+            ToolbarAction(R.drawable.ic_open_in_new, "독서 노트 (모든 책)") { openHub() },
             ToolbarAction(R.drawable.ic_share, "인용문 모두 공유") { shareAllQuotes() },
         ))
         val actions = bar.getChildAt(0) as ViewGroup
@@ -165,7 +167,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 background = pressableBackground()
                 setOnClickListener { select(i) }
             }
-            val t = ctx.label(name, 16f).apply {
+            val t = ctx.label(name, 16f, maxLines = 1).apply {
                 gravity = Gravity.CENTER
                 setPadding(0, ctx.dp(12), 0, ctx.dp(10))
             }
@@ -253,7 +255,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         hubLink.visibility = if (i == 1 || i == 2) View.VISIBLE else View.GONE
     }
 
-    /** "모든 책의 노트": the hub on the matching tab; the dialog goes (the reader reloads its notes on return). */
+    /** "독서 노트 (모든 책)": the hub on the matching tab; the dialog goes (the reader reloads its notes on return). */
     private fun openHub() {
         val notesTab = if (tab == 1) NotesTab.BOOKMARKS else NotesTab.QUOTES
         dialog.dismiss()
@@ -283,8 +285,18 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private fun buildToc(): View {
         val doc = host.document ?: return ctx.emptyMessage("책을 여는 중입니다…")
         if (doc.toc.isEmpty()) {
-            val hint = if (doc.format == BookFormat.TXT) "\n\n⚙ → 전체 읽기 설정 → 이 책의 TXT 정리에서\n'챕터 자동 인식'을 켜거나 챕터 규칙(정규식)을 추가해 보세요" else ""
-            return ctx.emptyMessage("이 책에는 목차가 없습니다$hint")
+            val empty = ctx.emptyMessage("이 책에는 목차가 없습니다")
+            // A TXT book finds its chapters with the book's own TXT options: one tap there (from the reader only).
+            val reader = ctx as? ReaderActivity
+            if (doc.format != BookFormat.TXT || reader == null) return empty
+            return ctx.vertical {
+                gravity = Gravity.CENTER
+                addView(empty, lp())
+                addView(ctx.outlineButton("이 책의 TXT 정리 ›") {
+                    dialog.dismiss()
+                    reader.openAppSettings(SettingsActivity.PAGE_BOOK_TXT)
+                }, lp(WRAP_CONTENT, WRAP_CONTENT))
+            }
         }
         return TocTab(doc).also { tocTab = it }.view
     }
@@ -313,7 +325,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
 
         private val list = ctx.einkListView()
         private val summary = ctx.label("", 15f, maxLines = 1)
-        private val nowBtn = headerButton("지금") { pager.showRow(current.coerceAtLeast(0), CURRENT_ROW) }
+        private val nowBtn = headerButton("현재 위치") { pager.showRow(current.coerceAtLeast(0), CURRENT_ROW) }
         private val numBtn = headerButton("화 번호") { askEpisode() }
         private val searchBtn = headerButton("검색") { askFilter() }
         private val allBtn = headerButton("전체 보기") { clearFilter() }
@@ -627,7 +639,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         }
     }
 
-    private fun headerButton(text: String, onClick: () -> Unit): TextView = ctx.label(text, 14f).apply {
+    private fun headerButton(text: String, onClick: () -> Unit): TextView = ctx.label(text, 15f, maxLines = 1).apply {
         gravity = Gravity.CENTER
         setPadding(ctx.dp(10), 0, ctx.dp(10), 0)
         // No pressed state: what the button does is the feedback (one e-ink update).
@@ -686,7 +698,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                     note.visibility = if (b.note.isBlank()) View.GONE else View.VISIBLE
                     note.text = "메모: ${b.note}"
                     row.findViewWithTag<TextView>("meta").text =
-                        "${pageOf(b.section, b.offset)}쪽  ·  ${Fmt.dateTime(b.createdAt)}"
+                        "${pageOf(b.section, b.offset)}쪽 · ${Fmt.date(b.createdAt)}"
                     return row
                 }
             }
@@ -780,7 +792,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         if (tab == 2) shareAll.visibility = if (list.isNotEmpty()) View.VISIBLE else View.GONE
         container.removeAllViews()
         if (all.isEmpty()) {
-            container.addView(ctx.emptyMessage("인용문이 없습니다\n\n본문을 길게 눌러 문장을 선택한 뒤\n'인용'을 누르세요"))
+            container.addView(ctx.emptyMessage("인용문이 없습니다\n\n본문을 길게 누른 뒤 ‘인용’을 누르세요"))
             return
         }
         val ink = QuoteLook.ink()
@@ -910,7 +922,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             MenuItem("복사", R.drawable.ic_content_copy) { TextActions.copy(ctx, q.text) },
             MenuItem("공유", R.drawable.ic_share) { TextActions.share(ctx, quoteShareText(q), book.title) },
             MenuItem("색 바꾸기", R.drawable.ic_ink_highlighter) { recolour(swatchAnchor(anchor), q, container) },
-            MenuItem("메모", R.drawable.ic_edit) { editQuoteNote(q, q.note, container) },
+            MenuItem("메모 편집", R.drawable.ic_edit) { editQuoteNote(q, q.note, container) },
             MenuItem("삭제", R.drawable.ic_delete) {
                 ctx.confirm("인용문 삭제", "이 인용문을 삭제할까요?", "삭제") {
                     scope.launch {
@@ -1002,7 +1014,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         val note = row.findViewWithTag<TextView>("note")
         note.visibility = if (q.note.isBlank()) View.GONE else View.VISIBLE
         note.text = "메모: ${q.note}"
-        val meta = "${pageOf(q.section, q.start)}쪽  ·  ${Fmt.dateTime(q.createdAt)}"
+        val meta = "${pageOf(q.section, q.start)}쪽 · ${Fmt.date(q.createdAt)}"
         row.findViewWithTag<TextView>("meta").text = if (placeChanged(q)) meta + QuoteRows.STALE_SUFFIX else meta
         val swatch = row.findViewWithTag<QuoteSwatch>("swatch")
         val style = QuoteStyles.of(q.style)
@@ -1025,14 +1037,14 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
          * a list this short scrolls well enough there). The 썸네일 grid stays a page at a time.
          */
         const val SCROLLS = true
-        /** [지금] and a jump show the entry as the 4th row: the three above give context. */
+        /** [현재 위치] and a jump show the entry as the 4th row: the three above give context. */
         const val CURRENT_ROW = 3
-        const val HEADER_DP = 40
+        const val HEADER_DP = 48
         const val INFO_DP = 26
         /** A message after a jump waits for the dialog to go (the reader's window gets the focus back). */
         const val NOTE_DELAY_MS = 300L
         /** Filter chips are 44 dp tall (N §7.2). */
-        const val CHIP_DP = 44
+        const val CHIP_DP = 48
         /** A row click this soon after its DOWN came from that touch (a tap is released before the long press). */
         const val TAP_CLICK_MS = 1_500L
         /** The last-used quote style (N §7.1.3; the selection popup's default). */
@@ -1181,22 +1193,23 @@ internal object ListKeys {
 /** Texts of the TOC tab (header, filter, gaps dialog, jump notes). Pure; unit-tested. */
 internal object TocText {
     /**
-     * Header summary: "540화 · 지금 123화" when the episodes are usable ([maxNumber] ≥ 0; [currentNumber] -1 leaves out
-     * "지금"), else "목차 612개 · 지금 87번째" ([current] = TOC index, -1 before the first entry: "목차 612개").
+     * Header summary, as the status bar's 회차 reads: "123/540화" when the episodes are usable ([maxNumber] ≥ 0;
+     * [currentNumber] -1: "540화"), else "87/612" ([current] = TOC index, -1 before the first entry: "목차 612개").
      */
     fun summary(count: Int, current: Int, maxNumber: Int, currentNumber: Int): String = when {
-        maxNumber >= 0 && currentNumber >= 0 -> "${maxNumber}화 · 지금 ${currentNumber}화"
+        maxNumber >= 0 && currentNumber >= 0 -> "$currentNumber/${maxOf(maxNumber, currentNumber)}화"
         maxNumber >= 0 -> "${maxNumber}화"
-        current >= 0 -> "목차 ${count}개 · 지금 ${current + 1}번째"
+        current >= 0 -> "${current + 1}/${maxOf(count, current + 1)}"
         else -> "목차 ${count}개"
     }
 
-    /** "남은 시간  이 화 3분 · 책 7시간" (either part may be missing); null when both are unknown. */
+    /** "남은 시간 · 챕터 3분 · 책 7시간" (either part may be missing); null when both are unknown. */
     fun timeLeft(episodeMinutes: Int?, bookMinutes: Int?): String? {
-        val parts = ArrayList<String>(2)
-        if (episodeMinutes != null) parts += "이 화 ${ReaderFormat.duration(episodeMinutes)}"
+        val parts = ArrayList<String>(3)
+        parts += "남은 시간"
+        if (episodeMinutes != null) parts += "챕터 ${ReaderFormat.duration(episodeMinutes)}"
         if (bookMinutes != null) parts += "책 ${ReaderFormat.duration(bookMinutes)}"
-        return if (parts.isEmpty()) null else "남은 시간  " + parts.joinToString(" · ")
+        return if (parts.size == 1) null else parts.joinToString(" · ")
     }
 
     /** "빠진 화 3개 · 중복 1개 ›" (either part alone), or null when there is nothing to report. */
@@ -1240,9 +1253,9 @@ internal object TocText {
     /** "57" or "120–125". */
     fun runLabel(r: IntRange): String = if (r.first == r.last) "${r.first}" else "${r.first}–${r.last}"
 
-    /** The go-to dialog's [화] hint: "1–540화 · 지금 123화" ([current] -1: without "지금"). */
+    /** The go-to dialog's [화] hint: "1–540화 · 현재 123화" ([current] -1: without "현재"), as [GoToText.info] says. */
     fun episodeHint(min: Int, max: Int, current: Int): String =
-        "${min.coerceAtLeast(0)}–${max}화" + if (current >= 0) " · 지금 ${current}화" else ""
+        "${min.coerceAtLeast(0)}–${max}화" + if (current >= 0) " · 현재 ${current}화" else ""
 
     /** After a jump to the next higher episode: "57화가 없어 58화로 이동했습니다". */
     fun jumped(asked: Int, found: Int): String = "${asked}화가 없어 ${found}화로 이동했습니다"
@@ -1252,8 +1265,8 @@ internal object TocText {
 
     /** The bookmark tab's empty text; the corner tap is mentioned only when it is on ("북마크 모서리 터치"). */
     fun noBookmarks(byTouch: Boolean): String =
-        if (byTouch) "북마크가 없습니다\n\n화면 오른쪽 위 모서리를 누르거나\n메뉴에서 북마크를 추가하세요"
-        else "북마크가 없습니다\n\n메뉴에서 북마크를 추가하세요"
+        if (byTouch) "북마크가 없습니다\n\n오른쪽 위 모서리를 누르거나\n‘북마크 추가’를 누르세요"
+        else "북마크가 없습니다\n\n‘북마크 추가’를 누르세요"
 
     /**
      * 이 / 가 after [word]: by the final consonant of a last Hangul syllable, or of a last digit as read in Korean

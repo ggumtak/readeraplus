@@ -67,18 +67,23 @@ class LightPolicyTest {
     }
 
     @Test fun rowTexts() {
-        assertEquals("이 기기는 앱이 전면광을 바꿀 수 없습니다", LightPolicy.deviceSubtitle(true, true, false, true, false))
-        assertEquals("'시스템 설정 수정' 권한이 필요합니다 · 눌러서 허용", LightPolicy.deviceSubtitle(true, true, true, false, false))
-        assertEquals("전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다", LightPolicy.deviceSubtitle(false, true, true, false, false))
-        assertEquals("기기 전체 밝기를 바꿉니다 · 리더를 나가면 원래대로", LightPolicy.deviceSubtitle(true, true, false, false, true))
-        assertEquals("기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지", LightPolicy.deviceSubtitle(true, false, false, false, false))
-        assertEquals("기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지 (자동 밝기는 다시 켜짐)", LightPolicy.deviceSubtitle(true, false, false, false, true))
+        assertEquals("이 기기는 앱이 조명을 바꿀 수 없습니다", LightPolicy.deviceSubtitle(true, true, false, true, false))
+        assertEquals("권한 필요 · 눌러서 허용", LightPolicy.deviceSubtitle(true, true, true, false, false))
+        assertEquals("조명이 안 바뀔 때 켜세요", LightPolicy.deviceSubtitle(false, true, true, false, false))
+        assertEquals("나가면 원래 밝기로", LightPolicy.deviceSubtitle(true, true, false, false, true))
+        assertEquals("나가도 이 밝기 유지", LightPolicy.deviceSubtitle(true, false, false, false, false))
+        assertEquals("나가도 이 밝기 유지 · 자동 밝기는 다시 켬", LightPolicy.deviceSubtitle(true, false, false, false, true))
         assertEquals("이 기기에서는 밝기 스와이프를 쓸 수 없습니다", LightPolicy.swipeSubtitle(true))
-        assertEquals("화면 왼쪽 가장자리를 위아래로 밀어 밝기를 바꿉니다", LightPolicy.swipeSubtitle(false))
+        assertEquals("왼쪽 가장자리를 위아래로 밀기", LightPolicy.swipeSubtitle(false))
+        // One wording: no 전면광, the app's name as the system list shows it, no ASCII quotes.
+        for (t in listOf(LightPolicy.DEVICE_DIALOG, LightPolicy.NO_PERMISSION_SCREEN, LightPolicy.DEVICE_NONE)) {
+            assertFalse(t, "전면광" in t || "ReaderaPlus" in t || '\'' in t)
+        }
+        assertTrue(LightPolicy.DEVICE_DIALOG.contains("‘리더플러스’"))
         assertTrue(LightPolicy.panelRowVisible(none = true, warm = false))
         assertTrue(LightPolicy.panelRowVisible(none = false, warm = true))
         assertFalse(LightPolicy.panelRowVisible(none = false, warm = false))
         assertEquals("밝기와 색온도는 기기 조명에서 조절합니다", LightPolicy.panelSubtitle(true))
-        assertEquals("색온도(따뜻한 빛)는 기기 조명에서 바꿉니다", LightPolicy.panelSubtitle(false))
+        assertEquals("밝기 · 색온도(따뜻한 빛)", LightPolicy.panelSubtitle(false))
     }
 }

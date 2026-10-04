@@ -1,26 +1,23 @@
 package com.ggumtak.readeraplus.reader
 
-import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.util.Log
 import android.view.View
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Book
-import com.ggumtak.readeraplus.data.BookFileProvider
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.NotesTab
 import com.ggumtak.readeraplus.data.Shelf
-import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
 import com.ggumtak.readeraplus.ui.kit.MenuItem
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
-import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.popupMenu
 import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
+import com.ggumtak.readeraplus.ui.library.LibraryText
 import com.ggumtak.readeraplus.ui.notes.NotesActivity
+import com.ggumtak.readeraplus.ui.settings.SettingsFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,9 +25,10 @@ import kotlinx.coroutines.withContext
 private const val MENU_TAG = "ReaderMenus"
 
 /**
- * The reader's ⋮ menu (ReadEra order, B/W). PLAN C22 final order: 목차 … 페이지 이동 · (W2) 페이지 썸네일 ·
- * (narrow) 북마크 추가/삭제 · 스크롤로 보기/페이지로 보기 · 자동 넘김/자동 스크롤 · … 내 리뷰 · 독서 노트 · …;
- * existing items keep their places.
+ * The reader's ⋮ menu (ReadEra order, B/W): 페이지 이동 · 페이지 썸네일 · (narrow) 북마크 추가/삭제 · 스크롤로 보기
+ * (페이지로 보기) · 자동 넘김 (자동 스크롤) · 화면 새로고침 · 독서 노트 · 책 정보 · 내 리뷰 · 즐겨찾기·컬렉션 · 설정. At
+ * most 11 rows (≤ 536 dp), so it fits the Comet's 720 dp without scrolling. Sharing the file and the trash are the
+ * library's book menu's.
  */
 internal fun ReaderActivity.showOverflowMenu(anchor: View) {
     // Captured now: every action below works on this book even if another one is opened meanwhile.
@@ -50,13 +48,11 @@ internal fun ReaderActivity.showOverflowMenu(anchor: View) {
         MenuItem(ScrollWiring.autoItem(scrollMode, autoTurnOn), R.drawable.ic_timer) { toggleAutoTurn() },
         // After the popup has disappeared from the panel, or its outline stays as ghosting.
         MenuItem("화면 새로고침", R.drawable.ic_refresh) { refreshAfterDraw(POPUP_GONE_MS) },
-        MenuItem("내 리뷰", R.drawable.ic_rate_review) { guarded { ReaderPanels.showReview(this) } },
         // N §6.7: this book's notes in the hub; a note tapped there comes back through onNewIntent (N §6.3).
         MenuItem("독서 노트", R.drawable.ic_format_quote) { guarded { NotesActivity.open(this, NotesTab.ALL, bk.id) } },
-        MenuItem("컬렉션·목록에 추가", R.drawable.ic_playlist_add) { showAddMenu(anchor, bk) },
         MenuItem("책 정보", R.drawable.ic_info) { guarded { ReaderPanels.showDocumentInfo(this, bk, document) } },
-        MenuItem("파일 공유", R.drawable.ic_share) { shareBookFile(bk) },
-        MenuItem("휴지통으로 이동", R.drawable.ic_delete) { confirmTrash(bk) },
+        MenuItem("내 리뷰", R.drawable.ic_rate_review) { guarded { ReaderPanels.showReview(this) } },
+        MenuItem("즐겨찾기·컬렉션", R.drawable.ic_playlist_add) { showAddMenu(anchor, bk) },
         MenuItem("설정", R.drawable.ic_settings) { guarded { openAppSettings() } },
     )
     guarded { popupMenu(anchor, items, widthDp = 260) }
@@ -64,7 +60,7 @@ internal fun ReaderActivity.showOverflowMenu(anchor: View) {
 
 private const val POPUP_GONE_MS = 120L
 
-/** "컬렉션·목록에 추가": favourites / to read / have read toggles and collections. */
+/** "즐겨찾기·컬렉션": the library book menu's shelf toggles (its own labels) and the collections. */
 private fun ReaderActivity.showAddMenu(anchor: View, book: Book) {
     val id = book.id
     scope.launch {
@@ -76,23 +72,26 @@ private fun ReaderActivity.showAddMenu(anchor: View, book: Book) {
             }
         } ?: book
         val items = listOf(
-            MenuItem("즐겨찾기", if (b.favorite) R.drawable.ic_star_fill else R.drawable.ic_star) {
-                flag(if (b.favorite) "즐겨찾기에서 뺐습니다" else "즐겨찾기에 추가했습니다") { Library.setFavorite(id, !b.favorite) }
+            MenuItem(LibraryText.flagMenuLabel(Shelf.FAVORITES, b.favorite), if (b.favorite) R.drawable.ic_star_fill else R.drawable.ic_star) {
+                flag(shelfMessage(Shelf.FAVORITES, !b.favorite)) { Library.setFavorite(id, !b.favorite) }
             },
-            MenuItem(Shelf.TO_READ.label, if (b.toRead) R.drawable.ic_schedule_fill else R.drawable.ic_schedule) {
+            MenuItem(LibraryText.flagMenuLabel(Shelf.TO_READ, b.toRead), if (b.toRead) R.drawable.ic_schedule_fill else R.drawable.ic_schedule) {
                 flag(shelfMessage(Shelf.TO_READ, !b.toRead)) { Library.setToRead(id, !b.toRead) }
             },
-            MenuItem(Shelf.HAVE_READ.label, if (b.haveRead) R.drawable.ic_done_all_fill else R.drawable.ic_done_all) {
+            MenuItem(LibraryText.flagMenuLabel(Shelf.HAVE_READ, b.haveRead), if (b.haveRead) R.drawable.ic_done_all_fill else R.drawable.ic_done_all) {
                 flag(shelfMessage(Shelf.HAVE_READ, !b.haveRead)) { Library.setHaveRead(id, !b.haveRead) }
             },
-            MenuItem("컬렉션…", R.drawable.ic_library_books) { showCollections(id) },
+            MenuItem("컬렉션에 추가…", R.drawable.ic_library_books) { showCollections(id) },
         )
         // The anchor (⋮ in the chrome) must still be in a window, or PopupWindow throws BadTokenException.
         if (!isFinishing && !isDestroyed && anchor.isAttachedToWindow) guarded { popupMenu(anchor, items, widthDp = 240) }
     }
 }
 
-/** "읽을 책에 추가했습니다" / "다 읽은 책에서 뺐습니다" (the shelf labels end in 책, so the particles are fixed). */
+/**
+ * "읽을 책에 추가했습니다" / "다 읽은 책에서 뺐습니다" / "즐겨찾기에 추가했습니다" (에 / 에서 follow any noun, so the
+ * particles are fixed).
+ */
 internal fun shelfMessage(shelf: Shelf, added: Boolean): String =
     if (added) "${shelf.label}에 추가했습니다" else "${shelf.label}에서 뺐습니다"
 
@@ -133,7 +132,7 @@ private fun ReaderActivity.showCollections(id: Long) {
                             val c = Library.createCollection(n)
                             Library.setInCollection(id, c.id, true)
                         }
-                        toast("'$n'에 추가했습니다")
+                        toast("‘$n’에 추가했습니다")
                     }
                 }
             }
@@ -141,50 +140,9 @@ private fun ReaderActivity.showCollections(id: Long) {
     }
 }
 
-private fun ReaderActivity.shareBookFile(book: Book) {
-    try {
-        val uri = BookFileProvider.uriFor(packageName, book.id)
-        val mime = if (book.format == BookFormat.EPUB) "application/epub+zip" else "text/plain"
-        val send = Intent(Intent.ACTION_SEND)
-            .setType(mime)
-            .putExtra(Intent.EXTRA_STREAM, uri)
-            .putExtra(Intent.EXTRA_TITLE, book.fileName)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        startActivity(Intent.createChooser(send, "파일 공유").addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION))
-    } catch (t: Throwable) {
-        Log.w(MENU_TAG, "share failed", t)
-        toast("파일을 공유할 수 없습니다")
-    }
-}
-
-private fun ReaderActivity.confirmTrash(book: Book) {
-    val id = book.id
-    confirm("휴지통으로 이동", "'${book.title}'을(를) 휴지통으로 옮길까요?", ok = "이동") {
-        scope.launch {
-            // Finish only after the write, so the library's onResume reload no longer lists the book.
-            val ok = withContext(Dispatchers.IO) {
-                try {
-                    Library.setTrashed(id, true)
-                    true
-                } catch (t: Throwable) {
-                    Log.w(MENU_TAG, "trash failed", t)
-                    false
-                }
-            }
-            if (ok) finish() else toast("휴지통으로 옮기지 못했습니다")
-        }
-    }
-}
-
-/** Long-press on the rotation button: pick a fixed orientation or follow the sensor. */
+/** Long-press on the rotation button: pick a fixed orientation or follow the sensor (설정's 화면 방향 choices). */
 internal fun ReaderActivity.showOrientationChooser() {
-    val options = listOf(
-        "자동 회전" to ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
-        "세로" to ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,
-        "가로" to ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
-        "세로 (뒤집힘)" to ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT,
-        "가로 (뒤집힘)" to ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE,
-    )
+    val options = SettingsFormat.ORIENTATIONS
     val selected = options.indexOfFirst { it.second == app.orientationLock }.coerceAtLeast(0)
     chooser("화면 방향", options.map { it.first }, selected) { which -> setOrientationLock(options[which].second) }
 }

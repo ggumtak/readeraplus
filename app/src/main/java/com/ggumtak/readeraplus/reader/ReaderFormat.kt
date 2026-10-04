@@ -15,27 +15,13 @@ import java.util.zip.ZipException
  * still estimates (no "~"): the estimate only settles into the exact number.
  */
 object ReaderFormat {
-    const val SEP = "  ·  "
+    const val SEP = " · "
 
     /** Shared TTS rate label in the reader and settings. */
     fun ttsRate(v: Float): String = String.format(Locale.US, "%.1f배", v)
 
     /** Shared TTS pitch label (pitch is a ratio, without the speed suffix). */
     fun ttsPitch(v: Float): String = String.format(Locale.US, "%.1f", v)
-
-    /** Shared chooser labels for volume page direction. */
-    fun volumeMode(mode: VolumeMode): String = when (mode) {
-        VolumeMode.OFF -> "넘기지 않음 (볼륨 조절)"
-        VolumeMode.DOWN_NEXT -> "아래 = 다음 페이지 (기본)"
-        VolumeMode.UP_NEXT -> "위 = 다음 페이지 (방향 반전)"
-    }
-
-    /** Short value beside the popup row. */
-    fun volumeModeShort(mode: VolumeMode): String = when (mode) {
-        VolumeMode.OFF -> "끔"
-        VolumeMode.DOWN_NEXT -> "아래 = 다음"
-        VolumeMode.UP_NEXT -> "위 = 다음"
-    }
 
     /** The error panel's message when nothing in [openError]'s list matches. */
     const val OPEN_FAILED = "책을 열지 못했습니다"
@@ -52,7 +38,8 @@ object ReaderFormat {
         return if (is24 && h < 10) "0$h:$mm" else "$h:$mm"
     }
 
-    fun chapterLeft(pages: Int): String = if (pages <= 0) "챕터 마지막 쪽" else "챕터 ${pages}쪽 남음"
+    /** The status's 챕터 쪽 번호 (R2): "2/32", the page within its chapter over the chapter's pages (total ≥ page). */
+    fun chapterPage(page: Int, total: Int): String = "$page/${maxOf(total, page)}"
 
     /**
      * The footer's 회차 item (T1-5): "123/540화" — the episode [number] of the current TOC entry over the book's
@@ -62,8 +49,8 @@ object ReaderFormat {
     fun episodeLabel(numbered: Boolean, number: Int, maxNumber: Int, index: Int, count: Int): String =
         if (numbered && number > 0) "$number/${maxOf(maxNumber, number)}화" else "${index + 1}/${maxOf(count, index + 1)}"
 
-    /** The footer's 남은 시간 item (T1-7): "이 화 3분" ([bookScope] false) or "책 7시간 20분". */
-    fun timeLeft(bookScope: Boolean, minutes: Int): String = (if (bookScope) "책 " else "이 화 ") + duration(minutes)
+    /** The footer's 남은 시간 item (T1-7): "챕터 3분" ([bookScope] false) or "책 7시간 20분". */
+    fun timeLeft(bookScope: Boolean, minutes: Int): String = (if (bookScope) "책 " else "챕터 ") + duration(minutes)
 
     /** Minutes needed for [chars] characters at [charsPerMinute] (whole minutes, rounded down: "1분 미만" below one). */
     fun minutesFor(chars: Long, charsPerMinute: Int): Int {
@@ -135,27 +122,31 @@ object ReaderFormat {
     fun brightness(value: Float): String =
         if (value < 0f) "밝기 자동" else "밝기 ${Math.round(value.coerceIn(0f, 1f) * 100f)}%"
 
-    fun autoTurnOn(seconds: Int): String = "자동 넘김 켜짐 (${seconds}초)"
+    fun autoTurnOn(seconds: Int): String = "자동 넘김 켜짐 · ${seconds}초마다"
 
     /**
      * Why a book could not be opened or shown, for the error panel and toasts: never an exception message or class
-     * name, except [DocumentException]s, whose messages are our own Korean sentences (only their first line: a
-     * second one holds a path or URI, see [openErrorDetail]).
+     * name, except [DocumentException]s, whose messages are our own Korean sentences (only their first line, without a
+     * closing period: a second line holds a path or URI, see [openErrorDetail]).
      */
     fun openError(t: Throwable): String = when {
-        t is DocumentException -> t.message?.lineSequence()?.first()?.trim()?.takeIf { it.isNotEmpty() } ?: OPEN_FAILED
-        t is OutOfMemoryError -> "메모리가 부족합니다"
+        t is DocumentException ->
+            t.message?.lineSequence()?.first()?.trim()?.removeSuffix(".")?.takeIf { it.isNotEmpty() } ?: OPEN_FAILED
+        t is OutOfMemoryError -> NO_MEMORY
         isNoSpace(t) -> "저장 공간이 부족합니다"
         t is SecurityException -> "파일 접근 권한이 없습니다"
         t is FileNotFoundException -> "파일을 찾을 수 없습니다"
         t is ZipException -> "EPUB 파일이 손상되었습니다"
-        t is IOException -> "파일을 읽지 못했습니다"
+        t is IOException -> READ_FAILED
         else -> OPEN_FAILED
     }
 
+    private const val NO_MEMORY = "메모리가 부족합니다"
+    private const val READ_FAILED = "파일을 읽지 못했습니다"
+
     /**
      * The small grey line under [openError] ("자세히: ZipException"), or null. A [DocumentException] shows the file
-     * path its message carries on a second line ("파일을 찾을 수 없습니다.\n/storage/…": which file is missing), else
+     * path its message carries on a second line ("파일을 찾을 수 없습니다\n/storage/…": which file is missing), else
      * names its cause; a URI there (percent-encoded, unreadable) is left out.
      */
     fun openErrorDetail(t: Throwable): String? {
@@ -166,13 +157,18 @@ object ReaderFormat {
     }
 
     /**
-     * The paragraph shown in place of a section that could not be loaded: "이 부분을 불러오지 못했습니다 (EPUB 파일이
-     * 손상되었습니다)", never an exception message (only the class, for a bug report, when nothing better is known).
+     * The paragraph shown in place of a section that could not be loaded, in the words of the toast that reports it:
+     * "이 부분을 표시하지 못했습니다 (EPUB 파일이 손상되었습니다)", never an exception message (only the class, for a
+     * bug report, when nothing better is known). A reason that is itself a "…지 못했습니다" becomes a short noun.
      */
     fun sectionError(t: Throwable): String {
-        if (t is OutOfMemoryError) return "메모리가 부족해 이 부분을 표시하지 못했습니다."
-        val why = openError(t)
-        return "이 부분을 불러오지 못했습니다 (" + (if (why == OPEN_FAILED) errorDetail(t) else why) + ")"
+        val why = when (val w = openError(t)) {
+            OPEN_FAILED -> errorDetail(t)
+            NO_MEMORY -> "메모리 부족"
+            READ_FAILED -> "파일 읽기 오류"
+            else -> w
+        }
+        return "이 부분을 표시하지 못했습니다 ($why)"
     }
 
     /** Label of a TXT encoding ("" = automatic detection): the one wording of the reader and the library. */

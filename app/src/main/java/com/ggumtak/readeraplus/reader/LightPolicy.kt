@@ -2,7 +2,8 @@ package com.ggumtak.readeraplus.reader
 
 /**
  * The pure decisions behind the brightness flow (UI_SPEC §4.3–4.4, brightness.md §4.3–4.4 and §6): the verdict
- * reducer, the one-time question, what a restore puts back, automatic confirmation and the Korean row texts.
+ * reducer, the one-time question, what a restore puts back, automatic confirmation and the Korean texts the reader
+ * and 설정 share (one source).
  * No Android types: unit-tested by `LightPolicyTest`. Every text is a constant (bind() allocates nothing).
  */
 internal object LightPolicy {
@@ -15,16 +16,26 @@ internal object LightPolicy {
     const val RESTORE_LEVEL = 1
     const val RESTORE_MODE = 2
 
-    const val SWIPE_SUBTITLE = "화면 왼쪽 가장자리를 위아래로 밀어 밝기를 바꿉니다"
+    const val SWIPE_SUBTITLE = "왼쪽 가장자리를 위아래로 밀기"
     const val SWIPE_SUBTITLE_NONE = "이 기기에서는 밝기 스와이프를 쓸 수 없습니다"
-    const val DEVICE_OFF = "전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다"
-    const val DEVICE_ON_RESTORE = "기기 전체 밝기를 바꿉니다 · 리더를 나가면 원래대로"
-    const val DEVICE_ON_KEEP = "기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지"
-    const val DEVICE_ON_KEEP_AUTO = "기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지 (자동 밝기는 다시 켜짐)"
-    const val DEVICE_NO_PERMISSION = "'시스템 설정 수정' 권한이 필요합니다 · 눌러서 허용"
-    const val DEVICE_NONE = "이 기기는 앱이 전면광을 바꿀 수 없습니다"
-    const val PANEL_SUBTITLE = "색온도(따뜻한 빛)는 기기 조명에서 바꿉니다"
+    const val DEVICE_OFF = "조명이 안 바뀔 때 켜세요"
+    const val DEVICE_ON_RESTORE = "나가면 원래 밝기로"
+    const val DEVICE_ON_KEEP = "나가도 이 밝기 유지"
+    const val DEVICE_ON_KEEP_AUTO = "나가도 이 밝기 유지 · 자동 밝기는 다시 켬"
+    const val DEVICE_NO_PERMISSION = "권한 필요 · 눌러서 허용"
+    const val DEVICE_NONE = "이 기기는 앱이 조명을 바꿀 수 없습니다"
+    const val PANEL_SUBTITLE = "밝기 · 색온도(따뜻한 빛)"
     const val PANEL_SUBTITLE_NONE = "밝기와 색온도는 기기 조명에서 조절합니다"
+
+    /** Dialog A (brightness.md §5.3) before the "시스템 설정 수정" page; the system list names the app 리더플러스. */
+    const val DEVICE_DIALOG = "이 기기의 조명은 앱 화면 밝기를 따르지 않을 수 있습니다. ‘시스템 설정 수정’을 허용하면 " +
+        "리더가 기기 밝기를 직접 바꿉니다.\n\n" +
+        "· 다른 앱에도 같은 밝기가 적용됩니다\n" +
+        "· 리더를 나가면 원래 밝기로 돌아갑니다\n" +
+        "· 다음 화면에서 ‘리더플러스’를 찾아 허용한 뒤 돌아오세요"
+
+    /** Dialog C (brightness.md §5.5): the firmware hides that page; the adb command follows on its own line. */
+    const val NO_PERMISSION_SCREEN = "이 기기에는 ‘시스템 설정 수정’ 화면이 없습니다. PC에 연결해 아래 명령으로 허용할 수 있습니다."
 
     /**
      * The verdict after the answer [yes] to question [ask] (§4.3 edges). [DeviceLight.VERDICT_UNKNOWN] means "no

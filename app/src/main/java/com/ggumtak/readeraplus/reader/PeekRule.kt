@@ -17,7 +17,7 @@ internal class PeekRule {
         USER_JUMP,
         /** The return strip or chip. */
         RETURN_POINT,
-        /** The selection popup's "여기서 읽기". */
+        /** The selection popup's "여기부터 듣기". */
         READ_HERE,
         /** Scroll mode: the first settle of a user scroll. */
         SCROLL_SETTLE,

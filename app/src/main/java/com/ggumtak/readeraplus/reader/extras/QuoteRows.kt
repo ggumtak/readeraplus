@@ -14,7 +14,7 @@ internal object QuoteRows {
     /** Width of the swatch column at the row's right edge (its whole height is the touch target). */
     const val SWATCH_COLUMN_DP = 48
 
-    const val STALE_SUFFIX = "  ·  위치 바뀜"
+    const val STALE_SUFFIX = " · 위치 바뀜"
 
     /** Quotes per displayed style ([QuoteStyles.of]: unknown stored ids count as yellow, as they are drawn). */
     fun styleCounts(quotes: List<Quote>): IntArray {
@@ -43,10 +43,10 @@ internal object QuoteRows {
     fun filter(quotes: List<Quote>, style: Int): List<Quote> =
         if (style == ALL) quotes else quotes.filter { QuoteStyles.of(it.style) == style }
 
-    /** "인용문", "인용문 12", or "인용문 5 / 12" while a chip filters. */
+    /** "인용문", "인용문 12", or "인용문 5" while a chip filters (the chip row names the style and [전체 12]). */
     fun tabLabel(shown: Int, total: Int, filtered: Boolean): String = when {
         total == 0 -> "인용문"
-        filtered -> "인용문 $shown / $total"
+        filtered -> "인용문 $shown"
         else -> "인용문 $total"
     }
 

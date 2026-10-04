@@ -8,7 +8,7 @@ import com.ggumtak.readeraplus.render.HighlightKind
 /**
  * The selection popup's actions (UI_SPEC polish 13, NOTES_SPEC §7.1, PLAN C26), pure and unit-tested: one row of 5
  * cells — 복사 · 인용 · 메모 · 사전·번역 · ⋮ (over an existing quote: 복사 · 메모 · 인용 삭제 · 사전·번역 · ⋮) — and the
- * ⋮ menu in the order 색 골라 인용… · 공유 · 문단 · 검색 · 웹 검색 · 여기서 읽기 · 문구 지우기 (TXT only).
+ * ⋮ menu in the order 색 골라 인용… · 공유 · 문단 선택 · 책에서 검색 · 웹 검색 · 여기부터 듣기 · 문구 지우기 (TXT only).
  */
 internal object SelectionActions {
     enum class Id(val label: String) {
@@ -22,10 +22,10 @@ internal object SelectionActions {
         MORE("더보기"),
         PICK_STYLE("색 골라 인용…"),
         SHARE("공유"),
-        PARAGRAPH("문단"),
-        SEARCH("검색"),
+        PARAGRAPH("문단 선택"),
+        SEARCH("책에서 검색"),
         WEB_SEARCH("웹 검색"),
-        READ_ALOUD("여기서 읽기"),
+        READ_ALOUD("여기부터 듣기"),
         DELETE_PHRASE("문구 지우기"),
     }
 

@@ -12,12 +12,22 @@ internal class StatusInputs {
     @JvmField var bar = -1f                                       // char progress of the page start; last page = 1; -1 = off
     @JvmField var chapterTitle: String? = null; @JvmField var bookTitle: String? = null
     @JvmField var chapterStartsHere = false                       // the page begins the chapter: CHAPTER draws nothing (§6 P1-16)
-    @JvmField var chapterPagesLeft = -1
+    @JvmField var chapterPage = -1; @JvmField var chapterPages = -1   // R2 "2/32"; -1 = unknown (no TOC)
     @JvmField var minutesEpisode = -1; @JvmField var minutesBook = -1
     @JvmField var epNumbered = false; @JvmField var epNumber = -1; @JvmField var epMax = -1
     @JvmField var tocIndex = -1; @JvmField var tocCount = 0
     @JvmField var minuteOfDay = -1; @JvmField var is24 = true
     @JvmField var battery = -1
+
+    /**
+     * R2 "2/32": global page [cur] in the chapter that begins on page [first] (1 for the front matter before the first
+     * TOC entry) and ends before page [next] (where the next chapter begins; total + 1 after the last one). Estimates
+     * that disagree never show page 0 or a page past the chapter's last.
+     */
+    fun setChapterPage(cur: Int, first: Int, next: Int) {
+        chapterPage = (cur - first + 1).coerceAtLeast(1)
+        chapterPages = (next - first).coerceAtLeast(chapterPage)
+    }
 }
 
 /**
@@ -78,7 +88,7 @@ internal class StatusModel {
     private fun chars(b: CharArray, item: StatusItem, inp: StatusInputs): Int = when (item) {
         StatusItem.PAGE -> if (inp.page <= 0) 0 else StatusText.page(b, 0, inp.page, inp.total)
         StatusItem.PERCENT -> if (inp.percent < 0) 0 else StatusText.percent(b, 0, inp.percent)
-        StatusItem.CHAPTER_PAGES_LEFT -> if (inp.chapterPagesLeft < 0) 0 else StatusText.chapterLeft(b, 0, inp.chapterPagesLeft)
+        StatusItem.CHAPTER_PAGES_LEFT -> if (inp.chapterPage <= 0) 0 else StatusText.chapterPage(b, 0, inp.chapterPage, inp.chapterPages)
         StatusItem.EPISODE ->
             if ((inp.epNumbered && inp.epNumber > 0) || inp.tocIndex >= 0) {
                 StatusText.episode(b, 0, inp.epNumbered, inp.epNumber, inp.epMax, inp.tocIndex, inp.tocCount)
@@ -126,12 +136,9 @@ internal class StatusModel {
 /** Allocation-free formatters; output identical to their ReaderFormat twins (tested). Return the new length. */
 internal object StatusText {
     private const val PAGE_SEP = " / "
-    private const val CHAPTER_LAST = "챕터 마지막 쪽"
-    private const val CHAPTER_PREFIX = "챕터 "
-    private const val CHAPTER_SUFFIX = "쪽 남음"
     private const val EPISODE_SUFFIX = "화"
     private const val SCOPE_BOOK = "책 "
-    private const val SCOPE_EPISODE = "이 화 "
+    private const val SCOPE_CHAPTER = "챕터 "
     private const val UNDER_MINUTE = "1분 미만"
     private const val MINUTES = "분"
     private const val HOURS = "시간"
@@ -157,10 +164,8 @@ internal object StatusText {
         return int(buf, n, minute)
     }
 
-    fun chapterLeft(buf: CharArray, at: Int, pages: Int): Int {            // "챕터 5쪽 남음" / "챕터 마지막 쪽"
-        if (pages <= 0) return put(buf, at, CHAPTER_LAST)
-        return put(buf, int(buf, put(buf, at, CHAPTER_PREFIX), pages), CHAPTER_SUFFIX)
-    }
+    fun chapterPage(buf: CharArray, at: Int, page: Int, total: Int): Int =   // "2/32" (total ≥ page)
+        int(buf, put(buf, int(buf, at, page), '/'), maxOf(total, page))
 
     fun episode(buf: CharArray, at: Int, numbered: Boolean, n: Int, max: Int, idx: Int, count: Int): Int {  // "123/540화" / "87/612"
         if (numbered && n > 0) {
@@ -169,8 +174,8 @@ internal object StatusText {
         return int(buf, put(buf, int(buf, at, idx + 1), '/'), maxOf(count, idx + 1))
     }
 
-    fun timeLeft(buf: CharArray, at: Int, book: Boolean, minutes: Int): Int {   // "이 화 3분" / "책 7시간 20분" / "… 1분 미만"
-        val n = put(buf, at, if (book) SCOPE_BOOK else SCOPE_EPISODE)
+    fun timeLeft(buf: CharArray, at: Int, book: Boolean, minutes: Int): Int {   // "챕터 3분" / "책 7시간 20분" / "… 1분 미만"
+        val n = put(buf, at, if (book) SCOPE_BOOK else SCOPE_CHAPTER)
         if (minutes < 1) return put(buf, n, UNDER_MINUTE)
         if (minutes < 60) return put(buf, int(buf, n, minutes), MINUTES)
         val h = minutes / 60

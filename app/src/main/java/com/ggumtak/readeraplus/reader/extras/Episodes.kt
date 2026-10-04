@@ -64,7 +64,7 @@ class Episodes private constructor(
     val parsedCount: Int
 
     /**
-     * Largest number, or -1 when none parsed ("540화" in "지금 123화 · 540화"). Special entries count only when every
+     * Largest number, or -1 when none parsed ("540화" in "123/540화"). Special entries count only when every
      * numbered entry is special ("2024년 공지" must not make a 540-episode book read "2024화").
      */
     val maxNumber: Int
@@ -164,7 +164,7 @@ class Episodes private constructor(
     /**
      * The episode the reader is in when TOC entry [index] is the current one: that entry's number when it has one
      * and is not special, else the nearest such number before it (a 작가의 말 after 123화 is still "123화"); -1 when
-     * there is none. Used for "지금 123화".
+     * there is none. Used for "123/540화".
      */
     internal fun numberAt(index: Int): Int {
         var i = index.coerceAtMost(numbers.size - 1)

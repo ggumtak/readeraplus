@@ -2,6 +2,7 @@ package com.ggumtak.readeraplus.ui.settings
 
 import com.ggumtak.readeraplus.data.AutoBackup
 import com.ggumtak.readeraplus.engine.PageBreakMode
+import com.ggumtak.readeraplus.reader.LightPolicy
 import com.ggumtak.readeraplus.reader.extras.SleepChoice
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.HL_LOOK_AUTO
@@ -244,6 +245,10 @@ class SettingsFormatTest {
         assertEquals("없음", R3Rows.slotChoice(StatusItem.NONE))
         assertEquals("시계 (14:05)", R3Rows.slotChoice(StatusItem.CLOCK))
         assertEquals("쪽 번호 (12 / 3259)", R3Rows.slotChoice(StatusItem.PAGE))
+        // R2: the chapter's page sits right under the book's.
+        assertEquals("챕터 쪽 번호 (2/32)", R3Rows.slotChoice(StatusItem.CHAPTER_PAGES_LEFT))
+        assertEquals(StatusItem.PAGE.ordinal + 1, StatusItem.CHAPTER_PAGES_LEFT.ordinal)
+        assertEquals("챕터 남은 시간 (챕터 3분)", R3Rows.slotChoice(StatusItem.TIME_LEFT_EPISODE))
         assertEquals("배터리 (80%)", R3Rows.slotChoice(StatusItem.BATTERY))
         // A title has no example: the chooser does not repeat the name.
         assertEquals("책 제목", R3Rows.slotChoice(StatusItem.BOOK_TITLE))
@@ -272,20 +277,25 @@ class SettingsFormatTest {
 
     @Test
     fun brightnessSubtitles() {
-        assertEquals("화면 좌측을 위아래로 스와이프하여 밝기를 조절합니다", R3Rows.brightnessSwipe(scroll = false, none = false))
-        assertEquals("화면 왼쪽 끝(10%)을 위아래로 끌면 밝기 · 나머지는 스크롤", R3Rows.brightnessSwipe(scroll = true, none = false))
+        assertEquals("왼쪽 가장자리를 위아래로 밀기", R3Rows.brightnessSwipe(scroll = false, none = false))
+        assertEquals("왼쪽 가장자리만 밝기 · 나머지는 스크롤", R3Rows.brightnessSwipe(scroll = true, none = false))
         assertEquals("이 기기에서는 밝기 스와이프를 쓸 수 없습니다", R3Rows.brightnessSwipe(scroll = true, none = true))
-        assertEquals("전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다", R3Rows.brightnessDevice(false, true, true, false))
-        assertEquals("기기 전체 밝기를 바꿉니다 · 리더를 나가면 원래대로", R3Rows.brightnessDevice(true, true, true, false))
-        assertEquals("기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지", R3Rows.brightnessDevice(true, false, true, false))
-        assertEquals("‘시스템 설정 수정’ 권한이 필요합니다 · 눌러서 허용", R3Rows.brightnessDevice(true, true, false, false))
-        assertEquals("이 기기는 앱이 전면광을 바꿀 수 없습니다", R3Rows.brightnessDevice(true, true, true, true))
+        assertEquals("조명이 안 바뀔 때 켜세요", R3Rows.brightnessDevice(false, true, true, false))
+        assertEquals("나가면 원래 밝기로", R3Rows.brightnessDevice(true, true, true, false))
+        assertEquals("나가도 이 밝기 유지", R3Rows.brightnessDevice(true, false, true, false))
+        assertEquals("권한 필요 · 눌러서 허용", R3Rows.brightnessDevice(true, true, false, false))
+        assertEquals("이 기기는 앱이 조명을 바꿀 수 없습니다", R3Rows.brightnessDevice(true, true, true, true))
         // UI_SPEC §4.3 fix 2: an automatic original comes back on leave even when the level stays.
-        assertEquals("기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지 (자동 밝기는 다시 켜짐)",
-            R3Rows.brightnessDevice(true, false, true, false, origAuto = true))
-        assertEquals("기기 전체 밝기를 바꿉니다 · 리더를 나가면 원래대로", R3Rows.brightnessDevice(true, true, true, false, origAuto = true))
-        assertEquals("전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다", R3Rows.brightnessDevice(false, false, true, false, origAuto = true))
-        assertTrue(R3Rows.NO_PERMISSION_SCREEN.endsWith("adb shell appops set com.ggumtak.readeraplus WRITE_SETTINGS allow"))
+        assertEquals("나가도 이 밝기 유지 · 자동 밝기는 다시 켬", R3Rows.brightnessDevice(true, false, true, false, origAuto = true))
+        assertEquals("나가면 원래 밝기로", R3Rows.brightnessDevice(true, true, true, false, origAuto = true))
+        assertEquals("조명이 안 바뀔 때 켜세요", R3Rows.brightnessDevice(false, false, true, false, origAuto = true))
+        // The settings page and the reader say the same.
+        for (on in booleanArrayOf(true, false)) for (restore in booleanArrayOf(true, false)) for (write in booleanArrayOf(true, false)) {
+            assertEquals(LightPolicy.deviceSubtitle(on, restore, on && !write, false, false), R3Rows.brightnessDevice(on, restore, write, false))
+        }
+        assertEquals("밝기 · 색온도(따뜻한 빛)", R3Rows.LIGHT_SETTINGS)
+        assertEquals(LightPolicy.DEVICE_DIALOG, R3Rows.DEVICE_DIALOG)
+        assertTrue(R3Rows.NO_PERMISSION_SCREEN.endsWith("명령으로 허용할 수 있습니다.\n\nadb shell appops set com.ggumtak.readeraplus WRITE_SETTINGS allow"))
     }
 
     @Test

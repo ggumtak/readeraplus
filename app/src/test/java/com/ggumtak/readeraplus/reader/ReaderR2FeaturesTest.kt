@@ -69,8 +69,8 @@ class ReaderR2FeaturesTest {
 
     @Test
     fun timeLeft() {
-        assertEquals("이 화 3분", ReaderFormat.timeLeft(false, 3))
-        assertEquals("이 화 1분 미만", ReaderFormat.timeLeft(false, 0))
+        assertEquals("챕터 3분", ReaderFormat.timeLeft(false, 3))
+        assertEquals("챕터 1분 미만", ReaderFormat.timeLeft(false, 0))
         assertEquals("책 7시간 20분", ReaderFormat.timeLeft(true, 440))
         assertEquals("책 104시간", ReaderFormat.timeLeft(true, 104 * 60 + 5))
         assertEquals(0, ReaderFormat.minutesFor(599, 600))
@@ -84,8 +84,7 @@ class ReaderR2FeaturesTest {
     fun endPanelTexts() {
         assertEquals("읽은 시간 4시간 12분", ReaderFormat.readTime(4 * 3600 + 12 * 60 + 30))
         assertEquals("읽은 시간 1분 미만", ReaderFormat.readTime(20))
-        assertEquals("완독 처리됨", EndPanel.finishedLabel(true))
-        assertEquals("완독으로 표시", EndPanel.finishedLabel(false))
+        assertEquals("다 읽은 책으로 표시", EndPanel.FINISHED_LABEL)
     }
 
     @Test

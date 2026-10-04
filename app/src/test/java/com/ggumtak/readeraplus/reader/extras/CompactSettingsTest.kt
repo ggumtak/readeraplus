@@ -38,7 +38,7 @@ class CompactSettingsTest {
         assertEquals("3–5", PageLabel.clean("3~5"))
         assertEquals("", PageLabel.clean(null))
         assertEquals("", PageLabel.clean(""))
-        val plain = "12 / 3259  ·  챕터 5쪽 남음"
+        val plain = "12 / 3259 · 2/32"
         assertSame(plain, PageLabel.clean(plain))
         for (l in listOf("~1 / ~2", "~12", "a ~ b", "～")) assertFalse(l, PageLabel.clean(l).contains('~') || PageLabel.clean(l).contains('～'))
     }
@@ -66,10 +66,10 @@ class CompactSettingsTest {
     @Test
     fun goToInfoText() {
         val pct = GoToText.percent(0.52f)
-        assertEquals("현재 12 / 3259쪽  ·  $pct", GoToText.info(12, 3259, 0.52f, pagesKnown = true))
+        assertEquals("현재 12 / 3259쪽 · $pct", GoToText.info(12, 3259, 0.52f, pagesKnown = true))
         assertEquals("현재 $pct", GoToText.info(-1, -1, 0.52f, pagesKnown = true))
         val counting = GoToText.info(12, 3260, 0.52f, pagesKnown = false)
-        assertTrue(counting.startsWith("현재 12 / 3260쪽  ·  $pct\n"))
+        assertEquals("현재 12 / 3260쪽 · $pct\n쪽수 계산 중 · %로 이동하세요", counting)
         assertFalse(counting.contains('~'))
     }
 

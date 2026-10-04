@@ -54,7 +54,7 @@ class SelectionActionsTest {
     @Test
     fun labels_areTheSpecStrings() {
         assertEquals(
-            listOf("복사", "인용", "메모", "사전·번역", "더보기", "색 골라 인용…", "공유", "문단", "검색", "웹 검색", "여기서 읽기", "문구 지우기"),
+            listOf("복사", "인용", "메모", "사전·번역", "더보기", "색 골라 인용…", "공유", "문단 선택", "책에서 검색", "웹 검색", "여기부터 듣기", "문구 지우기"),
             listOf(Id.COPY, Id.QUOTE, Id.NOTE, Id.LOOKUP, Id.MORE, Id.PICK_STYLE, Id.SHARE, Id.PARAGRAPH, Id.SEARCH,
                 Id.WEB_SEARCH, Id.READ_ALOUD, Id.DELETE_PHRASE).map { it.label },
         )

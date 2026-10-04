@@ -189,7 +189,7 @@ internal class ThumbsTab(private val host: ReaderHost, private val close: () -> 
     private fun askPage() {
         if (total <= 0 || geometry == null) return
         val max = total // the hint keeps the total of the moment it opens
-        InkNumPad.show(ctx, "쪽 번호", "1–$max", NumPadState.lengthFor(max)) { p ->
+        InkNumPad.show(ctx, "쪽 번호", "1–${max}쪽", NumPadState.lengthFor(max)) { p ->
             if (started) request(ThumbGridMath.gridPageOf(p.coerceIn(1, max), perPage))
             null
         }

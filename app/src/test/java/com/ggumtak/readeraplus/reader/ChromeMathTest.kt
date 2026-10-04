@@ -28,10 +28,10 @@ class ChromeMathTest {
 
     @Test
     fun stripUsesTheShortFormOnlyWhenTheLabelsCollide() {
-        // Comet, density 2, 15 sp: "‹ 10 페이지로" (≈ 222 px with paddings and the chevron) + "지우기" (144 px min).
+        // Comet, density 2, 15 sp: "‹ 10쪽으로" (≈ 222 px with paddings and the chevron) + "지우기" (144 px min).
         assertFalse(ChromeMath.stripShort(222f, 154f, 0f, 720f, 16f))
         assertFalse(ChromeMath.stripShort(222f, 154f, 222f, 720f, 16f))
-        // 1.3× font scale with 5-digit pages: "‹ 12345 페이지로" + "23259 페이지로 ›" ≈ 326 px each.
+        // 1.3× font scale with 5-digit pages: "‹ 12345쪽으로" + "23259쪽으로 ›" ≈ 326 px each.
         assertTrue(ChromeMath.stripShort(326f, 181f, 326f, 720f, 16f))
         // A side that reaches the centred box alone is enough.
         assertTrue(ChromeMath.stripShort(300f, 154f, 0f, 720f, 16f))

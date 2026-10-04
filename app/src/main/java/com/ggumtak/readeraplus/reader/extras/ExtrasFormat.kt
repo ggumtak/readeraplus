@@ -13,9 +13,8 @@ import com.ggumtak.readeraplus.settings.UserStyles
 import com.ggumtak.readeraplus.ui.kit.isNoSpace
 import com.ggumtak.readeraplus.ui.kit.ownMessage
 import com.ggumtak.readeraplus.ui.kit.userMessage
+import com.ggumtak.readeraplus.ui.settings.SettingsFormat
 import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import java.util.regex.PatternSyntaxException
 import kotlin.math.abs
@@ -54,13 +53,11 @@ internal object Fmt {
         return if (h > 0) "${h}시간 ${m}분" else "${m}분"
     }
 
-    /** "2026.09.29 14:05", or "-" for 0. */
-    fun dateTime(ms: Long): String =
-        if (ms <= 0) "-" else SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA).format(Date(ms))
+    /** "9월 29일 14:05" (another year: "2025년 9월 29일 14:05"), or "-" for 0: the app's one wording ([SettingsFormat]). */
+    fun dateTime(ms: Long): String = if (ms <= 0) "-" else SettingsFormat.dateTime(ms)
 
-    /** "yyyy.MM.dd" or "-". */
-    fun date(ms: Long): String =
-        if (ms <= 0) "-" else SimpleDateFormat("yyyy.MM.dd", Locale.KOREA).format(Date(ms))
+    /** A list's date, "9월 29일" (another year: "2025년 9월 29일"), or "-" for 0. */
+    fun date(ms: Long): String = if (ms <= 0) "-" else SettingsFormat.date(ms)
 
     /** 0..1 → "34%", "0.4%", "100%". */
     fun percent(fraction: Float): String {
@@ -300,10 +297,10 @@ internal object GoToText {
     /** Percent exactly as the reader footer prints it for [fraction] (0..1). */
     fun percent(fraction: Float): String = "${ReaderFormat.percent(if (fraction.isNaN()) 0f else fraction)}%"
 
-    /** "현재 12 / 3259쪽  ·  34%" (+ a note while the page count is still running). */
+    /** "현재 12 / 3259쪽 · 34%" (+ a note while the page count is still running). */
     fun info(page: Int, total: Int, fraction: Float, pagesKnown: Boolean): String {
-        val where = if (page > 0) "현재 $page${if (total > 0) " / $total" else ""}쪽  ·  " else "현재 "
-        val note = if (!pagesKnown) "\n(쪽수 계산 중 — 퍼센트로 이동할 수 있습니다)" else ""
+        val where = if (page > 0) "현재 $page${if (total > 0) " / $total" else ""}쪽 · " else "현재 "
+        val note = if (!pagesKnown) "\n쪽수 계산 중 · %로 이동하세요" else ""
         return where + percent(fraction) + note
     }
 }
@@ -343,13 +340,16 @@ internal object SearchText {
     fun percent(scanned: Int, total: Int): Int =
         if (total <= 0) 0 else (scanned.toLong() * 100 / total).toInt().coerceIn(0, 99)
 
-    /** "검색 중 34%" (+ "  ·  8개" once something is found), then "57개 결과", "결과 없음" or the capped count. */
+    /** "검색 중 34%" (+ " · 8개" once something is found), then "57개 결과", "결과 없음" or the capped count. */
     fun status(scanned: Int, total: Int, hits: Int, complete: Boolean, capped: Boolean, max: Int): String = when {
-        !complete -> "검색 중 ${percent(scanned, total)}%" + if (hits > 0) "  ·  ${hits}개" else ""
-        capped -> "${hits}개 결과 (최대 ${max}개까지 표시)"
+        !complete -> "검색 중 ${percent(scanned, total)}%" + if (hits > 0) " · ${hits}개" else ""
+        capped -> "${max}개 이상 (앞 ${max}개만 표시)"
         hits == 0 -> "결과 없음"
         else -> "${hits}개 결과"
     }
+
+    /** The empty list after a search: "‘등불’이 들어간 곳이 없습니다". */
+    fun noHits(query: String): String = "‘$query’${Josa.iGa(query)} 들어간 곳이 없습니다"
 }
 
 /**
@@ -639,35 +639,36 @@ internal object VoiceChoice {
 }
 
 /**
- * The TTS sleep timer choices (T1-11): 끔 / 15 / 30 / 45 / 60 / 90분 / 이 화 끝까지 / 2화 끝까지. Chapters
+ * The 멈춤 예약 choices (T1-11): 끔 · 15 · 30 · 45 · 60 · 90분 · 이 챕터 끝까지 · 다음 챕터 끝까지. Chapters
  * ([AppSettings.ttsSleepChapters]) win over minutes. Pure.
  */
 internal object SleepChoice {
     class Option(val minutes: Int, val chapters: Int, val label: String)
 
     val OPTIONS: List<Option> = listOf(0, 15, 30, 45, 60, 90).map { Option(it, 0, Fmt.minutes(it)) } +
-        Option(0, 1, "이 화 끝까지") + Option(0, 2, "2화 끝까지")
+        Option(0, 1, "이 챕터 끝까지") + Option(0, 2, "다음 챕터 끝까지")
 
     /** Chooser index of the saved values; -1 when they are not among the options (an older build's 10 / 120분). */
     fun indexOf(minutes: Int, chapters: Int): Int =
         if (chapters > 0) OPTIONS.indexOfFirst { it.chapters == chapters } else OPTIONS.indexOfFirst { it.chapters == 0 && it.minutes == minutes }
 
-    /** Row summary: "끔", "30분", "이 화 끝까지", "2화 끝까지". */
+    /** Row summary: "끔", "30분", "이 챕터 끝까지", "다음 챕터 끝까지" ("챕터 3개 끝까지" from an older build). */
     fun summary(minutes: Int, chapters: Int): String = when {
-        chapters == 1 -> "이 화 끝까지"
-        chapters >= 2 -> "${chapters}화 끝까지"
+        chapters == 1 -> "이 챕터 끝까지"
+        chapters == 2 -> "다음 챕터 끝까지"
+        chapters > 2 -> "챕터 ${chapters}개 끝까지"
         else -> Fmt.minutes(minutes)
     }
 
     /**
-     * The control bar's note while the timer runs: "3분 후 멈춤" ([remainingMs], rounded up), "이 화 끝나면 멈춤" /
-     * "다음 화 끝나면 멈춤" ([chaptersLeft] boundaries to go); "" when no timer runs.
+     * The control bar's note while the timer runs: "3분 뒤 멈춤" ([remainingMs], rounded up), "이 챕터 끝나면 멈춤" /
+     * "다음 챕터 끝나면 멈춤" ([chaptersLeft] boundaries to go); "" when no timer runs.
      */
     fun barNote(remainingMs: Long, chaptersLeft: Int): String = when {
-        chaptersLeft == 1 -> "이 화 끝나면 멈춤"
-        chaptersLeft == 2 -> "다음 화 끝나면 멈춤"
-        chaptersLeft > 2 -> "${chaptersLeft}화 뒤 멈춤"
-        remainingMs > 0 -> "${(remainingMs + 59_999L) / 60_000L}분 후 멈춤"
+        chaptersLeft == 1 -> "이 챕터 끝나면 멈춤"
+        chaptersLeft == 2 -> "다음 챕터 끝나면 멈춤"
+        chaptersLeft > 2 -> "챕터 ${chaptersLeft}개 뒤 멈춤"
+        remainingMs > 0 -> "${(remainingMs + 59_999L) / 60_000L}분 뒤 멈춤"
         else -> ""
     }
 }

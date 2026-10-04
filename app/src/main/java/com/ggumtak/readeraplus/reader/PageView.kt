@@ -177,7 +177,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                 if (!drawFailed) Log.w(TAG, "scroll draw failed", t)
                 drawFailed = true
                 canvas.drawColor(Color.WHITE)
-                canvas.drawText("페이지를 그리지 못했습니다.", 12f * resources.displayMetrics.density,
+                canvas.drawText("페이지를 그리지 못했습니다", 12f * resources.displayMetrics.density,
                     errorPaint.textSize * 2f, errorPaint)
                 false
             }

@@ -37,7 +37,7 @@ import com.ggumtak.readeraplus.ui.kit.vertical
  * Reader chrome (hidden by default, U §2): an overlay that never resizes the page. The top bar holds the actions
  * (back, bookmark, TTS, search, TOC, settings, more), the one-line book title and the brightness row with its lazily
  * built options panel; the bottom bar holds the return strip ([ReturnNav.dock]), the page label centred on the full
- * width with [rotation][pin] on the right, and the seek row ([이전 화] seek bar [다음 화]). White, 1 px black lines, no
+ * width with [rotation][pin] on the right, and the seek row ([이전 챕터] seek bar [다음 챕터]). White, 1 px black lines, no
  * animation, state shown by swapping icons (never `isSelected`). Both bars swallow touches so taps never fall through
  * to the page. While the seek bar is dragged a full-width preview box floats just above the bottom bar (outside the
  * bars, so their heights never change). Every setter compares with the last bound value: an unchanged view is never
@@ -53,7 +53,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         fun onSettings(anchor: View)
         fun onMore(anchor: View)
         fun onPageLabel()
-        /** [이전 화] / [다음 화] beside the seek bar (T1-5): the previous / next chapter start, no return chip. */
+        /** [이전 챕터] / [다음 챕터] beside the seek bar (T1-5): the previous / next chapter start, no return chip. */
         fun onChapter(next: Boolean)
         fun onRotation()
         fun onRotationChooser()
@@ -122,13 +122,13 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     // Options panel values: cached until the rows exist, then bound on change.
     private var swipeOn = false
     private var swipeEnabled = true
-    private var swipeSubtitle = SWIPE_SUBTITLE
+    private var swipeSubtitle = LightPolicy.SWIPE_SUBTITLE
     private var askKind = LightController.ASK_NONE
     private var deviceOn = false
-    private var deviceSubtitle = DEVICE_SUBTITLE_OFF
+    private var deviceSubtitle = LightPolicy.DEVICE_OFF
     private var deviceEnabled = true
     private var panelRowVisible = false
-    private var panelSubtitle = PANEL_SUBTITLE
+    private var panelSubtitle = LightPolicy.PANEL_SUBTITLE
     private var rows: OptionRows? = null
 
     // SeekBar looks (U §2.2): manual = solid black thumb; auto = hollow ring thumb and a grey progress track.
@@ -149,7 +149,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         bookmark = ctx.iconButton(R.drawable.ic_bookmark, "북마크 추가") { actions.onBookmark() }
         bookmark.setOnLongClickListener { v -> ctx.toast(v.contentDescription); true }   // the current description
         actionsRow.addView(bookmark)
-        actionsRow.addView(ctx.iconButton(R.drawable.ic_volume_up, "TTS 읽기") { actions.onTts() })
+        actionsRow.addView(ctx.iconButton(R.drawable.ic_volume_up, "듣기") { actions.onTts() })
         actionsRow.addView(ctx.iconButton(R.drawable.ic_search, "검색") { actions.onSearch() })
         actionsRow.addView(ctx.iconButton(R.drawable.ic_toc, "목차") { actions.onToc() })
         gear = ctx.iconButton(R.drawable.ic_settings, "읽기 설정") { v -> actions.onSettings(v) }
@@ -226,7 +226,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         }
         labelRow.addView(pageLabel, FrameLayout.LayoutParams(ctx.dp(144), ctx.dp(48), Gravity.CENTER))
         val cluster = ctx.horizontal()
-        rotation = ctx.iconButton(R.drawable.ic_screen_rotation, "화면 회전 잠금") { actions.onRotation() }
+        rotation = ctx.iconButton(R.drawable.ic_screen_rotation, ROTATION_LOCK) { actions.onRotation() }
         rotation.setOnLongClickListener { actions.onRotationChooser(); true }
         cluster.addView(rotation)
         pin = ctx.iconButton(R.drawable.ic_push_pin, PIN_SET) { actions.onPinHere() }
@@ -270,9 +270,9 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             })
         }
         val seekRow = ctx.horizontal { setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
-        seekRow.addView(ctx.iconButton(R.drawable.ic_skip_previous, "이전 화") { actions.onChapter(false) })
+        seekRow.addView(ctx.iconButton(R.drawable.ic_skip_previous, "이전 챕터") { actions.onChapter(false) })
         seekRow.addView(seek, lp(0, WRAP_CONTENT, 1f))
-        seekRow.addView(ctx.iconButton(R.drawable.ic_skip_next, "다음 화") { actions.onChapter(true) })
+        seekRow.addView(ctx.iconButton(R.drawable.ic_skip_next, "다음 챕터") { actions.onChapter(true) })
         bottom.addView(seekRow, lp())
     }
 
@@ -465,6 +465,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         if (boundRotationLocked == locked) return
         boundRotationLocked = locked
         rotation.setImageResource(if (locked) R.drawable.ic_screen_lock_rotation else R.drawable.ic_screen_rotation)
+        // What a tap does: unlock while locked.
+        rotation.contentDescription = if (locked) ROTATION_UNLOCK else ROTATION_LOCK
     }
 
     // ------------------------------------------------------------------ brightness (bound by LightController only)
@@ -622,7 +624,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             }
             val texts = ctx.vertical()
             texts.addView(ctx.label(PANEL_TITLE, 15f, maxLines = 1))
-            panelSub = subtitle(PANEL_SUBTITLE)
+            panelSub = subtitle(LightPolicy.PANEL_SUBTITLE)
             texts.addView(panelSub)
             panelRow.addView(texts, lp(0, WRAP_CONTENT, 1f))
             panelRow.addView(ctx.icon(R.drawable.ic_chevron_right, 24, Ink.GRAY))
@@ -733,19 +735,18 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     private companion object {
         const val PAGE_LABEL = "페이지 이동"
         const val PIN_SET = "이 페이지 고정"
-        const val PIN_MOVE = "이 페이지로 고정 옮기기"
+        const val PIN_MOVE = "여기로 고정 옮기기"
         const val PIN_RELEASE = "고정 해제"
         const val AUTO_FOLLOW = "시스템 밝기 따르기"
         const val AUTO_MANUAL = "직접 밝기 조절"
         const val OPTIONS = "밝기 옵션"
         const val UNAVAILABLE_LINK = "기기 조명 설정에서 조절"
         const val SWIPE_TITLE = "스와이프로 밝기 조절"
-        const val SWIPE_SUBTITLE = "화면 왼쪽 가장자리를 위아래로 밀어 밝기를 바꿉니다"
         const val DEVICE_TITLE = "기기 밝기 직접 조절"
-        const val DEVICE_SUBTITLE_OFF = "전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다"
         const val PANEL_TITLE = "기기 조명 설정 열기"
-        const val PANEL_SUBTITLE = "색온도(따뜻한 빛)는 기기 조명에서 바꿉니다"
-        const val ASK_WINDOW_TEXT = "전면광 밝기가 바뀌었나요?"
-        const val ASK_DEVICE_TEXT = "막대를 움직여 보세요. 전면광이 바뀌나요?"
+        const val ROTATION_LOCK = "화면 회전 잠금"
+        const val ROTATION_UNLOCK = "화면 회전 잠금 해제"
+        const val ASK_WINDOW_TEXT = "조명 밝기가 바뀌었나요?"
+        const val ASK_DEVICE_TEXT = "막대를 움직여 보세요. 조명이 바뀌나요?"
     }
 }

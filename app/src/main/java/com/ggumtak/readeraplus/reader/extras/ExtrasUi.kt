@@ -357,7 +357,7 @@ internal object TextActions {
         }
         val pm = activity.packageManager
         val labels = apps.map { it.loadLabel(pm).toString() } + "웹 검색"
-        activity.alert().setTitle("사전 · 번역")
+        activity.alert().setTitle("사전·번역")
             .setItems(labels.toTypedArray()) { _, which ->
                 if (which >= apps.size) {
                     webSearch(activity, text) { onPicked?.invoke(Lookups.VIA_WEB, webSearchHost()) }

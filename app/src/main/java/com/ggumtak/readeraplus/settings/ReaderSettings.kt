@@ -257,7 +257,7 @@ data class AppSettings(
     val ttsRate: Float = 1f,
     val ttsPitch: Float = 1f,
     val ttsSleepMinutes: Int = 0,
-    /** TTS sleep timer by episodes: 0 = off, 1 = "이 화 끝까지", 2 = "2화 끝까지" (instead of [ttsSleepMinutes]). */
+    /** 멈춤 예약 by chapters: 0 = off, 1 = "이 챕터 끝까지", 2 = "다음 챕터 끝까지" (instead of [ttsSleepMinutes]). */
     val ttsSleepChapters: Int = 0,
     /** "읽는 문장 표시": underline the sentence being spoken (each sentence redraws the page: one e-ink update). */
     val ttsHighlight: Boolean = true,
@@ -311,7 +311,7 @@ enum class LibraryListMode(val label: String) { LIST("전체"), COMPACT("요약"
 
 /**
  * What one slot of the page's status lines shows. The header and the footer each have three slots
- * (left / centre / right). Stored by name ("r.footerLeft" = "CLOCK"): never rename an entry, only append.
+ * (left / centre / right). Stored by name ("r.footerLeft" = "CLOCK"): never rename or remove an entry.
  * The declaration order is the chooser order. [short] labels the popup's slot buttons (≤ 6 Hangul).
  * [example] is shown in choosers that have no live value.
  */
@@ -320,10 +320,10 @@ enum class StatusItem(val label: String, val short: String, val example: String?
     CHAPTER("챕터 제목", "챕터 제목", "제3화 비밀"),
     BOOK_TITLE("책 제목", "책 제목", null),
     PAGE("쪽 번호", "쪽 번호", "12 / 3259"),
+    CHAPTER_PAGES_LEFT("챕터 쪽 번호", "챕터 쪽", "2/32"),            // the name of its old meaning (pages left) stays
     PERCENT("진행률", "진행률", "34%"),
-    CHAPTER_PAGES_LEFT("챕터 남은 쪽", "남은 쪽", "챕터 5쪽 남음"),
     EPISODE("회차", "회차", "123/540화"),
-    TIME_LEFT_EPISODE("이 화 남은 시간", "화 남은 시간", "이 화 3분"),
+    TIME_LEFT_EPISODE("챕터 남은 시간", "챕터 시간", "챕터 3분"),
     TIME_LEFT_BOOK("책 남은 시간", "책 남은 시간", "책 7시간 20분"),
     CLOCK("시계", "시계", "14:05"),
     BATTERY("배터리", "배터리", "80%"),                      // [Δ] no "▭": U+25AD is missing from some firmware fonts

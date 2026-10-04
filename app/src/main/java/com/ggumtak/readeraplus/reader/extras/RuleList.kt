@@ -62,7 +62,7 @@ object RuleList {
         return sb.toString().trimEnd('\n')
     }
 
-    /** Rules the parser applies: non-blank, non-comment lines with "=>" (the row summary "치환 규칙 (n개 켜짐)"). */
+    /** Rules the parser applies: non-blank, non-comment lines with "=>" (the row summary "바꾸기 규칙 (n개 켜짐)"). */
     fun enabledCount(text: String): Int = text.lineSequence().count { line ->
         val t = line.trim()
         t.isNotEmpty() && !t.startsWith("#") && t.indexOf("=>") > 0
@@ -182,7 +182,7 @@ internal object RuleEdit {
             return Built(RuleItem(name, RuleLiteral.quote(f.find), Matcher.quoteReplacement(replace), enabled), null)
         }
         var pattern = f.find.trim()
-        if (pattern.contains("=>")) return Built(null, "정규식에 '=>'를 쓰려면 '=[>]'로 적으세요")
+        if (pattern.contains("=>")) return Built(null, "정규식에 ‘=>’를 쓰려면 ‘=[>]’로 적으세요")
         // A rule line starting with '#' is a comment to the parser: escape the character (same regex).
         if (pattern.startsWith("#")) pattern = "\\$pattern"
         val compiled = try {
@@ -242,7 +242,7 @@ internal object RuleText {
 }
 
 /**
- * The ready-made cleanup rules ("정리 규칙 팩", T1-10): original patterns for common 텍본 noise. None is in any rule
+ * The ready-made cleanup rules ("추천 규칙", T1-10): original patterns for common 텍본 noise. None is in any rule
  * text until the user adds it; an added pack is an ordinary named rule (it can be switched off or edited).
  */
 internal object CleanupPacks {
