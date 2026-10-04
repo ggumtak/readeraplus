@@ -83,8 +83,8 @@ class ReaderFormatTest {
         assertEquals("내용이 없는 책입니다", ReaderFormat.openError(DocumentException("내용이 없는 책입니다")))
         assertEquals("내용이 없는 문서입니다", ReaderFormat.openError(DocumentException("내용이 없는 문서입니다.")))
         assertEquals(
-            "손상된 EPUB 파일입니다: a.epub",
-            ReaderFormat.openError(DocumentException("손상된 EPUB 파일입니다: a.epub", ZipException("bad"))),
+            "EPUB 파일이 손상되었습니다",
+            ReaderFormat.openError(DocumentException("EPUB 파일이 손상되었습니다", ZipException("bad"))),
         )
         // Never an exception message or class name in the message itself.
         for (t in listOf(IOException("secret/path"), RuntimeException("x"), ZipException("y"))) {
@@ -109,8 +109,8 @@ class ReaderFormatTest {
         // The path is the grey detail line: it tells which file is missing.
         assertEquals("/storage/emulated/0/책/소설.txt", ReaderFormat.openErrorDetail(missing))
         // A content URI is dropped altogether (percent-encoded, unreadable).
-        val uri = DocumentException("파일을 읽을 수 없습니다.\ncontent://com.android.externalstorage.documents/document/primary%3ADownload%2Fa.txt")
-        assertEquals("파일을 읽을 수 없습니다", ReaderFormat.openError(uri))
+        val uri = DocumentException("파일을 읽지 못했습니다\ncontent://com.android.externalstorage.documents/document/primary%3ADownload%2Fa.txt")
+        assertEquals("파일을 읽지 못했습니다", ReaderFormat.openError(uri))
         assertNull(ReaderFormat.openErrorDetail(uri))
     }
 
@@ -120,8 +120,8 @@ class ReaderFormatTest {
             ReaderFormat.sectionError(ZipException("invalid entry size (expected 10 but got 5) OEBPS/ch1.xhtml")))
         // Never "…지 못했습니다 (…지 못했습니다)".
         assertEquals("이 부분을 표시하지 못했습니다 (파일 읽기 오류)", ReaderFormat.sectionError(IOException("EIO")))
-        assertEquals("이 부분을 표시하지 못했습니다 (EPUB을 해석할 수 없습니다: a.epub)",
-            ReaderFormat.sectionError(DocumentException("EPUB을 해석할 수 없습니다: a.epub", IllegalStateException("x"))))
+        assertEquals("이 부분을 표시하지 못했습니다 (EPUB 파일이 올바르지 않습니다)",
+            ReaderFormat.sectionError(DocumentException("EPUB 파일이 올바르지 않습니다", IllegalStateException("x"))))
         assertEquals("이 부분을 표시하지 못했습니다 (자세히: IllegalStateException)",
             ReaderFormat.sectionError(IllegalStateException("unexpected token <p> at OEBPS/Text/ch1.xhtml")))
         assertEquals("이 부분을 표시하지 못했습니다 (메모리 부족)", ReaderFormat.sectionError(OutOfMemoryError()))

@@ -128,9 +128,9 @@ internal class EpubZip private constructor(
             val z = try {
                 openZip(file)
             } catch (e: IOException) {
-                throw DocumentException("EPUB 파일을 열 수 없습니다: ${file.name}", e)
+                throw DocumentException("파일을 읽지 못했습니다", e)
             } catch (e: SecurityException) {
-                throw DocumentException("EPUB 파일을 읽을 권한이 없습니다: ${file.name}", e)
+                throw DocumentException("파일 접근 권한이 없습니다", e)
             }
             try {
                 val map = HashMap<String, ZipEntry>()
@@ -148,7 +148,7 @@ internal class EpubZip private constructor(
                     z.close()
                 } catch (_: IOException) {
                 }
-                throw DocumentException("손상된 EPUB 파일입니다: ${file.name}", e)
+                throw DocumentException("EPUB 파일이 손상되었습니다", e)
             }
         }
 

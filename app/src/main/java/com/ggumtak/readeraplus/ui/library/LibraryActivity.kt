@@ -53,6 +53,7 @@ import com.ggumtak.readeraplus.reader.DeviceLight
 import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderIo
 import com.ggumtak.readeraplus.reader.ResumeState
+import com.ggumtak.readeraplus.reader.extras.Josa
 import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.settings.LibraryListMode
 import com.ggumtak.readeraplus.settings.LibrarySort
@@ -95,12 +96,12 @@ import android.provider.Settings as SystemSettings
 
 /**
  * Library (launcher) screen, ReadEra-style in black & white: toolbar (drawer / shelf title / view toggle / search /
- * overflow), a drawer overlay with every shelf plus 독서 노트 · 단어장, four views (전체 cards, 요약 rows, 썸네일 and
- * 그리드 covers in one GridView), scrolling (the default, every device) or paged with 목록 넘기기 = 쪽 단위 (ListPager
- * + pager bar, no fast scroller), grouped shelves, search-as-you-type, sort, book menu actions, multi-select with batch
- * actions (T1-13), collections, trash,
- * storage permission flow, background scanning with a status row, SAF open/import, open-last-on-start, the idle auto
- * backup and the fresh-install restore offer.
+ * overflow with the library's own work), a drawer overlay for moving between shelves, 독서 노트 · 단어장 and 설정, four
+ * views (자세히 cards, 간단히 rows, 큰 표지 and 작은 표지 in one GridView), scrolling (the default, every device) or
+ * paged with 목록 넘기기 = 쪽 단위 (ListPager + pager bar, no fast scroller), grouped shelves, search-as-you-type, sort,
+ * book menu actions, multi-select with batch actions (T1-13), collections, trash, storage permission flow, background
+ * scanning with a status row, SAF open/import, open-last-on-start, the idle auto backup and the fresh-install restore
+ * offer.
  *
  * Every database call runs on [Dispatchers.IO]; the main thread only binds views. No animations anywhere.
  */
@@ -165,7 +166,11 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private var counts: Map<Shelf, Int>? = null
     /** Reload when the window regains focus (after dialogs owned by other modules that may edit books). */
     internal var refreshOnFocus = false
+    /** Books may come back retitled (책 정보 edited here or in the reader): the next [showBooks] compares titles. */
+    private var checkTitles = false
     private var localStatus: String? = null
+    /** The empty list shows the no-access message and buttons: the permission panel above it hides (no duplicates). */
+    private var noAccessShown = false
     /** Writes in flight on [writeDispatcher]; the list is reloaded from the database only once they are all stored. */
     private var pendingWrites = 0
     /** A reload is owed once [pendingWrites] drops to 0. */
@@ -202,7 +207,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     /** Bumped by every touch or key: the running backup's busy() sees the user come back. */
     @Volatile private var interactions = 0
     @Volatile private var resumedForBackup = false
-    /** The one-time "자동 백업을 … 저장했습니다" line, shown on the status strip for this visit. */
+    /** The one-time "자동 백업을 저장했습니다 · …" line, shown on the status strip for this visit. */
     private var backupNotice: String? = null
     private val backupRunnable = Runnable { runIdleBackup() }
 
@@ -259,7 +264,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private class DrawerItem(val row: LinearLayout, val label: TextView, val count: TextView)
 
-    /** "N권 선택" toolbar: title, [더보기] (one book), [전체], [닫기], then the batch actions. */
+    /** "N권 선택" toolbar: title, [더보기] (one book), [모두 선택], [닫기], then the batch actions. */
     private class SelectionBar(
         val root: LinearLayout,
         val title: TextView,
@@ -366,8 +371,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     override fun onRestart() {
         super.onRestart()
         // Back from the reader / settings: they can add books to collections, so the card icons must be
-        // recomputed (the onResume reload picks this up).
+        // recomputed (the onResume reload picks this up), and edit a title drawn on a generated cover.
         collectionMembers = null
+        checkTitles = true
     }
 
     override fun onResume() {
@@ -462,7 +468,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private fun pendingBackupNotice(): String? {
         val raw = Settings.raw()
         if (raw.getBoolean(PREF_BACKUP_NOTICE, false) || AutoBackup.lastWrittenAt(this) <= 0L) return null
-        return LibraryText.autoBackupNotice(AutoBackup.locationLabel())
+        return LibraryText.AUTO_BACKUP_NOTICE
     }
 
     override fun onStop() {
@@ -521,6 +527,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         // A dialog or menu in front is not idle: the wait for the periodic scan starts over when it closes.
         restartAutoScanWait()
         if (hasFocus && refreshOnFocus && uiBuilt) {
+            checkTitles = true
             invalidateCounts()
             reload()
         }
@@ -647,7 +654,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         }
         content.addView(listView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
 
-        // One GridView serves 썸네일 and 그리드 (configureGrid sets the columns and cells per mode).
+        // One GridView serves 큰 표지 and 작은 표지 (configureGrid sets the columns and cells per mode).
         gridView = InkGridView(this).apply {
             numColumns = LibraryGridMath.columns(LibraryListMode.GRID, resources.displayMetrics.widthPixels / resources.displayMetrics.density)
             stretchMode = GridView.STRETCH_COLUMN_WIDTH
@@ -734,12 +741,12 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         row.addView(titleView, lp(0, WRAP_CONTENT, 1f))
         extraBtn = iconButton(R.drawable.ic_add, "새 컬렉션") { onExtraAction() }.apply { visibility = View.GONE }
         row.addView(extraBtn)
-        // 전체 → 요약 → 썸네일 → 그리드 in one tap each (no chooser dialog to open and close on e-ink).
+        // 자세히 → 간단히 → 큰 표지 → 작은 표지 in one tap each (no chooser dialog to open and close on e-ink).
         viewBtn = iconButton(modeIcon(listMode), modeDescription(listMode)) { cycleListMode() }
         viewBtnMode = listMode
         row.addView(viewBtn)
         row.addView(iconButton(R.drawable.ic_search, "검색") { toggleSearch() })
-        row.addView(iconButton(R.drawable.ic_more_vert, "메뉴") { showOverflow(it) })
+        row.addView(iconButton(R.drawable.ic_more_vert, "더보기") { showOverflow(it) })
         bar.addView(row, lp())
         bar.addView(hairline())
         return bar
@@ -750,7 +757,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val row = horizontal { setPadding(dp(12), 0, dp(4), 0); minimumHeight = dp(52) }
         row.addView(icon(R.drawable.ic_search, 22, Ink.GRAY))
         searchEdit = InkEditText(this).apply {
-            hint = "제목, 작가, 파일 이름"
+            hint = "제목 · 작가 · 파일 이름 검색"
             setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT
             imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI
@@ -834,12 +841,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         }
         permPanel.addView(label("모든 파일 접근 권한이 필요합니다", 17f, bold = true), lp())
         permPanel.addView(
-            label(
-                "기기에 있는 EPUB · TXT 파일을 찾아 서재에 보여 주려면 ‘모든 파일 접근’을 허용하세요. " +
-                    "허용하고 돌아오면 자동으로 스캔합니다. 설정 화면이 열리지 않으면 ‘폴더 추가’로 책 폴더를 고르세요.",
-                14f,
-                color = Ink.GRAY,
-            ).apply { setPadding(0, dp(6), 0, dp(10)); setLineSpacing(0f, 1.2f) },
+            label("허용하면 기기에 있는 TXT·EPUB 책을 찾아 서재에 넣습니다.", 15f)
+                .apply { setPadding(0, dp(6), 0, dp(10)); setLineSpacing(0f, 1.2f) },
             lp(),
         )
         val buttons = horizontal()
@@ -849,6 +852,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             })
         }
         add("권한 허용") { requestStorageAccess() }
+        // "스캔 폴더 추가" (its name in ⋮) would wrap in a third of the panel.
         add("폴더 추가") { pickTree() }
         add("닫기") {
             Settings.raw().edit().putBoolean(PREF_PERM_PANEL_HIDDEN, true).apply()
@@ -875,37 +879,36 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         col.addView(header, lp())
         col.addView(hairline())
         col.addView(View(this), lp(MATCH_PARENT, dp(4)))
-        Shelf.entries.forEach { s ->
-            val item = drawerRow(shelfIcon(s), s.label) { selectShelf(s) }
-            drawerItems[s] = item
-            col.addView(item.row, lp())
+        // Navigation only, in groups parted by a line (NOTES_SPEC §10.1): the reading shelves, 독서 노트 · 단어장, the
+        // grouped shelves, the trash, then 설정 · 읽기 기록. The library's own work (scan, files, Wi-Fi) is in ⋮.
+        fun divider() {
+            col.addView(View(this), lp(MATCH_PARENT, dp(4)))
+            col.addView(hairline())
+            col.addView(View(this), lp(MATCH_PARENT, dp(4)))
         }
-        // 독서 노트 · 단어장 after 휴지통 (NOTES_SPEC §10.1); their counts come with the shelf counts.
-        col.addView(hairline())
-        val notes = drawerRow(R.drawable.ic_format_quote, "독서 노트") { closeDrawer(); NotesActivity.open(this) }
-        val words = drawerRow(R.drawable.ic_translate, "단어장") { closeDrawer(); NotesActivity.open(this, NotesTab.WORDS) }
-        notesItems = arrayOf(notes, words)
-        col.addView(notes.row, lp())
-        col.addView(words.row, lp())
-        col.addView(View(this), lp(MATCH_PARENT, dp(4)))
-        col.addView(hairline())
-        col.addView(View(this), lp(MATCH_PARENT, dp(4)))
+        LibraryText.DRAWER_SHELVES.forEachIndexed { g, shelves ->
+            if (g > 0) divider()
+            for (s in shelves) {
+                val item = drawerRow(shelfIcon(s), s.label) { selectShelf(s) }
+                drawerItems[s] = item
+                col.addView(item.row, lp())
+            }
+            if (g == 0) {
+                // Their counts come with the shelf counts.
+                divider()
+                val notes = drawerRow(R.drawable.ic_format_quote, "독서 노트") { closeDrawer(); NotesActivity.open(this) }
+                val words = drawerRow(R.drawable.ic_translate, "단어장") { closeDrawer(); NotesActivity.open(this, NotesTab.WORDS) }
+                notesItems = arrayOf(notes, words)
+                col.addView(notes.row, lp())
+                col.addView(words.row, lp())
+            }
+        }
+        divider()
         col.addView(drawerRow(R.drawable.ic_settings, "설정") { closeDrawer(); SettingsActivity.open(this) }.row, lp())
         // ic_history, not the spec's ic_schedule: that clock is already 읽을 책's icon a few rows up.
         col.addView(drawerRow(R.drawable.ic_history, "읽기 기록") {
             closeDrawer()
             SettingsActivity.open(this, SettingsActivity.PAGE_STATS)
-        }.row, lp())
-        col.addView(drawerRow(R.drawable.ic_file_open, "파일 열기") { closeDrawer(); openFilePicker() }.row, lp())
-        // Books received there are in the database when this screen resumes: onResume reloads the list and counts.
-        col.addView(drawerRow(R.drawable.ic_download, "Wi-Fi로 책 받기") {
-            closeDrawer()
-            SettingsActivity.open(this, SettingsActivity.PAGE_WIFI)
-        }.row, lp())
-        col.addView(drawerRow(R.drawable.ic_refresh, "도서 스캔") { closeDrawer(); manualScan() }.row, lp())
-        col.addView(drawerRow(R.drawable.ic_info, "정보") {
-            closeDrawer()
-            SettingsActivity.open(this, SettingsActivity.PAGE_ABOUT)
         }.row, lp())
         col.addView(View(this), lp(MATCH_PARENT, dp(12)))
         val scroll = ScrollView(this).apply {
@@ -920,7 +923,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private fun drawerRow(iconRes: Int, text: String, onClick: () -> Unit): DrawerItem {
         val row = horizontal {
-            minimumHeight = dp(52)
+            minimumHeight = dp(48)
             setPadding(dp(16), 0, dp(16), 0)
             background = pressableBackground()
             setOnClickListener { onClick() }
@@ -1165,7 +1168,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         return true
     }
 
-    /** The adapter of the list view for the current mode (전체 cards or 요약 rows). */
+    /** The adapter of the list view for the current mode (자세히 cards or 간단히 rows). */
     private fun listAdapterForMode(): BookAdapter =
         if (listMode == LibraryListMode.COMPACT) compactAdapter else bookAdapter
 
@@ -1177,6 +1180,10 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
      * switch keeps the first visible book; no query).
      */
     private fun showBooks(rows: List<BookRow>, scrollTop: Boolean, keepFirst: Int = -1) {
+        if (checkTitles) {
+            checkTitles = false
+            forgetRetitledCovers(shownRows, rows)
+        }
         shownRows = rows
         // Books that left the list (moved to another shelf, trashed, filtered out) are no longer checked.
         if (selection.active && selection.retain(rows.mapTo(HashSet(rows.size)) { it.book.id })) updateSelectionBar()
@@ -1206,8 +1213,19 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 keepFirst >= 0 -> listView.setSelection(keepFirst.coerceIn(0, (rows.size - 1).coerceAtLeast(0)))
             }
         }
-        if (rows.isEmpty()) showEmptyState() else emptyScroll.visibility = View.GONE
+        if (rows.isEmpty()) showEmptyState() else hideEmptyState()
         afterFirstList()
+    }
+
+    /** A generated cover shows the title and author: a book edited in 책 정보 drops its old bitmap from memory. */
+    private fun forgetRetitledCovers(old: List<BookRow>, new: List<BookRow>) {
+        if (old.isEmpty()) return
+        val before = HashMap<Long, Book>(old.size * 2)
+        for (r in old) before[r.book.id] = r.book
+        for (r in new) {
+            val b = before[r.book.id] ?: continue
+            if (b.title != r.book.title || b.author != r.book.author) CoverLoader.forget(r.book.id)
+        }
     }
 
     private fun showGroups(groups: List<ShelfGroup>, scrollTop: Boolean) {
@@ -1225,7 +1243,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         } else if (scrollTop) {
             listView.setSelection(0)
         }
-        if (groups.isEmpty()) showEmptyState() else emptyScroll.visibility = View.GONE
+        if (groups.isEmpty()) showEmptyState() else hideEmptyState()
         afterFirstList()
     }
 
@@ -1249,7 +1267,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         listView.paged = on
         gridView.paged = on
         pagerBar.visibility = if (on) View.VISIBLE else View.GONE
-        // 요약 rows are 80 / 88 dp, the grid's cells fitted or natural: rebind what is on screen.
+        // 간단히 rows are 80 / 88 dp, the grid's cells fitted or natural: rebind what is on screen.
         configureGrid()
         compactAdapter.notifyDataSetChanged()
     }
@@ -1358,17 +1376,19 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val msg: String
         val storageShelf = shelf == Shelf.ALL || shelf == Shelf.READING_NOW || shelf == Shelf.DOWNLOADS ||
             shelf == Shelf.FOLDERS || shelf == Shelf.FORMATS
-        if (!hasAccess && noSearch && storageShelf && group == null) {
-            msg = "책을 찾으려면 ‘모든 파일 접근’ 권한이 필요합니다.\n권한을 허용하거나 ‘파일 열기’로 책을 직접 추가하세요."
+        val noAccess = !hasAccess && noSearch && storageShelf && group == null
+        if (noAccess) {
+            msg = "책을 찾으려면 ‘모든 파일 접근’을 허용하세요."
             buttons += "권한 허용" to { requestStorageAccess() }
-            buttons += "폴더 추가" to { pickTree() }
+            buttons += "스캔 폴더 추가" to { pickTree() }
             buttons += "파일 열기" to { openFilePicker() }
         } else {
             msg = LibraryText.emptyMessage(shelf, query, group != null, flagButtons = listMode == LibraryListMode.LIST)
             if (noSearch && group == null) {
                 when (shelf) {
-                    Shelf.ALL, Shelf.READING_NOW, Shelf.DOWNLOADS, Shelf.FOLDERS, Shelf.FORMATS -> {
-                        buttons += "도서 스캔" to { manualScan() }
+                    // 읽고 있는 책 fills by opening a book: no scan or file buttons there.
+                    Shelf.ALL, Shelf.DOWNLOADS, Shelf.FOLDERS, Shelf.FORMATS -> {
+                        buttons += "책 스캔" to { manualScan() }
                         buttons += "파일 열기" to { openFilePicker() }
                     }
                     Shelf.COLLECTIONS -> buttons += "새 컬렉션" to { newCollection(null) }
@@ -1376,7 +1396,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 }
             }
         }
+        // The no-access message has the panel's buttons: the panel hides meanwhile (same pass, one redraw).
+        setNoAccessShown(noAccess)
         showMessage(msg, buttons)
+    }
+
+    private fun hideEmptyState() {
+        emptyScroll.visibility = View.GONE
+        setNoAccessShown(false)
     }
 
     private fun showMessage(msg: CharSequence, buttons: List<Pair<String, () -> Unit>>) {
@@ -1391,7 +1418,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     private fun showError(t: Throwable) {
-        val msg = ErrorLines.reason(t)?.let { "서재를 불러오지 못했습니다.\n$it" } ?: "서재를 불러오지 못했습니다."
+        val msg = ErrorLines.reason(t)?.let { "서재를 불러오지 못했습니다\n$it" } ?: "서재를 불러오지 못했습니다"
         showMessage(ErrorLines.withGrayDetail(msg, t), listOf("다시 시도" to { reload() }))
     }
 
@@ -1437,7 +1464,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     // ============================================================================================ status & jobs
 
     private fun updateStatus() {
-        val text = listOfNotNull(localStatus, LibraryJobs.status()).joinToString("  ·  ").ifEmpty { null } ?: backupNotice
+        val text = listOfNotNull(localStatus, LibraryJobs.status()).joinToString(" · ").ifEmpty { null } ?: backupNotice
         if (text == null) {
             setStatusVisible(false)
         } else {
@@ -1485,7 +1512,15 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private fun updatePermissionPanel() {
         val hidden = Settings.raw().getBoolean(PREF_PERM_PANEL_HIDDEN, false)
-        permPanel.visibility = if (!hasAccess && !hidden) View.VISIBLE else View.GONE
+        val v = if (!hasAccess && !hidden && !noAccessShown) View.VISIBLE else View.GONE
+        if (permPanel.visibility != v) permPanel.visibility = v
+    }
+
+    /** The empty list says "책을 찾으려면 ‘모든 파일 접근’을 허용하세요" with the panel's buttons: the panel hides. */
+    private fun setNoAccessShown(shown: Boolean) {
+        if (noAccessShown == shown) return
+        noAccessShown = shown
+        updatePermissionPanel()
     }
 
     internal fun requestStorageAccess() {
@@ -1493,7 +1528,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             val specific = Intent(SystemSettings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
             if (tryStartForResult(specific, REQ_ALL_FILES)) return
             if (tryStartForResult(Intent(SystemSettings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION), REQ_ALL_FILES)) {
-                toast("목록에서 ‘${getString(R.string.app_name)}’을 찾아 허용하세요")
+                val name = getString(R.string.app_name)
+                toast("목록에서 ‘$name’${Josa.eulReul(name)} 찾아 허용하세요")
                 return
             }
             showNoPermissionScreen()
@@ -1504,7 +1540,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 // "다시 묻지 않음": requestPermissions would be denied silently — open the app's settings page.
                 val details = Intent(SystemSettings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
                 if (tryStartForResult(details, REQ_ALL_FILES)) {
-                    toast("권한 → 저장공간을 허용하세요")
+                    toast("‘권한’에서 ‘저장공간’을 허용하세요")
                     return
                 }
             }
@@ -1584,12 +1620,12 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 setLocalStatus(null)
                 result.onSuccess { book ->
                     if (book == null) {
-                        toast("지원하지 않는 파일입니다 (EPUB · TXT만 열 수 있습니다)")
+                        toast("TXT·EPUB 파일만 열 수 있습니다")
                     } else {
                         changed()
                         ReaderActivity.open(this@LibraryActivity, book.id)
                     }
-                }.onFailure { toast(ErrorLines.line("파일을 열 수 없습니다", it)) }
+                }.onFailure { toast(ErrorLines.line("파일을 열지 못했습니다", it)) }
             }
             return
         }
@@ -1628,13 +1664,10 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 }
                 val app = Settings.app
                 val merged = LibraryText.addScanFolder(app.scanFolders, path, roots)
-                if (merged != null) {
-                    Settings.saveApp(app.copy(scanFolders = merged))
-                    toast("스캔 폴더에 추가했습니다: $path")
-                } else {
-                    toast("이미 스캔 범위에 포함된 폴더입니다")
-                }
-                if (!LibraryJobs.startScan(this@LibraryActivity, announce = true)) toast("이미 스캔 중입니다")
+                if (merged != null) Settings.saveApp(app.copy(scanFolders = merged))
+                // One toast: a scan already running is said there (the new folder joins the next scan).
+                val started = LibraryJobs.startScan(this@LibraryActivity, announce = true)
+                toast(LibraryText.scanFolderMessage(path, added = merged != null, scanning = !started))
             }
             return
         }
@@ -1646,7 +1679,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         else "이 폴더는 파일 경로로 읽을 수 없는 저장소입니다."
         confirmDialog(
             title = "폴더에서 가져오기",
-            message = "$why\n폴더 안의 EPUB · TXT 파일을 앱 저장소로 복사해서 서재에 추가할까요?",
+            message = "$why\n폴더 안의 TXT·EPUB 파일을 앱 저장소로 복사할까요?",
             ok = "복사",
         ) { startTreeImport(uri) }
     }
@@ -1662,15 +1695,18 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     // ============================================================================================ overflow
 
+    /** ⋮: the library's own work (the drawer only moves between shelves). */
     private fun showOverflow(anchor: View) {
         val items = ArrayList<MenuItem>()
         items += MenuItem("정렬: ${sort.label}", R.drawable.ic_sort) { chooseSort() }
         items += MenuItem("보기: ${listMode.label}", modeIcon(listMode)) { chooseMode() }
         if (shelf == Shelf.COLLECTIONS && group == null) items += MenuItem("새 컬렉션", R.drawable.ic_add) { newCollection(null) }
         if (shelf == Shelf.TRASH) items += MenuItem("휴지통 비우기", R.drawable.ic_delete_forever) { confirmEmptyTrash() }
-        items += MenuItem("도서 스캔", R.drawable.ic_refresh) { manualScan() }
         items += MenuItem("파일 열기", R.drawable.ic_file_open) { openFilePicker() }
-        items += MenuItem("폴더 추가", R.drawable.ic_create_new_folder) { pickTree() }
+        items += MenuItem("스캔 폴더 추가", R.drawable.ic_create_new_folder) { pickTree() }
+        // Books received there are in the database when this screen resumes: onResume reloads the list and counts.
+        items += MenuItem("Wi-Fi로 책 받기", R.drawable.ic_download) { SettingsActivity.open(this, SettingsActivity.PAGE_WIFI) }
+        items += MenuItem("책 스캔", R.drawable.ic_refresh) { manualScan() }
         items += MenuItem("설정", R.drawable.ic_settings) { SettingsActivity.open(this) }
         popupMenu(anchor, items, 260)
     }
@@ -1691,7 +1727,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         chooser("보기", options.map { LibraryText.modeChoice(it) }, listMode.ordinal) { i -> setListMode(options[i]) }
     }
 
-    /** The toolbar toggle: 전체 → 요약 → 썸네일 → 그리드 → 전체. */
+    /** The toolbar toggle: 자세히 → 간단히 → 큰 표지 → 작은 표지 → 자세히. */
     private fun cycleListMode() = setListMode(LibraryText.nextListMode(listMode))
 
     /**
@@ -1722,11 +1758,11 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         LibraryListMode.LIST -> R.drawable.ic_article
         LibraryListMode.COMPACT -> R.drawable.ic_view_list
         LibraryListMode.GRID -> R.drawable.ic_grid_view
-        LibraryListMode.COVERS -> R.drawable.ic_grid_view
+        LibraryListMode.COVERS -> R.drawable.ic_apps
     }
 
-    /** The toggle shows the current view; its long-press label says so and what a tap does. */
-    private fun modeDescription(m: LibraryListMode): String = "보기: ${m.label} (눌러서 바꾸기)"
+    /** The toggle shows the current view, and so does its label ("보기: 큰 표지"); a tap moves to the next one. */
+    private fun modeDescription(m: LibraryListMode): String = "보기: ${m.label}"
 
     private fun scrollPage(dir: Int) {
         val v: AbsListView = if (gridView.visibility == View.VISIBLE) gridView else listView
@@ -1823,7 +1859,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     internal fun openBook(book: Book) {
         if (book.trashed) {
-            toast("휴지통에 있는 책입니다. 먼저 복원하세요.")
+            toast("휴지통에 있는 책입니다 · 먼저 복원하세요")
             return
         }
         ReaderActivity.open(this, book.id)
@@ -1936,18 +1972,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         if (bar.title.text.toString() != title) bar.title.text = title
         val single = if (n == 1) View.VISIBLE else View.GONE
         if (bar.more.visibility != single) bar.more.visibility = single
+        // Black either way (no grey-only state): with nothing checked the title asks for a book and taps do nothing.
         val enabled = n > 0
-        bar.actions.forEach { cell ->
-            if (cell.isEnabled != enabled) {
-                cell.isEnabled = enabled
-                cell.alpha = if (enabled) 1f else 0.4f
-            }
-        }
+        bar.actions.forEach { cell -> if (cell.isEnabled != enabled) cell.isEnabled = enabled }
     }
 
     /**
-     * The selection toolbar, in place of the normal one: "N권 선택" [⋮ 더보기] [전체] [닫기] over the batch actions
-     * [컬렉션에 추가] [다 읽음으로] [읽을 책으로] [휴지통]. Built once, on the first long-press.
+     * The selection toolbar, in place of the normal one: "N권 선택" [⋮ 더보기] [모두 선택] [닫기] over the batch actions
+     * [컬렉션] [다 읽음] [읽을 책] [휴지통]. Built once, on the first long-press.
      */
     private fun buildSelectionBar(): SelectionBar {
         val bar = vertical { setBackgroundColor(Ink.WHITE); visibility = View.GONE }
@@ -1960,16 +1992,16 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         lateinit var more: ImageButton
         more = iconButton(R.drawable.ic_more_vert, "더보기") { showSelectedBookMenu(more) }.apply { visibility = View.GONE }
         top.addView(more)
-        top.addView(flatButton("전체") { selectAllShown() })
+        top.addView(flatButton("모두 선택") { selectAllShown() })
         top.addView(flatButton("닫기") { endSelection() })
         bar.addView(top, lp())
 
         val actionsRow = horizontal { setPadding(dp(4), 0, dp(4), dp(4)) }
         val cells = listOf(
-            actionCell(R.drawable.ic_library_books, "컬렉션에 추가") { batchAddToCollection() },
-            actionCell(R.drawable.ic_done_all, "다 읽음으로") { batchShelf(Shelf.HAVE_READ) },
-            actionCell(R.drawable.ic_schedule, "읽을 책으로") { batchShelf(Shelf.TO_READ) },
-            actionCell(R.drawable.ic_delete, "휴지통") { batchTrash() },
+            actionCell(R.drawable.ic_library_books, "컬렉션", "컬렉션에 추가") { batchAddToCollection() },
+            actionCell(R.drawable.ic_done_all, "다 읽음", "다 읽은 책에 추가") { batchShelf(Shelf.HAVE_READ) },
+            actionCell(R.drawable.ic_schedule, "읽을 책", "읽을 책에 추가") { batchShelf(Shelf.TO_READ) },
+            actionCell(R.drawable.ic_delete, "휴지통", "휴지통으로 옮기기") { batchTrash() },
         )
         cells.forEach { actionsRow.addView(it, lp(0, dp(64), 1f)) }
         bar.addView(actionsRow, lp())
@@ -1989,21 +2021,20 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         setOnClickListener { onClick() }
     }
 
-    /** A batch action: icon over a one-line label, the whole cell pressable. */
-    private fun actionCell(iconRes: Int, text: String, onClick: () -> Unit): View = vertical {
+    /** A batch action: icon over a short one-line label ([description] says what it does), the whole cell pressable. */
+    private fun actionCell(iconRes: Int, text: String, description: String, onClick: () -> Unit): View = vertical {
         gravity = Gravity.CENTER
         background = pressableBackground()
-        contentDescription = text
+        contentDescription = description
         addView(icon(iconRes, 24))
         addView(label(text, 13f, maxLines = 1).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, 0)
-            setAutoSizeTextTypeUniformWithConfiguration(9, 13, 1, TypedValue.COMPLEX_UNIT_SP)
         }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         setOnClickListener { if (selection.size > 0) onClick() }
     }
 
-    /** [전체]: checks every listed book (all of them, not only the ones on screen), or unchecks them all. */
+    /** [모두 선택]: checks every listed book (all of them, not only the ones on screen), or unchecks them all. */
     private fun selectAllShown() {
         if (selection.toggleAll(shownRows.map { it.book.id })) {
             updateSelectionBar()
@@ -2021,7 +2052,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         bookMenu(row, anchor, flags = true) { endSelection() }
     }
 
-    /** [다 읽음으로] / [읽을 책으로]: one transaction for all checked books (the same rules as the card flags). */
+    /** [다 읽음] / [읽을 책]: one transaction for all checked books (the same rules as the card flags). */
     private fun batchShelf(target: Shelf) {
         val ids = selection.snapshot()
         endSelection()
@@ -2037,14 +2068,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val run = {
             endSelection()
             invalidateCounts()
-            queueWrite("휴지통으로 이동하지 못했습니다", done = { toast(LibraryText.trashedMessage(ids.size)) }) {
+            queueWrite("휴지통으로 옮기지 못했습니다", done = { toast(LibraryText.trashedMessage(ids.size)) }) {
                 Library.trash(ids)
             }
         }
-        if (ids.size == 1) run() else confirmDialog("휴지통으로 이동", LibraryText.trashQuestion(ids.size), "이동") { run() }
+        if (ids.size == 1) run() else confirmDialog("휴지통으로 옮기기", LibraryText.trashQuestion(ids.size), "옮기기") { run() }
     }
 
-    /** [컬렉션에 추가]: pick a collection (or make one); the checked books are added in one transaction. */
+    /** [컬렉션]: pick a collection (or make one); the checked books are added in one transaction. */
     private fun batchAddToCollection() {
         val ids = selection.snapshot()
         pickCollection { c ->

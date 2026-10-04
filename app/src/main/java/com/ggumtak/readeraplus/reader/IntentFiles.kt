@@ -22,10 +22,11 @@ internal object IntentFiles {
 
     fun resolveBook(context: Context, intent: Intent): Book {
         val id = intent.getLongExtra(ReaderActivity.EXTRA_BOOK_ID, -1L)
-        if (id > 0) return Library.book(id) ?: throw DocumentException("서재에서 책을 찾을 수 없습니다.")
-        val uri = intent.data ?: throw DocumentException("열 파일이 지정되지 않았습니다.")
-        val file = fileFor(context, uri) ?: throw DocumentException("파일을 읽을 수 없습니다.\n$uri")
-        return Library.addOrUpdateFile(file) ?: throw DocumentException("지원하지 않는 파일입니다: ${file.name}")
+        // The reason only (the panel's title says the book could not be opened); a second line is the URI.
+        if (id > 0) return Library.book(id) ?: throw DocumentException("서재에 없는 책입니다")
+        val uri = intent.data ?: throw DocumentException("열 파일이 없습니다")
+        val file = fileFor(context, uri) ?: throw DocumentException("파일을 읽지 못했습니다\n$uri")
+        return Library.addOrUpdateFile(file) ?: throw DocumentException("TXT·EPUB 파일만 열 수 있습니다")
     }
 
     fun fileFor(context: Context, uri: Uri): File? = when (uri.scheme?.lowercase()) {

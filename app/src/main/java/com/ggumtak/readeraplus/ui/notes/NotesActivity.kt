@@ -63,12 +63,11 @@ import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.keepAll
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
-import com.ggumtak.readeraplus.ui.kit.ownMessage
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.toolbar
-import com.ggumtak.readeraplus.ui.kit.userMessage
 import com.ggumtak.readeraplus.ui.kit.vertical
 import com.ggumtak.readeraplus.ui.library.LibraryText
+import com.ggumtak.readeraplus.ui.settings.ErrorLines
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
@@ -391,16 +390,17 @@ class NotesActivity : Activity() {
         root.addView(tabs, lp())
         root.addView(hairline())
 
+        // 48 dp with 40 dp chips: the book, order and colour choices (the ⋮ menu does not repeat them).
         val filters = horizontal {
-            minimumHeight = dp(44)
-            setPadding(dp(16), dp(6), dp(16), dp(6))
+            minimumHeight = dp(48)
+            setPadding(dp(16), dp(4), dp(16), dp(4))
         }
         bookChip = chip { if (q.bookId != null) setBook(null) else menus.bookChooser() }.apply { maxWidth = dp(150) }
         orderChip = chip { menus.orderChooser() }
         styleChip = chip { menus.styleChooser() }
-        filters.addView(bookChip, lp(WRAP_CONTENT, dp(32)))
-        filters.addView(orderChip, lp(WRAP_CONTENT, dp(32)).apply { leftMargin = dp(8) })
-        filters.addView(styleChip, lp(WRAP_CONTENT, dp(32)).apply { leftMargin = dp(8) })
+        filters.addView(bookChip, lp(WRAP_CONTENT, dp(40)))
+        filters.addView(orderChip, lp(WRAP_CONTENT, dp(40)).apply { leftMargin = dp(8) })
+        filters.addView(styleChip, lp(WRAP_CONTENT, dp(40)).apply { leftMargin = dp(8) })
         root.addView(filters, lp())
         root.addView(hairline())
 
@@ -453,7 +453,7 @@ class NotesActivity : Activity() {
     private fun chip(onClick: (View) -> Unit): TextView = label("", 14f, maxLines = 1).apply {
         gravity = Gravity.CENTER
         setPadding(dp(12), 0, dp(12), 0)
-        background = borderBox(radiusDp = 16f)
+        background = borderBox(radiusDp = 20f)
         setOnClickListener(onClick)
     }
 
@@ -478,7 +478,7 @@ class NotesActivity : Activity() {
         val row = horizontal { minimumHeight = dp(52); setPadding(dp(16), 0, dp(4), 0) }
         searchEdit = InkEditText(this).apply {
             setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 17f)
-            hint = "인용문·메모·단어·책 제목 검색"
+            hint = "인용문 · 메모 · 단어 · 책 제목 검색"
             setSingleLine(true)
             imeOptions = EditorInfo.IME_ACTION_SEARCH
             background = null
@@ -523,13 +523,15 @@ class NotesActivity : Activity() {
         setText(bookChip, NotesText.scopeLabel(if (q.bookId == null) null else filterBook?.title ?: ""))
         setText(orderChip, NotesText.orderChip(q.order))
         setText(styleChip, NotesText.styleChip(q.style))
-        val styleVis = if (q.tab == NotesTab.QUOTES && QuoteStyles.COUNT > 1) View.VISIBLE else View.GONE
-        if (styleChip.visibility != styleVis) styleChip.visibility = styleVis
-        for (c in arrayOf(bookChip, orderChip, styleChip)) {
-            if (c.isEnabled == !selecting) continue
-            c.isEnabled = !selecting
-            c.setTextColor(if (selecting) Ink.DISABLED else Ink.BLACK)
+        // While selecting the chips step aside (invisible, the row keeps its height): no grey "disabled" look.
+        val styleVis = when {
+            q.tab != NotesTab.QUOTES || QuoteStyles.COUNT <= 1 -> View.GONE
+            selecting -> View.INVISIBLE
+            else -> View.VISIBLE
         }
+        if (styleChip.visibility != styleVis) styleChip.visibility = styleVis
+        val chipVis = if (selecting) View.INVISIBLE else View.VISIBLE
+        for (c in arrayOf(bookChip, orderChip)) if (c.visibility != chipVis) c.visibility = chipVis
         if (selecting) {
             setText(selectTitle, NotesText.selectionTitle(selected.size))
             val anyQuote = selected.any { (it ushr 56).toInt() == NoteKind.QUOTE.code }
@@ -608,7 +610,7 @@ class NotesActivity : Activity() {
                 releaseDrawHold()
                 updateChrome()
                 updateEmpty()
-                toast(userMessage(IllegalStateException()))
+                toast("노트를 불러오지 못했습니다")
                 return@launch
             }
             apply(r)
@@ -701,8 +703,8 @@ class NotesActivity : Activity() {
             if (c.top >= list.paddingTop && c.bottom <= list.height - list.paddingBottom) fully++
         }
         val max = PagerMath.total(n, fully.coerceAtLeast(1), step)
-        com.ggumtak.readeraplus.ui.kit.InkNumPad.show(this, "쪽 번호", "1~$max", max.toString().length) { p ->
-            if (p !in 1..max) "1~${max}쪽 사이로 입력하세요" else { jumpTo(NotesWindow.rowForPage(p, step)); null }
+        com.ggumtak.readeraplus.ui.kit.InkNumPad.show(this, "화면 번호", "1–$max", max.toString().length) { p ->
+            if (p !in 1..max) "1–$max 사이로 입력하세요" else { jumpTo(NotesWindow.rowForPage(p, step)); null }
         }
     }
 
@@ -897,7 +899,7 @@ class NotesActivity : Activity() {
         scope.launch {
             val ok = withContext(Dispatchers.IO) { runCatching { write() }.onFailure { Log.w(NotesPerf.TAG, "write failed", it) }.isSuccess }
             if (isDestroyed) return@launch
-            if (ok) done?.invoke() else toast(userMessage(IllegalStateException()))
+            if (ok) done?.invoke() else toast("저장하지 못했습니다")
             reload(list.firstVisiblePosition)
         }
     }
@@ -921,7 +923,7 @@ class NotesActivity : Activity() {
             } catch (e: ActivityNotFoundException) {
                 exportFormat = null
                 exportRefs = null
-                toast("내보내지 못했습니다: " + userMessage(e))
+                toast("저장할 곳을 고르는 화면을 열 수 없습니다")
             }
         }
     }
@@ -965,7 +967,7 @@ class NotesActivity : Activity() {
                 NotesText.exportedToast(n)
             } catch (t: Throwable) {
                 Log.w(NotesPerf.TAG, "export failed", t)
-                "내보내지 못했습니다: " + (ownMessage(t) ?: userMessage(t))
+                ErrorLines.line("내보내지 못했습니다", t)
             }
             main.post {
                 val a = host.get()

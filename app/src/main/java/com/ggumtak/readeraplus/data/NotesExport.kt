@@ -87,8 +87,8 @@ object NotesExport {
     /** Result of [share]: the TXT text, the notes in it and whether the rest was cut. */
     internal class Shared(val text: String, val written: Int, val cut: Boolean)
 
-    /** "\n…(나머지 N개는 '내보내기'로 저장하세요)": appended when the share text was cut. */
-    internal fun shareSuffix(rest: Int): String = "\n…(나머지 ${rest}개는 '내보내기'로 저장하세요)"
+    /** "\n…(나머지 N개는 ‘내보내기’로 저장하세요)": appended when the share text was cut. */
+    internal fun shareSuffix(rest: Int): String = "\n…(나머지 ${rest}개는 ‘내보내기’로 저장하세요)"
 
     /**
      * The 공유 text: TXT, at most [max] chars ([TextActions.SHARE_MAX_CHARS]: the binder buffer, not 200k), cut at an
@@ -134,8 +134,8 @@ object NotesExport {
     }
 
     /**
-     * "범위": "모든 책 · 전체", "《제목》 · 인용문", "선택한 노트 12개", plus " · 검색: 단어". [selected] = the selection
-     * size, null for the query's list.
+     * "범위": "모든 책 · 모든 노트", "《제목》 · 인용문", "선택한 노트 12개", plus " · 검색: 단어". [selected] = the
+     * selection size, null for the query's list.
      */
     internal fun scope(q: NotesQuery, books: List<NoteBook>, selected: Int?, format: Format): String {
         val sb = StringBuilder(48)
@@ -147,7 +147,7 @@ object NotesExport {
                 val title = books.firstOrNull { it.id == id }?.title ?: DELETED_TITLE
                 sb.append('《').append(inline(title, format)).append('》')
             }
-            sb.append(" · ").append(q.tab.label)
+            sb.append(" · ").append(if (q.tab == NotesTab.ALL) "모든 노트" else q.tab.label)
         }
         val text = q.text.trim()
         if (text.isNotEmpty()) sb.append(" · 검색: ").append(inline(text, format))
@@ -161,9 +161,7 @@ object NotesExport {
     ): Int {
         val md = format == Format.MARKDOWN
         val cal = Calendar.getInstance(zone)
-        val c = summary.counts
-        val counts = "책 ${summary.books}권 · 인용문 ${c.quotes} · 메모 ${c.memos} · 북마크 ${c.bookmarks} · " +
-            "리뷰 ${c.reviews} · 단어 ${c.words}"
+        val counts = counts(summary)
         if (md) {
             sink.lead("# 독서 노트\n\n- 내보낸 날짜: ${time(now, cal)}\n- 범위: $scope\n- $counts\n")
         } else {
@@ -193,17 +191,26 @@ object NotesExport {
         return written
     }
 
+    /** "책 3권 · 인용문 3개 · 메모 2개 · …": the kinds with none are left out ("책 1권 · 인용문 1개"). */
+    internal fun counts(summary: Summary): String {
+        val c = summary.counts
+        val sb = StringBuilder(64).append("책 ").append(summary.books).append('권')
+        for ((label, n) in arrayOf("인용문" to c.quotes, "메모" to c.memos, "북마크" to c.bookmarks, "리뷰" to c.reviews, "단어" to c.words)) {
+            if (n > 0) sb.append(" · ").append(label).append(' ').append(n).append('개')
+        }
+        return sb.toString()
+    }
+
     private fun bookHeading(book: NoteBook, md: Boolean): String {
         val mark = when {
             book.missing -> " (파일 없음)"
             book.trashed -> " (휴지통)"
             else -> ""
         }
+        // The file name shows the format already ("… · `절대회귀 1-896 (완).txt`").
         val name = book.path.substringAfterLast('/')
-        val ext = name.substringAfterLast('.', "").takeIf { it.isNotEmpty() && it.length <= 5 && name.contains('.') }
         val info = StringBuilder(64)
         info.append(if (book.author.isBlank()) "작가 미상" else inline(book.author, md))
-        if (ext != null) info.append(" · ").append(ext.uppercase())
         if (name.isNotEmpty()) {
             info.append(" · ")
             val n = oneLine(norm(name))
@@ -286,7 +293,7 @@ object NotesExport {
         }
     }
 
-    /** "12화 과거로 · 37% · [파파고 · ]2026-09-12 21:04" (chapter and percent only when known). */
+    /** "12화 과거로 · 37% · [파파고 · ]2026년 9월 12일 21:04" (chapter and percent only when known). */
     private fun meta(r: NoteRow, md: Boolean, cal: Calendar, app: String?): String {
         val sb = StringBuilder(48)
         val chapter = oneLine(norm(r.chapter)).trim()
@@ -424,13 +431,13 @@ object NotesExport {
     /** Whole percent, floored, 0..100. */
     internal fun percent(frac: Float): Int = (frac.coerceIn(0f, 1f) * 100f + 1e-4f).toInt().coerceIn(0, 100)
 
-    /** "2026-09-12 21:04" in the calendar's zone. */
+    /** "2026년 9월 12일 21:04" in the calendar's zone: always with the year (the file is kept). */
     internal fun time(ms: Long, cal: Calendar): String {
         cal.timeInMillis = ms
-        val sb = StringBuilder(16)
-        sb.append(cal.get(Calendar.YEAR)).append('-')
-        two(sb, cal.get(Calendar.MONTH) + 1); sb.append('-')
-        two(sb, cal.get(Calendar.DAY_OF_MONTH)); sb.append(' ')
+        val sb = StringBuilder(24)
+        sb.append(cal.get(Calendar.YEAR)).append("년 ")
+        sb.append(cal.get(Calendar.MONTH) + 1).append("월 ")
+        sb.append(cal.get(Calendar.DAY_OF_MONTH)).append("일 ")
         two(sb, cal.get(Calendar.HOUR_OF_DAY)); sb.append(':')
         two(sb, cal.get(Calendar.MINUTE))
         return sb.toString()

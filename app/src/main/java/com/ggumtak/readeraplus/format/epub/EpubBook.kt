@@ -36,7 +36,7 @@ internal class EpubBook private constructor(
 
     /** Spine items that can be displayed (XHTML or image), in reading order. */
     private val spine: List<ManifestItem> = selectSpine(zip, pkg).also {
-        if (it.isEmpty()) throw DocumentException("표시할 내용이 없는 EPUB입니다: ${file.name}")
+        if (it.isEmpty()) throw DocumentException("내용이 없는 책입니다")
     }
 
     /** Canonical zip path → first spine index. */
@@ -355,7 +355,7 @@ internal class EpubBook private constructor(
     }
 
     private fun errorSection(): SectionContent {
-        val msg = "(이 부분을 표시할 수 없습니다)"
+        val msg = "(이 부분을 표시하지 못했습니다)"
         return SectionContent(msg, listOf(ParagraphBlock(0, msg.length, BlockStyle(align = Align.CENTER, indent = false))))
     }
 
@@ -576,10 +576,10 @@ internal class EpubBook private constructor(
                 throw e
             } catch (e: Exception) {
                 zip.close()
-                throw DocumentException("EPUB을 해석할 수 없습니다: ${file.name}", e)
+                throw DocumentException(EpubDocuments.MALFORMED, e)
             } catch (e: StackOverflowError) {
                 zip.close()
-                throw DocumentException("EPUB을 해석할 수 없습니다: ${file.name}", e)
+                throw DocumentException(EpubDocuments.MALFORMED, e)
             }
         }
     }

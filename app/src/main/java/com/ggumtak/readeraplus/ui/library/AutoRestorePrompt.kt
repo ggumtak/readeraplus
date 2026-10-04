@@ -9,20 +9,21 @@ import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.settings.ErrorLines
+import com.ggumtak.readeraplus.ui.settings.R3Rows
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The restore offer of a fresh install (scroll SPEC §3.4): "이전 설정과 읽기 기록을 복원할까요?".
+ * The restore offer of a fresh install (scroll SPEC §3.4): "이전 기록을 복원할까요?" over when, what and where.
  *
  * [LibraryActivity] holds its scan while the offer is open (the first scan of a fresh install would otherwise add every
  * book before the backup's flags and positions arrive) and calls [start] from `refreshVisible` when
  * `InstallState.offerPending` and storage access is granted. Candidates are found on IO (headers only); none with
  * content settles the offer silently. The dialog is not cancelable and has no animation:
  * - [새로 시작]: settle the offer, release the scan; the old files stay on disk (BackupPage can still restore them);
- * - [다른 백업 보기] (only with more than one candidate): pick another backup, which shows the same dialog for it;
+ * - [다른 백업] (only with more than one candidate): pick another backup, which shows the same dialog for it;
  * - [복원]: "복원하는 중…" on the status strip, restore on IO, toast "책 N권의 기록을 복원했습니다", start the first
  *   scan and recreate the library (list mode and sort come from the backup). The restore runs in the process, not
  *   the activity: a library recreated or reopened meanwhile ([busy]) holds its scan, shows "복원하는 중…" and takes
@@ -105,23 +106,24 @@ internal class AutoRestorePrompt(private val activity: LibraryActivity, private 
         val s = c.summary
         val location = LibraryText.backupLocation(c.auto, c.file?.parentFile?.name, AutoBackup.locationLabel())
         val b = activity.alert()
-            .setTitle("이전 기록 복원")
-            .setMessage(LibraryText.restoreOfferMessage(c.createdAt, s.books, s.read, s.bookmarks, s.quotes, location, lateAnswer))
+            .setTitle("이전 기록을 복원할까요?")
+            .setMessage(LibraryText.restoreOfferMessage(c.createdAt, s.books, s.bookmarks, s.quotes, location, lateAnswer))
             .setCancelable(false)
             .setPositiveButton("복원") { _, _ -> dialog = null; restore(c) }
             .setNegativeButton("새로 시작") { _, _ -> dialog = null; settle() }
-        if (all.size > 1) b.setNeutralButton("다른 백업 보기") { _, _ -> dialog = null; pickOther(all, c, lateAnswer) }
+        if (all.size > 1) b.setNeutralButton("다른 백업") { _, _ -> dialog = null; pickOther(all, c, lateAnswer) }
         dialog = b.showNoAnim()
     }
 
-    /** The candidates as a list; Back or [취소] returns to the question for [current] (the offer is never lost). */
+    /**
+     * The candidates as a list, in 설정's 복원 wording ([R3Rows.candidate]); Back or [취소] returns to the question for
+     * [current] (the offer is never lost).
+     */
     private fun pickOther(all: List<AutoBackup.Candidate>, current: AutoBackup.Candidate, lateAnswer: Boolean) {
-        val labels = all.map {
-            LibraryText.backupChoice(it.createdAt, it.summary.books, it.summary.read, it.summary.bookmarks, it.summary.quotes, it.auto)
-        }.toTypedArray()
+        val labels = all.map { R3Rows.candidate(it.createdAt, it.summary, it.auto) }.toTypedArray()
         var next = current
         dialog = activity.alert()
-            .setTitle("다른 백업 보기")
+            .setTitle("복원할 백업 고르기")
             .setSingleChoiceItems(labels, all.indexOf(current)) { d, which -> next = all[which]; d.dismiss() }
             .setNegativeButton("취소", null)
             .setOnDismissListener {

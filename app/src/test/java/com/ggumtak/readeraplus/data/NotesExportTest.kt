@@ -62,60 +62,60 @@ class NotesExportTest {
         val expect = """
             |# 독서 노트
             |
-            |- 내보낸 날짜: 2026-09-30 15:42
-            |- 범위: 모든 책 · 전체
-            |- 책 3권 · 인용문 3 · 메모 2 · 북마크 2 · 리뷰 1 · 단어 1
+            |- 내보낸 날짜: 2026년 9월 30일 15:42
+            |- 범위: 모든 책 · 모든 노트
+            |- 책 3권 · 인용문 3개 · 메모 2개 · 북마크 2개 · 리뷰 1개 · 단어 1개
             |
             |## 절대회귀 1-896 (완)
             |
-            |작가 미상 · TXT · `절대회귀 1-896 (완).txt`
+            |작가 미상 · `절대회귀 1-896 (완).txt`
             |
             |### 리뷰
             |
             |> 끝까지 읽었다. 중반부가 가장 좋았다.
             |> 둘째 줄
             |
-            |*2026-09-12 21:04*
+            |*2026년 9월 12일 21:04*
             |
             |### 인용문 (2)
             |
             |> 인용문 본문 첫 줄
             |> 둘째 줄
             |
-            |— 12화 과거로 · 37% · 2026-09-12 21:04  
+            |— 12화 과거로 · 37% · 2026년 9월 12일 21:04  
             |**메모:** 이 장면 다시 읽기
             |
             |> 두 번째 인용문
             |
-            |— 13화 · 38% · 2026-09-12 21:30
+            |— 13화 · 38% · 2026년 9월 12일 21:30
             |
             |### 북마크 (1)
             |
-            |- 12화 과거로 · 37% · 2026-09-12 21:04 — “새벽 공기는 생각보다 차가웠고…”  
+            |- 12화 과거로 · 37% · 2026년 9월 12일 21:04 — “새벽 공기는 생각보다 차가웠고…”  
             |  **메모:** 여기서부터 다시
             |
             |### 단어 (1)
             |
-            |- **비명** — “…타인의 **비명**이 퍼졌다…” — 12화 · 37% · 파파고 · 2026-09-12 21:04  
+            |- **비명** — “…타인의 **비명**이 퍼졌다…” — 12화 · 37% · 파파고 · 2026년 9월 12일 21:04  
             |  **뜻:** 외마디 소리
             |
             |## 여름의 끝 (휴지통)
             |
-            |김작가 · EPUB · `여름의 끝.epub`
+            |김작가 · `여름의 끝.epub`
             |
             |### 북마크 (1)
             |
-            |- 2026-09-12 21:04
+            |- 2026년 9월 12일 21:04
             |
             |## 사라진 책 (파일 없음)
             |
-            |박작가 · TXT · `사라진 책.txt`
+            |박작가 · `사라진 책.txt`
             |
             |### 인용문 (1)
             |
             |> 사라진 책의 인용
             |
-            |— 12화 과거로 · 37% · 2026-09-12 21:04
+            |— 12화 과거로 · 37% · 2026년 9월 12일 21:04
             |""".trimMargin()
         assertEquals(expect, md)
     }
@@ -126,46 +126,46 @@ class NotesExportTest {
         assertEquals(6, n)
         val expect = """
             |독서 노트
-            |내보낸 날짜: 2026-09-30 15:42
-            |범위: 모든 책 · 전체
-            |책 2권 · 인용문 2 · 메모 2 · 북마크 2 · 리뷰 1 · 단어 1
+            |내보낸 날짜: 2026년 9월 30일 15:42
+            |범위: 모든 책 · 모든 노트
+            |책 2권 · 인용문 2개 · 메모 2개 · 북마크 2개 · 리뷰 1개 · 단어 1개
             |
             |========================================
             |《절대회귀 1-896 (완)》
-            |작가 미상 · TXT · 절대회귀 1-896 (완).txt
+            |작가 미상 · 절대회귀 1-896 (완).txt
             |========================================
             |
             |[리뷰]
             |끝까지 읽었다. 중반부가 가장 좋았다.
             |둘째 줄
-            |(2026-09-12 21:04)
+            |(2026년 9월 12일 21:04)
             |
             |[인용문 2]
             |“인용문 본문 첫 줄
             |둘째 줄”
-            |  — 12화 과거로 · 37% · 2026-09-12 21:04
+            |  — 12화 과거로 · 37% · 2026년 9월 12일 21:04
             |  메모: 이 장면 다시 읽기
             |
             |“두 번째 인용문”
-            |  — 13화 · 38% · 2026-09-12 21:30
+            |  — 13화 · 38% · 2026년 9월 12일 21:30
             |
             |[북마크 1]
-            |• 12화 과거로 · 37% · 2026-09-12 21:04
+            |• 12화 과거로 · 37% · 2026년 9월 12일 21:04
             |  “새벽 공기는 생각보다 차가웠고…”
             |  메모: 여기서부터 다시
             |
             |[단어 1]
             |• 비명 — “…타인의 비명이 퍼졌다…”
-            |  12화 · 37% · 파파고 · 2026-09-12 21:04
+            |  12화 · 37% · 파파고 · 2026년 9월 12일 21:04
             |  뜻: 외마디 소리
             |
             |========================================
             |《여름의 끝》 (휴지통)
-            |김작가 · EPUB · 여름의 끝.epub
+            |김작가 · 여름의 끝.epub
             |========================================
             |
             |[북마크 1]
-            |• 2026-09-12 21:04
+            |• 2026년 9월 12일 21:04
             |""".trimMargin()
         assertEquals(expect, txt)
     }
@@ -173,17 +173,18 @@ class NotesExportTest {
     @Test
     fun scopes() {
         val books = listOf(book1)
-        assertEquals("모든 책 · 전체", NotesExport.scope(NotesQuery(), books, null, NotesExport.Format.TXT))
+        assertEquals("모든 책 · 모든 노트", NotesExport.scope(NotesQuery(), books, null, NotesExport.Format.TXT))
         assertEquals("《절대회귀 1-896 (완)》 · 인용문", NotesExport.scope(NotesQuery(NotesTab.QUOTES, bookId = 1), books, null, NotesExport.Format.TXT))
         assertEquals("선택한 노트 12개", NotesExport.scope(NotesQuery(), books, 12, NotesExport.Format.TXT))
-        assertEquals("모든 책 · 단어 · 검색: 비명", NotesExport.scope(NotesQuery(NotesTab.WORDS, text = " 비명 "), books, null, NotesExport.Format.TXT))
+        assertEquals("모든 책 · 단어장 · 검색: 비명", NotesExport.scope(NotesQuery(NotesTab.WORDS, text = " 비명 "), books, null, NotesExport.Format.TXT))
         assertEquals("선택한 노트 2개 · 검색: a\\_b", NotesExport.scope(NotesQuery(text = "a_b"), books, 2, NotesExport.Format.MARKDOWN))
         // One-book and selection scopes in the header.
         val (one, _) = render(rows.filter { it.bookId == 1L }, books, NotesExport.Format.TXT, NotesQuery(NotesTab.ALL, bookId = 1))
-        assertTrue(one.contains("범위: 《절대회귀 1-896 (완)》 · 전체\n책 1권 · 인용문 2"))
+        assertTrue(one.contains("범위: 《절대회귀 1-896 (완)》 · 모든 노트\n책 1권 · 인용문 2개"))
         val (sel, n) = render(rows.take(2), listOf(book1), NotesExport.Format.MARKDOWN, selected = 2)
         assertEquals(2, n)
-        assertTrue(sel.contains("- 범위: 선택한 노트 2개\n- 책 1권 · 인용문 1 · 메모 0 · 북마크 0 · 리뷰 0 · 단어 1\n"))
+        // Kinds with none are left out of the counts.
+        assertTrue(sel.contains("- 범위: 선택한 노트 2개\n- 책 1권 · 인용문 1개 · 단어 1개\n"))
     }
 
     @Test
@@ -191,7 +192,7 @@ class NotesExportTest {
         val (md, n) = render(listOf(quote(1, 1, 0, 0, "하나")), listOf(book1, book2), NotesExport.Format.MARKDOWN)
         assertEquals(1, n)
         assertFalse(md.contains("### 리뷰") || md.contains("### 북마크") || md.contains("### 단어") || md.contains("여름의 끝"))
-        assertTrue(md.contains("- 책 1권 · 인용문 1 · 메모 0 · 북마크 0 · 리뷰 0 · 단어 0\n"))
+        assertTrue(md.contains("- 책 1권 · 인용문 1개\n"))
     }
 
     @Test
@@ -203,10 +204,10 @@ class NotesExportTest {
         assertEquals(same, plain) // single-colour exports are byte-identical
         val two = listOf(quote(1, 1, 0, 0, "가", style = 1), quote(2, 1, 0, 9, "나", style = 2))
         val (md, _) = render(two, listOf(book1), NotesExport.Format.MARKDOWN)
-        assertTrue(md.contains("\n— [초록] 12화 과거로 · 37% · 2026-09-12 21:04\n"))
+        assertTrue(md.contains("\n— [초록] 12화 과거로 · 37% · 2026년 9월 12일 21:04\n"))
         assertTrue(md.contains("\n— [파랑] 12화 과거로"))
         val (txt, _) = render(two, listOf(book1), NotesExport.Format.TXT)
-        assertTrue(txt.contains("\n  — [초록] 12화 과거로 · 37% · 2026-09-12 21:04\n"))
+        assertTrue(txt.contains("\n  — [초록] 12화 과거로 · 37% · 2026년 9월 12일 21:04\n"))
     }
 
     @Test
@@ -234,9 +235,9 @@ class NotesExportTest {
         )
         val (md, _) = render(r, listOf(b), NotesExport.Format.MARKDOWN)
         assertTrue(md.contains("\n## \\*별\\* \\#1\n"))
-        assertTrue(md.contains("\na\\_b · TXT · `ab.txt`\n"))
-        assertTrue(md.contains("\n— \\_1장\\_ \\# · 37% · 2026-09-12 21:04  \n**메모:** 메모 \\*강조\\*  \n2\\) 둘째\n"))
-        assertTrue(md.contains("- **a\\*b** — “문장 **a\\*b** 끝” — 12화 · 37% · 파파고 · 2026-09-12 21:04  \n  **뜻:** 뜻 \\~x\\~\n"))
+        assertTrue(md.contains("\na\\_b · `ab.txt`\n"))
+        assertTrue(md.contains("\n— \\_1장\\_ \\# · 37% · 2026년 9월 12일 21:04  \n**메모:** 메모 \\*강조\\*  \n2\\) 둘째\n"))
+        assertTrue(md.contains("- **a\\*b** — “문장 **a\\*b** 끝” — 12화 · 37% · 파파고 · 2026년 9월 12일 21:04  \n  **뜻:** 뜻 \\~x\\~\n"))
     }
 
     @Test
@@ -269,23 +270,23 @@ class NotesExportTest {
         val many = (1..2000).map { quote(it.toLong(), 1, 0, it, "인용문 $it " + "가".repeat(40)) }
         val chunks = NotesExport.chunks(many, listOf(book1))
         val summary = NotesExport.Summary.of(chunks)
-        val s = NotesExport.share(chunks.asSequence(), summary, "모든 책 · 전체", now, utc)
+        val s = NotesExport.share(chunks.asSequence(), summary, "모든 책 · 모든 노트", now, utc)
         assertTrue(s.cut)
         assertTrue(s.text.length <= TextActions.SHARE_MAX_CHARS)
-        assertTrue(s.text.endsWith("”\n  — 12화 과거로 · 37% · 2026-09-12 21:04\n" + NotesExport.shareSuffix(2000 - s.written)))
-        assertTrue(s.text.endsWith("\n…(나머지 ${2000 - s.written}개는 '내보내기'로 저장하세요)"))
+        assertTrue(s.text.endsWith("”\n  — 12화 과거로 · 37% · 2026년 9월 12일 21:04\n" + NotesExport.shareSuffix(2000 - s.written)))
+        assertTrue(s.text.endsWith("\n…(나머지 ${2000 - s.written}개는 ‘내보내기’로 저장하세요)"))
         assertTrue(s.written in 100 until 2000)
         // Small lists are shared whole.
         val few = NotesExport.chunks(many.take(3), listOf(book1))
-        val all = NotesExport.share(few.asSequence(), NotesExport.Summary.of(few), "모든 책 · 전체", now, utc)
+        val all = NotesExport.share(few.asSequence(), NotesExport.Summary.of(few), "모든 책 · 모든 노트", now, utc)
         assertFalse(all.cut)
         assertEquals(3, all.written)
         assertEquals(render(many.take(3), listOf(book1), NotesExport.Format.TXT).first, all.text)
         // A tiny cap keeps the header only, with every note counted as left out.
-        val tiny = NotesExport.share(few.asSequence(), NotesExport.Summary.of(few), "모든 책 · 전체", now, utc, max = 200)
+        val tiny = NotesExport.share(few.asSequence(), NotesExport.Summary.of(few), "모든 책 · 모든 노트", now, utc, max = 200)
         assertTrue(tiny.cut)
         assertEquals(0, tiny.written)
-        assertTrue(tiny.text.endsWith("단어 0\n\n…(나머지 3개는 '내보내기'로 저장하세요)"))
+        assertTrue(tiny.text.endsWith("책 1권 · 인용문 3개\n\n…(나머지 3개는 ‘내보내기’로 저장하세요)"))
     }
 
     @Test

@@ -42,43 +42,44 @@ import com.ggumtak.readeraplus.ui.kit.vertical
 internal class BookRow(
     val book: Book,
     val title: String,
-    /** "TXT, 3.4MB · 3일 전" / "… · 시리즈명 3" / "… · 파일 없음" ([LibraryText.metaLine]). */
+    /** "3일 전 · TXT 3.4MB" / "시리즈명 3 · …" / "파일 없음 · …" ([LibraryText.metaLine]). */
     val meta: String,
     val percent: String,
     val inCollection: Boolean,
+    /** When it was last read ("3일 전", "" for a book never opened): the 간단히 row's state. */
+    private val lastRead: String = "",
 ) {
     val opened: Boolean get() = book.lastReadAt > 0
 
-    /** Never opened: "새 책" stands in for the percent (전체), the progress line (grids) or ends the 요약 meta. */
+    /** Never opened: "새 책" stands in for the percent (자세히), the progress line (표지 views) or the 간단히 state. */
     val isNew: Boolean = book.lastReadAt <= 0
 
-    /** "새 책" / "완독" in place of a card's or cell's progress line (unopened books only), else null. */
+    /** "새 책" / "다 읽음" in place of a card's or cell's progress line (unopened books only), else null. */
     val tag: String? get() = if (opened) null else LibraryText.statusTag(false, book.haveRead)
 
-    /** The 요약 meta line; built on its first bind (only that view shows it, a few rows at a time) and kept. */
+    /** The 간단히 second line; built on its first bind (only that view shows it, a few rows at a time) and kept. */
     private var compact: String? = null
 
     fun compactMeta(): String = compact ?: LibraryText.compactMeta(
-        book.author, book.format.label, book.sizeBytes, book.favorite, opened, book.haveRead, book.toRead,
-        missing = book.trashed && book.missingAt > 0,
+        book.author, book.favorite, opened, book.haveRead, book.toRead,
+        missing = book.trashed && book.missingAt > 0, lastRead = lastRead,
     ).also { compact = it }
 
-    /** Second line of the old 간단히 row ("작가 · 34% · 3일 전"); kept for callers that want the reading time. */
-    fun compactLine(): String = LibraryText.compactLine(book.author, opened, book.haveRead, percent) {
-        LibraryText.ago(book.lastReadAt, System.currentTimeMillis())
-    }
-
     companion object {
-        fun of(book: Book, inCollection: Boolean, now: Long = System.currentTimeMillis()): BookRow = BookRow(
-            book = book,
-            title = book.title.ifBlank { book.fileName.substringBeforeLast('.') },
-            meta = LibraryText.metaLine(
-                book.format.label, book.sizeBytes, book.series, book.seriesIndex,
-                LibraryText.lastRead(now, book.lastReadAt), missing = book.trashed && book.missingAt > 0,
-            ),
-            percent = LibraryText.percent(book.progress, book.lastReadAt > 0),
-            inCollection = inCollection,
-        )
+        fun of(book: Book, inCollection: Boolean, now: Long = System.currentTimeMillis()): BookRow {
+            val lastRead = LibraryText.lastRead(now, book.lastReadAt)
+            return BookRow(
+                book = book,
+                title = book.title.ifBlank { book.fileName.substringBeforeLast('.') },
+                meta = LibraryText.metaLine(
+                    book.format.label, book.sizeBytes, book.series, book.seriesIndex, lastRead,
+                    missing = book.trashed && book.missingAt > 0,
+                ),
+                percent = LibraryText.percent(book.progress, book.lastReadAt > 0),
+                inCollection = inCollection,
+                lastRead = lastRead,
+            )
+        }
     }
 }
 
@@ -91,7 +92,7 @@ internal interface BookActions {
     val selection: BookSelection
     /** E-ink screen (`DeviceClass.cached == true`): card buttons get no pressed state (NOTES_SPEC §3.3). */
     val eink: Boolean
-    /** The lists page instead of scrolling (요약 rows are then 80 dp at least, else 88 dp). */
+    /** The lists page instead of scrolling (간단히 rows are then 80 dp at least, else 88 dp). */
     val paged: Boolean
     /** Tap on a book: open it (its menu in the trash), or check / uncheck it while selecting. */
     fun tap(row: BookRow, anchor: View)
@@ -270,8 +271,8 @@ private fun Context.cardButton(actions: BookActions, res: Int, desc: String, onC
 // ---------------------------------------------------------------------------------------------- list card
 
 /**
- * 전체 card (ReadEra layout, black & white; NOTES_SPEC §10.2, UI_SPEC polish 14): cover 96×136 with its 1 px border,
- * then title (≤ 3 lines), author (GONE if blank), "TXT, 3.4MB · 3일 전", progress line + "34%" (or "새 책") and the five
+ * 자세히 card (ReadEra layout, black & white; NOTES_SPEC §10.2, UI_SPEC polish 14): cover 96×136 with its 1 px border,
+ * then title (≤ 3 lines), author (GONE if blank), "3일 전 · TXT 3.4MB", progress line + "34%" (or "새 책") and the five
  * action buttons. No card border: padding (10, 10, 6, 10) dp, a 1 px LINE_LIGHT separator inset 8 dp, pressed =
  * PRESSED fill. While selecting, the cover carries the mark and the buttons hide (invisible: the card keeps its height).
  */
@@ -323,7 +324,7 @@ internal class BookCardHolder(private val ctx: Context, private val actions: Boo
         }
         progress = ProgressLineView(ctx)
         progRow.addView(progress, lp(0, ctx.dp(14), 1f))
-        // "34%", or "새 책" / "완독" in place of the empty percent of a book never opened.
+        // "34%", or "새 책" / "다 읽음" in place of the empty percent of a book never opened.
         percent = ctx.label("", 13f, maxLines = 1).apply {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
             minWidth = ctx.dp(40)
@@ -397,8 +398,8 @@ internal class BookCardHolder(private val ctx: Context, private val actions: Boo
 // ---------------------------------------------------------------------------------------------- compact row
 
 /**
- * 요약 row (NOTES_SPEC §10.2, library.md §2.4): a 48×68 cover (the canonical bitmap at 0.5×), the title (16 sp bold,
- * ≤ 2 lines), "★ 작가 · TXT 3.4MB · 다 읽음" (13 sp grey), a 10 dp progress line + "34%", and ⋮ (48 dp × the full row
+ * 간단히 row (NOTES_SPEC §10.2, library.md §2.4): a 48×68 cover (the canonical bitmap at 0.5×), the title (16 sp bold,
+ * ≤ 2 lines), "★ 작가 · 3일 전" (14 sp grey), a 10 dp progress line + "34%", and ⋮ (48 dp × the full row
  * height). At least 80 dp tall when paged, 88 dp when scrolling. While selecting, the cover carries the mark and ⋮
  * hides.
  */
@@ -433,7 +434,7 @@ internal class CompactRowHolder(private val ctx: Context, private val actions: B
         line.addView(frame, LinearLayout.LayoutParams(w, h).apply { topMargin = ctx.dp(10); bottomMargin = ctx.dp(10) })
         val texts = ctx.vertical { setPadding(ctx.dp(12), ctx.dp(10), 0, ctx.dp(10)) }
         title = ctx.label("", 16f, bold = true, maxLines = 2)
-        sub = ctx.label("", 13f, color = Ink.GRAY, maxLines = 1).apply { setPadding(0, ctx.dp(3), 0, 0) }
+        sub = ctx.label("", 14f, color = Ink.GRAY, maxLines = 1).apply { setPadding(0, ctx.dp(3), 0, 0) }
         texts.addView(title, lp())
         texts.addView(sub, lp())
         val progRow = ctx.horizontal { setPadding(0, ctx.dp(4), 0, 0) }
@@ -479,9 +480,9 @@ internal class CompactRowHolder(private val ctx: Context, private val actions: B
 // ---------------------------------------------------------------------------------------------- grid cell
 
 /**
- * A cell of 썸네일 ([LibraryListMode.GRID]: cover 96×136, 6 dp line, 12 sp title on 2 lines) or 그리드
+ * A cell of 큰 표지 ([LibraryListMode.GRID]: cover 96×136, 6 dp line, 12 sp title on 2 lines) or 작은 표지
  * ([LibraryListMode.COVERS]: cover 76×108, 4 dp line, 11 sp title on 1 line) — [LibraryGridMath.cell]. The progress
- * line, or "새 책" (10 sp grey), sits in a fixed slot and the title has a fixed line count, so every cell has the
+ * line, or "새 책" / "다 읽음" (10 sp black), sits in a fixed slot and the title has a fixed line count, so every cell has the
  * exact height the adapter gives it. Tap opens, long press starts multi-select.
  */
 internal class GridCellHolder(private val ctx: Context, private val actions: BookActions, val mode: LibraryListMode) : SelectableHolder {
@@ -514,7 +515,7 @@ internal class GridCellHolder(private val ctx: Context, private val actions: Boo
         val slot = FrameLayout(ctx)
         progress = ProgressLineView(ctx)
         slot.addView(progress, FrameLayout.LayoutParams(MATCH_PARENT, ctx.dp(spec.slotDp), Gravity.CENTER_VERTICAL))
-        tag = ctx.label("", 10f, color = Ink.GRAY, maxLines = 1).apply {
+        tag = ctx.label("", 10f, maxLines = 1).apply {
             gravity = Gravity.CENTER
             includeFontPadding = false
             visibility = View.GONE
@@ -589,7 +590,7 @@ internal class BookListAdapter(private val ctx: Context, private val actions: Bo
     }
 }
 
-/** 요약 rows. */
+/** 간단히 rows. */
 internal class CompactListAdapter(private val ctx: Context, private val actions: BookActions) : BookAdapter() {
     override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
         val holder = (convertView?.tag as? CompactRowHolder) ?: CompactRowHolder(ctx, actions)
@@ -599,7 +600,7 @@ internal class CompactListAdapter(private val ctx: Context, private val actions:
 }
 
 /**
- * 썸네일 and 그리드 in the one GridView: [mode] picks the cell recipe (a recycled holder of the other mode is not
+ * 큰 표지 and 작은 표지 in the one GridView: [mode] picks the cell recipe (a recycled holder of the other mode is not
  * reused), [cellHeight] the exact cell height (px).
  */
 internal class BookGridAdapter(private val ctx: Context, private val actions: BookActions) : BookAdapter() {
@@ -677,7 +678,7 @@ internal class GroupAdapter(
         row.addView(ic)
         val texts = ctx.vertical()
         val name = ctx.label("", 17f, maxLines = 2)
-        val sub = ctx.label("", 13f, color = Ink.GRAY, maxLines = 2).apply { setPadding(0, ctx.dp(2), 0, 0) }
+        val sub = ctx.label("", 14f, color = Ink.GRAY, maxLines = 2).apply { setPadding(0, ctx.dp(2), 0, 0) }
         texts.addView(name, lp())
         texts.addView(sub, lp())
         row.addView(texts, lp(0, WRAP_CONTENT, 1f))

@@ -170,8 +170,8 @@ class ListPager(val list: AbsListView,val bar: InkPagerBar,private val cols: Int
     fun showRow(index: Int) { if (count>0) { list.setSelection(index.coerceIn(0,count-1));update() } }
     fun openNumPad() {
         val max=total()
-        InkNumPad.show(list.context,"쪽 번호","1~$max",max.toString().length) { p ->
-            if (p !in 1..max) "1~${max}쪽 사이로 입력하세요" else { showRow((p-1)*step());null }
+        InkNumPad.show(list.context,"화면 번호","1–$max",max.toString().length) { p ->
+            if (p !in 1..max) "1–$max 사이로 입력하세요" else { showRow((p-1)*step());null }
         }
     }
     fun update() {

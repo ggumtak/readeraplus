@@ -32,6 +32,7 @@ import com.ggumtak.readeraplus.settings.ReadMode
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.ScrollStyle
 import com.ggumtak.readeraplus.settings.StatusItem
+import com.ggumtak.readeraplus.ui.library.LibraryText
 import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -408,13 +409,8 @@ object R3Rows {
     /** The chooser's checked item for a stored value (자동 reads as 스크롤). */
     fun listPagingIndex(v: Int): Int = if (v == LIST_PAGING_PAGED) 1 else 0
 
-    /** The 서재 "보기" chooser (NOTES §10.2): the view's name and what it shows. */
-    fun libraryViewChoice(m: LibraryListMode): String = when (m) {
-        LibraryListMode.LIST -> "${m.label} (표지 · 정보 · 버튼)"
-        LibraryListMode.COMPACT -> "${m.label} (작은 표지 · 한 줄 정보)"
-        LibraryListMode.GRID -> "${m.label} (표지 3열)"
-        LibraryListMode.COVERS -> "${m.label} (작은 표지 4열)"
-    }
+    /** The 서재 "보기" chooser (NOTES §10.2): the library's own wording, so both choosers read the same. */
+    fun libraryViewChoice(m: LibraryListMode): String = LibraryText.modeChoice(m)
 
     // ---- 페이지 표시 (scroll SPEC §2.4, anchor §3.3 / §4.4)
 

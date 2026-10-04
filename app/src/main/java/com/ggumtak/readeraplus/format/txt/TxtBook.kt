@@ -88,7 +88,7 @@ internal class TxtBook(
                     if (temporary) r.close()
                 }
             } catch (e: IOException) {
-                throw DocumentException("읽기 실패: ${file.name}", e)
+                throw DocumentException(TxtDocuments.READ_FAILED, e)
             }
         }
     }

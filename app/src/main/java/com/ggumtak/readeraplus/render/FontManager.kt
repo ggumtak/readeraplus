@@ -164,7 +164,7 @@ object FontManager {
         val tmp = File(dir, ".import-${System.nanoTime()}.tmp")
         val header = ByteArray(12)
         try {
-            val input = cr.openInputStream(uri) ?: throw IOException("파일을 열 수 없습니다")
+            val input = cr.openInputStream(uri) ?: throw IOException("파일을 읽지 못했습니다")
             input.use {
                 val n = readUpTo(it, header)
                 if (n < 12 || !SfntReader.looksLikeSfnt(header, n)) {
@@ -175,7 +175,7 @@ object FontManager {
                     copyLimited(it, out, MAX_IMPORT_BYTES - n)
                 }
             }
-            val sfnt = SfntReader.parse(tmp) ?: throw IllegalArgumentException("글꼴 파일을 읽을 수 없습니다 (손상된 파일)")
+            val sfnt = SfntReader.parse(tmp) ?: throw IllegalArgumentException("글꼴 파일이 손상되었습니다")
             val name = FontFiles.sanitizeFileName(display, header, System.currentTimeMillis())
             val target = File(dir, name)
             if (target.exists()) target.delete()

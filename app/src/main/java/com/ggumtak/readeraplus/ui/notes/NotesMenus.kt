@@ -70,54 +70,48 @@ internal class NotesMenus(private val a: NotesActivity) {
 
     // ============================================================================================ row menus
 
+    /**
+     * One order for every kind: 책에서 보기 · the kind's own edit (메모 편집, 리뷰 편집, 뜻 메모) and actions · 복사 ·
+     * 공유 · (색 바꾸기) · 선택 · 삭제.
+     */
     fun rowMenu(row: NoteRow, anchor: View) {
         val items = ArrayList<MenuItem>()
-        when (row.ref.kind) {
+        val kind = row.ref.kind
+        items += MenuItem("책에서 보기", R.drawable.ic_open_in_new) { if (kind == NoteKind.REVIEW) openBook(row) else openAt(row) }
+        when (kind) {
             NoteKind.QUOTE -> {
-                items += MenuItem("책에서 보기", R.drawable.ic_open_in_new) { openAt(row) }
+                items += MenuItem("메모 편집") { editNote(row) }
                 if (row.bodyCut || row.body.count { it == '\n' } >= 4 || row.body.length > 160) {
                     items += MenuItem("전체 보기") { fullView(row) }
                 }
                 items += MenuItem("복사") { withFull(row) { b, n -> TextActions.copy(a, NotesText.shareQuote(b, n, null, null)) } }
-                items += MenuItem("공유", R.drawable.ic_share) { share(row) }
-                items += MenuItem("메모 편집") { editNote(row) }
-                items += MenuItem("색 바꾸기", R.drawable.ic_ink_highlighter) { recolour(row, anchor) }
-                items += MenuItem("선택") { a.enterSelection(row) }
-                items += MenuItem("삭제", R.drawable.ic_delete) { delete(row) }
             }
             NoteKind.BOOKMARK -> {
-                items += MenuItem("책에서 보기", R.drawable.ic_open_in_new) { openAt(row) }
                 items += MenuItem("메모 편집") { editNote(row) }
                 items += MenuItem("복사") { withFull(row) { b, n -> TextActions.copy(a, bookmarkText(row, b, n)) } }
-                items += MenuItem("공유", R.drawable.ic_share) { share(row) }
-                items += MenuItem("선택") { a.enterSelection(row) }
-                items += MenuItem("삭제", R.drawable.ic_delete) { delete(row) }
             }
             NoteKind.REVIEW -> {
                 items += MenuItem("리뷰 편집") { editNote(row) }
-                items += MenuItem("책 열기", R.drawable.ic_open_in_new) { openBook(row) }
                 items += MenuItem("복사") { withFull(row) { b, _ -> TextActions.copy(a, b.trim()) } }
-                items += MenuItem("공유", R.drawable.ic_share) { share(row) }
-                items += MenuItem("선택") { a.enterSelection(row) }
-                items += MenuItem("리뷰 지우기", R.drawable.ic_delete) { delete(row) }
             }
             NoteKind.LOOKUP -> {
-                items += MenuItem("다시 찾기", R.drawable.ic_translate) { lookUp(row) }
-                items += MenuItem("문맥 보기", R.drawable.ic_open_in_new) { openAt(row) }
-                items += MenuItem("웹 검색", R.drawable.ic_search) { TextActions.webSearch(a, row.word.trim()) }
                 items += MenuItem("뜻 메모") { editNote(row) }
-                items += MenuItem("복사") { TextActions.copy(a, row.word.trim()) }
-                items += MenuItem("선택") { a.enterSelection(row) }
-                items += MenuItem("삭제", R.drawable.ic_delete) { delete(row) }
+                items += MenuItem("다시 찾기", R.drawable.ic_translate) { lookUp(row) }
+                items += MenuItem("웹 검색", R.drawable.ic_search) { TextActions.webSearch(a, row.word.trim()) }
                 if (a.q.wordsOnce && row.wordCount > 1) {
                     items += MenuItem("모든 기록 보기") { a.setWordsOnce(false, text = row.word.trim()) }
                 }
+                items += MenuItem("복사") { TextActions.copy(a, row.word.trim()) }
             }
         }
+        items += MenuItem("공유", R.drawable.ic_share) { share(row) }
+        if (kind == NoteKind.QUOTE) items += MenuItem("색 바꾸기", R.drawable.ic_ink_highlighter) { recolour(row, anchor) }
+        items += MenuItem("선택") { a.enterSelection(row) }
+        items += MenuItem("삭제", R.drawable.ic_delete) { delete(row) }
         a.popupMenu(anchor, items)
     }
 
-    /** Tap, 책에서 보기, 문맥 보기: the book file is checked on IO; a missing file keeps the notes and says so. */
+    /** Tap and 책에서 보기: the book file is checked on IO; a missing file keeps the notes and says so. */
     fun openAt(row: NoteRow) = open(row, ReaderJump.of(row))
 
     private fun openBook(row: NoteRow) = open(row, null)
@@ -133,7 +127,7 @@ internal class NotesMenus(private val a: NotesActivity) {
             }
             if (a.isDestroyed) return@launch
             if (!ok) {
-                a.toast("책 파일을 찾을 수 없습니다 (노트는 남아 있습니다)")
+                a.toast("책 파일을 찾을 수 없습니다 · 노트는 그대로 있습니다")
                 return@launch
             }
             ReaderActivity.open(a, row.bookId, jump)
@@ -201,16 +195,16 @@ internal class NotesMenus(private val a: NotesActivity) {
         }
     }
 
+    /** Asks, then deletes; the row leaving the list is the result (no toast). */
     private fun delete(row: NoteRow) {
         val id = row.ref.id
         val title = a.book(row.bookId)?.title.orEmpty()
-        val done = { a.toast(NotesText.deletedToast(1)) }
         when (row.ref.kind) {
-            NoteKind.QUOTE -> a.confirm("인용문 삭제", "이 인용문을 삭제할까요?", "삭제") { a.write({ Library.deleteQuotes(listOf(id)) }, done) }
-            NoteKind.BOOKMARK -> a.confirm("북마크 삭제", "이 북마크를 삭제할까요?", "삭제") { a.write({ Library.deleteBookmarks(listOf(id)) }, done) }
-            NoteKind.REVIEW -> a.confirm("리뷰 지우기", "‘$title’의 리뷰를 지울까요?", "지우기") { a.write({ Library.clearReviews(listOf(id)) }, done) }
+            NoteKind.QUOTE -> a.confirm("인용문 삭제", "이 인용문을 삭제할까요?", "삭제") { a.write({ Library.deleteQuotes(listOf(id)) }) }
+            NoteKind.BOOKMARK -> a.confirm("북마크 삭제", "이 북마크를 삭제할까요?", "삭제") { a.write({ Library.deleteBookmarks(listOf(id)) }) }
+            NoteKind.REVIEW -> a.confirm("리뷰 삭제", "‘$title’의 리뷰를 삭제할까요?", "삭제") { a.write({ Library.clearReviews(listOf(id)) }) }
             NoteKind.LOOKUP -> a.confirm("단어 기록 삭제", "‘${NotesText.wordTitle(row.word)}’ 기록을 삭제할까요?", "삭제") {
-                a.write({ Lookups.delete(listOf(id)) }, done)
+                a.write({ Lookups.delete(listOf(id)) })
             }
         }
     }
@@ -230,19 +224,18 @@ internal class NotesMenus(private val a: NotesActivity) {
 
     // ============================================================================================ overflow
 
+    /** ⋮: the list's actions (the chips under the tabs choose the book, order and colour); 단어장's two switches. */
     fun overflow(anchor: View) {
         val items = ArrayList<MenuItem>()
-        items += MenuItem("정렬…", R.drawable.ic_sort) { orderChooser() }
-        items += MenuItem("책 선택…", R.drawable.ic_filter_list) { bookChooser() }
         items += MenuItem("여러 개 선택", R.drawable.ic_check_box) { a.enterSelection(null) }
         items += MenuItem("내보내기…", R.drawable.ic_upload) { exportChooser(null) }
         items += MenuItem("공유", R.drawable.ic_share) { shareList(null) }
         if (a.q.tab == NotesTab.WORDS) {
             val once = Settings.raw().getBoolean(NotesActivity.PREF_WORDS_ONCE, false)
             items += MenuItem("같은 단어 한 번만", checked = once) { a.setWordsOnce(!once) }
+            val rec = Settings.app.recordLookups
+            items += MenuItem("찾아본 단어 기록", checked = rec) { a.setRecordLookups(!rec) }
         }
-        val rec = Settings.app.recordLookups
-        items += MenuItem("찾아본 단어 기록", checked = rec) { a.setRecordLookups(!rec) }
         a.popupMenu(anchor, items, widthDp = 260)
     }
 
@@ -275,7 +268,6 @@ internal class NotesMenus(private val a: NotesActivity) {
                 by[NoteKind.REVIEW]?.let { Library.clearReviews(it) }
                 by[NoteKind.LOOKUP]?.let { Lookups.delete(it) }
             }) {
-                a.toast(NotesText.deletedToast(n))
                 a.endSelectionOnReload()
             }
         }
@@ -284,7 +276,8 @@ internal class NotesMenus(private val a: NotesActivity) {
     fun recolourSelected(anchor: View) {
         val ids = selectedRefs().filter { it.kind == NoteKind.QUOTE }.map { it.id }
         if (ids.isEmpty()) return
-        pickStyle(anchor, null) { s -> a.write({ Library.setQuoteStyles(ids, s) }) { a.toast(NotesText.recolouredToast(ids.size)) } }
+        // The swatches on the rows are the result (no toast).
+        pickStyle(anchor, null) { s -> a.write({ Library.setQuoteStyles(ids, s) }) }
     }
 
     // ============================================================================================ share and export
@@ -310,12 +303,12 @@ internal class NotesMenus(private val a: NotesActivity) {
 
     fun exportChooser(refs: LongArray?) {
         val formats = listOf(NotesExport.Format.MARKDOWN, NotesExport.Format.TXT)
-        a.chooser("내보내기 형식", listOf("Markdown (.md) · 메모 앱·옵시디언", "텍스트 (.txt)"), -1) { a.startExport(formats[it], refs) }
+        a.chooser("내보내기 형식", listOf("마크다운 (.md)", "텍스트 (.txt)"), -1) { a.startExport(formats[it], refs) }
     }
 
     // ============================================================================================ choosers
 
-    /** 모든 색 chip: "모든 색 · n", then one row per style with notes (swatch + label + count). */
+    /** 모든 색 chip: "모든 색" with the total, then one row per style with notes (swatch + label + count). */
     fun styleChooser() {
         val q0 = a.q.copy(style = null)
         a.scope.launch {
@@ -336,9 +329,9 @@ internal class NotesMenus(private val a: NotesActivity) {
                     setOnClickListener { dialog.dismiss(); a.setStyle(s) }
                 }
                 if (s != null) r.addView(QuoteSwatch(a, s, 14, ink), LinearLayout.LayoutParams(a.dp(20), a.dp(20)).apply { rightMargin = a.dp(12) })
-                val text = if (s == null) "모든 색 · $n" else QuoteStyles.label(s)
+                val text = if (s == null) "모든 색" else QuoteStyles.label(s)
                 r.addView(a.label(text, 17f, bold = s == a.q.style), lp(0, WRAP_CONTENT, 1f))
-                if (s != null) r.addView(a.label(n.toString(), 15f, color = Ink.GRAY))
+                r.addView(a.label(n.toString(), 15f, color = Ink.GRAY))
                 col.addView(r, lp())
             }
             dialog.window?.setWindowAnimations(0)
@@ -411,7 +404,7 @@ internal class NotesMenus(private val a: NotesActivity) {
                 background = pressableBackground()
                 val texts = a.vertical()
                 texts.addView(a.label("", 16f, maxLines = 2), lp())
-                texts.addView(a.label("", 13f, color = Ink.GRAY, maxLines = 1), lp())
+                texts.addView(a.label("", 14f, color = Ink.GRAY, maxLines = 1), lp())
                 addView(texts, lp(0, WRAP_CONTENT, 1f))
                 addView(a.label("", 15f, color = Ink.GRAY).apply { gravity = Gravity.END; setPadding(a.dp(12), 0, 0, 0) })
             }
@@ -421,9 +414,9 @@ internal class NotesMenus(private val a: NotesActivity) {
             val count = row.getChildAt(1) as TextView
             val b = getItem(position)
             if (b == null) {
-                title.text = "모든 책 · $total"
+                title.text = "모든 책"
                 author.visibility = View.GONE
-                count.text = ""
+                count.text = total.toString()
             } else {
                 val suffix = if (b.missing) " (파일 없음)" else if (b.trashed) " (휴지통)" else ""
                 title.text = "《${b.title}》$suffix"

@@ -157,8 +157,9 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             fillReceived()
         }
 
-        override fun onError(message: String) {
-            errorText.text = "받지 못한 파일이 있습니다: $message"
+        /** "받지 못한 파일: a.txt · 빈 파일은 받을 수 없습니다", or the reason alone when the whole request failed. */
+        override fun onError(message: String, file: String?) {
+            errorText.text = if (file == null) message else "받지 못한 파일: $file · $message"
             errorText.visibility = View.VISIBLE
         }
     }

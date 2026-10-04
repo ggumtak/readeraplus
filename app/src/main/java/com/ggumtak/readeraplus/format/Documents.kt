@@ -15,7 +15,7 @@ object Documents {
         when (BookFormat.forFile(file.name)) {
             BookFormat.TXT -> TxtDocuments.open(file, options)
             BookFormat.EPUB -> EpubDocuments.open(file, options)
-            null -> throw DocumentException("지원하지 않는 형식: ${file.name}")
+            null -> throw DocumentException("TXT·EPUB 파일만 열 수 있습니다")
         }
 
     /**

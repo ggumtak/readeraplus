@@ -145,14 +145,15 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
                     h.titleLine.visibility = View.VISIBLE
                     h.mark.visibility = View.VISIBLE
                     text(h.title, firstLine.ifEmpty { row.chapter.ifBlank { NoteKind.BOOKMARK.label } }, 16f, Ink.BLACK, 1, bold = true)
-                    text(h.text, row.body.trim(), 15f, Ink.GRAY, 2)
+                    text(h.text, row.body.trim(), 15f, Ink.BLACK, 2)
                     val rest = row.note.trim().substringAfter('\n', "").trim()
                     noteLine(h, "메모", rest)
                 }
             }
             NoteKind.REVIEW -> {
                 h.titleLine.visibility = View.VISIBLE
-                h.tag.visibility = View.VISIBLE
+                // "리뷰" only where other kinds are listed beside it (the 리뷰 tab says it already).
+                h.tag.visibility = if (tab == NotesTab.ALL) View.VISIBLE else View.GONE
                 text(h.title, book?.title ?: "(삭제된 책)", 16f, Ink.BLACK, 1, bold = true)
                 text(h.text, row.body.trim(), 15f, Ink.BLACK, 6)
             }
@@ -176,17 +177,24 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
             }
         }
         h.text.visibility = if (h.text.text.isNullOrEmpty()) View.GONE else View.VISIBLE
-        h.meta.text = meta(row, book, tab, now)
+        h.meta.text = meta(row, book, now)
     }
 
-    private fun meta(row: NoteRow, book: NoteBook?, tab: NotesTab, now: Long): String {
+    /**
+     * "《제목》 · 12화 · 37% · 21:04": no kind label (the row's look says it), the book unless implied, the place (only
+     * the percent when the bookmark's title is its chapter already), the dictionary app, and the time: "21:04" under a
+     * day header, else [NotesText.time].
+     */
+    private fun meta(row: NoteRow, book: NoteBook?, now: Long): String {
         val kind = row.ref.kind
-        val time = NotesText.time(row.time, now)
-        if (kind == NoteKind.REVIEW) return NotesText.meta(kind.label, NotesText.percent(row.frac)?.let { "$it%" }, time)
-        val kindLabel = if (tab == NotesTab.ALL) kind.label else null
+        val time = if (cb.byBook) NotesText.time(row.time, now) else NotesText.hm(row.time)
+        val percent = NotesText.percent(row.frac)?.let { "$it%" }
+        if (kind == NoteKind.REVIEW) return NotesText.meta(percent, time)
         val bookPart = if (cb.bookImplied) null else NotesText.bookPart(book?.title, book?.trashed == true, book?.missing == true)
+        val chapterTitled = kind == NoteKind.BOOKMARK && row.note.isBlank() && row.chapter.isNotBlank()
+        val place = if (chapterTitled) percent else NotesText.place(row.chapter, row.frac)
         val app = if (kind == NoteKind.LOOKUP) row.app else null
-        return NotesText.meta(kindLabel, bookPart, NotesText.place(row.chapter, row.frac), app, time)
+        return NotesText.meta(bookPart, place, app, time)
     }
 
     private fun bindHeader(h: Holder, position: Int, page: NotesPage, row: NoteRow, now: Long) {
@@ -263,7 +271,7 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
             isFocusable = false
         }
         val headerTitle: TextView = ctx.label("", 14f, bold = true, maxLines = 1)
-        val headerAuthor: TextView = ctx.label("", 13f, color = Ink.GRAY, maxLines = 1).apply { setPadding(ctx.dp(12), 0, 0, 0) }
+        val headerAuthor: TextView = ctx.label("", 14f, color = Ink.GRAY, maxLines = 1).apply { setPadding(ctx.dp(12), 0, 0, 0) }
         val loading: TextView = ctx.label("불러오는 중…", 14f, color = Ink.GRAY).apply {
             gravity = Gravity.CENTER_VERTICAL
             minHeight = ctx.dp(64)
@@ -282,11 +290,11 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
             (layoutParams as LinearLayout.LayoutParams).rightMargin = ctx.dp(6)
         }
         val title: TextView = ctx.label("", 16f, bold = true, maxLines = 1)
-        val badge: TextView = ctx.label("", 12f, color = Ink.GRAY, maxLines = 1).apply { setPadding(ctx.dp(8), 0, 0, 0) }
+        val badge: TextView = ctx.label("", 14f, color = Ink.GRAY, maxLines = 1).apply { setPadding(ctx.dp(8), 0, 0, 0) }
         val text: TextView = ctx.label("", 16f, maxLines = 4).apply { setLineSpacing(0f, 1.2f) }
         val secondary: TextView = ctx.label("", 14f, color = Ink.GRAY, maxLines = 2).apply { setPadding(0, ctx.dp(4), 0, 0) }
         val note: TextView = ctx.label("", 14f, maxLines = 3).apply { setPadding(0, ctx.dp(6), 0, 0) }
-        val meta: TextView = ctx.label("", 13f, color = Ink.GRAY, maxLines = 1).apply { setPadding(0, ctx.dp(6), 0, 0) }
+        val meta: TextView = ctx.label("", 14f, color = Ink.GRAY, maxLines = 1).apply { setPadding(0, ctx.dp(6), 0, 0) }
         val right: LinearLayout = ctx.vertical()
         val swatch = QuoteSwatch(ctx, 0, 12, QuoteLook.ink())
         val swatchCell: FrameLayout = FrameLayout(ctx).apply {
@@ -296,7 +304,7 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
             addView(swatch, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER))
         }
         val lookUp = CardButton(ctx, R.drawable.ic_translate, "다시 찾기") {}
-        val menu = CardButton(ctx, R.drawable.ic_more_vert, "노트 메뉴") {}
+        val menu = CardButton(ctx, R.drawable.ic_more_vert, "더보기") {}
         val divider: View = View(ctx).apply { setBackgroundColor(Ink.LINE_LIGHT) }
 
         init {

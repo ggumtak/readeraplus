@@ -297,17 +297,18 @@ const val EINK_REFRESH_GC16 = 1
 const val EINK_REFRESH_CLEAN = 2
 const val EINK_REFRESH_FLASH = 3
 
+/** The library's sort orders (stored by name); ADDED lists the newest first. */
 enum class LibrarySort(val label: String) {
     RECENT("최근 읽은 순"),
-    TITLE("제목"),
-    AUTHOR("작가"),
-    ADDED("추가한 날짜"),
-    SIZE("파일 크기"),
-    PROGRESS("진행률"),
+    TITLE("제목순"),
+    AUTHOR("작가순"),
+    ADDED("최근 추가순"),
+    SIZE("파일 크기순"),
+    PROGRESS("진행률순"),
 }
 
-/** Library views, in the order the toolbar toggle cycles through them (stored by name). */
-enum class LibraryListMode(val label: String) { LIST("전체"), COMPACT("요약"), GRID("썸네일"), COVERS("그리드") }
+/** Library views, in the order the toolbar toggle cycles through them (stored by name: the names never change). */
+enum class LibraryListMode(val label: String) { LIST("자세히"), COMPACT("간단히"), GRID("큰 표지"), COVERS("작은 표지") }
 
 /**
  * What one slot of the page's status lines shows. The header and the footer each have three slots

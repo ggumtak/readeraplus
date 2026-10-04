@@ -5,13 +5,16 @@ import android.view.KeyEvent
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
 import com.ggumtak.readeraplus.reader.ReaderFormat
+import com.ggumtak.readeraplus.reader.extras.Josa
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.LibraryListMode
 import com.ggumtak.readeraplus.settings.TapAction
+import com.ggumtak.readeraplus.ui.settings.SettingsFormat
 import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import java.util.Locale
+import java.util.TimeZone
 
 /**
  * Pure (JVM-testable) helpers of the library screen: display strings, path conversion for SAF picks,
@@ -24,6 +27,17 @@ internal object LibraryText {
     private val GROUPED = setOf(Shelf.AUTHORS, Shelf.SERIES, Shelf.COLLECTIONS, Shelf.FORMATS, Shelf.FOLDERS)
 
     fun isGrouped(shelf: Shelf): Boolean = shelf in GROUPED
+
+    /**
+     * The drawer's shelves in their groups, top to bottom (NOTES_SPEC §10.1): the reading shelves, the grouped ones,
+     * the trash. 독서 노트 · 단어장 follow the first group and 설정 · 읽기 기록 the last; a line parts the groups. The
+     * stored shelf names (the enum) keep their order.
+     */
+    val DRAWER_SHELVES: List<List<Shelf>> = listOf(
+        listOf(Shelf.READING_NOW, Shelf.ALL, Shelf.FAVORITES, Shelf.TO_READ, Shelf.HAVE_READ),
+        listOf(Shelf.COLLECTIONS, Shelf.AUTHORS, Shelf.SERIES, Shelf.FOLDERS, Shelf.DOWNLOADS, Shelf.FORMATS),
+        listOf(Shelf.TRASH),
+    )
 
     private val UNITS = arrayOf("KB", "MB", "GB", "TB")
 
@@ -51,22 +65,22 @@ internal object LibraryText {
         return "$rounded${UNITS[i]}"
     }
 
-    /** "TXT, 3.4MB". */
-    fun metaLine(formatLabel: String, sizeBytes: Long): String = "$formatLabel, ${formatSize(sizeBytes)}"
+    /** "TXT 3.4MB". */
+    fun metaLine(formatLabel: String, sizeBytes: Long): String = "$formatLabel ${formatSize(sizeBytes)}"
 
     /**
-     * The card's meta line (NOTES_SPEC §10.2, library.md §2.2): "TXT, 3.4MB · 3일 전", "TXT, 3.4MB · 시리즈명 3" for a
-     * book in a series, "TXT, 3.4MB" for one never opened, and "TXT, 3.4MB · 파일 없음" for a trashed book whose file
-     * is gone. Built on IO in `reload()`.
+     * The 자세히 card's meta line (NOTES_SPEC §10.2, library.md §2.2), the useful part first: "3일 전 · TXT 3.4MB",
+     * "시리즈명 3 · TXT 3.4MB" for a book in a series, "TXT 3.4MB" for one never opened, and "파일 없음 · TXT 3.4MB" for
+     * a trashed book whose file is gone. Built on IO in `reload()`.
      */
     fun metaLine(formatLabel: String, sizeBytes: Long, series: String?, seriesIndex: Float?, lastRead: String, missing: Boolean): String {
         val base = metaLine(formatLabel, sizeBytes)
-        val extra = when {
+        val first = when {
             missing -> "파일 없음"
             !series.isNullOrBlank() -> seriesLabel(series, seriesIndex)
             else -> lastRead
         }
-        return if (extra.isEmpty()) base else "$base · $extra"
+        return if (first.isEmpty()) base else "$first · $base"
     }
 
     /** "시리즈명 3" ("시리즈명 2.5" for a half step, the bare name without an index). */
@@ -83,26 +97,27 @@ internal object LibraryText {
         if (lastReadAt <= 0L) "" else ago(lastReadAt, now, zone)
 
     /**
-     * The 요약 row's meta line: "★ 작가 · TXT 3.4MB · 다 읽음". A leading "★ " for a favourite, then the author (left out
-     * when blank), format and size, and one trailing state: "새 책" (never opened), "다 읽음", "읽을 책" or nothing.
+     * The 간단히 row's second line: "★ 작가 · 3일 전". A leading "★ " for a favourite, then the author (left out when
+     * blank) and one state: "파일 없음", "다 읽음", "새 책" (never opened), "읽을 책", else when it was last read
+     * ([lastRead]). No format or size: the row is for finding a book, not for its file.
      */
     fun compactMeta(
-        author: String, formatLabel: String, sizeBytes: Long,
-        favorite: Boolean, opened: Boolean, haveRead: Boolean, toRead: Boolean, missing: Boolean = false,
+        author: String, favorite: Boolean, opened: Boolean, haveRead: Boolean, toRead: Boolean, missing: Boolean,
+        lastRead: String,
     ): String {
-        val sb = StringBuilder(48)
+        val sb = StringBuilder(32)
         if (favorite) sb.append("★ ")
         val a = author.trim()
-        if (a.isNotEmpty()) sb.append(a).append(" · ")
-        sb.append(formatLabel).append(' ').append(formatSize(sizeBytes))
         val state = when {
             missing -> "파일 없음"
             haveRead -> "다 읽음"
             !opened -> "새 책"
             toRead -> "읽을 책"
-            else -> null
+            else -> lastRead
         }
-        if (state != null) sb.append(" · ").append(state)
+        sb.append(a)
+        if (a.isNotEmpty() && state.isNotEmpty()) sb.append(" · ")
+        sb.append(state)
         return sb.toString()
     }
 
@@ -114,24 +129,14 @@ internal object LibraryText {
     }
 
     /**
-     * The word that stands in for a progress bar or percent: "완독" for a book marked read, "새 책" for one never
+     * The word that stands in for a progress bar or percent: "다 읽음" for a book marked read, "새 책" for one never
      * opened, else null (show the progress). Cards and cells use it only for unopened books (their flag icons show
-     * 완독); compact rows, which have no flag icons, use it as it is.
+     * 다 읽음).
      */
     fun statusTag(opened: Boolean, haveRead: Boolean): String? = when {
-        haveRead -> "완독"
+        haveRead -> "다 읽음"
         !opened -> "새 책"
         else -> null
-    }
-
-    /**
-     * Second line of a compact ("간단히") row: "작가 · 34% · 3일 전", or "작가 · 새 책" / "작가 · 완독" ([statusTag]).
-     * No author → the line starts with the progress. [ago] is only read for an opened, unfinished book.
-     */
-    fun compactLine(author: String, opened: Boolean, haveRead: Boolean, percent: String, ago: () -> String): String {
-        val status = statusTag(opened, haveRead) ?: "$percent · ${ago()}"
-        val a = author.trim()
-        return if (a.isEmpty()) status else "$a · $status"
     }
 
     /**
@@ -152,15 +157,15 @@ internal object LibraryText {
         }
     }
 
-    /** The "보기" chooser: each view with a one-line description (NOTES_SPEC §10.2). */
+    /** The "보기" chooser of the library and of 설정 (NOTES_SPEC §10.2): "큰 표지 (3열)". */
     fun modeChoice(mode: LibraryListMode): String = when (mode) {
-        LibraryListMode.LIST -> "전체 — 표지 · 정보 · 버튼"
-        LibraryListMode.COMPACT -> "요약 — 작은 표지와 한 줄 정보"
-        LibraryListMode.GRID -> "썸네일 — 표지 3열"
-        LibraryListMode.COVERS -> "그리드 — 작은 표지 4열"
+        LibraryListMode.LIST -> mode.label
+        LibraryListMode.COMPACT -> "${mode.label} (한 줄)"
+        LibraryListMode.GRID -> "${mode.label} (3열)"
+        LibraryListMode.COVERS -> "${mode.label} (4열)"
     }
 
-    /** The toolbar view toggle's cycle: 전체 → 요약 → 썸네일 → 그리드 → 전체 (the enum's order). */
+    /** The toolbar view toggle's cycle: 자세히 → 간단히 → 큰 표지 → 작은 표지 → 자세히 (the enum's order). */
     fun nextListMode(mode: LibraryListMode): LibraryListMode {
         val all = LibraryListMode.entries
         return all[(mode.ordinal + 1) % all.size]
@@ -174,63 +179,56 @@ internal object LibraryText {
     /** Title of the selection toolbar: "3권 선택", or a prompt while nothing is checked. */
     fun selectionTitle(count: Int): String = if (count <= 0) "책을 고르세요" else "${count}권 선택"
 
-    /** Result of [다 읽음으로] / [읽을 책으로]: "다 읽은 책에 3권을 추가했습니다". */
+    /** Result of [다 읽음] / [읽을 책]: "다 읽은 책에 3권을 추가했습니다". */
     fun addedToShelf(shelf: Shelf, count: Int): String = "${shelf.label}에 ${count}권을 추가했습니다"
 
-    /** Result of [컬렉션에 추가]: "‘무협’에 3권을 추가했습니다". */
+    /** Result of [컬렉션]: "‘무협’에 3권을 추가했습니다". */
     fun addedToCollection(name: String, count: Int): String = "‘$name’에 ${count}권을 추가했습니다"
 
     /** Result of moving books to the trash (one book: the book menu's wording). */
-    fun trashedMessage(count: Int): String = if (count == 1) "휴지통으로 이동했습니다" else "${count}권을 휴지통으로 이동했습니다"
+    fun trashedMessage(count: Int): String = if (count == 1) "휴지통으로 옮겼습니다" else "${count}권을 휴지통으로 옮겼습니다"
 
     /** Question before a batch move to the trash (the trash has no batch restore, so several books ask first). */
-    fun trashQuestion(count: Int): String = "고른 책 ${count}권을 휴지통으로 이동합니다. 휴지통에서는 한 권씩 복원할 수 있습니다."
+    fun trashQuestion(count: Int): String = "고른 책 ${count}권을 휴지통으로 옮길까요? 휴지통에서는 한 권씩 복원할 수 있습니다."
 
     // ---- deleting books that have notes (NOTES_SPEC §10.1)
 
-    /** Appended to a delete / empty-trash question when the books carry [notes] notes (nothing when 0). */
-    fun notesWarning(notes: Int): String =
-        if (notes <= 0) "" else "\n\n이 책의 인용문·메모·북마크·리뷰·단어 ${notes}개도 함께 지워집니다. 먼저 독서 노트에서 내보낼 수 있습니다."
+    /** Appended to a delete / empty-trash question when the [books] carry [notes] notes (nothing when 0). */
+    fun notesWarning(notes: Int, books: Int = 1): String = when {
+        notes <= 0 -> ""
+        books > 1 -> "\n\n이 책들의 노트 ${notes}개도 함께 지워집니다."
+        else -> "\n\n이 책의 노트 ${notes}개도 함께 지워집니다."
+    }
 
     /** "영구 삭제" question for one book. */
-    fun deleteMessage(title: String, notes: Int): String = "‘$title’을(를) 서재에서 삭제합니다." + notesWarning(notes)
+    fun deleteMessage(title: String, notes: Int): String =
+        "‘$title’${Josa.eulReul(title)} 서재에서 삭제할까요?" + notesWarning(notes)
 
-    /** "휴지통 비우기" question. */
-    fun emptyTrashMessage(notes: Int): String = "휴지통의 모든 책을 서재에서 삭제합니다." + notesWarning(notes)
+    /** "휴지통 비우기" question; [books] = the books in the trash. */
+    fun emptyTrashMessage(notes: Int, books: Int): String =
+        "휴지통을 비울까요? 휴지통의 책이 모두 서재에서 삭제됩니다." + notesWarning(notes, books)
 
     // ---- auto backup and the restore offer (scroll SPEC §3.2, §3.4)
 
-    /** "2026-10-03 14:05". */
-    fun backupTime(millis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
-        BACKUP_TIME.format(Instant.ofEpochMilli(millis).atZone(zone))
-
-    private val BACKUP_TIME = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT)
-
     /**
-     * The offer's message. [location] names where the file is ("다운로드/ReaderaPlus/backup", "다운로드" or "문서");
-     * [lateAnswer]: this install already has reading history of its own (the offer is answered late).
+     * The offer's message under its question title: when, what and where. [location] names where the file is
+     * ("다운로드/ReaderaPlus/backup", "다운로드" or "문서"); [lateAnswer]: this install already has reading history of its
+     * own (the offer is answered late).
      */
     fun restoreOfferMessage(
-        createdAt: Long, books: Int, read: Int, bookmarks: Int, quotes: Int, location: String, lateAnswer: Boolean,
-        zone: ZoneId = ZoneId.systemDefault(),
+        createdAt: Long, books: Int, bookmarks: Int, quotes: Int, location: String, lateAnswer: Boolean,
+        tz: TimeZone = TimeZone.getDefault(), now: Long = System.currentTimeMillis(),
     ): String {
         val sb = StringBuilder(160)
-        sb.append("이전 설정과 읽기 기록을 복원할까요?\n\n")
-        sb.append(backupTime(createdAt, zone)).append(" 백업 · 책 ").append(books).append("권 (읽던 책 ").append(read)
-            .append("권) · 북마크 ").append(bookmarks).append("개 · 인용문 ").append(quotes).append("개\n")
-        sb.append("위치: ").append(location).append('\n')
+        sb.append(SettingsFormat.dateTime(createdAt, tz, now)).append(" 백업\n")
+        sb.append("책 ").append(books).append("권 · 북마크 ").append(bookmarks).append("개 · 인용문 ").append(quotes).append("개\n")
+        sb.append("위치: ").append(location).append("\n\n")
         sb.append("책 파일은 지금 있는 곳에서 다시 찾습니다.")
         if (lateAnswer) sb.append('\n').append(RESTORE_LATE_LINE)
         return sb.toString()
     }
 
     const val RESTORE_LATE_LINE = "지금 설정은 백업의 설정으로 바뀌고, 책마다 더 최근에 읽은 위치가 남습니다."
-
-    /** One row of "다른 백업 보기": "2026-10-03 14:05 · 책 120권 · 읽던 책 14권 · 북마크 3개 · 인용문 9개 · 자동". */
-    fun backupChoice(createdAt: Long, books: Int, read: Int, bookmarks: Int, quotes: Int, auto: Boolean,
-                     zone: ZoneId = ZoneId.systemDefault()): String =
-        "${backupTime(createdAt, zone)} · 책 ${books}권 · 읽던 책 ${read}권 · 북마크 ${bookmarks}개 · 인용문 ${quotes}개 · " +
-            if (auto) "자동" else "직접 내보냄"
 
     /** Where a backup file lies, for the offer: the auto-backup folder, else the top-level folder it was found in. */
     fun backupLocation(auto: Boolean, parentName: String?, autoLabel: String): String = when {
@@ -242,8 +240,8 @@ internal object LibraryText {
     /** Toast after a restore. */
     fun restoredMessage(books: Int): String = "책 ${books}권의 기록을 복원했습니다"
 
-    /** The one-time status line after this install's first auto backup. */
-    fun autoBackupNotice(location: String): String = "자동 백업을 ${location}에 저장했습니다 · 설정 → 백업 및 복원에서 끌 수 있습니다"
+    /** The one-time status line after this install's first auto backup (the place is on the 백업·복원 page). */
+    const val AUTO_BACKUP_NOTICE = "자동 백업을 저장했습니다 · 설정의 ‘백업·복원’에서 끌 수 있습니다"
 
     // ---- import / scan results
 
@@ -255,6 +253,14 @@ internal object LibraryText {
 
     /** "스캔 완료: 책 120권". */
     fun scanDoneMessage(total: Int): String = "스캔 완료: 책 ${total}권"
+
+    /**
+     * The one toast after a folder was picked for the scan: "‘Books’ 폴더를 스캔에 추가했습니다", or that the scan
+     * covers it already; " · 스캔 중" when a scan was running already (the new folder waits for the next one).
+     */
+    fun scanFolderMessage(path: String, added: Boolean, scanning: Boolean): String =
+        (if (added) "‘${folderName(path)}’ 폴더를 스캔에 추가했습니다" else "이미 스캔 범위에 있는 폴더입니다") +
+            if (scanning) " · 스캔 중" else ""
 
     /** Last path segment of a folder path ("/storage/emulated/0/Books" → "Books"). */
     fun folderName(path: String): String {
@@ -447,9 +453,9 @@ internal object LibraryText {
     /** Status row text while scanning / importing, or null when idle. */
     fun statusText(scanning: Boolean, scanFound: Int, importing: Boolean, imported: Int, importTotal: Int): String? {
         val parts = ArrayList<String>(2)
-        if (scanning) parts += if (scanFound > 0) "스캔 중… $scanFound" else "스캔 중…"
+        if (scanning) parts += if (scanFound > 0) "책 스캔 중… ${scanFound}권" else "책 스캔 중…"
         if (importing) parts += if (importTotal > 0) "가져오는 중… $imported/$importTotal" else "가져오는 중… $imported"
-        return if (parts.isEmpty()) null else parts.joinToString("  ·  ")
+        return if (parts.isEmpty()) null else parts.joinToString(" · ")
     }
 
     /**
@@ -457,23 +463,24 @@ internal object LibraryText {
      * views the hint points to multi-select or the book menu instead.
      */
     fun emptyMessage(shelf: Shelf, query: String, inGroup: Boolean, flagButtons: Boolean = true): String {
-        if (query.isNotBlank()) return "‘${query.trim()}’에 해당하는 항목이 없습니다."
+        if (query.isNotBlank()) return "‘${query.trim()}’ 검색 결과가 없습니다."
         if (inGroup) return "이 항목에 책이 없습니다."
         return when (shelf) {
             Shelf.READING_NOW -> "${Shelf.READING_NOW.label}이 없습니다.\n책을 열면 여기에 표시됩니다."
-            Shelf.ALL -> "책이 없습니다.\n‘도서 스캔’으로 기기의 EPUB · TXT 파일을 찾거나 ‘파일 열기’로 추가하세요."
+            // The [책 스캔] and [파일 열기] buttons under it say the rest.
+            Shelf.ALL -> "책이 없습니다."
             Shelf.FAVORITES -> "즐겨찾기한 책이 없습니다.\n" +
                 if (flagButtons) "카드의 별 버튼으로 추가하세요." else "책 메뉴에서 ‘즐겨찾기에 추가’를 고르세요."
             Shelf.TO_READ -> "${Shelf.TO_READ.label}이 없습니다.\n" +
-                if (flagButtons) "카드의 시계 버튼으로 추가하세요." else "책을 길게 눌러 고른 뒤 ‘읽을 책으로’를 누르세요."
+                if (flagButtons) "카드의 시계 버튼으로 추가하세요." else "책을 길게 눌러 고른 뒤 ‘읽을 책’을 누르세요."
             Shelf.HAVE_READ -> "${Shelf.HAVE_READ.label}이 없습니다.\n" +
-                if (flagButtons) "카드의 체크 버튼으로 표시하세요." else "책을 길게 눌러 고른 뒤 ‘다 읽음으로’를 누르세요."
+                if (flagButtons) "카드의 체크 버튼으로 표시하세요." else "책을 길게 눌러 고른 뒤 ‘다 읽음’을 누르세요."
             Shelf.AUTHORS -> "작가 정보가 있는 책이 없습니다."
             Shelf.SERIES -> "시리즈 정보가 있는 책이 없습니다."
-            Shelf.COLLECTIONS -> "컬렉션이 없습니다.\n오른쪽 위 + 버튼으로 새 컬렉션을 만드세요."
+            Shelf.COLLECTIONS -> "컬렉션이 없습니다."
             Shelf.FORMATS -> "책이 없습니다."
             Shelf.FOLDERS -> "책이 있는 폴더가 없습니다."
-            Shelf.DOWNLOADS -> "다운로드 폴더에 EPUB · TXT 파일이 없습니다."
+            Shelf.DOWNLOADS -> "다운로드 폴더에 TXT·EPUB 파일이 없습니다."
             Shelf.TRASH -> "휴지통이 비어 있습니다."
         }
     }

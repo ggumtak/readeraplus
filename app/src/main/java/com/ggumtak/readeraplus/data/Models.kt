@@ -105,9 +105,11 @@ data class NotePlace(val chapter: String, val frac: Float, val sig: String) {
 }
 
 enum class NoteKind(val code: Int, val label: String) { QUOTE(1, "인용문"), BOOKMARK(2, "북마크"), REVIEW(3, "리뷰"), LOOKUP(4, "단어") }
-enum class NotesTab(val label: String) { ALL("전체"), QUOTES("인용문"), MEMOS("메모"), BOOKMARKS("북마크"), REVIEWS("리뷰"), WORDS("단어") }
-enum class NotesOrder(val label: String) {
-    NEWEST("최신순"), OLDEST("오래된 순"), BOOK_RECENT("책별 · 최근 읽은 책 먼저"), BOOK_TITLE("책별 · 제목순");
+enum class NotesTab(val label: String) { ALL("전체"), QUOTES("인용문"), MEMOS("메모"), BOOKMARKS("북마크"), REVIEWS("리뷰"), WORDS("단어장") }
+/** The hub's orders (stored by name): [label] in the chooser, [short] on the chip. */
+enum class NotesOrder(val label: String, val short: String) {
+    NEWEST("최신순", "최신순"), OLDEST("오래된순", "오래된순"),
+    BOOK_RECENT("책별 · 최근 읽은 순", "책별 · 최근"), BOOK_TITLE("책별 · 제목순", "책별 · 제목");
     val byBook: Boolean get() = this == BOOK_RECENT || this == BOOK_TITLE
 }
 

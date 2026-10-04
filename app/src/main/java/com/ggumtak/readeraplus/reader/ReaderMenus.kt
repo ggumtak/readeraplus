@@ -125,7 +125,7 @@ private fun ReaderActivity.showCollections(id: Long) {
         }
         b.setPositiveButton("닫기", null)
             .setNeutralButton("새 컬렉션") { _, _ ->
-                prompt("새 컬렉션", hint = "컬렉션 이름") { name ->
+                prompt("새 컬렉션", hint = "컬렉션 이름", ok = "만들기") { name ->
                     val n = name.trim()
                     if (n.isNotEmpty()) {
                         ReaderIo.launch {

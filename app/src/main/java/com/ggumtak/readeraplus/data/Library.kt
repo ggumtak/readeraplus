@@ -464,7 +464,7 @@ object Library {
         }
         if (removed.isNotEmpty()) notesChanged()
         for ((id, _) in removed) invalidateCover(id)
-        if (failed > 0) throw IOException("파일 ${failed}개를 삭제하지 못했습니다")
+        if (failed > 0) throw IOException("파일 ${failed}개가 지워지지 않습니다")
     }
 
     fun lastOpened(): Book? = db().queryFirst(LibrarySql.SELECT_LAST_OPENED, null, BookRows::book)
@@ -487,7 +487,7 @@ object Library {
     private fun deleteFileOrThrow(path: String) {
         if (path.isEmpty()) return
         val f = File(path)
-        if (f.exists() && !f.delete() && f.exists()) throw IOException("파일을 삭제할 수 없습니다: ${f.name}")
+        if (f.exists() && !f.delete() && f.exists()) throw IOException("파일이 지워지지 않습니다")
     }
 
     internal fun invalidateCover(bookId: Long) {

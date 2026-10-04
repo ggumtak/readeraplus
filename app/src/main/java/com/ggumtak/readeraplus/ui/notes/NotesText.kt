@@ -26,18 +26,26 @@ object NotesText {
 
     private fun two(n: Int): String = if (n < 10) "0$n" else n.toString()
 
-    /** Meta time: today "21:04", yesterday "어제 21:04", this year "9월 28일", older "2025.12.03". */
+    /**
+     * Meta time where no day header says the day (the book orders): today "21:04", yesterday "어제 21:04", this year
+     * "9월 28일", older "2025년 12월 3일".
+     */
     fun time(t: Long, now: Long, zone: ZoneId = ZoneId.systemDefault()): String {
         val d = zoned(t, zone)
         val today = zoned(now, zone).toLocalDate()
         val day = d.toLocalDate()
-        val hm = two(d.hour) + ":" + two(d.minute)
         return when {
-            day == today -> hm
-            day == today.minusDays(1) -> "어제 $hm"
+            day == today -> hm(t, zone)
+            day == today.minusDays(1) -> "어제 ${hm(t, zone)}"
             day.year == today.year -> "${day.monthValue}월 ${day.dayOfMonth}일"
-            else -> "${day.year}.${two(day.monthValue)}.${two(day.dayOfMonth)}"
+            else -> "${day.year}년 ${day.monthValue}월 ${day.dayOfMonth}일"
         }
+    }
+
+    /** "21:04": the meta time under a day header (최신순, 오래된순), which already names the day. */
+    fun hm(t: Long, zone: ZoneId = ZoneId.systemDefault()): String {
+        val d = zoned(t, zone)
+        return two(d.hour) + ":" + two(d.minute)
     }
 
     /** The local day of [t] (epoch day): rows under one day header share it. */
@@ -57,8 +65,8 @@ object NotesText {
         }
     }
 
-    /** Book-order group header: "《제목》 · 12". */
-    fun bookHeader(title: String, count: Int): String = "《${title.ifBlank { "제목 없음" }}》 · $count"
+    /** Book-order group header: "《제목》 · 12개". */
+    fun bookHeader(title: String, count: Int): String = "《${title.ifBlank { "제목 없음" }}》 · ${count}개"
 
     /** Percent of a reading fraction: floor(frac × 100), "0%" allowed; null when unknown (frac < 0). */
     fun percent(frac: Float): Int? = if (frac < 0f || frac.isNaN()) null else Math.floor(frac.coerceAtMost(1f) * 100.0).toInt()
@@ -88,7 +96,7 @@ object NotesText {
         else -> "《$title》"
     }
 
-    /** Joins the non-blank meta parts with " · " (kind label, book, place, app, time). */
+    /** Joins the non-blank meta parts with " · " (book, place, app, time). */
     fun meta(vararg parts: String?): String {
         val sb = StringBuilder()
         for (p in parts) {
@@ -117,7 +125,8 @@ object NotesText {
     /** Chip of the book filter: "모든 책 ▾", or "《제목》 ✕" when filtered to one book. */
     fun scopeLabel(title: String?): String = if (title == null) "모든 책 ▾" else "《$title》 ✕"
 
-    fun orderChip(order: NotesOrder): String = order.label + " ▾"
+    /** Order chip: the order's short name, "책별 · 최근 ▾" (the chooser lists the full ones). */
+    fun orderChip(order: NotesOrder): String = order.short + " ▾"
 
     /** Colour chip: "모든 색 ▾" or "노랑 ▾". */
     fun styleChip(style: Int?): String = (if (style == null) "모든 색" else QuoteStyles.label(style)) + " ▾"
@@ -141,18 +150,18 @@ object NotesText {
 
     fun emptyText(tab: NotesTab, search: String, oneBook: Boolean, recordLookups: Boolean, bookmarkByTouch: Boolean): String =
         when (emptyCase(tab, search, oneBook, recordLookups)) {
-            Empty.SEARCH -> "‘${search.trim()}’와 일치하는 노트가 없습니다"
+            Empty.SEARCH -> "‘${search.trim()}’ 검색 결과가 없습니다"
             Empty.ONE_BOOK -> "이 책에는 노트가 없습니다"
-            Empty.WORDS_OFF -> "단어 기록이 꺼져 있습니다"
+            Empty.WORDS_OFF -> "찾아본 단어 기록이 꺼져 있습니다"
             Empty.TAB -> when (tab) {
-                NotesTab.ALL -> "아직 모은 노트가 없습니다\n\n책을 읽다가 글자를 길게 눌러 '인용'이나 '메모'를 누르거나 북마크를 추가하면\n" +
-                    "모든 책의 인용문·메모·북마크·리뷰가 여기에 모입니다"
-                NotesTab.QUOTES -> "인용문이 없습니다\n\n본문을 길게 눌러 문장을 선택한 뒤 '인용'을 누르세요"
-                NotesTab.MEMOS -> "메모가 없습니다\n\n문장을 선택하고 '메모'를 누르거나\n인용문·북마크의 메뉴에서 메모를 남기세요"
+                NotesTab.ALL -> "아직 노트가 없습니다\n\n읽다가 글자를 길게 눌러 ‘인용’·‘메모’를 고르거나\n" +
+                    "북마크를 추가하면 여기에 모입니다"
+                NotesTab.QUOTES -> "인용문이 없습니다\n\n본문을 길게 눌러 문장을 선택한 뒤 ‘인용’을 누르세요"
+                NotesTab.MEMOS -> "메모가 없습니다\n\n문장을 길게 눌러 ‘메모’를 누르세요"
                 NotesTab.BOOKMARKS -> "북마크가 없습니다\n\n읽는 중에 메뉴의 북마크 버튼을 누르세요" +
                     (if (bookmarkByTouch) "\n화면 오른쪽 위 모서리를 눌러도 됩니다" else "")
-                NotesTab.REVIEWS -> "리뷰가 없습니다\n\n책 메뉴의 '내 리뷰'나\n책을 다 읽은 뒤 나오는 화면에서 남길 수 있습니다"
-                NotesTab.WORDS -> "찾아본 단어가 없습니다\n\n글자를 길게 눌러 '사전·번역'이나 '웹 검색'을 누르면\n" +
+                NotesTab.REVIEWS -> "리뷰가 없습니다\n\n읽는 화면 ⋮ 메뉴의 ‘내 리뷰’나\n다 읽은 뒤 ‘리뷰 쓰기’로 남기세요"
+                NotesTab.WORDS -> "찾아본 단어가 없습니다\n\n글자를 길게 눌러 ‘사전·번역’이나 ‘웹 검색’을 누르면\n" +
                     "찾아본 단어와 그 문장이 여기에 기록됩니다"
             }
         }
@@ -161,10 +170,6 @@ object NotesText {
 
     fun deleteSelectedMessage(n: Int, reviews: Boolean): String =
         "선택한 ${n}개를 삭제할까요?" + if (reviews) " 리뷰는 책에서 지워집니다." else ""
-
-    fun deletedToast(n: Int): String = if (n <= 1) "삭제했습니다" else "${n}개를 삭제했습니다"
-
-    fun recolouredToast(n: Int): String = "인용문 ${n}개의 색을 바꿨습니다"
 
     fun exportedToast(n: Int): String = "노트 ${n}개를 내보냈습니다"
 
@@ -213,7 +218,7 @@ object NotesText {
 
     /**
      * Caps a TXT export for ACTION_SEND at [cap] chars, cut at an item boundary (a blank line, or a "• " list item),
-     * with "\n…(나머지 N개는 '내보내기'로 저장하세요)". [total] = the notes written. Returns (text, cut).
+     * with "\n…(나머지 N개는 ‘내보내기’로 저장하세요)". [total] = the notes written. Returns (text, cut).
      */
     fun shareCap(text: String, total: Int, cap: Int): Pair<String, Boolean> {
         if (text.length <= cap) return text to false
@@ -225,7 +230,7 @@ object NotesText {
         val kept = text.substring(0, end).trimEnd()
         val shown = itemsIn(kept)
         val rest = (total - shown).coerceAtLeast(1)
-        return "$kept\n…(나머지 ${rest}개는 '내보내기'로 저장하세요)" to true
+        return "$kept\n…(나머지 ${rest}개는 ‘내보내기’로 저장하세요)" to true
     }
 
     /** Items started in a TXT export text: quotes (“ at a line start), list items ("• ") and reviews ("[리뷰]"). */

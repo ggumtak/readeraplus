@@ -432,7 +432,7 @@ internal object BackupJson {
         val root = try {
             JSONObject(t)
         } catch (e: JSONException) {
-            throw IllegalArgumentException("백업 파일을 읽을 수 없습니다 (JSON 형식이 아닙니다)", e)
+            throw IllegalArgumentException("백업 파일이 아니거나 손상되었습니다", e)
         }
         if (!root.has("books") && !root.has("settings") && root.optString("format") != FORMAT) {
             throw IllegalArgumentException("리더플러스 백업 파일이 아닙니다")

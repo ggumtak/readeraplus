@@ -25,7 +25,10 @@ class NotesTextTest {
         assertEquals("어제 21:04", NotesText.time(at(2026, 9, 29, 21, 4), now, zone))
         assertEquals("9월 28일", NotesText.time(at(2026, 9, 28, 21, 4), now, zone))
         assertEquals("1월 1일", NotesText.time(at(2026, 1, 1, 0, 0), now, zone))
-        assertEquals("2025.12.03", NotesText.time(at(2025, 12, 3), now, zone))
+        assertEquals("2025년 12월 3일", NotesText.time(at(2025, 12, 3), now, zone))
+        // Under a day header the time alone.
+        assertEquals("21:04", NotesText.hm(at(2025, 12, 3, 21, 4), zone))
+        assertEquals("09:05", NotesText.hm(at(2026, 9, 29, 9, 5), zone))
     }
 
     @Test
@@ -56,13 +59,13 @@ class NotesTextTest {
     fun badgesHeadersAndMeta() {
         assertEquals("", NotesText.countBadge(1))
         assertEquals("3회", NotesText.countBadge(3))
-        assertEquals("《샘플》 · 12", NotesText.bookHeader("샘플", 12))
+        assertEquals("《샘플》 · 12개", NotesText.bookHeader("샘플", 12))
         assertEquals("《샘플》", NotesText.bookPart("샘플", false, false))
         assertEquals("《샘플》(휴지통)", NotesText.bookPart("샘플", true, false))
         assertEquals("《샘플》(파일 없음)", NotesText.bookPart("샘플", true, true))
         assertEquals("(삭제된 책)", NotesText.bookPart(null, false, false))
-        assertEquals("인용문 · 《샘플》 · 1화 · 3% · 21:04", NotesText.meta("인용문", "《샘플》", "1화 · 3%", null, "21:04"))
-        assertEquals("리뷰 · 57% · 9월 12일", NotesText.meta("리뷰", "57%", "", "9월 12일"))
+        assertEquals("《샘플》 · 1화 · 3% · 21:04", NotesText.meta(null, "《샘플》", "1화 · 3%", null, "21:04"))
+        assertEquals("57% · 9월 12일", NotesText.meta("57%", "", "9월 12일"))
     }
 
     @Test
@@ -70,6 +73,12 @@ class NotesTextTest {
         assertEquals("모든 책 ▾", NotesText.scopeLabel(null))
         assertEquals("《샘플》 ✕", NotesText.scopeLabel("샘플"))
         assertEquals("최신순 ▾", NotesText.orderChip(NotesOrder.NEWEST))
+        assertEquals("책별 · 최근 ▾", NotesText.orderChip(NotesOrder.BOOK_RECENT))
+        assertEquals(
+            listOf("최신순", "오래된순", "책별 · 최근 읽은 순", "책별 · 제목순"),
+            NotesOrder.entries.map { it.label },
+        )
+        assertEquals(listOf("최신순", "오래된순", "책별 · 최근", "책별 · 제목"), NotesOrder.entries.map { it.short })
         assertEquals("모든 색 ▾", NotesText.styleChip(null))
         assertEquals("초록 ▾", NotesText.styleChip(1))
         assertEquals(" · 128개", NotesText.countSuffix(128))
@@ -90,25 +99,35 @@ class NotesTextTest {
 
     @Test
     fun emptyStates() {
-        assertEquals("‘비명’와 일치하는 노트가 없습니다", NotesText.emptyText(NotesTab.ALL, " 비명 ", true, true, true))
+        assertEquals("‘비명’ 검색 결과가 없습니다", NotesText.emptyText(NotesTab.ALL, " 비명 ", true, true, true))
         assertEquals("이 책에는 노트가 없습니다", NotesText.emptyText(NotesTab.QUOTES, "", true, true, true))
-        assertEquals("단어 기록이 꺼져 있습니다", NotesText.emptyText(NotesTab.WORDS, "", false, false, true))
+        assertEquals("찾아본 단어 기록이 꺼져 있습니다", NotesText.emptyText(NotesTab.WORDS, "", false, false, true))
         assertEquals(NotesText.Empty.WORDS_OFF, NotesText.emptyCase(NotesTab.WORDS, "", false, false))
         assertEquals(NotesText.Empty.TAB, NotesText.emptyCase(NotesTab.QUOTES, "", false, false))
-        assertTrue(NotesText.emptyText(NotesTab.ALL, "", false, true, true).startsWith("아직 모은 노트가 없습니다\n\n"))
+        assertEquals(
+            "아직 노트가 없습니다\n\n읽다가 글자를 길게 눌러 ‘인용’·‘메모’를 고르거나\n북마크를 추가하면 여기에 모입니다",
+            NotesText.emptyText(NotesTab.ALL, "", false, true, true),
+        )
+        assertEquals("메모가 없습니다\n\n문장을 길게 눌러 ‘메모’를 누르세요", NotesText.emptyText(NotesTab.MEMOS, "", false, true, true))
+        assertEquals(
+            "리뷰가 없습니다\n\n읽는 화면 ⋮ 메뉴의 ‘내 리뷰’나\n다 읽은 뒤 ‘리뷰 쓰기’로 남기세요",
+            NotesText.emptyText(NotesTab.REVIEWS, "", false, true, true),
+        )
         assertTrue(NotesText.emptyText(NotesTab.BOOKMARKS, "", false, true, true).endsWith("\n화면 오른쪽 위 모서리를 눌러도 됩니다"))
         assertEquals("북마크가 없습니다\n\n읽는 중에 메뉴의 북마크 버튼을 누르세요", NotesText.emptyText(NotesTab.BOOKMARKS, "", false, true, false))
-        assertEquals("인용문이 없습니다\n\n본문을 길게 눌러 문장을 선택한 뒤 '인용'을 누르세요", NotesText.emptyText(NotesTab.QUOTES, "", false, true, true))
-        for (t in NotesTab.entries) assertTrue(NotesText.emptyText(t, "", false, true, true).isNotBlank())
+        assertEquals("인용문이 없습니다\n\n본문을 길게 눌러 문장을 선택한 뒤 ‘인용’을 누르세요", NotesText.emptyText(NotesTab.QUOTES, "", false, true, true))
+        for (t in NotesTab.entries) {
+            val text = NotesText.emptyText(t, "", false, true, true)
+            assertTrue(text.isNotBlank())
+            // ‘’ quotes only.
+            assertFalse(t.name, text.contains('\''))
+        }
     }
 
     @Test
     fun dialogsAndToasts() {
         assertEquals("선택한 3개를 삭제할까요?", NotesText.deleteSelectedMessage(3, false))
         assertEquals("선택한 3개를 삭제할까요? 리뷰는 책에서 지워집니다.", NotesText.deleteSelectedMessage(3, true))
-        assertEquals("삭제했습니다", NotesText.deletedToast(1))
-        assertEquals("4개를 삭제했습니다", NotesText.deletedToast(4))
-        assertEquals("인용문 5개의 색을 바꿨습니다", NotesText.recolouredToast(5))
         assertEquals("노트 12개를 내보냈습니다", NotesText.exportedToast(12))
     }
 
@@ -122,8 +141,8 @@ class NotesTextTest {
 
     @Test
     fun shareCapCutsAtAnItemBoundary() {
-        val item = "“인용문 본문”\n  — 1화 · 2026-09-12 21:04\n\n"
-        val text = "독서 노트\n범위: 모든 책 · 전체\n\n" + item.repeat(100)
+        val item = "“인용문 본문”\n  — 1화 · 2026년 9월 12일 21:04\n\n"
+        val text = "독서 노트\n범위: 모든 책 · 모든 노트\n\n" + item.repeat(100)
         val (same, cut0) = NotesText.shareCap(text, 100, text.length)
         assertFalse(cut0)
         assertEquals(text, same)
@@ -134,7 +153,7 @@ class NotesTextTest {
         assertTrue(body.endsWith("21:04"))
         val shown = NotesText.itemsIn(body)
         assertTrue(shown in 1..99)
-        assertTrue(capped.endsWith("\n…(나머지 ${100 - shown}개는 '내보내기'로 저장하세요)"))
+        assertTrue(capped.endsWith("\n…(나머지 ${100 - shown}개는 ‘내보내기’로 저장하세요)"))
         assertEquals(3, NotesText.itemsIn("[리뷰]\n좋다\n\n“a”\n\n• b\n  “c”"))
     }
 

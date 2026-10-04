@@ -497,8 +497,9 @@ fun Context.chooser(title: String, options: List<String>, selected: Int, onPick:
 /**
  * Text input dialog (system keyboard: for text, Hangul included; numbers use the non-frozen `InkNumPad`). The caret
  * stays hidden until the user touches the field ([inkCursor]): a blinking caret is an e-ink update twice a second.
+ * [ok] names what the button does ("만들기", "바꾸기") where "확인" would not say it.
  */
-fun Context.prompt(title: String, initial: String = "", hint: String = "", onOk: (String) -> Unit) {
+fun Context.prompt(title: String, initial: String = "", hint: String = "", ok: String = "확인", onOk: (String) -> Unit) {
     val edit = android.widget.EditText(this).apply {
         setText(initial)
         this.hint = hint
@@ -508,7 +509,7 @@ fun Context.prompt(title: String, initial: String = "", hint: String = "", onOk:
     }
     val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(edit) }
     alert().setTitle(title).setView(box)
-        .setPositiveButton("확인") { _, _ -> onOk(edit.text.toString()) }
+        .setPositiveButton(ok) { _, _ -> onOk(edit.text.toString()) }
         .setNegativeButton("취소", null)
         .showNoAnim()
 }

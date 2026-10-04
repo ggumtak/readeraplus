@@ -5,6 +5,7 @@ import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.LibraryListMode
+import com.ggumtak.readeraplus.settings.LibrarySort
 import com.ggumtak.readeraplus.settings.TapAction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,9 +36,9 @@ class LibraryTextTest {
     }
 
     @Test
-    fun metaLine_formatCommaSize() {
-        assertEquals("TXT, 3.4MB", LibraryText.metaLine("TXT", (3.4 * 1024 * 1024).toLong()))
-        assertEquals("EPUB, 820KB", LibraryText.metaLine("EPUB", 820L * 1024))
+    fun metaLine_formatAndSize() {
+        assertEquals("TXT 3.4MB", LibraryText.metaLine("TXT", (3.4 * 1024 * 1024).toLong()))
+        assertEquals("EPUB 820KB", LibraryText.metaLine("EPUB", 820L * 1024))
     }
 
     @Test
@@ -66,6 +67,21 @@ class LibraryTextTest {
     fun groupedShelves() {
         val grouped = Shelf.entries.filter { LibraryText.isGrouped(it) }.toSet()
         assertEquals(setOf(Shelf.AUTHORS, Shelf.SERIES, Shelf.COLLECTIONS, Shelf.FORMATS, Shelf.FOLDERS), grouped)
+    }
+
+    @Test
+    fun drawerShelves_everyShelfOnceInItsGroup() {
+        val all = LibraryText.DRAWER_SHELVES.flatten()
+        assertEquals(Shelf.entries.size, all.size)
+        assertEquals(Shelf.entries.toSet(), all.toSet())
+        // The reading shelves first (독서 노트 · 단어장 follow them), the trash alone at the end.
+        assertEquals(
+            listOf(Shelf.READING_NOW, Shelf.ALL, Shelf.FAVORITES, Shelf.TO_READ, Shelf.HAVE_READ),
+            LibraryText.DRAWER_SHELVES.first(),
+        )
+        assertEquals(listOf(Shelf.TRASH), LibraryText.DRAWER_SHELVES.last())
+        // The grouped shelves stand together.
+        assertTrue(LibraryText.DRAWER_SHELVES[1].all { LibraryText.isGrouped(it) || it == Shelf.DOWNLOADS })
     }
 
     @Test
@@ -178,15 +194,19 @@ class LibraryTextTest {
     @Test
     fun statusText_combinesJobs() {
         assertNull(LibraryText.statusText(false, 0, false, 0, 0))
-        assertEquals("스캔 중…", LibraryText.statusText(true, 0, false, 0, 0))
-        assertEquals("스캔 중… 120", LibraryText.statusText(true, 120, false, 0, 0))
+        assertEquals("책 스캔 중…", LibraryText.statusText(true, 0, false, 0, 0))
+        assertEquals("책 스캔 중… 120권", LibraryText.statusText(true, 120, false, 0, 0))
         assertEquals("가져오는 중… 3/10", LibraryText.statusText(false, 0, true, 3, 10))
-        assertEquals("스캔 중… 5  ·  가져오는 중… 0", LibraryText.statusText(true, 5, true, 0, 0))
+        assertEquals("책 스캔 중… 5권 · 가져오는 중… 0", LibraryText.statusText(true, 5, true, 0, 0))
     }
 
     @Test
     fun emptyMessage_searchAndShelves() {
-        assertTrue(LibraryText.emptyMessage(Shelf.ALL, "마법", false).contains("마법"))
+        assertEquals("‘마법’ 검색 결과가 없습니다.", LibraryText.emptyMessage(Shelf.ALL, " 마법 ", false))
+        // The buttons under the message say how to add books.
+        assertEquals("책이 없습니다.", LibraryText.emptyMessage(Shelf.ALL, "", false))
+        assertEquals("컬렉션이 없습니다.", LibraryText.emptyMessage(Shelf.COLLECTIONS, "", false))
+        assertEquals("다운로드 폴더에 TXT·EPUB 파일이 없습니다.", LibraryText.emptyMessage(Shelf.DOWNLOADS, "", false))
         assertTrue(LibraryText.emptyMessage(Shelf.TRASH, "", false).contains("휴지통"))
         assertTrue(LibraryText.emptyMessage(Shelf.AUTHORS, "", true).contains("항목"))
         for (s in Shelf.entries) assertTrue(LibraryText.emptyMessage(s, "", false).isNotBlank())
@@ -212,27 +232,19 @@ class LibraryTextTest {
         assertTrue(LibraryText.emptyMessage(Shelf.TO_READ, "", false, flagButtons = true).contains("시계 버튼"))
         val compact = LibraryText.emptyMessage(Shelf.TO_READ, "", false, flagButtons = false)
         assertFalse(compact.contains("버튼"))
-        assertTrue(compact.contains("‘읽을 책으로’"))
-        assertTrue(LibraryText.emptyMessage(Shelf.HAVE_READ, "", false, flagButtons = false).contains("‘다 읽음으로’"))
+        // The batch buttons' own labels.
+        assertTrue(compact.endsWith("‘읽을 책’을 누르세요."))
+        assertTrue(LibraryText.emptyMessage(Shelf.HAVE_READ, "", false, flagButtons = false).endsWith("‘다 읽음’을 누르세요."))
         assertTrue(LibraryText.emptyMessage(Shelf.FAVORITES, "", false, flagButtons = false).contains("책 메뉴"))
     }
 
     @Test
     fun statusTag_finishedBeforeNew() {
         assertEquals("새 책", LibraryText.statusTag(opened = false, haveRead = false))
-        assertEquals("완독", LibraryText.statusTag(opened = true, haveRead = true))
-        // Marked read without opening it here (read elsewhere): 완독, not 새 책.
-        assertEquals("완독", LibraryText.statusTag(opened = false, haveRead = true))
+        assertEquals("다 읽음", LibraryText.statusTag(opened = true, haveRead = true))
+        // Marked read without opening it here (read elsewhere): 다 읽음, not 새 책.
+        assertEquals("다 읽음", LibraryText.statusTag(opened = false, haveRead = true))
         assertNull(LibraryText.statusTag(opened = true, haveRead = false))
-    }
-
-    @Test
-    fun compactLine_authorProgressAndAgo() {
-        assertEquals("김작가 · 34% · 3일 전", LibraryText.compactLine("김작가", true, false, "34%") { "3일 전" })
-        assertEquals("34% · 어제", LibraryText.compactLine("  ", true, false, "34%") { "어제" })
-        assertEquals("김작가 · 새 책", LibraryText.compactLine("김작가", false, false, "") { error("not read") })
-        assertEquals("김작가 · 완독", LibraryText.compactLine(" 김작가 ", true, true, "100%") { error("not read") })
-        assertEquals("새 책", LibraryText.compactLine("", false, false, "") { error("not read") })
     }
 
     @Test
@@ -277,9 +289,10 @@ class LibraryTextTest {
         assertEquals("다 읽은 책에 3권을 추가했습니다", LibraryText.addedToShelf(Shelf.HAVE_READ, 3))
         assertEquals("읽을 책에 1권을 추가했습니다", LibraryText.addedToShelf(Shelf.TO_READ, 1))
         assertEquals("‘무협’에 12권을 추가했습니다", LibraryText.addedToCollection("무협", 12))
-        assertEquals("휴지통으로 이동했습니다", LibraryText.trashedMessage(1))
-        assertEquals("5권을 휴지통으로 이동했습니다", LibraryText.trashedMessage(5))
-        assertTrue(LibraryText.trashQuestion(5).contains("5권"))
+        assertEquals("휴지통으로 옮겼습니다", LibraryText.trashedMessage(1))
+        assertEquals("5권을 휴지통으로 옮겼습니다", LibraryText.trashedMessage(5))
+        // The question's verb is the button's: 옮길까요? / 옮기기.
+        assertEquals("고른 책 5권을 휴지통으로 옮길까요? 휴지통에서는 한 권씩 복원할 수 있습니다.", LibraryText.trashQuestion(5))
     }
 
     @Test
@@ -289,6 +302,15 @@ class LibraryTextTest {
         assertEquals("책 12권을 가져왔습니다", LibraryText.treeImportedMessage(12))
         assertEquals("가져온 책이 없습니다", LibraryText.treeImportedMessage(0))
         assertEquals("스캔 완료: 책 120권", LibraryText.scanDoneMessage(120))
+    }
+
+    @Test
+    fun scanFolderMessage_oneToast() {
+        val books = "/storage/emulated/0/Books"
+        assertEquals("‘Books’ 폴더를 스캔에 추가했습니다", LibraryText.scanFolderMessage(books, added = true, scanning = false))
+        assertEquals("‘Books’ 폴더를 스캔에 추가했습니다 · 스캔 중", LibraryText.scanFolderMessage("$books/", added = true, scanning = true))
+        assertEquals("이미 스캔 범위에 있는 폴더입니다", LibraryText.scanFolderMessage(books, added = false, scanning = false))
+        assertEquals("이미 스캔 범위에 있는 폴더입니다 · 스캔 중", LibraryText.scanFolderMessage(books, added = false, scanning = true))
     }
 
     @Test
@@ -432,12 +454,13 @@ class LibraryTextTest {
     @Test
     fun metaLine_lastReadSeriesAndMissing() {
         val mb = (3.4 * 1024 * 1024).toLong()
-        assertEquals("TXT, 3.4MB · 3일 전", LibraryText.metaLine("TXT", mb, null, null, "3일 전", missing = false))
-        assertEquals("TXT, 3.4MB", LibraryText.metaLine("TXT", mb, null, null, "", missing = false))
-        assertEquals("EPUB, 3.4MB · 삼국지 3", LibraryText.metaLine("EPUB", mb, "삼국지", 3f, "어제", missing = false))
-        assertEquals("EPUB, 3.4MB · 삼국지", LibraryText.metaLine("EPUB", mb, " 삼국지 ", null, "", missing = false))
-        assertEquals("TXT, 3.4MB · 파일 없음", LibraryText.metaLine("TXT", mb, "삼국지", 3f, "어제", missing = true))
-        assertEquals("TXT, 3.4MB · 3일 전", LibraryText.metaLine("TXT", mb, "  ", 2f, "3일 전", missing = false))
+        // The useful part first, then the file.
+        assertEquals("3일 전 · TXT 3.4MB", LibraryText.metaLine("TXT", mb, null, null, "3일 전", missing = false))
+        assertEquals("TXT 3.4MB", LibraryText.metaLine("TXT", mb, null, null, "", missing = false))
+        assertEquals("삼국지 3 · EPUB 3.4MB", LibraryText.metaLine("EPUB", mb, "삼국지", 3f, "어제", missing = false))
+        assertEquals("삼국지 · EPUB 3.4MB", LibraryText.metaLine("EPUB", mb, " 삼국지 ", null, "", missing = false))
+        assertEquals("파일 없음 · TXT 3.4MB", LibraryText.metaLine("TXT", mb, "삼국지", 3f, "어제", missing = true))
+        assertEquals("3일 전 · TXT 3.4MB", LibraryText.metaLine("TXT", mb, "  ", 2f, "3일 전", missing = false))
         assertEquals("삼국지 2.5", LibraryText.seriesLabel("삼국지", 2.5f))
     }
 
@@ -451,60 +474,67 @@ class LibraryTextTest {
     }
 
     @Test
-    fun compactMeta_flagsAuthorSizeState() {
-        val mb = (3.4 * 1024 * 1024).toLong()
-        assertEquals("★ 김작가 · TXT 3.4MB · 다 읽음", LibraryText.compactMeta("김작가", "TXT", mb, true, true, true, false))
-        assertEquals("김작가 · TXT 3.4MB · 새 책", LibraryText.compactMeta(" 김작가 ", "TXT", mb, false, false, false, false))
-        assertEquals("EPUB 3.4MB · 읽을 책", LibraryText.compactMeta("", "EPUB", mb, false, true, false, true))
-        assertEquals("EPUB 3.4MB", LibraryText.compactMeta("", "EPUB", mb, false, true, false, false))
-        assertEquals("EPUB 3.4MB · 파일 없음", LibraryText.compactMeta("", "EPUB", mb, false, true, false, false, missing = true))
+    fun compactMeta_authorAndOneState() {
+        // No format or size: the author and when it was read (or the book's state).
+        assertEquals("★ 김작가 · 다 읽음", LibraryText.compactMeta("김작가", true, true, true, false, false, "3일 전"))
+        assertEquals("김작가 · 새 책", LibraryText.compactMeta(" 김작가 ", false, false, false, false, false, ""))
+        assertEquals("읽을 책", LibraryText.compactMeta("", false, true, false, true, false, "어제"))
+        assertEquals("김작가 · 3일 전", LibraryText.compactMeta("김작가", false, true, false, false, false, "3일 전"))
+        assertEquals("★ 3일 전", LibraryText.compactMeta("", true, true, false, false, false, "3일 전"))
+        assertEquals("파일 없음", LibraryText.compactMeta("", false, true, true, false, true, "어제"))
     }
 
     @Test
     fun modeChoice_labelsInEnumOrder() {
         assertEquals(
-            listOf("전체 — 표지 · 정보 · 버튼", "요약 — 작은 표지와 한 줄 정보", "썸네일 — 표지 3열", "그리드 — 작은 표지 4열"),
+            listOf("자세히", "간단히 (한 줄)", "큰 표지 (3열)", "작은 표지 (4열)"),
             LibraryListMode.entries.map { LibraryText.modeChoice(it) },
         )
-        assertEquals(listOf("전체", "요약", "썸네일", "그리드"), LibraryListMode.entries.map { it.label })
+        assertEquals(listOf("자세히", "간단히", "큰 표지", "작은 표지"), LibraryListMode.entries.map { it.label })
+        // Stored by name: the names never change.
+        assertEquals(listOf("LIST", "COMPACT", "GRID", "COVERS"), LibraryListMode.entries.map { it.name })
+        assertEquals(
+            listOf("최근 읽은 순", "제목순", "작가순", "최근 추가순", "파일 크기순", "진행률순"),
+            LibrarySort.entries.map { it.label },
+        )
     }
 
     @Test
     fun deleteMessages_mentionNotesOnlyWhenThereAreSome() {
-        assertEquals("‘책’을(를) 서재에서 삭제합니다.", LibraryText.deleteMessage("책", 0))
+        // A question with the button's verb (삭제할까요? / 삭제) and the particle that fits the title.
+        assertEquals("‘책’을 서재에서 삭제할까요?", LibraryText.deleteMessage("책", 0))
+        assertEquals("‘나무’를 서재에서 삭제할까요?", LibraryText.deleteMessage("나무", 0))
         assertEquals(
-            "‘책’을(를) 서재에서 삭제합니다.\n\n이 책의 인용문·메모·북마크·리뷰·단어 5개도 함께 지워집니다. 먼저 독서 노트에서 내보낼 수 있습니다.",
+            "‘책’을 서재에서 삭제할까요?\n\n이 책의 노트 5개도 함께 지워집니다.",
             LibraryText.deleteMessage("책", 5),
         )
-        assertEquals("휴지통의 모든 책을 서재에서 삭제합니다.", LibraryText.emptyTrashMessage(0))
-        assertTrue(LibraryText.emptyTrashMessage(2).endsWith("단어 2개도 함께 지워집니다. 먼저 독서 노트에서 내보낼 수 있습니다."))
+        assertEquals("휴지통을 비울까요? 휴지통의 책이 모두 서재에서 삭제됩니다.", LibraryText.emptyTrashMessage(0, 3))
+        assertTrue(LibraryText.emptyTrashMessage(2, 3).endsWith("\n\n이 책들의 노트 2개도 함께 지워집니다."))
+        assertTrue(LibraryText.emptyTrashMessage(2, 1).endsWith("\n\n이 책의 노트 2개도 함께 지워집니다."))
     }
 
     @Test
     fun restoreOffer_messageAndLateLine() {
         val zone = ZoneId.of("Asia/Seoul")
+        val tz = java.util.TimeZone.getTimeZone(zone)
         val at = LocalDateTime.of(2026, 9, 30, 21, 5).atZone(zone).toInstant().toEpochMilli()
-        val msg = LibraryText.restoreOfferMessage(at, 120, 14, 3, 9, "다운로드/ReaderaPlus/backup", false, zone)
+        val now = LocalDateTime.of(2026, 10, 4, 9, 0).atZone(zone).toInstant().toEpochMilli()
+        val msg = LibraryText.restoreOfferMessage(at, 120, 3, 9, "다운로드/ReaderaPlus/backup", false, tz, now)
         assertEquals(
-            "이전 설정과 읽기 기록을 복원할까요?\n\n2026-09-30 21:05 백업 · 책 120권 (읽던 책 14권) · 북마크 3개 · 인용문 9개\n" +
-                "위치: 다운로드/ReaderaPlus/backup\n책 파일은 지금 있는 곳에서 다시 찾습니다.",
+            "9월 30일 21:05 백업\n책 120권 · 북마크 3개 · 인용문 9개\n위치: 다운로드/ReaderaPlus/backup\n\n" +
+                "책 파일은 지금 있는 곳에서 다시 찾습니다.",
             msg,
         )
-        val late = LibraryText.restoreOfferMessage(at, 1, 1, 0, 0, "문서", true, zone)
+        // A backup of another year names it.
+        val old = LocalDateTime.of(2025, 12, 1, 8, 0).atZone(zone).toInstant().toEpochMilli()
+        assertTrue(LibraryText.restoreOfferMessage(old, 1, 0, 0, "문서", false, tz, now).startsWith("2025년 12월 1일 08:00 백업\n"))
+        val late = LibraryText.restoreOfferMessage(at, 1, 0, 0, "문서", true, tz, now)
         assertTrue(late.endsWith("\n지금 설정은 백업의 설정으로 바뀌고, 책마다 더 최근에 읽은 위치가 남습니다."))
-        assertEquals(
-            "2026-09-30 21:05 · 책 120권 · 읽던 책 14권 · 북마크 3개 · 인용문 9개 · 자동",
-            LibraryText.backupChoice(at, 120, 14, 3, 9, true, zone),
-        )
-        assertTrue(LibraryText.backupChoice(at, 1, 0, 0, 0, false, zone).endsWith("· 직접 내보냄"))
         assertEquals("다운로드/ReaderaPlus/backup", LibraryText.backupLocation(true, "backup", "다운로드/ReaderaPlus/backup"))
         assertEquals("문서", LibraryText.backupLocation(false, "Documents", "x"))
         assertEquals("다운로드", LibraryText.backupLocation(false, "Download", "x"))
         assertEquals("다운로드", LibraryText.backupLocation(false, null, "x"))
         assertEquals("책 3권의 기록을 복원했습니다", LibraryText.restoredMessage(3))
-        assertEquals(
-            "자동 백업을 다운로드/ReaderaPlus/backup에 저장했습니다 · 설정 → 백업 및 복원에서 끌 수 있습니다",
-            LibraryText.autoBackupNotice("다운로드/ReaderaPlus/backup"),
-        )
+        assertEquals("자동 백업을 저장했습니다 · 설정의 ‘백업·복원’에서 끌 수 있습니다", LibraryText.AUTO_BACKUP_NOTICE)
     }
 }

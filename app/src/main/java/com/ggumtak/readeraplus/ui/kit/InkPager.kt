@@ -70,9 +70,10 @@ object PagerMath {
 }
 
 /**
- * The pager bar under a paged list: [◀ 이전]  "3 / 27"  [다음 ▶], 44dp tall with a 1px top line. The buttons have no
+ * The pager bar under a paged list: [◀ 이전]  "3 / 27"  [다음 ▶], 48dp tall with a 1px top line. The buttons have no
  * pressed state (the page change is the feedback: one e-ink update per page) and turn gray at the ends. Created by
- * the caller, placed below the list (it sets its own 44dp LinearLayout params) and handed to [inkPaging].
+ * the caller, placed below the list (it sets its own 48dp LinearLayout params) and handed to [inkPaging]. A page here
+ * is one screen of the list, so the buttons are "이전 화면" / "다음 화면".
  */
 class InkPagerBar(context: Context) : LinearLayout(context) {
     internal val prev: TextView = button("◀ 이전")
@@ -107,7 +108,7 @@ class InkPagerBar(context: Context) : LinearLayout(context) {
         includeFontPadding = false
         minWidth = context.dp(88)
         setPadding(context.dp(16), 0, context.dp(16), 0)
-        contentDescription = if (text.startsWith("◀")) "이전 페이지" else "다음 페이지"
+        contentDescription = if (text.startsWith("◀")) "이전 화면" else "다음 화면"
     }
 
     internal fun show(page: Int, total: Int, canPrev: Boolean, canNext: Boolean) {
@@ -124,7 +125,7 @@ class InkPagerBar(context: Context) : LinearLayout(context) {
     }
 
     companion object {
-        const val HEIGHT_DP = 44
+        const val HEIGHT_DP = 48
     }
 }
 

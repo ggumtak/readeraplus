@@ -210,7 +210,7 @@ class SettingsFormatTest {
         assertEquals(listOf("페이지 넘김 (기본)", "스크롤 (위아래로 읽기)"), R3Rows.READ_MODES.map { R3Rows.readModeChoice(it) })
         assertEquals(ReadMode.entries.toSet(), R3Rows.READ_MODES.toSet())
         assertEquals(
-            listOf("전체 (표지 · 정보 · 버튼)", "요약 (작은 표지 · 한 줄 정보)", "썸네일 (표지 3열)", "그리드 (작은 표지 4열)"),
+            listOf("자세히", "간단히 (한 줄)", "큰 표지 (3열)", "작은 표지 (4열)"),
             LibraryListMode.entries.map { R3Rows.libraryViewChoice(it) },
         )
     }
