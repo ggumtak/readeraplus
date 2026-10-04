@@ -14,7 +14,8 @@ RC-A 세 파트와 최신 모든 레인을 합치고, 연결 누락을 보완했
 - CI 27: BackupJsonTest 3건(Maven org.json 키 순서) → 1886f33에서 BackupJson.write 머리 순서를 고정, 로컬 도구도 CI와 같은 classpath.
 - 독립 리뷰 20건 수정(0f5e845), 대화상자 NPE 크래시 수정(3f42e03), CI 29·30 스크립트 점검(930cc74, 9d92bed).
 - CI 31: 크래시 0, PASS 79, FAIL 2(51 재시도·덤프 보강, 57은 57_repeat 진단 추가). 상세: RC_A_INTEGRATION_STATUS.md.
-- 남은 일: 다음 [screens] 결과로 51·57 확인, 코멧 실기기 PLAN 5.4/5.5.
+- CI 33(e922861): 앱 충돌 0, CHECK 81건 전부 PASS. 성능 정적 점검 수정(6e8670e) 포함.
+- 남은 일: 코멧 실기기 점검(docs/next/DEVICE_CHECKLIST.md, PLAN 5.4/5.5).
 
 ## 다음 순서
 1. 이번 `[screens]` 커밋의 Actions 결과 확인. APK 빌드 성공과 screenshots 성공을 각각 확인한다.
