@@ -294,3 +294,8 @@ tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci
   - 시간 창은 실제 시간(elapsedRealtime): 잠자기 동안 멈추는 uptime으로는 3초가 몇 시간이 될 수 있었다.
   - 진행 막대: 아래 여백 6 · 8 dp에서는 간격을 줄여(`edgeGapPx`) 예전처럼 막대가 보인다.
   - 검사: typecheck 0, unittest 1,553 OK.
+
+## CI 40 결과 (b0565f6, workflow_dispatch, 2026-10-04)
+- APK 빌드 성공, `[screens]` CHECK 88건 전부 PASS, 앱 충돌 0 (43aaaed의 run 38은 다음 푸시로 취소되어 수동 실행).
+- 작업 관리자 재현: 79_clear_top(NEW_TASK | CLEAR_TOP) · 79b_clear_task(NEW_TASK | CLEAR_TASK) 모두 리더가 위, 75와 같은 쪽(픽셀 차이 0%).
+  78(뒤로로 닫은 뒤)은 서재 그대로. 최근 앱 70–77, 서재 40 · 45/46(쪽 단위 선택 시) · 89p, 아래 상태 61_footer · 52 · 53도 PASS.
