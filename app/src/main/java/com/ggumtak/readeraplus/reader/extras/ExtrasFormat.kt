@@ -350,14 +350,16 @@ internal object SearchText {
 }
 
 /**
- * Size / placement maths of the compact reading-settings popup and the drop-down lists it opens (px in the reader
+ * Size / placement maths of the quick reading options (⚙) and the drop-down lists they open (px in the reader
  * window). Sized for the ~6" 360×720 dp e-ink screen (U polish 7): centred, the whole width but 8 dp on each side
  * (≤ 400 dp), 8 dp under the status-bar inset, and at most 56% of the height, so the lower part of the page stays in
- * view as the preview while the main section ([MAIN_ROWS] × [Compact.ROW_DP] = 396 dp) never scrolls.
+ * view as the preview while the whole popup ([QUICK_HEIGHT_DP] = 376 dp) never scrolls.
  */
 internal object PopupGeometry {
-    /** Rows of the popup's main section: 스타일, 글꼴, 글자 크기, 굵기, 줄 간격, 문단 간격, 들여쓰기, 정렬 │ 줄바꿈, 더보기. */
-    const val MAIN_ROWS = 9
+    /** The quick options' rows: 글자 크기, 굵기, 줄 간격, 문단 간격, 글꼴 (between the title bar and "전체 읽기 설정"). */
+    const val QUICK_ROWS = 5
+    /** The whole popup: the title bar, [QUICK_ROWS] rows and the "전체 읽기 설정" row (376 dp). */
+    const val QUICK_HEIGHT_DP = Compact.BAR_DP + QUICK_ROWS * Compact.ROW_DP + Compact.BAR_DP
     /** Space left beside the popup, both sides together (dp): it is centred, 8 dp from each edge. */
     const val SIDE_GAP_DP = 16
     const val MAX_WIDTH_DP = 400

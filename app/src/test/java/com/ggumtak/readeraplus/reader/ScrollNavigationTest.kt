@@ -139,6 +139,30 @@ class ScrollNavigationTest {
         repeat(20) { nav.continueWork() }
         assertEquals(saved, nav.anchor); assertEquals(2, e.frames)
     }
+    @Test fun flingFramesMoveLikeADragAndSettleOnceAsFling() {
+        val e = Events(); val nav = start(Source(mutableListOf(section())), e, false)
+        nav.drag(20f)
+        // The reader's fling frames (OverScroller deltas) after the release.
+        nav.drag(30f); nav.drag(15f)
+        assertEquals(15f, nav.lastMove, 0f)
+        assertTrue(nav.moving); assertTrue(e.settled.isEmpty())
+        nav.endFling()
+        assertFalse(nav.moving)
+        assertEquals(65f, nav.pos.dy, 0f)
+        assertEquals(listOf(SettleKind.FLING), e.settled)
+        // Nothing left to end; a later plain release still settles as DRAG.
+        nav.endFling()
+        assertEquals(1, e.settled.size)
+        nav.drag(5f); nav.release(5f, 0f, 50f)
+        assertEquals(listOf(SettleKind.FLING, SettleKind.DRAG), e.settled)
+    }
+    @Test fun flingStopsAtTheBookStart() {
+        val e = Events(); val nav = start(Source(mutableListOf(section())), e, false)
+        nav.drag(-40f)
+        assertEquals(0f, nav.lastMove, 0f)
+        nav.endFling()
+        assertEquals(listOf(SettleKind.FLING), e.settled)
+    }
     @Test fun cancelledLiveDragSettlesBeforeAnchorIsRead() {
         val e = Events(); val nav = start(Source(mutableListOf(section())), e, false)
         nav.drag(80f)

@@ -141,15 +141,14 @@ class SettingsFormatTest {
         assertEquals("자동 (이 기기: 쪽 단위)", R3Rows.listPaging(LIST_PAGING_AUTO, true))
         assertEquals("자동 (이 기기: 스크롤)", R3Rows.listPaging(LIST_PAGING_AUTO, false))
         assertEquals("자동 (이 기기: 스크롤)", R3Rows.listPaging(LIST_PAGING_AUTO, null))
-        assertEquals("자동 (이 기기: e-ink → 손을 떼면 이동)", R3Rows.scrollStyle(ScrollStyle.AUTO, true))
-        assertEquals("자동 (이 기기: 휴대폰 → 손가락을 따라 이동)", R3Rows.scrollStyle(ScrollStyle.AUTO, false))
-        assertEquals("자동 (이 기기: 휴대폰 → 손가락을 따라 이동)", R3Rows.scrollStyle(ScrollStyle.AUTO, null))
+        // Scroll mode follows the finger on every device unless "손을 떼면 이동" is chosen (2026-10-04).
+        for (eink in listOf(true, false, null)) assertEquals("자동 (손가락을 따라 이동)", R3Rows.scrollStyle(ScrollStyle.AUTO, eink))
         // Fixed choices don't depend on the device.
         for (eink in listOf(true, false, null)) {
             assertEquals(listOf("색", "흑백 무늬"), R3Rows.HL_LOOKS.drop(1).map { R3Rows.highlightLook(it, eink) })
             assertEquals(listOf("쪽 단위", "스크롤"), R3Rows.LIST_PAGINGS.drop(1).map { R3Rows.listPaging(it, eink) })
             assertEquals(
-                listOf("손가락을 따라 이동 (휴대폰)", "손을 떼면 이동 (e-ink)"),
+                listOf("손가락을 따라 이동", "손을 떼면 이동 (e-ink)"),
                 R3Rows.SCROLL_STYLES.drop(1).map { R3Rows.scrollStyle(it, eink) },
             )
         }

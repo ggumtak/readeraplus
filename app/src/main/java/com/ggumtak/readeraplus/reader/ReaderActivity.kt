@@ -86,6 +86,7 @@ import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.ui.library.LibraryActivity
+import com.ggumtak.readeraplus.ui.settings.OpenBook
 import com.ggumtak.readeraplus.ui.settings.SettingsActivity
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.borderBox
@@ -637,9 +638,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // Per-view refresh modes may be reset by the firmware while another app was in front.
         prepareEink()
         if (session != null) {
+            // 설정 → 이 책의 TXT 정리: new TXT options join the compare below (one re-parse); a new encoding re-opens.
+            val reopening = takeSettingsEdits()
             // The book's effective settings, as the open path built them (no relayout when only this merge differs).
             val r = Settings.reader
-            if (r.withTxt(bookOverride) != readerTarget) applyToSession(r)
+            if (!reopening && r.withTxt(bookOverride) != readerTarget) applyToSession(r)
             // Clock and battery: same main-thread step as any repaint above, so still one redraw.
             refreshDecor(onlyIfChanged = true, sample = true)
         }
@@ -4021,7 +4024,39 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     internal fun openAppSettings(settingsPage: String? = null) {
         light.markOwnLaunch()
-        SettingsActivity.open(this, settingsPage)
+        // The open book goes along, so 읽기 설정 can offer its own TXT options ([takeSettingsEdits] takes them back).
+        val b = bookRef
+        val book = if (b != null && session != null) OpenBook.Info(b.id, b.title, b.format, b.encoding, bookOverride) else null
+        SettingsActivity.open(this, settingsPage, book)
+    }
+
+    /**
+     * The edits 설정 made for this book ([OpenBook], once): new TXT options become [bookOverride], applied by
+     * [onResume]'s one settings compare (one re-parse for any number of changes); a new encoding re-opens the book,
+     * like the library's "인코딩 변경". True when it re-opens.
+     */
+    private fun takeSettingsEdits(): Boolean {
+        val b = bookRef ?: return false
+        val e = OpenBook.take(b.id) ?: return false
+        if (e.overrideChanged) bookOverride = e.override
+        val enc = e.encoding?.trim()
+        if (enc == null || enc == b.encoding.trim()) return false
+        val id = b.id
+        val o = bookOverride
+        val overrideChanged = e.overrideChanged
+        scope.launch {
+            // 설정 saved both already; written again here, in this order, so the re-open reads them whatever its own
+            // writes are still doing.
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    if (overrideChanged) BookPrefs.setTxtOverride(id, o)
+                    Library.setEncoding(id, enc)
+                }
+            }
+            // The host caches the Book (and its encoding); re-creating the activity re-reads it from the library.
+            if (!isFinishing && !isDestroyed) recreate()
+        }
+        return true
     }
 
     internal fun isCurrentPageBookmarked(): Boolean {

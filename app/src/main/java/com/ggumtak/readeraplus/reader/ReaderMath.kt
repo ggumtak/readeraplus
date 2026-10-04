@@ -414,12 +414,14 @@ internal object ScrollWiring {
     /** JUMP to a mid-line offset (a search hit, a sentence, a fragment) goes 25 % down; everything else to the top. */
     fun contextPlacement(jump: Boolean, lineStart: Boolean): Boolean = jump && !lineStart
 
-    /** AUTO = STEP on e-ink (and while the device class is unknown), SMOOTH on a known LCD; a forced choice wins. */
-    fun stepMotion(style: com.ggumtak.readeraplus.settings.ScrollStyle, eink: Boolean?): Boolean = when (style) {
-        com.ggumtak.readeraplus.settings.ScrollStyle.STEP -> true
-        com.ggumtak.readeraplus.settings.ScrollStyle.SMOOTH -> false
-        com.ggumtak.readeraplus.settings.ScrollStyle.AUTO -> eink != false
-    }
+    /**
+     * Only a forced "손을 떼면 이동" (STEP) moves a screen per release. AUTO follows the finger on every device, e-ink
+     * included (2026-10-04: scroll mode is read on a phone, and it should scroll like any list); [eink] no longer
+     * decides it.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun stepMotion(style: com.ggumtak.readeraplus.settings.ScrollStyle, eink: Boolean?): Boolean =
+        style == com.ggumtak.readeraplus.settings.ScrollStyle.STEP
 
     /** Queued turns [n] (signed) become this many instant screen steps. */
     fun flushSteps(n: Int): Int = minOf(Math.abs(n), MAX_FLUSH_STEPS)

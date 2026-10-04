@@ -327,10 +327,14 @@ object R3Rows {
 
     val SCROLL_STYLES: List<ScrollStyle> = listOf(ScrollStyle.AUTO, ScrollStyle.SMOOTH, ScrollStyle.STEP)
 
-    /** "자동 (이 기기: e-ink → 손을 떼면 이동)" / "손가락을 따라 이동 (휴대폰)" / "손을 떼면 이동 (e-ink)". */
+    /**
+     * "자동 (손가락을 따라 이동)" / "손가락을 따라 이동" / "손을 떼면 이동 (e-ink)". AUTO follows the finger on every device
+     * since 2026-10-04 ([com.ggumtak.readeraplus.reader.ScrollWiring.stepMotion]); [eink] no longer changes a label.
+     */
+    @Suppress("UNUSED_PARAMETER")
     fun scrollStyle(s: ScrollStyle, eink: Boolean?): String = when (s) {
-        ScrollStyle.AUTO -> auto(if (eink == true) "e-ink → ${ScrollStyle.STEP.label}" else "휴대폰 → ${ScrollStyle.SMOOTH.label}")
-        ScrollStyle.SMOOTH -> "${s.label} (휴대폰)"
+        ScrollStyle.AUTO -> "자동 (${ScrollStyle.SMOOTH.label})"
+        ScrollStyle.SMOOTH -> s.label
         ScrollStyle.STEP -> "${s.label} (e-ink)"
     }
 

@@ -77,8 +77,9 @@ class ScrollWiringTest {
 
     @Test
     fun motionResolvesAutoByDeviceClass() {
-        assertTrue(ScrollWiring.stepMotion(ScrollStyle.AUTO, true))
-        assertTrue(ScrollWiring.stepMotion(ScrollStyle.AUTO, null))
+        // AUTO follows the finger everywhere (2026-10-04), e-ink and an unknown device class included.
+        assertFalse(ScrollWiring.stepMotion(ScrollStyle.AUTO, true))
+        assertFalse(ScrollWiring.stepMotion(ScrollStyle.AUTO, null))
         assertFalse(ScrollWiring.stepMotion(ScrollStyle.AUTO, false))
         assertTrue(ScrollWiring.stepMotion(ScrollStyle.STEP, false))
         assertFalse(ScrollWiring.stepMotion(ScrollStyle.SMOOTH, true))

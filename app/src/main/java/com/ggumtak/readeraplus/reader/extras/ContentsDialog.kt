@@ -84,8 +84,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Full-screen 목차 · 북마크 · 인용문 dialog. Every list is paged a screen at a time ([InkPager]: pager bar, page keys,
- * a drag is one page jump). The TOC tab (T1-1) has a header — "540화 · 지금 123화" with [지금] [화 번호] [검색], the
+ * Full-screen 목차 · 북마크 · 인용문 dialog. Every list scrolls and flings like any list ([SCROLLS]) under its pager
+ * bar ([InkPager]: "3 / 27", ◀ / ▶ and the page keys jump a page). The TOC tab (T1-1) has a header — "540화 · 지금 123화" with [지금] [화 번호] [검색], the
  * time left (T1-7) and, for a confidently numbered TOC, "빠진 화 3개 · 중복 1개 ›" — and marks the entries before the
  * current one in gray.
  */
@@ -265,13 +265,16 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         if (!stale()) host.goTo(pos, remember = true)
     }
 
-    /** A list with its pager bar below it (the bar is the list's page indicator and ◀ / ▶ buttons). */
+    /**
+     * A list with its pager bar below it (the bar is the list's page indicator and ◀ / ▶ buttons). The list scrolls
+     * and flings like any list on every device (2026-10-04, [SCROLLS]); the bar and the page keys jump a page.
+     */
     private fun pagedList(tabIndex: Int, list: ListView): LinearLayout {
         val col = ctx.vertical()
         col.addView(list, lp(MATCH_PARENT, 0, 1f))
         val bar = InkPagerBar(ctx)
         col.addView(bar)
-        pagers[tabIndex] = list.inkPaging(bar)
+        pagers[tabIndex] = list.inkPaging(bar, scrolls = SCROLLS)
         return col
     }
 
@@ -280,7 +283,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private fun buildToc(): View {
         val doc = host.document ?: return ctx.emptyMessage("책을 여는 중입니다…")
         if (doc.toc.isEmpty()) {
-            val hint = if (doc.format == BookFormat.TXT) "\n\n읽기 설정에서 '챕터 자동 인식'을 켜거나\n챕터 규칙(정규식)을 추가해 보세요" else ""
+            val hint = if (doc.format == BookFormat.TXT) "\n\n⚙ → 전체 읽기 설정 → 이 책의 TXT 정리에서\n'챕터 자동 인식'을 켜거나 챕터 규칙(정규식)을 추가해 보세요" else ""
             return ctx.emptyMessage("이 책에는 목차가 없습니다$hint")
         }
         return TocTab(doc).also { tocTab = it }.view
@@ -368,7 +371,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             list.setOnItemClickListener { _, _, position, _ -> openEntry(indexAt(position)) }
             val bar = InkPagerBar(ctx)
             col.addView(bar)
-            pager = list.inkPaging(bar)
+            pager = list.inkPaging(bar, scrolls = SCROLLS)
             pagers[0] = pager
             view = col
 
@@ -1017,6 +1020,11 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull()).ifEmpty { "-" }
 
     companion object {
+        /**
+         * The 목차 / 북마크 / 인용문 lists drag and fling like any list, e-ink included (the user's call, 2026-10-04:
+         * a list this short scrolls well enough there). The 썸네일 grid stays a page at a time.
+         */
+        const val SCROLLS = true
         /** [지금] and a jump show the entry as the 4th row: the three above give context. */
         const val CURRENT_ROW = 3
         const val HEADER_DP = 40

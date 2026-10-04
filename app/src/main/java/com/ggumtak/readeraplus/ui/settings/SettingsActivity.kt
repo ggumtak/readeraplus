@@ -9,6 +9,7 @@ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
+import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.lp
@@ -44,6 +45,13 @@ class SettingsActivity : Activity() {
         const val PAGE_STATS = "stats"
         /** "TXT 기본 정리 설정" (T1-9): the global TXT options every book without its own override uses. */
         const val PAGE_TXT_DEFAULTS = "txt_defaults"
+        /**
+         * "읽기 설정": every reading setting (style, letters, paragraphs, page, file options); the quick options' "전체
+         * 읽기 설정" opens it.
+         */
+        const val PAGE_READING = "reading"
+        /** "이 책의 TXT 정리" (T1-9): the TXT options of the book the reader has open ([OpenBook]); else 읽기 설정. */
+        const val PAGE_BOOK_TXT = "book_txt"
 
         /**
          * Raw pref (Long, epoch millis) bumped by "캐시 비우기". Modules that cache derived data outside cacheDir
@@ -65,9 +73,11 @@ class SettingsActivity : Activity() {
 
         /**
          * Opens settings on [page] (null = the main list; an id this build doesn't know opens the main list too).
-         * Callable from any activity: the library drawer (PAGE_STATS, PAGE_WIFI, PAGE_ABOUT), the reader.
+         * Callable from any activity: the library drawer (PAGE_STATS, PAGE_WIFI, PAGE_ABOUT), the reader. [book] is
+         * the reader's open book ([OpenBook]; null from anywhere else).
          */
-        fun open(context: Context, page: String? = null) {
+        fun open(context: Context, page: String? = null, book: OpenBook.Info? = null) {
+            OpenBook.open(book)
             context.startActivity(
                 Intent(context, SettingsActivity::class.java)
                     .putExtra(EXTRA_PAGE, page)
@@ -121,6 +131,9 @@ class SettingsActivity : Activity() {
         PAGE_WIFI -> WifiTransferPage(this)
         PAGE_STATS -> StatsPage(this)
         PAGE_TXT_DEFAULTS -> TxtDefaultsPage(this)
+        PAGE_READING -> ReadingPage(this)
+        // Restored after the process was killed, or opened without a TXT book: the page it belongs to.
+        PAGE_BOOK_TXT -> if (OpenBook.info?.format == BookFormat.TXT) BookTxtPage(this) else ReadingPage(this)
         else -> MainPage(this)
     }
 

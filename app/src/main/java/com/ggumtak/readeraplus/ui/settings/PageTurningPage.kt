@@ -23,11 +23,9 @@ import com.ggumtak.readeraplus.settings.KeyHold
 import com.ggumtak.readeraplus.settings.ReadMode
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
-import com.ggumtak.readeraplus.settings.SideMargin
 import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.settings.TapZoneMode
-import com.ggumtak.readeraplus.settings.VerticalMargin
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
@@ -47,11 +45,10 @@ import kotlinx.coroutines.withContext
 /**
  * "넘김·화면 설정" (PLAN §1.6.3): the read mode (page turning or scroll, and the scroll motion), tap-zone mode with a
  * visual preview (3×3 editor in CUSTOM mode), swipes and the long-press time, keys (key → action bindings with the
- * "이 키로 할 동작" chooser, key hold, key test), auto page turn, the book end, the page display (side and top/bottom
- * margins, page breaks), the status bands (six slots, progress line, text size) and the e-ink screen (page mode,
- * refresh cadence by day and night, chapter / picture refreshes, the device's own ghost clearing, and a "고급" group
- * with the refresh method, flash length, the refresh test and diagnostics). The reading-settings popup's "넘김·화면 설정" button opens this page; rows it shares with the
- * popup use its labels and ranges.
+ * "이 키로 할 동작" chooser, key hold, key test), auto page turn, the book end, the screen (흑백 반전, and a link to the
+ * margins and page breaks on 읽기 설정), the status bands (six slots, progress line, text size) and the e-ink screen
+ * (page mode, refresh cadence by day and night, chapter / picture refreshes, the device's own ghost clearing, and a
+ * "고급" group with the refresh method, flash length, the refresh test and diagnostics). 읽기 설정 links here.
  */
 internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_PAGE_TURNING, "넘김·화면 설정") {
     private val modeRows = LinkedHashMap<TapZoneMode, View>()
@@ -66,8 +63,6 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     private var scrollStyleRow: View? = null
     private var swipeRow: View? = null
     private var verticalSwipeRow: View? = null
-    /** 좌우 여백, 상하 여백 and their note (hidden while "페이지 여백" is off). */
-    private var marginViews: Array<View> = emptyArray()
     /** The six slot rows, index band * 3 + pos. */
     private val slotRows = arrayOfNulls<View>(6)
     private var statusSizeRow: View? = null
@@ -204,8 +199,8 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
             app.autoMarkFinished,
         ) { v -> editApp { it.copy(autoMarkFinished = v) } })
 
-        // ---- page display (reader settings; the popup's labels and ranges)
-        addPageDisplay(body)
+        // ---- screen (흑백 반전; margins and page breaks are on 읽기 설정)
+        addScreen(body)
 
         // ---- status bands (UI_SPEC §5.5, anchor §2.7)
         addStatusBar(body)
@@ -253,54 +248,16 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         }
     }
 
-    // ---------------------------------------------------------------- page display (scroll SPEC §2.4, anchor §3.3 / §4.4)
+    // ---------------------------------------------------------------- screen
 
-    private fun addPageDisplay(body: LinearLayout) {
-        val r = Settings.reader
-        body.section("페이지 표시")
-        val side = ctx.stepperRow(
-            "좌우 여백",
-            SideMargin.toUi(r.marginLeftDp).coerceIn(SideMargin.UI_MIN, SideMargin.UI_MAX).toFloat(),
-            SideMargin.UI_MIN.toFloat(), SideMargin.UI_MAX.toFloat(), SideMargin.UI_STEP.toFloat(),
-            { SideMargin.label(it.toInt()) },
-        ) { v ->
-            val dp = SideMargin.toDp(v.toInt())
-            editReader { it.copy(marginLeftDp = dp, marginRightDp = dp) }
-        }.liveStepperValue()
-        val vertical = ctx.stepperRow(
-            "상하 여백",
-            VerticalMargin.toUi(r.marginTopDp).coerceIn(VerticalMargin.UI_MIN, VerticalMargin.UI_MAX).toFloat(),
-            VerticalMargin.UI_MIN.toFloat(), VerticalMargin.UI_MAX.toFloat(), VerticalMargin.UI_STEP.toFloat(),
-            { VerticalMargin.label(it.toInt()) },
-        ) { v ->
-            val dp = VerticalMargin.toDp(v.toInt())
-            editReader { it.copy(marginTopDp = dp, marginBottomDp = dp) }
-            updateStatusUi()
-        }.liveStepperValue()
-        val note = ctx.note(R3Rows.MARGIN_NOTE)
-        marginViews = arrayOf(side, vertical, note)
-        for (v in marginViews) body.addView(v)
-        var breakRow: View? = null
-        breakRow = ctx.valueRow("페이지 나눔", R3Rows.pageBreak(r.pageBreak)) {
-            val opts = R3Rows.PAGE_BREAKS
-            ctx.chooser("페이지 나눔", opts.map { R3Rows.pageBreakChoice(it) }, opts.indexOf(Settings.reader.pageBreak)) { i ->
-                if (Settings.reader.pageBreak != opts[i]) editReader { it.copy(pageBreak = opts[i]) }
-                breakRow?.setSummary(R3Rows.pageBreak(opts[i]))
-            }
-        }.also(body::addView)
-        body.addView(ctx.toggleRow("흑백 반전", "검은 바탕에 흰 글씨", r.invert) { v -> editReader { it.copy(invert = v) } })
-        body.addView(ctx.toggleRow("페이지 여백", "끄면 여백을 최소로 줄입니다", r.pageMargins) { v ->
-            editReader { it.copy(pageMargins = v) }
-            updateMarginUi()
-            updateStatusUi()
-        })
-        updateMarginUi()
-    }
-
-    /** The two steppers and their note are hidden while "페이지 여백" is off (the popup's rule). */
-    private fun updateMarginUi() {
-        val on = Settings.reader.pageMargins
-        for (v in marginViews) v.setShown(on)
+    /**
+     * "화면": 흑백 반전, and the way to the text's margins and page breaks, which live on 읽기 설정 since 2026-10-04 (one
+     * home per setting: [ReadingPage]).
+     */
+    private fun addScreen(body: LinearLayout) {
+        body.section("화면")
+        body.addView(ctx.toggleRow("흑백 반전", "검은 바탕에 흰 글씨", Settings.reader.invert) { v -> editReader { it.copy(invert = v) } })
+        body.addView(ctx.navRow("여백 · 페이지 나눔", "읽기 설정의 '페이지'에 있습니다") { activity.push(SettingsActivity.PAGE_READING) })
     }
 
     // ---------------------------------------------------------------- status bands (UI_SPEC §5.5, anchor §2.7)

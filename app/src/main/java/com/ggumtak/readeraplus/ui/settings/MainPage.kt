@@ -106,6 +106,9 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         }.also(body::addView)
 
         body.section("읽기 설정")
+        body.addView(ctx.navRow("읽기 설정", "스타일 · 글꼴 · 글자 크기 · 간격 · 여백 · TXT · EPUB") {
+            activity.push(SettingsActivity.PAGE_READING)
+        })
         turnRow = ctx.navRow("넘김·화면 설정", turnSummary(app)) { activity.push(SettingsActivity.PAGE_PAGE_TURNING) }.also(body::addView)
         fontRow = ctx.navRow("글꼴 관리", "읽기 글꼴: …") { activity.push(SettingsActivity.PAGE_FONTS) }.also(body::addView)
         body.addView(ctx.navRow("TXT 기본 정리 설정", "빈 줄 · 줄 합치기 · 챕터 인식 · 치환 규칙 (따로 정하지 않은 모든 TXT)") {

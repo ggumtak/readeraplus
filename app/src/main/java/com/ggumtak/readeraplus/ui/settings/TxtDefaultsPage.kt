@@ -13,8 +13,8 @@ import com.ggumtak.readeraplus.ui.kit.toast
 
 /**
  * "TXT 기본 정리 설정" (T1-9): the global TXT options ([com.ggumtak.readeraplus.settings.ReaderSettings] `txt*`) that
- * every TXT book without its own settings uses. The rows and their wording are the reading-settings popup's TXT rows
- * (its labels are reused); the replacement rules open the shared manager ([RulesDialog]). A change here re-parses
+ * every TXT book without its own settings uses. The rows and their wording are those of "이 책의 TXT 정리"
+ * ([BookTxtPage], the labels of [ReadingSettingsPopup]'s companion); the replacement rules open the shared manager ([RulesDialog]). A change here re-parses
  * the TXT books that follow the defaults the next time each opens (their index key changes); books with their own
  * settings ("이 책에만 적용") keep theirs and their cached index.
  */
@@ -28,7 +28,7 @@ internal class TxtDefaultsPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         val r = Settings.reader
         val body = ctx.pageBody()
         body.addView(ctx.note(
-            "책마다 따로 정하지 않은 모든 TXT 책에 쓰입니다. 한 권만 바꾸려면 읽는 중에 읽기 설정의 'TXT 파일 · 이 책에만 적용'을 쓰세요. " +
+            "책마다 따로 정하지 않은 모든 TXT 책에 쓰입니다. 한 권만 바꾸려면 그 책을 읽다가 ⚙ → 전체 읽기 설정 → '이 책의 TXT 정리'를 쓰세요. " +
                 "여기서 바꾸면 TXT 책을 다음에 열 때 한 번 다시 정리하므로 조금 느리게 열립니다.",
         ))
 
@@ -68,7 +68,7 @@ internal class TxtDefaultsPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     }
 
     override fun onShown() {
-        // The popup's "모든 TXT 기본값으로 저장" may have changed the defaults meanwhile.
+        // "이 책의 TXT 정리 → 모든 TXT 기본값으로 저장" may have changed the defaults meanwhile.
         val r = Settings.reader
         blankRow?.setSummary(ReadingSettingsPopup.blankLabel(r.txtBlankLines))
         joinRow?.setSummary(ReadingSettingsPopup.joinLabel(r.txtJoinWrappedLines))

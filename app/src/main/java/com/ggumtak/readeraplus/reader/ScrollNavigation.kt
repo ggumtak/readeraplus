@@ -28,6 +28,11 @@ internal class ScrollNavigation(private val source: StripSource, private val eve
     private var snap = false
     private var dragging = false
     private var distance = 0f
+    /** How the next settle of a finished drag is reported: DRAG, or FLING after momentum ([endFling]). */
+    private var releaseKind = SettleKind.DRAG
+    /** Pixels the last [drag] call actually moved (0 at the book's ends and at a section that is still loading). */
+    var lastMove = 0f
+        private set
     val pending get() = stepPending || pixelsPending
     val moving get() = pending || dragging
 
@@ -106,6 +111,7 @@ internal class ScrollNavigation(private val source: StripSource, private val eve
         if (stepPending) continueStep() else if (pixelsPending) continuePixels()
     }
     fun drag(delta: Float) {
+        lastMove = 0f
         if (!delta.isFinite() || stepPending) return
         if (!dragging) { cursor.set(pos); distance = 0f }
         dragging = true; pixelsPending = true; snap = false; pixels += delta
@@ -120,15 +126,25 @@ internal class ScrollNavigation(private val source: StripSource, private val eve
             continuePixels()
         } else {
             dragging = false
-            // No momentum or animation after UP. An unfinished empty walk can settle only at real content.
+            // Navigation itself never schedules momentum: the reader drives a fling through [drag] and [endFling]. An
+            // unfinished empty walk can settle only at real content.
             if (pixelsPending) { pixels = 0f; continuePixels() }
             else { settle(SettleKind.DRAG, distance); distance = 0f }
         }
     }
+    /** The end of a SMOOTH fling the reader drove with [drag] frames: one settle (FLING) for the whole gesture. */
+    fun endFling() {
+        if (!dragging) return
+        dragging = false
+        releaseKind = SettleKind.FLING
+        if (pixelsPending) { pixels = 0f; continuePixels() }
+        else { settle(SettleKind.FLING, distance); distance = 0f }
+        releaseKind = SettleKind.DRAG
+    }
     private fun continuePixels() {
         val s = cursor.section; val p = cursor.page; val dy = cursor.dy
         val moved = ScrollMath.scrollBy(source, cursor, pixels, height)
-        pixels -= moved; distance += moved
+        pixels -= moved; distance += moved; lastMove += moved
         val empty = source.layoutOf(cursor.section)?.pages?.getOrNull(cursor.page)?.lines?.isEmpty() == true
         if (empty && cursor.blockedAt < 0 && (s != cursor.section || p != cursor.page || dy != cursor.dy)) {
             events.later(); return
@@ -139,7 +155,7 @@ internal class ScrollNavigation(private val source: StripSource, private val eve
         pixelsPending = false; pixels = 0f
         // A drag stops at unknown content; loading it never resumes the gesture automatically.
         cursor.set(pos)
-        if (!dragging) { settle(SettleKind.DRAG, distance); distance = 0f }
+        if (!dragging) { settle(releaseKind, distance); distance = 0f }
         if (blocked >= 0) events.blocked(blocked)
     }
     fun cancel(): Boolean {

@@ -151,6 +151,14 @@ internal fun LinearLayout.liveStepperValue(): LinearLayout {
     return this
 }
 
+/** Names the − / + buttons of a `stepperRow` "<title> 줄이기" / "<title> 늘리기" (TalkBack, and the CI finds them so). */
+internal fun LinearLayout.namedStepper(title: String): LinearLayout {
+    val box = getChildAt(childCount - 1) as? ViewGroup
+    box?.getChildAt(0)?.contentDescription = "$title 줄이기"
+    box?.getChildAt(2)?.contentDescription = "$title 늘리기"
+    return this
+}
+
 /** Radio-style row: radio icon on the left, title + optional summary. */
 internal fun Context.radioRow(title: String, summary: String?, checked: Boolean, onClick: (View) -> Unit): LinearLayout {
     val r = horizontal {

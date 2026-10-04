@@ -54,24 +54,41 @@ class PopupGeometryTest {
     }
 
     @Test
-    fun mainSectionNeverScrollsAt1440px() {
-        assertEquals(9, PopupGeometry.MAIN_ROWS)
-        assertEquals(44, Compact.ROW_DP)
-        assertEquals(44, Compact.STEP_DP)
-        assertEquals(36, Compact.TOGGLE_DP)
-        assertEquals(15f, Compact.LABEL_SP, 0f)
-        assertEquals(16f, Compact.VALUE_SP, 0f)
-        assertEquals(13f, Compact.HEADER_SP, 0f)
+    fun quickOptionsNeverScrollAt1440px() {
+        // 읽기 설정 · 모든 책에 적용 · 닫기 / 글자 크기 / 굵기 / 줄 간격 / 문단 간격 / 글꼴 / 전체 읽기 설정 (2026-10-04).
+        assertEquals(5, PopupGeometry.QUICK_ROWS)
+        assertEquals(56, Compact.ROW_DP)
+        assertEquals(48, Compact.BAR_DP)
+        assertEquals(48, Compact.STEP_DP)
+        assertEquals(48, Compact.LIST_ROW_DP)
+        assertEquals(16f, Compact.LABEL_SP, 0f)
+        assertEquals(17f, Compact.VALUE_SP, 0f)
+        assertEquals(376, PopupGeometry.QUICK_HEIGHT_DP)
         // Emulator / Comet: 720×1440 px at 2.0, with and without a status bar (up to 32 dp).
         for (inset in intArrayOf(0, 48, 64)) {
             val place = PopupGeometry.settings(1440, inset, 2f)
-            val main = Math.round(PopupGeometry.MAIN_ROWS * Compact.ROW_DP * 2f) // 792 px
-            // Main section + the 1 px border on each side.
-            assertTrue("inset $inset: main ${main + 2} px > ${place.height} px", main + 2 <= place.height)
+            val whole = Math.round(PopupGeometry.QUICK_HEIGHT_DP * 2f) // 752 px
+            // The whole popup + the 1 px border on each side.
+            assertTrue("inset $inset: popup ${whole + 2} px > ${place.height} px", whole + 2 <= place.height)
         }
-        // Stepper buttons and toggles make rows no taller than the others.
-        assertTrue(Compact.STEP_DP <= Compact.ROW_DP)
-        assertTrue(Compact.TOGGLE_DP <= Compact.ROW_DP)
+        // Every button is the 48 dp minimum touch target and fits its row.
+        assertTrue(Compact.STEP_DP >= 48 && Compact.STEP_DP <= Compact.ROW_DP)
+        assertTrue(Compact.STEP_DP <= Compact.BAR_DP)
+    }
+
+    @Test
+    fun quickFieldsCarryOnlyTheFiveQuickSettings() {
+        val base = ReaderSettings(marginLeftDp = 30, invert = true, txtBlankLines = 2, lineHeightPct = 150)
+        val src = ReaderSettings(fontSizeSp = 23f, fontWeight = 600, lineHeightPct = 190, paragraphSpacingPct = 40,
+            fontId = "x", indentPct = 300, invert = false, txtBlankLines = 0, marginLeftDp = 5)
+        val out = QuickFields.onto(base, src)
+        assertEquals(23f, out.fontSizeSp, 0f)
+        assertEquals(600, out.fontWeight)
+        assertEquals(190, out.lineHeightPct)
+        assertEquals(40, out.paragraphSpacingPct)
+        assertEquals("x", out.fontId)
+        // Everything else stays the saved settings' (a stale popup copy never overwrites 설정's changes).
+        assertEquals(base.copy(fontSizeSp = 23f, fontWeight = 600, lineHeightPct = 190, paragraphSpacingPct = 40, fontId = "x"), out)
     }
 
     // ------------------------------------------------------------------ drop-down lists
@@ -100,7 +117,7 @@ class PopupGeometryTest {
     @Test
     fun dropdownMaxHeightFraction() {
         assertEquals(0.8f, PopupGeometry.TALL_LIST_FRACTION, 0f)
-        // The status slot chooser: 12 items × 40 dp = 960 px fits whole under 0.8 × 1440 = 1152 px.
+        // A 12-item list × 48 dp = 1152 px fits whole under 0.8 × 1440 = 1152 px.
         val rows = StatusItem.entries.size * Compact.LIST_ROW_DP * 2
         val slot = PopupGeometry.dropdown(1440, 100, 188, rows, 2f, maxHeightFraction = 0.8f)
         assertEquals(rows, slot.height)

@@ -29,38 +29,36 @@ import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.vertical
 
 /*
- * Compact building blocks of the reading-settings popup, sized for the ~6" 360×720 dp e-ink screen (U polish 8, 18):
- * plain 44 dp rows split by light 1 px lines inset 12 dp (black only above section headers and 더보기), 15 sp labels,
- * 16 sp values, 44 dp stepper buttons on the label's own row, 13 sp bold section headers, joined segmented controls,
- * and a small drop-down list. No card boxes, no animations.
+ * Building blocks of the quick reading options (⚙) and their drop-down lists, sized for the ~6" 360×720 dp e-ink
+ * screen: 56 dp rows split by light 1 px lines inset 12 dp (black above the "전체 읽기 설정" row), 16 sp labels, 17 sp
+ * values, 48 dp stepper buttons on the label's own row, 48 dp list rows. No card boxes, no animations.
  */
 internal object Compact {
     /**
-     * Row height: the popup's main section ([PopupGeometry.MAIN_ROWS] rows) is 396 dp, which fits under the 56% cap
-     * of the Comet (403 dp) without scrolling.
+     * Row height: 48 dp touch targets with room around them. The popup ([PopupGeometry.QUICK_ROWS] rows between two
+     * [BAR_DP] bars, 376 dp) fits under the 56% cap of the Comet (403 dp) without scrolling.
      */
-    const val ROW_DP = 44
-    const val LABEL_SP = 15f
-    const val VALUE_SP = 16f
-    const val SUMMARY_SP = 12f
-    const val HEADER_SP = 13f
-    const val TOGGLE_SP = 13f
-    /** Toggle / segment height inside a row. */
-    const val TOGGLE_DP = 36
-    const val STEP_DP = 44
+    const val ROW_DP = 56
+    /** The title bar ("읽기 설정 · 모든 책에 적용 · 닫기") and the "전체 읽기 설정 ›" row. */
+    const val BAR_DP = 48
+    const val LABEL_SP = 16f
+    const val VALUE_SP = 17f
+    const val SUMMARY_SP = 13f
+    /** Stepper − / + and the close button: the 48 dp minimum touch target. */
+    const val STEP_DP = 48
     /** Common width of a stepper's value box, so the − / + buttons of every row line up. */
-    const val STEP_VALUE_DP = 60
+    const val STEP_VALUE_DP = 64
     const val PAD_DP = 12
     /** Inset of the light group lines from both sides. */
     const val LINE_INSET_DP = 12
-    const val LIST_ROW_DP = 40
-    const val LIST_SP = 15f
+    const val LIST_ROW_DP = 48
+    const val LIST_SP = 16f
 }
 
 /**
  * Row background: white (gray while pressed when [pressable]) with a 1 px line along the top when [topLine]: black
- * and full width (a group starts: section headers, 더보기, other dialogs' bars), or light and inset 12 dp when
- * [light] (an ordinary popup row).
+ * and full width (a group starts: "전체 읽기 설정", other dialogs' bars), or light and inset 12 dp when [light] (an
+ * ordinary popup row).
  */
 internal fun Context.compactRowBackground(pressable: Boolean, topLine: Boolean, light: Boolean = false): Drawable {
     val base: Drawable = if (pressable) pressableBackground(Ink.WHITE) else ColorDrawable(Ink.WHITE)
@@ -73,8 +71,8 @@ internal fun Context.compactRowBackground(pressable: Boolean, topLine: Boolean, 
 }
 
 /**
- * A horizontal settings row (min [Compact.ROW_DP], 12 dp side padding, no vertical padding: a 44 dp stepper button
- * makes a row of exactly 44 dp); clickable (pressed = gray) when [onClick] is set.
+ * A horizontal settings row (min [Compact.ROW_DP], 12 dp side padding, no vertical padding: the 48 dp stepper
+ * buttons sit centred in it); clickable (pressed = gray) when [onClick] is set.
  */
 internal fun Context.compactRow(topLine: Boolean = true, strongLine: Boolean = false, onClick: ((View) -> Unit)? = null): LinearLayout = horizontal {
     minimumHeight = dp(Compact.ROW_DP)
@@ -83,13 +81,7 @@ internal fun Context.compactRow(topLine: Boolean = true, strongLine: Boolean = f
     if (onClick != null) setOnClickListener(onClick)
 }
 
-/** 13 sp bold section header ("글자", "페이지", "TXT 파일" …) under a black group line. */
-internal fun Context.compactHeader(text: String): TextView = label(text, Compact.HEADER_SP, bold = true, color = Ink.GRAY).apply {
-    setPadding(dp(Compact.PAD_DP), dp(10), dp(Compact.PAD_DP), dp(4))
-    background = compactRowBackground(pressable = false, topLine = true)
-}
-
-/** The 15 sp row label (left side), optionally with a 12 sp gray summary under it. */
+/** The 16 sp row label (left side), optionally with a 13 sp gray summary under it. */
 internal fun Context.compactLabelBlock(title: String, summary: String? = null): View {
     val t = label(title, Compact.LABEL_SP, maxLines = 2)
     if (summary == null) return t
@@ -100,83 +92,9 @@ internal fun Context.compactLabelBlock(title: String, summary: String? = null): 
     }
 }
 
-/** 44 dp flat icon button (stepper − / +). */
+/** 48 dp flat icon button (stepper − / +, 닫기). */
 internal fun Context.compactIcon(iconRes: Int, description: String, onClick: (View) -> Unit): ImageButton =
     flatIcon(iconRes, description, sizeDp = Compact.STEP_DP, onClick = onClick)
-
-/**
- * A small square-bordered text toggle (the "내 스타일 ▾" button): selected = black fill with white regular text.
- * Update with [setCompactToggle].
- */
-internal fun Context.compactToggle(text: String, selected: Boolean, onClick: (View) -> Unit): TextView =
-    label(text, Compact.TOGGLE_SP, maxLines = 1).apply {
-        gravity = Gravity.CENTER
-        minHeight = dp(Compact.TOGGLE_DP)
-        minWidth = dp(40)
-        setPadding(dp(7), 0, dp(7), 0)
-        setOnClickListener(onClick)
-        setCompactToggle(this, selected)
-    }
-
-/** Selected = black fill + white text, else white + black; the weight never changes, so nothing shifts. */
-internal fun setCompactToggle(v: TextView, selected: Boolean) {
-    val ctx = v.context
-    if (v.isSelected == selected && v.background != null) return
-    v.isSelected = selected
-    v.background = ctx.borderBox(if (selected) Ink.BLACK else Ink.WHITE)
-    v.setTextColor(if (selected) Ink.WHITE else Ink.BLACK)
-}
-
-/**
- * A joined segmented control (U polish 18): one 1 px black border around all [options], 1 px black dividers, no
- * radius; the selected segment is black with white regular text. A tap on another segment marks it at once (same UI
- * message as the setting's own change: one e-ink update) and calls [onPick] with its index.
- */
-internal class CompactSegments(ctx: Context, options: List<String>, selected: Int, onPick: (Int) -> Unit) {
-    val view: LinearLayout = LinearLayout(ctx).apply {
-        orientation = LinearLayout.HORIZONTAL
-        background = ctx.borderBox(Color.TRANSPARENT)
-        setPadding(1, 1, 1, 1)
-    }
-    private val cells = ArrayList<TextView>(options.size)
-    var selected: Int = -1
-        private set
-
-    init {
-        options.forEachIndexed { i, text ->
-            if (i > 0) view.addView(View(ctx).apply { setBackgroundColor(Ink.LINE) }, LinearLayout.LayoutParams(1, MATCH_PARENT))
-            val cell = ctx.label(text, Compact.TOGGLE_SP, maxLines = 1).apply {
-                gravity = Gravity.CENTER
-                minHeight = ctx.dp(Compact.TOGGLE_DP) - 2
-                minWidth = ctx.dp(40)
-                setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
-                setOnClickListener {
-                    if (this@CompactSegments.selected == i) return@setOnClickListener
-                    select(i)
-                    onPick(i)
-                }
-            }
-            cells += cell
-            view.addView(cell, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
-        }
-        select(selected)
-    }
-
-    /** Marks segment [index] (−1 = none); no-op when it is already the one. */
-    fun select(index: Int) {
-        if (index == selected) return
-        selected = index
-        cells.forEachIndexed { j, c ->
-            val on = j == index
-            c.isSelected = on
-            c.setBackgroundColor(if (on) Ink.BLACK else Ink.WHITE)
-            c.setTextColor(if (on) Ink.WHITE else Ink.BLACK)
-        }
-    }
-
-    /** Segment [index]'s view (content descriptions, long-press hints). */
-    fun cell(index: Int): TextView = cells[index]
-}
 
 /** One entry of a [CompactList]. [checked] null = no radio mark; [typeface] renders the label in that face. */
 internal class ListEntry(
@@ -189,7 +107,7 @@ internal class ListEntry(
 )
 
 /**
- * Compact drop-down list for the settings popup: 40 dp rows, 15 sp text, [widthPx] wide (≤ the popup), at most
+ * Compact drop-down list for the settings popup: 48 dp rows, 16 sp text, [widthPx] wide (≤ the popup), at most
  * [maxHeightFraction] of the screen tall (scrolls; 0.8 for the status slot chooser), its right edge [rightInsetPx] inside [anchor]'s, under the anchor (or above it
  * when there is no room below). The checked row is scrolled into view. Tracked for [ReaderPanels.dismissAll].
  * Returns null when it cannot be shown.
