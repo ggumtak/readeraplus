@@ -338,10 +338,9 @@ close_popup() { # one BACK closes the popup (and the bars); BACK again while a p
   hide_chrome; sleep 1
 }
 margins_zero() { # margins_zero <n>: on 설정 → 읽기 설정 (open; the margins left the quick options), 좌우 여백 and 상하 여백
-  # both read "0" (S §2.4, A). The two steppers are adjacent: 좌우 여백 is aligned well under the toolbar first.
-  # Each value is read from the dump of the scroll_find that put its row on screen (CI 34: a dump taken after align
-  # had neither row).
-  local l v
+  # both read "0" (S §2.4, A), each from the dump of the scroll_find that put its stepper on screen. No align: on
+  # settings pages it dragged the list past both rows (CI 34; its dump rightly had neither).
+  local l v=""
   scroll_find "좌우 여백 늘리기" || { check "$1" 1 "no 좌우 여백 stepper"; return 1; }
   l=$(stepper_value "좌우 여백")
   scroll_find "상하 여백 늘리기" && v=$(stepper_value "상하 여백")
@@ -450,19 +449,34 @@ missing() { # missing "label" …: the labels the last dump lacks (exact), quote
   for t in "$@"; do has "$t" || out="$out '$t'"; done
   echo "${out# }"
 }
-status_rows() { # STATUS = "위 · 왼쪽=…; …; 아래 · 오른쪽=…; 진행 막대=on|off", read on 넘김·화면 설정 (open). Each row is
-  # read from the dump of the scroll_find that put it on screen (CI 34: dumps taken after aligning the 상태 표시줄 header
-  # had none of the rows, while scroll_find found and tapped them right after); "?" for a row not found.
-  local t v out=""
+present() { # present "label" …: the labels the last dump shows (exact), ", "-joined in the order given
+  local t out=""
+  for t in "$@"; do has "$t" && out="$out, $t"; done
+  echo "${out#, }"
+}
+status_row() { # status_row "title": a 상태 표시줄 row in the last dump: a slot row's value, 진행 막대's switch (on|off)
+  if [ "$1" = "진행 막대" ]; then row_checked "$1"; else row_value "$1"; fi
+}
+status_rows() { # STATUS = "위 · 왼쪽=…; …; 아래 · 오른쪽=…; 진행 막대=on|off", read top down on 넘김·화면 설정 (open). A row
+  # is read from the dump on hand when that shows it, else from the dump of the scroll_find that puts it on screen. No
+  # align: on settings pages it dragged the list past the rows (CI 34; its dumps rightly had none). Once a row is not
+  # found, it and the rows after it read "?" without more searching: a regression is a quick 14b FAIL with the details,
+  # not a step timeout.
+  local t v out="" lost=""
   STATUS=""
-  scroll_find "상태 표시줄" || return 1
-  for t in "위 · 왼쪽" "위 · 가운데" "위 · 오른쪽" "아래 · 왼쪽" "아래 · 가운데" "아래 · 오른쪽"; do
-    v=""; scroll_find "$t" && v=$(row_value "$t")
+  scroll_find "상태 표시줄" || lost="상태 표시줄"
+  for t in "위 · 왼쪽" "위 · 가운데" "위 · 오른쪽" "아래 · 왼쪽" "아래 · 가운데" "아래 · 오른쪽" "진행 막대"; do
+    v=""
+    if [ -z "$lost" ]; then
+      v=$(status_row "$t")
+      if [ -z "$v" ]; then
+        if scroll_find "$t"; then v=$(status_row "$t"); else lost=$t; fi
+      fi
+    fi
     out="$out; $t=${v:-?}"
   done
-  v=""; scroll_find "진행 막대" && v=$(row_checked "진행 막대")
-  STATUS="${out#; }; 진행 막대=$v"
-  log "status rows: $STATUS"
+  STATUS="${out#; }"
+  log "status rows: $STATUS${lost:+ (not found from '$lost' on)}"
 }
 
 # ------------------------------------------------------------------ reader steps: chrome (U §8.2)
@@ -553,13 +567,15 @@ reading_settings() { # 14 the quick options (⚙); 14s their "전체 읽기 설�
   if [ -n "$label0" ] && [ "$label0" = "$label1" ]; then check 14s_back 0 "back on the book with BACK, label '$label1' as before"
   else check 14s_back 1 "label '$label0' before 설정, '$label1' after BACK"; fi
   perf_check 14s_same same_start 14s_a 14s_b
-  # 14b: the status slots, now on 넘김·화면 설정 (⋮ → 설정)
+  # 14b: the status slots, now on 넘김·화면 설정 (⋮ → 설정); the shot frames the section by its first row (scroll_find,
+  # no align), unless status_rows could not read that row
   open_turning_over_reader || return 1
-  status_rows || { leave_settings; return 1; }
+  status_rows
+  case "$STATUS" in "위 · 왼쪽=?"*) ;; *) scroll_find "위 · 왼쪽" ;; esac
   shot 14b_status_slots 0
   case "$STATUS" in
-    *"아래 · 왼쪽=없음; 아래 · 가운데=없음; 아래 · 오른쪽=없음; 진행 막대=o"*) check 14b 0 "bottom slots 없음, 진행 막대 row ($STATUS)";;
-    *) check 14b 1 "bottom slots not all 없음 or no 진행 막대 row ($STATUS)";;
+    *"; 아래 · 왼쪽=없음; 아래 · 가운데=없음; 아래 · 오른쪽=없음; 진행 막대=on") check 14b 0 "bottom slots 없음, 진행 막대 on ($STATUS)";;
+    *) check 14b 1 "bottom slots not all 없음 or 진행 막대 not on ($STATUS)";;
   esac
   case "$STATUS" in
     "위 · 왼쪽=없음; 위 · 가운데=챕터 제목; 위 · 오른쪽=없음;"*) check 14b_top 0 "top slots [없음][챕터 제목][없음]";;
@@ -629,7 +645,8 @@ choose_volume_mode() { # choose_volume_mode on|off: 볼륨 키 방향 반전 (on
   open_turning_over_reader || return 1
   scroll_find "볼륨 키로 넘김" || { leave_settings; return 1; }
   if [ "$1" = on ]; then
-    # Each row read from the dump of the scroll_find that put it on screen (CI 34: a dump after align had neither).
+    # Each row read from the dump of the scroll_find that put it on screen (no align: on settings pages it dragged the
+    # list past both rows, CI 34).
     v=$(row_checked "볼륨 키로 넘김"); s=$(row_value "볼륨 키로 넘김"); i=""
     scroll_find "볼륨 키 방향 반전" && i=$(row_checked "볼륨 키 방향 반전")
     if [ "$v" = on ] && [ "$i" = off ] && [ "${s#볼륨 아래 = 다음}" != "$s" ]; then
@@ -907,16 +924,28 @@ library_multiselect() { # 46c: a long-press on a book starts multi-select ("1권
   dump || return 1
   if has "권 선택" contains; then check 46c 0 "selection toolbar shown"; back; else check 46c 1 "no selection toolbar"; return 1; fi
 }
-status_page() { # 51: 설정 → 넘김·화면 설정 at the 상태 표시줄 section
+status_page() { # 51: 설정 → 넘김·화면 설정 at the 상태 표시줄 section, its six slot rows checked in the dump of the screen
+  # the shot shows (kept as ui_fail_51_status_page.xml on a FAIL). No align: on settings pages it dragged the list past
+  # the rows (CI 34, likely CI 31 too: its dumps rightly had none). scroll_find frames the section, and scrolls once
+  # more only when 아래 · 오른쪽 is still below: slot rows that leave the screen then were seen on the one before.
+  local slots=("위 · 왼쪽" "위 · 가운데" "위 · 오른쪽" "아래 · 왼쪽" "아래 · 가운데" "아래 · 오른쪽") t on before="" above="" gone=""
   open_turning_page || return 1
-  scroll_find "상태 표시줄" || return 1
-  align "상태 표시줄" 260
+  scroll_find "상태 표시줄" || { check 51 1 "no 상태 표시줄 section on 넘김·화면 설정"; return 1; }
+  if ! has "아래 · 오른쪽"; then
+    before=$(present "${slots[@]}")
+    scroll_find "아래 · 오른쪽" || dump # a failed search's last dump is one swipe behind the screen
+  fi
   shot 51_status_page 2
-  dump
-  # CI 31 and 34 missed the rows in the dump after align although scroll_find finds them: each row is looked up by
-  # scroll_find (on screen in its own dump); the dump is kept for the next diagnosis when one is missing.
-  if scroll_find "위 · 왼쪽" && scroll_find "아래 · 오른쪽"; then check 51 0 "slot rows shown"
-  else cp /tmp/ui.xml shots/ui_fail_51_status_page.xml 2>/dev/null; check 51 1 "slot rows (위 · 왼쪽 … 아래 · 오른쪽) missing"; fi
+  on=$(present "${slots[@]}")
+  for t in "${slots[@]}"; do
+    case ", $on, " in *", $t, "*) continue ;; esac
+    case ", $before, " in *", $t, "*) above="$above, $t" ;; *) gone="$gone, $t" ;; esac
+  done
+  if [ -z "$gone" ]; then check 51 0 "the shot shows the slot rows $on${above:+ (${above#, } just above it, seen before the last scroll)}"
+  else
+    cp /tmp/ui.xml shots/ui_fail_51_status_page.xml 2>/dev/null
+    check 51 1 "slot rows ${gone#, } not found (the shot shows: ${on:-none}${above:+; above it: ${above#, }})"
+  fi
 }
 stats_page() { # 50b: drawer → 읽기 기록 (T1-6)
   restart_library
@@ -989,19 +1018,32 @@ notes_lookup() { # 84: 사전·번역 cancelled, then 웹 검색 (logged only)
   shot 84_lookup 4
   back; sleep 2
 }
-first_row_xy() { # the first list row's text below the hub's bars (a long text line), else a fallback point
-  python3 - <<'PY'
-import re, xml.etree.ElementTree as ET
-best=None
-for n in ET.parse('/tmp/ui.xml').getroot().iter('node'):
-  t=n.get('text') or ''
-  m=re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',n.get('bounds',''))
-  if not m or len(t)<12: continue
-  x0,y0,x1,y1=map(int,m.groups())
-  if y0>=300 and (best is None or y0<best[1]): best=((x0+x1)//2,(y0+y1)//2)
-print(*(best or (360,600)))
+hub_xy() { # hub_xy note|day: "x y" of the topmost hub text below the bars in the last dump; nothing when none.
+  # note: a note's text (a long line), never a day header ("오늘 · 10월 4일 (일)", "9월 28일 (일)", "2025년 …") or a book
+  # header ("《제목》 · 3"): CI 34's 87/88 tapped "오늘 · …" for the first row. day: the first day header.
+  python3 - "$1" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+DAY = re.compile(r'((오늘|어제) · |\d{4}년 )?\d{1,2}월 \d{1,2}일 \(.\)')
+day = sys.argv[1] == 'day'
+try:
+  nodes = list(ET.parse('/tmp/ui.xml').getroot().iter('node'))
+except Exception:
+  nodes = []
+best = None
+for n in nodes:
+  t = n.get('text') or ''
+  m = re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', n.get('bounds', ''))
+  if not m: continue
+  if day:
+    if not DAY.fullmatch(t): continue
+  elif len(t) < 12 or DAY.fullmatch(t) or t.startswith('《'):
+    continue
+  x0, y0, x1, y1 = map(int, m.groups())
+  if y0 >= 300 and (best is None or y0 < best[0]): best = (y0, (x0 + x1) // 2, (y0 + y1) // 2)
+if best: print(*best[1:])
 PY
 }
+first_row_xy() { local xy; xy=$(hub_xy note); echo "${xy:-360 600}"; } # the first note's text, else a fallback point
 notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select, 89 단어
   # 87's chip offers the way back to the book's saved place, and only when that is not the quote's page (PLAN §1.6.1:
   # if (!isOnCurrentPage(saved)) returnNav.onJump(saved)). 80–84 made the quotes on the page sample-utf8.txt was saved
@@ -1040,8 +1082,9 @@ notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select
   shot 89_notes_words 2
   dump; if has "다시 찾기"; then check 89 0 "word row with 다시 찾기"; else check 89 1 "no word row (or the empty state, no browser)"; fi
 }
-notes_paged() { # 89p: 목록 넘기기 → 쪽 단위, a tap on a hub row still opens the book (the rows take their own taps:
-  # a paged list keeps every touch for paging); then 자동 again
+notes_paged() { # 89p: 목록 넘기기 → 쪽 단위, a tap on the first row's day header still opens the book (a paged list
+  # keeps every touch for paging, the row takes its own: the header takes none, so the tap is the row's); then 자동
+  # again. On purpose the header, not the note text 87 taps: both ways to the row are covered.
   open_settings || return 1
   pick_setting "목록 넘기기" "쪽 단위" || return 1
   restart_library
@@ -1051,11 +1094,13 @@ notes_paged() { # 89p: 목록 넘기기 → 쪽 단위, a tap on a hub row still
   tap_label "인용문" || return 1
   sleep 2
   dump; if ! has "모든 색" contains; then check 89p 1 "paged hub: no 인용문 tab"; open_settings && pick_setting "목록 넘기기" "자동"; return 1; fi
-  local xy; xy=$(first_row_xy)
+  local xy where="the first row's day header"
+  xy=$(hub_xy day)
+  [ -n "$xy" ] || { where="the first note's text (no day header on screen)"; xy=$(first_row_xy); }
   tap_xy "$xy"
   shot 89p_notes_paged_jump 5
-  dump; if ! has "모든 색" contains; then check 89p 0 "paged hub: a row tap opens the book"
-  else check 89p 1 "paged hub: a row tap left the hub on screen"; fi
+  dump; if ! has "모든 색" contains; then check 89p 0 "paged hub: a tap on $where opens the book"
+  else check 89p 1 "paged hub: a tap on $where left the hub on screen"; fi
   back; sleep 2
   open_settings && pick_setting "목록 넘기기" "자동"
 }

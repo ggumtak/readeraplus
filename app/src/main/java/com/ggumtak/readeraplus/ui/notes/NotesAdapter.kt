@@ -47,6 +47,8 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
         val tab: NotesTab
         /** The book filter is on, or the list is grouped by book: the meta line leaves the book out. */
         val bookImplied: Boolean
+        /** The book the list is filtered to, null for every book: a tap on its header would change nothing. */
+        val bookFilter: Long?
         val byBook: Boolean
         val selecting: Boolean
         fun isSelected(row: NoteRow): Boolean
@@ -112,15 +114,13 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
         h.lookUp.visibility = View.GONE
         h.menu.setOnClickListener { cb.onMenu(row, it) }
         // The row's own listeners, like the library cards: a paged list (e-ink) consumes its touches for paging and
-        // never runs the ListView's item click; a vertical drag past the slop still becomes the list's (PageDrag).
-        // The whole item takes them, as the item click did: the body, and a day header above it (CI 34: a tap on the
-        // first row's "오늘" header did nothing). A book header keeps its own (it opens that book's notes).
-        val tap = View.OnClickListener { cb.onRowTap(row, position) }
-        val press = View.OnLongClickListener { v -> cb.onMenu(row, v); true }
-        h.root.setOnClickListener(tap)
-        h.root.setOnLongClickListener(press)
-        h.body.setOnClickListener(tap)
-        h.body.setOnLongClickListener(press)
+        // never runs the ListView's item click; a drag past the slop still becomes the list's (PageDrag). Only the
+        // item view takes them: the body and a day header take no touch, so a tap anywhere on the row is the root's
+        // (CI 34: a tap on the first row's "오늘" header did nothing), one accessibility node per row, and the
+        // body's pressed background shows for it. ⋮, 다시 찾기 and the swatch keep their own taps, a book header its
+        // own when a tap on it changes something ([bindHeader]).
+        h.root.setOnClickListener { cb.onRowTap(row, position) }
+        h.root.setOnLongClickListener { v -> cb.onMenu(row, v); true }
 
         when (kind) {
             NoteKind.QUOTE, NoteKind.BOOKMARK -> {
@@ -203,9 +203,14 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
             text(h.headerTitle, NotesText.bookHeader(book?.title ?: "(삭제된 책)", book?.count ?: 0), 15f, Ink.BLACK, 1, bold = true)
             h.headerAuthor.visibility = if (book?.author.isNullOrBlank()) View.GONE else View.VISIBLE
             h.headerAuthor.text = book?.author.orEmpty()
-            if (book != null && !cb.selecting) h.header.setOnClickListener { cb.onBookHeader(book) }
-            else h.header.setOnClickListener(null)
-            h.header.isClickable = book != null && !cb.selecting
+            // The header opens that book's notes: its own tap only when that changes the list (not while selecting,
+            // not on the book the list is filtered to); then its long press is the row's. Else the row takes both.
+            if (book != null && !cb.selecting && book.id != cb.bookFilter) {
+                h.header.setOnClickListener { cb.onBookHeader(book) }
+                h.header.setOnLongClickListener { cb.onMenu(row, h.root); true }
+            } else {
+                h.plainHeader()
+            }
             return
         }
         val prev = previous(position, page)
@@ -218,8 +223,7 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
         h.header.minimumHeight = ctx.dp(32)
         text(h.headerTitle, NotesText.dayHeader(row.time, now), 14f, Ink.BLACK, 1, bold = true)
         h.headerAuthor.visibility = View.GONE
-        h.header.setOnClickListener(null)
-        h.header.isClickable = false
+        h.plainHeader()
     }
 
     private fun noteLine(h: Holder, labelText: String, note: String) {
@@ -265,6 +269,7 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
             minHeight = ctx.dp(64)
             setPadding(ctx.dp(16), 0, ctx.dp(16), 0)
         }
+        /** Never clickable: its touches are the root's, whose pressed state it shows (non-clickable children get it). */
         val body: LinearLayout = ctx.horizontal { gravity = Gravity.TOP; background = pressableBackground() }
         val check: ImageView = ctx.icon(R.drawable.ic_check_box_outline_blank, 24).apply {
             scaleType = ImageView.ScaleType.CENTER
@@ -323,6 +328,14 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
                 swatchCell.background = null
             }
             root.tag = this
+        }
+
+        /** The header takes no touch: a tap or long press on it is the row's (the root's). */
+        fun plainHeader() {
+            header.setOnClickListener(null)
+            header.setOnLongClickListener(null)
+            header.isClickable = false
+            header.isLongClickable = false
         }
 
         fun placeholder() {

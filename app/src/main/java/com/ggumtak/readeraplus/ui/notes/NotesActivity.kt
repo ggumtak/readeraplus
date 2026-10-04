@@ -399,7 +399,12 @@ class NotesActivity : Activity() {
         list = InkListView(this)
         adapter = NotesAdapter(this, rowWindow, rowCallbacks)
         list.adapter = adapter
-        // Row taps and long presses: each row's own listeners (NotesAdapter.bind), so they work when paged too.
+        // Row taps and long presses: each row's own listeners (NotesAdapter.bind), so they work when paged too. The
+        // list's item click and long click only hand DPAD_CENTER / ENTER on the selected row to them: a touch never
+        // fires twice, the clickable row takes it first. A row still loading has no long press to hand it to
+        // (performLongClick would fall back to a context menu, which the list hands back to this listener: a loop).
+        list.setOnItemClickListener { _, v, _, _ -> v.performClick() }
+        list.setOnItemLongClickListener { _, v, _, _ -> v.isLongClickable && v.performLongClick() }
         content.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         emptyText = emptyMessage("").apply { keepAll() }
         emptyButton = outlineButton("기록 켜기") { setRecordLookups(true) }.apply { visibility = View.GONE }
@@ -780,6 +785,7 @@ class NotesActivity : Activity() {
         override fun requestPage(page: Int) = this@NotesActivity.requestPage(page)
         override val tab: NotesTab get() = q.tab
         override val bookImplied: Boolean get() = q.bookId != null || q.order.byBook
+        override val bookFilter: Long? get() = q.bookId
         override val byBook: Boolean get() = q.order.byBook
         override val selecting: Boolean get() = this@NotesActivity.selecting
         override fun isSelected(row: NoteRow): Boolean = row.ref.packed() in selected
@@ -790,7 +796,9 @@ class NotesActivity : Activity() {
         override fun onSwatch(row: NoteRow, anchor: View) {
             if (selecting) toggleRef(row.ref) else menus.recolour(row, anchor)
         }
-        override fun onLookUp(row: NoteRow) { menus.lookUp(row) }
+        override fun onLookUp(row: NoteRow) {
+            if (selecting) toggleRef(row.ref) else menus.lookUp(row)
+        }
         override fun onBookHeader(book: NoteBook) { setBook(book.id) }
         override fun onRowTap(row: NoteRow, position: Int) = this@NotesActivity.onRowTap(row, position)
     }

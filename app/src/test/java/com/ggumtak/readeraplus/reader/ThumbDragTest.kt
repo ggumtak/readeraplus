@@ -36,12 +36,14 @@ class ThumbDragTest {
     }
 
     @Test
-    fun verticalOnlyDragIgnoresHorizontal() {
+    fun verticalOnlyDragTakesHorizontalWithoutPaging() {
         val d = PageDrag(20f)
         d.down(0f, 0f)
-        assertFalse(d.move(80f, 5f))
+        assertTrue(d.move(80f, 5f)) // the list's, never a tap on a row
+        assertEquals(0, d.up(80f, 5f))
         val both = PageDrag(20f, axisBoth = true)
         both.down(0f, 0f)
         assertTrue(both.move(80f, 5f))
+        assertEquals(-1, both.up(80f, 5f))
     }
 }

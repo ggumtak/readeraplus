@@ -85,7 +85,11 @@ private fun pageTouch(ev: MotionEvent, drag: PageDrag, pager: ListPager?): Boole
     return true
 }
 
-/** A tap stays a tap; a directional drag makes exactly one page decision on release. */
+/**
+ * A tap stays a tap; a drag past [slop] makes exactly one page decision on release, on the axis it first crossed the
+ * slop on (a tie is vertical). [axisBoth] pages on either axis (the grids); a vertical-only list still takes a sideways
+ * drag (intercepted, so it never ends as a tap on a row) and pages nothing for it.
+ */
 class PageDrag(private val slop: Float, private val axisBoth: Boolean=false) {
     private var x=0f; private var y=0f; private var active=false; private var horizontal=false
     var dragging=false; private set
@@ -94,12 +98,12 @@ class PageDrag(private val slop: Float, private val axisBoth: Boolean=false) {
         if (!active) return false
         if (dragging) return true
         val dx=abs(x-this.x);val dy=abs(y-this.y)
-        if (maxOf(dx,dy)>slop && (axisBoth || dy>dx)) { dragging=true;horizontal=axisBoth && dx>dy }
+        if (maxOf(dx,dy)>slop) { dragging=true;horizontal=dx>dy }
         return dragging
     }
     fun up(x: Float,y: Float): Int {
         move(x,y)
-        val delta=if (horizontal) this.x-x else this.y-y
+        val delta=if (!horizontal) this.y-y else if (axisBoth) this.x-x else 0f
         val dir=if (!dragging || delta==0f) 0 else if (delta>0f) 1 else -1
         cancel();return dir
     }
