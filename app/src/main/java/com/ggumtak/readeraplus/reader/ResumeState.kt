@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.SystemClock
+import java.lang.ref.WeakReference
 
 /**
  * U1: "the reader is showing a book" across process death.
@@ -34,15 +35,20 @@ object ResumeState {
 
     /** In-process: the book the live reader shows (after its first page) until the user closes it; -1 = none. */
     @Volatile private var liveBook = -1L
-    /** The reader instance that set [liveBook] (an older instance still finishing must not touch it). */
-    @Volatile private var liveOwner: Any? = null
+    /** The reader instance that set [liveBook] (weak: never keeps a destroyed activity; an older one can't touch it). */
+    @Volatile private var liveOwner: WeakReference<Any>? = null
+    /** That reader was destroyed without finishing (memory, "Don't keep activities"): its task record is still there. */
+    @Volatile private var ownerGone = false
     /** Book of the reader the system just finished ([dropped]), -1 = none; taken once, within [DROPPED_MS]. */
     @Volatile private var droppedBook = -1L
     @Volatile private var droppedAt = 0L
     /** A library start waiting ([awaitDrop]) for a drop that may arrive just after it, and since when. */
     private var dropWaiter: ((Long) -> Unit)? = null
     private var waitingSince = 0L
-    /** A dropped reader counts as interrupted for this long; a library start waits this long for a late drop. */
+    /**
+     * A dropped reader counts as interrupted for this long, and a library start waits this long for a late drop.
+     * Real time ([SystemClock.elapsedRealtime]): uptime stops while the device sleeps.
+     */
     private const val DROPPED_MS = 3_000L
 
     /** Activities created in this process (any class). The library resumes only as the first one. */
@@ -75,7 +81,8 @@ object ResumeState {
     /** Reader, after the first page of [bookId] (afterOpen). Keeps the try count: only a normal pause resets it. */
     fun opened(bookId: Long, owner: Any) {
         liveBook = bookId
-        liveOwner = owner
+        liveOwner = WeakReference(owner)
+        ownerGone = false
         val p = prefs ?: return
         if (p.getLong(K_BOOK, -1L) != bookId) p.edit().putLong(K_BOOK, bookId).apply()
     }
@@ -96,10 +103,33 @@ object ResumeState {
     fun clear() {
         liveBook = -1L
         liveOwner = null
+        ownerGone = false
         droppedBook = -1L
         dropWaiter = null
         val p = prefs ?: return
         if (p.contains(K_BOOK) || p.contains(K_TRIES)) p.edit().clear().apply()
+    }
+
+    private fun isOwner(owner: Any): Boolean = liveOwner?.get() === owner
+
+    /**
+     * Reader [owner] is destroyed after the user closed it (finish() already called [clear]). Clears again unless a
+     * newer reader owns the state: a first page that drew after finish() must not leave the closed book marked.
+     */
+    fun closed(owner: Any) {
+        if (isOwner(owner) || liveOwner?.get() == null) clear()
+    }
+
+    /** Reader [owner] destroyed without finishing (memory, "Don't keep activities"); its task record stays. */
+    fun detached(owner: Any) {
+        if (isOwner(owner)) ownerGone = true
+    }
+
+    /** A reader showing a book is up in this process (not finishing, not destroyed). Main thread. */
+    fun readerLive(): Boolean {
+        if (liveBook <= 0 || ownerGone) return false
+        val a = liveOwner?.get() as? Activity ?: return false
+        return !a.isFinishing && !a.isDestroyed
     }
 
     /**
@@ -108,15 +138,16 @@ object ResumeState {
      * as before (a later cold start shows the library); this process keeps the book for a library started by that same
      * launch ([takeInterrupted], or a waiting [awaitDrop]). Main thread.
      */
-    fun dropped(owner: Any, now: Long = SystemClock.uptimeMillis()) {
-        if (liveOwner !== owner) {
+    fun dropped(owner: Any, now: Long = SystemClock.elapsedRealtime()) {
+        if (!isOwner(owner)) {
             // A newer reader owns the marker now (the reopened one): leave it. Nothing live: just the marker.
-            if (liveOwner == null) clearMarker()
+            if (liveOwner?.get() == null) clearMarker()
             return
         }
         val id = liveBook
         liveBook = -1L
         liveOwner = null
+        ownerGone = false
         clearMarker()
         val waiter = dropWaiter?.takeIf { now - waitingSince <= DROPPED_MS }
         dropWaiter = null
@@ -128,11 +159,22 @@ object ResumeState {
         }
     }
 
-    /** Library start or new intent: the book of a reader the system finished just now, else -1. Taken once. */
-    fun takeInterrupted(now: Long = SystemClock.uptimeMillis()): Long {
+    /**
+     * Library start (no saved state) or new intent: the book of a reader the system finished just now, or of a reader
+     * destroyed earlier without finishing whose record that launch has cleared ([detached]); else -1. Taken once.
+     */
+    fun takeInterrupted(now: Long = SystemClock.elapsedRealtime()): Long {
         val id = droppedBook
         droppedBook = -1L
-        return if (id > 0 && now - droppedAt <= DROPPED_MS) id else -1L
+        if (id > 0 && now - droppedAt <= DROPPED_MS) return id
+        if (liveBook > 0 && ownerGone) {
+            val gone = liveBook
+            liveBook = -1L
+            liveOwner = null
+            ownerGone = false
+            return gone
+        }
+        return -1L
     }
 
     /**
@@ -140,7 +182,7 @@ object ResumeState {
      * the library started (its destroy is delivered later). [reopen] runs once if that happens within [DROPPED_MS].
      * Only while a reader is live (else nothing can drop). Main thread.
      */
-    fun awaitDrop(now: Long = SystemClock.uptimeMillis(), reopen: (Long) -> Unit) {
+    fun awaitDrop(now: Long = SystemClock.elapsedRealtime(), reopen: (Long) -> Unit) {
         if (liveBook <= 0) return
         dropWaiter = reopen
         waitingSince = now

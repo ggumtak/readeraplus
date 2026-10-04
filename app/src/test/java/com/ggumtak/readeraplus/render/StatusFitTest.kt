@@ -48,5 +48,12 @@ class StatusFitTest {
         assertFalse(StatusFit.footerFitsDp(11f, 30, progressBar = true))
         assertTrue(StatusFit.footerFitsDp(11f, 20, progressBar = false))
         assertFalse(StatusFit.footerFitsDp(11f, 16, progressBar = false))
+        // The gap shrinks in margins too small for it and the smallest lane: the bar shows wherever it did before.
+        assertEquals(8, StatusFit.edgeGapPx(80f, d))
+        assertEquals(8, StatusFit.edgeGapPx(20f, d))
+        assertEquals(4, StatusFit.edgeGapPx(16f, d))        // 8 dp margin: lane 12 px, gap 4 px
+        assertEquals(0, StatusFit.edgeGapPx(12f, d))        // 6 dp margin: lane 12 px at the edge, as before
+        assertEquals(0, StatusFit.edgeGapPx(8f, d))
+        for (m in listOf(12f, 16f, 20f, 80f)) assertTrue(StatusFit.lane(m - StatusFit.edgeGapPx(m, d), d) > 0f)
     }
 }

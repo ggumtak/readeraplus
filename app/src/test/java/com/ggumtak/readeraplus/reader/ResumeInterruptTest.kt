@@ -82,4 +82,37 @@ class ResumeInterruptTest {
         assertEquals(-1L, reopened)
         assertEquals(-1L, ResumeState.takeInterrupted(now = 1_200L))
     }
+
+    @Test fun aFirstPageDrawnAfterTheUserClosedIsUndoneAtDestroy() {
+        ResumeState.opened(7L, readerA)
+        ResumeState.clear()                                 // finish() while loading …
+        ResumeState.opened(7L, readerA)                     // … (guarded in afterOpen, but if it ever happens)
+        ResumeState.closed(readerA)                         // onDestroy of the user-closed reader
+        ResumeState.dropped(readerA, now = 1_000L)
+        assertEquals(-1L, ResumeState.takeInterrupted(now = 1_100L))
+    }
+
+    @Test fun closingAnOldReaderLeavesANewerOneAlone() {
+        ResumeState.opened(7L, readerA)
+        ResumeState.opened(8L, readerB)
+        ResumeState.closed(readerA)
+        ResumeState.dropped(readerB, now = 1_000L)
+        assertEquals(8L, ResumeState.takeInterrupted(now = 1_100L))
+    }
+
+    @Test fun aReaderDestroyedForMemoryIsReopenedWhenALaunchClearedItsRecord() {
+        // "Don't keep activities" / low memory: HOME destroyed the reader without finishing; a later CLEAR_TOP launch
+        // finishes the record with no instance (no callback): the library start still finds the book.
+        ResumeState.opened(7L, readerA)
+        ResumeState.detached(readerA)
+        assertEquals(7L, ResumeState.takeInterrupted(now = 99_000L))
+        assertEquals(-1L, ResumeState.takeInterrupted(now = 99_000L))
+    }
+
+    @Test fun aRecreatedReaderIsLiveAgain() {
+        ResumeState.opened(7L, readerA)
+        ResumeState.detached(readerA)
+        ResumeState.opened(7L, readerB)                     // the record came back (normal return): a new instance
+        assertEquals(-1L, ResumeState.takeInterrupted(now = 1_000L))
+    }
 }

@@ -691,9 +691,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     override fun onDestroy() {
-        // finish() (every close by the user) already cleared it; a finish by the system (an outside launch that
-        // cleared the task) leaves the book for the library to reopen (ResumeState.takeInterrupted).
-        if (isFinishing && !isChangingConfigurations && !userFinished) ResumeState.dropped(this)
+        // A close by the user (finish()) clears the resume state; a finish by the system (an outside launch that
+        // cleared the task) leaves the book for the library to reopen (ResumeState.takeInterrupted); a destroy
+        // without finishing (memory, "Don't keep activities") keeps the book with the task record.
+        if (!isChangingConfigurations) {
+            when {
+                isFinishing && userFinished -> ResumeState.closed(this)
+                isFinishing -> ResumeState.dropped(this)
+                else -> ResumeState.detached(this)
+            }
+        }
         light.onDestroy(isFinishing)
         detachScroll()
         anchorJob?.cancel()
@@ -1289,7 +1296,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val id = bookRef?.id ?: return
         val appCtx = applicationContext
         // PLAN §1.6.2, in this order; every IO step is launched, never awaited.
-        ResumeState.opened(id, this)                                                    // 1 (R)
+        if (!isFinishing) ResumeState.opened(id, this)                                  // 1 (R); not once closed
         // 2 (S): on main (apply(): in memory at once), so it sees the settings prefs before step 4's probe thread
         // can write "deviceClass" there (DA-B: a fresh install's restore offer is decided on untouched prefs).
         try {
@@ -2858,7 +2865,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (!s.settings.progressBar) return 0
         val g = s.generation?.geometry ?: return 0
         val density = resources.displayMetrics.density
-        val lane = StatusFit.lane((g.viewHeight - StatusFit.edgePx(density) - g.contentTop - l.config.height).toFloat(), density)
+        val margin = (g.viewHeight - g.contentTop - l.config.height).toFloat()
+        val lane = StatusFit.lane(margin - StatusFit.edgeGapPx(margin, density), density)
         return if (lane > 0f) ProgressMath.trackPx(g.viewWidth, lane, density) else 0
     }
 

@@ -297,7 +297,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
                            viewWidth: Int, viewHeight: Int, ribbonH: Float) {
         val st = decor.status ?: return
         // The bottom status keeps StatusFit.EDGE_DP of paper above the screen edge (the bezel may cover the last rows).
-        val edgeBottom = viewHeight - StatusFit.edgePx(density)
+        val edgeBottom = viewHeight - StatusFit.edgeGapPx(viewHeight - (top + ch), density)
         val bottom = edgeBottom - (top + ch)
         val lane = if (st.lane) StatusFit.lane(bottom, density) else 0f
         if (!st.header.isEmpty) {

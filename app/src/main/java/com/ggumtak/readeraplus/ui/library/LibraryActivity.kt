@@ -306,10 +306,18 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val i = intent
         // An outside launch (an e-reader's task manager or launcher) that cleared the task above the library has just
         // finished the reader the user was reading: open that book again instead of showing the library.
+        logStart("create", i)
         val interrupted = if (savedInstanceState == null) ResumeState.takeInterrupted() else -1L
         if (interrupted > 0) {
-            Log.i(TAG, "reopen the interrupted reader: book $interrupted, action ${i?.action}, flags 0x${Integer.toHexString(i?.flags ?: 0)}")
+            Log.i(TAG, "reopen the interrupted reader: book $interrupted")
             startOpenLast(resumeId = interrupted)
+            return
+        }
+        // A launch that only put a new library on top of the live reader (a task manager's MAIN intent without the
+        // launcher category, or the app's launch intent for a task a file manager's book started): show the reader.
+        if (savedInstanceState == null && !isTaskRoot && i?.action == Intent.ACTION_MAIN && ResumeState.readerLive()) {
+            Log.i(TAG, "a MAIN launch over the open reader: back to the reader")
+            finish()
             return
         }
         val first = ResumeState.activitiesCreated == 1
@@ -321,7 +329,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             LibraryText.StartMode.OPEN_LAST -> startOpenLast()
             LibraryText.StartMode.LIBRARY -> {
                 // The reader that launch finished may report it only after this start (its destroy comes later).
-                if (savedInstanceState == null) ResumeState.awaitDrop { id -> reopenInterrupted(id, i) }
+                if (savedInstanceState == null) ResumeState.awaitDrop { id -> reopenInterrupted(id) }
                 ensureUi()
             }
         }
@@ -368,6 +376,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         resumedForBackup = true
         if (decidingOpenLast) return // onLastBookLoaded opens the reader or shows the library
         ensureUi() // back from the reader opened at start
+        releaseDrawHold() // a reopen from onNewIntent held an already built library
         refreshVisible()
     }
 
@@ -472,15 +481,27 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         super.onNewIntent(intent)
         setIntent(intent)
         // As in onCreate: a launch with CLEAR_TOP | SINGLE_TOP from outside finished the reader above this library.
+        logStart("new intent", intent)
         val interrupted = ResumeState.takeInterrupted()
-        if (interrupted > 0) reopenInterrupted(interrupted, intent)
-        else ResumeState.awaitDrop { id -> reopenInterrupted(id, intent) }
+        if (interrupted > 0) {
+            // As at creation: the library is held from drawing while the book reopens (released in onResume after).
+            Log.i(TAG, "reopen the interrupted reader: book $interrupted")
+            startOpenLast(resumeId = interrupted)
+        } else {
+            ResumeState.awaitDrop { id -> reopenInterrupted(id) }
+        }
     }
 
-    /** The reader the user was reading was finished by an outside launch that brought this library up: reopen it. */
-    private fun reopenInterrupted(bookId: Long, i: Intent?) {
+    /** How the library was started (device diagnosis: which intent a task manager or launcher really sends). */
+    private fun logStart(what: String, i: Intent?) {
+        Log.i(TAG, "$what: action=${i?.action} categories=${i?.categories} flags=0x${Integer.toHexString(i?.flags ?: 0)} " +
+            "root=$isTaskRoot readerLive=${ResumeState.readerLive()}")
+    }
+
+    /** The reader finished by an outside launch reported only after this library came up: reopen its book. */
+    private fun reopenInterrupted(bookId: Long) {
         if (isFinishing || isDestroyed) return
-        Log.i(TAG, "reopen the interrupted reader: book $bookId, action ${i?.action}, flags 0x${Integer.toHexString(i?.flags ?: 0)}")
+        Log.i(TAG, "reopen the interrupted reader (late): book $bookId")
         try {
             ReaderActivity.open(this, bookId)
         } catch (t: Throwable) {

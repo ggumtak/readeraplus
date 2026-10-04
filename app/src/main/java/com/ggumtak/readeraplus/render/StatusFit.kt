@@ -36,6 +36,13 @@ internal object StatusFit {
     fun edgePx(density: Float): Int = Math.round(EDGE_DP * density)
 
     /**
+     * The edge gap a bottom margin of [marginPx] keeps: [edgePx], less in a margin too small for it and the smallest
+     * progress lane ([LANE_MIN_DP]), so the bar still shows wherever it showed before the gap.
+     */
+    fun edgeGapPx(marginPx: Float, density: Float): Int =
+        minOf(edgePx(density), maxOf(0, Math.floor((marginPx - LANE_MIN_DP * density).toDouble()).toInt()))
+
+    /**
      * Height of the progress lane in [marginPx], the bottom margin above the [EDGE_DP] gap: min(12 dp, margin), 0
      * under [LANE_MIN_DP].
      */

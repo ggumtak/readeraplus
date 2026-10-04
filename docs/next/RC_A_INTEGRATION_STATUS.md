@@ -284,3 +284,13 @@ tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci
   늦게 오는 종료는 3초 동안 `awaitDrop`). 뒤로 · 닫기 · 서재로 · 휴지통은 그대로 서재. 서재가 열린 리더 위에 그냥 뜨는 경우
   (파일 관리자에서 연 책 + `am start -n`)는 리더가 닫히지 않으므로 서재가 그대로 보인다(CI 40). CI 79/79b가 두 플래그를 재현.
   `adb logcat -s Library`에 "reopen the interrupted reader" 한 줄. 검사: typecheck 0, unittest 1,549 OK, CI Python OK.
+- 독립 리뷰(2명) 후속(같은 날):
+  - 불러오는 중에 닫은 책: finish() 뒤에 첫 쪽이 그려져도 `ResumeState.opened`를 부르지 않고, 닫힌 리더의 onDestroy가 한 번 더
+    정리한다(`closed`) — 다음 콜드 스타트가 닫은 책을 다시 여는 일 없음.
+  - onNewIntent(CLEAR_TOP | SINGLE_TOP)로 다시 열 때도 서재를 그리지 않고 책으로(`startOpenLast`, onResume에서 hold 해제).
+  - 작업 관리자가 서재를 새로 하나 열린 리더 위에 얹는 실행(MAIN, 카테고리 없음 등)도 처리: 루트가 아닌 서재가 MAIN으로 뜨고 리더가
+    살아 있으면 그 서재를 닫아 리더를 보인다. 서재 시작마다 `adb logcat -s Library`에 action · categories · flags · root가 남는다.
+  - 메모리 부족 · "활동 보관 안 함"으로 리더가 닫히지 않은 채 사라진 뒤의 CLEAR_TOP도 책으로(`detached`). 리더 인스턴스는 약한 참조.
+  - 시간 창은 실제 시간(elapsedRealtime): 잠자기 동안 멈추는 uptime으로는 3초가 몇 시간이 될 수 있었다.
+  - 진행 막대: 아래 여백 6 · 8 dp에서는 간격을 줄여(`edgeGapPx`) 예전처럼 막대가 보인다.
+  - 검사: typecheck 0, unittest 1,553 OK.
