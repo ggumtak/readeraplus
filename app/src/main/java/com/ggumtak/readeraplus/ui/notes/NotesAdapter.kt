@@ -113,8 +113,14 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
         h.menu.setOnClickListener { cb.onMenu(row, it) }
         // The row's own listeners, like the library cards: a paged list (e-ink) consumes its touches for paging and
         // never runs the ListView's item click; a vertical drag past the slop still becomes the list's (PageDrag).
-        h.body.setOnClickListener { cb.onRowTap(row, position) }
-        h.body.setOnLongClickListener { cb.onMenu(row, it); true }
+        // The whole item takes them, as the item click did: the body, and a day header above it (CI 34: a tap on the
+        // first row's "오늘" header did nothing). A book header keeps its own (it opens that book's notes).
+        val tap = View.OnClickListener { cb.onRowTap(row, position) }
+        val press = View.OnLongClickListener { v -> cb.onMenu(row, v); true }
+        h.root.setOnClickListener(tap)
+        h.root.setOnLongClickListener(press)
+        h.body.setOnClickListener(tap)
+        h.body.setOnLongClickListener(press)
 
         when (kind) {
             NoteKind.QUOTE, NoteKind.BOOKMARK -> {
@@ -324,6 +330,11 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
             body.visibility = View.GONE
             divider.visibility = View.GONE
             loading.visibility = View.VISIBLE
+            // A row still loading takes no tap (a recycled view must not open the row it showed before).
+            root.setOnClickListener(null)
+            root.setOnLongClickListener(null)
+            root.isClickable = false
+            root.isLongClickable = false
         }
     }
 }

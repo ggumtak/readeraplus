@@ -339,10 +339,12 @@ close_popup() { # one BACK closes the popup (and the bars); BACK again while a p
 }
 margins_zero() { # margins_zero <n>: on 설정 → 읽기 설정 (open; the margins left the quick options), 좌우 여백 and 상하 여백
   # both read "0" (S §2.4, A). The two steppers are adjacent: 좌우 여백 is aligned well under the toolbar first.
+  # Each value is read from the dump of the scroll_find that put its row on screen (CI 34: a dump taken after align
+  # had neither row).
   local l v
   scroll_find "좌우 여백 늘리기" || { check "$1" 1 "no 좌우 여백 stepper"; return 1; }
-  align "좌우 여백 늘리기" 400; dump
-  l=$(stepper_value "좌우 여백"); v=$(stepper_value "상하 여백")
+  l=$(stepper_value "좌우 여백")
+  scroll_find "상하 여백 늘리기" && v=$(stepper_value "상하 여백")
   [ "$l" = 0 ] && [ "$v" = 0 ]; check "$1" $? "좌우 여백 '$l', 상하 여백 '$v'"
 }
 popup_tap() { tap_label "$1" "${2:-exact}" || return 1; sleep "${3:-2}"; } # a button of the quick options (they never scroll)
@@ -448,20 +450,18 @@ missing() { # missing "label" …: the labels the last dump lacks (exact), quote
   for t in "$@"; do has "$t" || out="$out '$t'"; done
   echo "${out# }"
 }
-status_rows() { # STATUS = "위 · 왼쪽=…; …; 아래 · 오른쪽=…; 진행 막대=on|off", read on 넘김·화면 설정 (open) with its 상태
-  # 표시줄 section aligned under the toolbar; read again after one more drag when the dump misses a row (CI 31 missed them)
-  local d=/tmp/ui.xml
+status_rows() { # STATUS = "위 · 왼쪽=…; …; 아래 · 오른쪽=…; 진행 막대=on|off", read on 넘김·화면 설정 (open). Each row is
+  # read from the dump of the scroll_find that put it on screen (CI 34: dumps taken after aligning the 상태 표시줄 header
+  # had none of the rows, while scroll_find found and tapped them right after); "?" for a row not found.
+  local t v out=""
   STATUS=""
   scroll_find "상태 표시줄" || return 1
-  align "상태 표시줄" 260
-  dump || return 1
-  if [ -z "$(row_value "아래 · 오른쪽")" ] || [ -z "$(row_checked "진행 막대")" ]; then
-    log "status_rows: a slot row or 진행 막대 is not in the dump; dragging the list up once more"
-    cp /tmp/ui.xml /tmp/ui_status.xml; d=/tmp/ui_status.xml,/tmp/ui.xml
-    drag 100 1100 700; sleep 2; dump
-  fi
-  STATUS="$(python3 tools/ci/ui_rows.py values "$d" "위 · 왼쪽|위 · 가운데|위 · 오른쪽|아래 · 왼쪽|아래 · 가운데|아래 · 오른쪽")"
-  STATUS="$STATUS; 진행 막대=$(python3 tools/ci/ui_rows.py checked "$d" "진행 막대")"
+  for t in "위 · 왼쪽" "위 · 가운데" "위 · 오른쪽" "아래 · 왼쪽" "아래 · 가운데" "아래 · 오른쪽"; do
+    v=""; scroll_find "$t" && v=$(row_value "$t")
+    out="$out; $t=${v:-?}"
+  done
+  v=""; scroll_find "진행 막대" && v=$(row_checked "진행 막대")
+  STATUS="${out#; }; 진행 막대=$v"
   log "status rows: $STATUS"
 }
 
@@ -628,10 +628,11 @@ choose_volume_mode() { # choose_volume_mode on|off: 볼륨 키 방향 반전 (on
   local v i s
   open_turning_over_reader || return 1
   scroll_find "볼륨 키로 넘김" || { leave_settings; return 1; }
-  align "볼륨 키로 넘김" 400; dump # 볼륨 키 방향 반전 is the next row
   if [ "$1" = on ]; then
-    v=$(row_checked "볼륨 키로 넘김"); i=$(row_checked "볼륨 키 방향 반전"); s=$(row_value "볼륨 키로 넘김")
-    if has "볼륨 키 방향 반전" && [ "$v" = on ] && [ "$i" = off ] && [ "${s#볼륨 아래 = 다음}" != "$s" ]; then
+    # Each row read from the dump of the scroll_find that put it on screen (CI 34: a dump after align had neither).
+    v=$(row_checked "볼륨 키로 넘김"); s=$(row_value "볼륨 키로 넘김"); i=""
+    scroll_find "볼륨 키 방향 반전" && i=$(row_checked "볼륨 키 방향 반전")
+    if [ "$v" = on ] && [ "$i" = off ] && [ "${s#볼륨 아래 = 다음}" != "$s" ]; then
       check 14d_list 0 "버튼 · 키: 볼륨 키로 넘김 on ('$s'), 볼륨 키 방향 반전 off"
     else check 14d_list 1 "볼륨 키로 넘김 '$v' ('$s'), 볼륨 키 방향 반전 '$i' (want on, '볼륨 아래 = 다음…', off)"; fi
   fi
@@ -912,13 +913,9 @@ status_page() { # 51: 설정 → 넘김·화면 설정 at the 상태 표시줄 s
   align "상태 표시줄" 260
   shot 51_status_page 2
   dump
-  # CI 31 missed the rows once with no app change since a passing run: look again lower before failing, and keep
-  # the dump for the next diagnosis.
-  if ! { has "위 · 왼쪽" contains && has "아래 · 오른쪽" contains; }; then
-    log "51: slot rows not in the dump; dragging the list up once more"
-    drag 100 1100 700; sleep 2; dump
-  fi
-  if has "위 · 왼쪽" contains && has "아래 · 오른쪽" contains; then check 51 0 "slot rows shown"
+  # CI 31 and 34 missed the rows in the dump after align although scroll_find finds them: each row is looked up by
+  # scroll_find (on screen in its own dump); the dump is kept for the next diagnosis when one is missing.
+  if scroll_find "위 · 왼쪽" && scroll_find "아래 · 오른쪽"; then check 51 0 "slot rows shown"
   else cp /tmp/ui.xml shots/ui_fail_51_status_page.xml 2>/dev/null; check 51 1 "slot rows (위 · 왼쪽 … 아래 · 오른쪽) missing"; fi
 }
 stats_page() { # 50b: drawer → 읽기 기록 (T1-6)
