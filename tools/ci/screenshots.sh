@@ -171,7 +171,7 @@ fresh_reader() { # fresh_reader file mime: the app cold-started on that book (no
   restart_app -a android.intent.action.VIEW -t "$2" -d "file:///sdcard/Download/$1" -n $PKG/.reader.ReaderActivity
   sleep 4
 }
-step() { # step name function: one best-effort UI step in its own shell (5 minutes at most); never fails the job
+step() { # step name function: one best-effort UI step in its own shell (STEP_TIMEOUT s, 300 by default); never fails the job
   # No new step after STEPS_UNTIL seconds of this script, so a stuck emulator can't run the job into its time limit.
   if [ "$SECONDS" -gt "${STEPS_UNTIL:-3000}" ]; then log "step $1 skipped (out of time)"; return 0; fi
   log "step $1"
@@ -184,7 +184,7 @@ step() { # step name function: one best-effort UI step in its own shell (5 minut
   fi
   return 0
 }
-scroll_find() { # scroll_find "label" [exact|contains]: scroll INSIDE the active scroll container (including popups)
+scroll_find() { # scroll_find "label" [exact|contains]: scroll INSIDE the active scroll container (a page, a dialog's list)
   local i y gesture prev="" last=""
   XY=""
   for i in $(seq 1 14); do
@@ -313,17 +313,16 @@ reader_more() { # reader_more "item": the reader's ⋮ (content description 더�
   tap_label "$1" || { back; return 1; }
   sleep 3
 }
-open_popup() { # the reading-settings popup with 더보기 expanded (the process remembers the expanded state)
+open_popup() { # the quick reading options (⚙, content description 읽기 설정): since 672e85d only "읽기 설정 · 모든 책에
+  # 적용 · 닫기", the 글자 크기 · 굵기 · 줄 간격 · 문단 간격 steppers, 글꼴 and "전체 읽기 설정 ›" (376 dp: no 더보기, no
+  # scrolling). A 설정 a failed step left in front is left first.
+  if on_top SettingsActivity; then log "open_popup: 설정 is still in front, leaving it first"; leave_settings; fi
   show_chrome || return 1
   tap_label "읽기 설정" contains || return 1
   sleep 2; dump || return 1
-  has "글자 크기" contains || { log "the reading-settings popup is not the active window"; return 1; }
-  if ! has "접기"; then
-    scroll_find "더보기" || return 1
-    tap_xy "$XY"; sleep 2
-  fi
+  has "글자 크기" contains && has "전체 읽기 설정" || { log "the quick options popup is not the active window"; return 1; }
 }
-popup_focused() { # a focusable PopupWindow (the reading-settings popup, its drop-down list, a menu) has the input focus
+popup_focused() { # a focusable PopupWindow (the quick options popup, its 글꼴 list, a menu) has the input focus
   adb shell dumpsys window 2>/dev/null | grep -m1 -E 'mCurrentFocus=' | grep -q 'PopupWindow'
 }
 close_popup() { # one BACK closes the popup (and the bars); BACK again while a popup still has the focus, then the bars
@@ -338,18 +337,29 @@ close_popup() { # one BACK closes the popup (and the bars); BACK again while a p
   done
   hide_chrome; sleep 1
 }
-margins_zero() { # margins_zero <n>: in the open popup, 좌우 여백 and 상하 여백 both read "0" (S §2.4, A)
+margins_zero() { # margins_zero <n>: on 설정 → 읽기 설정 (open; the margins left the quick options), 좌우 여백 and 상하 여백
+  # both read "0" (S §2.4, A). The two steppers are adjacent: 좌우 여백 is aligned well under the toolbar first.
   local l v
-  scroll_find "상하 여백 늘리기" || { check "$1" 1 "no 상하 여백 stepper"; return 1; }
+  scroll_find "좌우 여백 늘리기" || { check "$1" 1 "no 좌우 여백 stepper"; return 1; }
+  align "좌우 여백 늘리기" 400; dump
   l=$(stepper_value "좌우 여백"); v=$(stepper_value "상하 여백")
   [ "$l" = 0 ] && [ "$v" = 0 ]; check "$1" $? "좌우 여백 '$l', 상하 여백 '$v'"
 }
-popup_tap() { scroll_find "$1" "${2:-exact}" || return 1; tap_xy "$XY"; sleep "${3:-2}"; } # a row/button in the popup
+popup_tap() { tap_label "$1" "${2:-exact}" || return 1; sleep "${3:-2}"; } # a button of the quick options (they never scroll)
 choose() { tap_label "$1" || tap_label "$1" contains; } # an item of an open chooser list
-set_slot() { # set_slot "아래 가운데" "쪽 번호": a status slot in the open popup (its button reads "<slot>: <value>")
-  popup_tap "$1:" contains 1 || return 1
-  choose "$2" || { back; return 1; }
-  sleep 2
+chooser_open() { dump && { grep -q 'select_dialog_listview' /tmp/ui.xml || has "취소"; }; } # an AlertDialog chooser in front
+choose_item() { # choose_item "item": an item of the open chooser (exact, else contains), scrolled into view inside the dialog
+  # when its list is taller than the dialog (the 12 status items); else BACK cancels the chooser
+  choose "$1" && return 0
+  if chooser_open && scroll_find "$1" contains; then tap_xy "$XY"; return 0; fi
+  chooser_open && back
+  return 1
+}
+set_slot() { # set_slot "아래 · 가운데" "쪽 번호": a status slot row of 넘김·화면 설정 (open; the slots left the quick options)
+  # and an item of its chooser; the row's value is logged
+  pick_setting "$1" "$2" exact || return 1
+  dump && log "slot '$1' reads '$(row_value "$1")'"
+  return 0
 }
 seek_to() { # seek_to <from %> <to %>: drags the chrome's seek bar (open) from one fraction to another and releases
   local b x0 y0 x1 y1 y
@@ -372,11 +382,87 @@ open_turning_page() { # 설정 → 넘김·화면 설정
   scroll_find "넘김·화면 설정" || return 1
   tap_xy "$XY"; sleep 3
 }
-pick_setting() { # pick_setting "row" "choice": a settings row (found by scrolling) and an item of its chooser
-  scroll_find "$1" contains || return 1
-  tap_xy "$XY"; sleep 2
-  choose "$2" || { back; return 1; }
+pick_setting() { # pick_setting "row" "choice" [exact|contains] [index]: a settings row (found by scrolling; index -1 = its
+  # last match on screen, past a section header of the same name such as 넘기는 방식's) and an item of its chooser
+  scroll_find "$1" "${3:-contains}" || return 1
+  [ -n "${4:-}" ] && XY=$(xy_of "$1" "${3:-contains}" "$4")
+  tap_xy "$XY" || return 1
   sleep 2
+  choose_item "$2" || return 1
+  sleep 2
+}
+
+# ------------------------------------------------------------------ 설정 over the open book (672e85d)
+# The quick options keep five rows. Everything else is a 설정 row now: margins, 페이지 나눔, 정렬 … on 읽기 설정 (the
+# popup's "전체 읽기 설정"), the status slots, 진행 막대, 넘기는 방식 and the volume keys on 넘김·화면 설정 (the reader's
+# ⋮ → 설정). Rows save at once; the reader applies what changed ONCE when it is back in front (onResume), keeping the
+# page's first character. So a step changes the row there over the open book (never through the library, which would
+# reopen it), leaves 설정 with BACK and checks the book as it did with the popup.
+
+open_reading_page() { # ⚙ → 전체 읽기 설정: 설정 → 읽기 설정 over the open book, the only page of its stack (one BACK leaves)
+  open_popup || return 1
+  tap_label "전체 읽기 설정" || { close_popup; return 1; }
+  sleep 3
+  reading_page_shown || { log "전체 읽기 설정 did not bring 설정 → 읽기 설정 to the front"; leave_settings; return 1; }
+}
+reading_page_shown() { # 설정 → 읽기 설정 in front: its toolbar title and its first section, 스타일 (the main list has neither)
+  on_top SettingsActivity && dump && has "읽기 설정" && has "스타일"
+}
+open_turning_over_reader() { # the reader's ⋮ → 설정 → 넘김·화면 설정 over the open book: two pages in 설정's stack, two
+  # BACKs to the book. (읽기 설정 links it too, but as its last row: a whole page of swipes on every trip.)
+  if on_top SettingsActivity; then log "open_turning_over_reader: 설정 is still in front, leaving it first"; leave_settings; fi
+  reader_more "설정" || return 1
+  on_top SettingsActivity || { log "⋮ → 설정 did not bring 설정 to the front"; return 1; }
+  scroll_find "넘김·화면 설정" || { leave_settings; return 1; }
+  tap_xy "$XY"; sleep 3
+  dump && has "넘김·화면 설정" && has "넘기는 방식" && return 0
+  log "넘김·화면 설정 did not open from 설정"; leave_settings; return 1
+}
+leave_settings() { # BACK while 설정 is in front (one per page of its stack, one more for a chooser left open), then the
+  # book must be in front with its bars closed. The guard before each BACK matters: one BACK too many would close the book.
+  local i n=0
+  for i in 1 2 3 4; do
+    on_top SettingsActivity || break
+    back; sleep 1; n=$((n + 1))
+  done
+  if ! on_top ReaderActivity; then log "leave_settings: the reader is not in front after $n BACKs"; return 1; fi
+  log "left 설정 with $n BACKs"
+  hide_chrome
+}
+row_value() { python3 tools/ci/ui_rows.py value /tmp/ui.xml "$1"; } # a settings row's summary (its value) in the last dump
+row_checked() { python3 tools/ci/ui_rows.py checked /tmp/ui.xml "$1"; } # "on" / "off": a toggle row's switch in the last dump
+set_toggle() { # set_toggle "title" on|off: a toggle row of the open settings page (found by scrolling), tapped only when its
+  # switch reads otherwise; false unless it then reads $2 (a switch the dump does not show is tapped once, blind)
+  local s
+  scroll_find "$1" || return 1
+  s=$(row_checked "$1")
+  if [ "$s" = "$2" ]; then log "toggle '$1' already $2"; return 0; fi
+  tap_xy "$XY"; sleep 2
+  dump || return 1
+  if [ -z "$s" ]; then log "toggle '$1': no switch in the dump, tapped once (now '$(row_checked "$1")')"; return 0; fi
+  s=$(row_checked "$1"); log "toggle '$1' -> '$s'"
+  [ "$s" = "$2" ]
+}
+missing() { # missing "label" …: the labels the last dump lacks (exact), quoted ("" = all there)
+  local t out=""
+  for t in "$@"; do has "$t" || out="$out '$t'"; done
+  echo "${out# }"
+}
+status_rows() { # STATUS = "위 · 왼쪽=…; …; 아래 · 오른쪽=…; 진행 막대=on|off", read on 넘김·화면 설정 (open) with its 상태
+  # 표시줄 section aligned under the toolbar; read again after one more drag when the dump misses a row (CI 31 missed them)
+  local d=/tmp/ui.xml
+  STATUS=""
+  scroll_find "상태 표시줄" || return 1
+  align "상태 표시줄" 260
+  dump || return 1
+  if [ -z "$(row_value "아래 · 오른쪽")" ] || [ -z "$(row_checked "진행 막대")" ]; then
+    log "status_rows: a slot row or 진행 막대 is not in the dump; dragging the list up once more"
+    cp /tmp/ui.xml /tmp/ui_status.xml; d=/tmp/ui_status.xml,/tmp/ui.xml
+    drag 100 1100 700; sleep 2; dump
+  fi
+  STATUS="$(python3 tools/ci/ui_rows.py values "$d" "위 · 왼쪽|위 · 가운데|위 · 오른쪽|아래 · 왼쪽|아래 · 가운데|아래 · 오른쪽")"
+  STATUS="$STATUS; 진행 막대=$(python3 tools/ci/ui_rows.py checked "$d" "진행 막대")"
+  log "status rows: $STATUS"
 }
 
 # ------------------------------------------------------------------ reader steps: chrome (U §8.2)
@@ -438,29 +524,55 @@ chrome_pin() { # 13 (+rawshot), 13b–13h, then rawshot 10a_pre and the bars ope
   rawshot 10a_pre; perf_mark 10a_pre # chrome closed: 10b compares against this page
   show_chrome # the bars open again for 14_reading_settings
 }
-reading_settings() { # 14, 14b, 14c, then 10b (+rawshot, no_relayout): the footer slot never moves the text
+reading_settings() { # 14 the quick options (⚙); 14s their "전체 읽기 설정" → 설정 → 읽기 설정, and BACK to the same page
+  # (14s_back, 14s_same); 14m the margins there; 14b, 14c the status slots on 넘김·화면 설정; then 10b (+rawshot,
+  # no_relayout): the footer slot never moves the text
+  local label0 label1 miss t
   show_chrome || return 1
+  label0=$(page_label); perf_mark 14s_a
   tap_label "읽기 설정" contains || return 1
   shot 14_reading_settings 2
-  dump; if has "글자 크기" contains && has "더보기" contains; then check 14 0 "popup with its main rows and 더보기"
-  else check 14 1 "popup rows missing"; fi
-  # 14b: 더보기, then up to the 상태 표시 section
-  if ! has "접기"; then scroll_find "더보기" && tap_xy "$XY"; sleep 2; fi
+  # 14: the slim popup (672e85d): title bar, four steppers, 글꼴, 전체 읽기 설정; no 더보기 / 접기
+  dump; miss=$(missing "읽기 설정" "모든 책에 적용" "닫기" "글꼴" "전체 읽기 설정")
+  for t in "글자 크기" "굵기" "줄 간격" "문단 간격"; do
+    has "$t 줄이기" && has "$t 늘리기" || miss="$miss '$t 줄이기/늘리기'"
+  done
+  if [ -z "$miss" ] && ! has "더보기" contains && ! has "접기"; then
+    check 14 0 "quick options: 읽기 설정 · 모든 책에 적용 · 닫기, 4 steppers, 글꼴, 전체 읽기 설정; no 더보기"
+  else check 14 1 "quick options: missing [${miss# }], 더보기 or 접기 $(has "더보기" contains || has "접기" && echo shown || echo absent)"; fi
+  # 14s: 전체 읽기 설정 opens 설정 → 읽기 설정 (the only page of its stack); BACK returns to the same page of the book
+  tap_label "전체 읽기 설정" || return 1
+  sleep 3
+  if reading_page_shown; then check 14s 0 "설정 → 읽기 설정 in front (title 읽기 설정, section 스타일)"
+  else check 14s 1 "설정 → 읽기 설정 not in front after 전체 읽기 설정"; return 1; fi
+  shot 14s_reading_page 0
   margins_zero 14m
-  scroll_find "아래 가운데: 없음" || return 1
-  shot 14b_status_slots 1
-  dump; if has "아래 왼쪽: 없음" && has "아래 오른쪽: 없음" && has "진행 막대" contains; then check 14b 0 "bottom slots 없음, 진행 막대 row"
-  else check 14b 1 "bottom slots not all 없음 or no 진행 막대 row"; fi
-  if has "위 왼쪽: 없음" && has "위 가운데: 챕터 제목" && has "위 오른쪽: 없음"; then check 14b_top 0 "top slots [없음][챕터 제목][없음]"
-  else check 14b_top 1 "top slots not [없음][챕터 제목][없음]"; fi
-  # 14c: the slot list
-  popup_tap "아래 가운데: 없음" exact 1 || return 1
-  shot 14c_slot_list 1
-  dump; if has "쪽 번호" && has "없음"; then check 14c 0 "slot list with 쪽 번호 and 없음"; else check 14c 1 "slot list items missing"; fi
-  choose "쪽 번호" || return 1
-  sleep 2
-  back # closes the popup (a second BACK would leave the reader)
-  sleep 2; hide_chrome
+  leave_settings || return 1
+  perf_mark 14s_b
+  show_chrome; label1=$(page_label)
+  if [ -n "$label0" ] && [ "$label0" = "$label1" ]; then check 14s_back 0 "back on the book with BACK, label '$label1' as before"
+  else check 14s_back 1 "label '$label0' before 설정, '$label1' after BACK"; fi
+  perf_check 14s_same same_start 14s_a 14s_b
+  # 14b: the status slots, now on 넘김·화면 설정 (⋮ → 설정)
+  open_turning_over_reader || return 1
+  status_rows || { leave_settings; return 1; }
+  shot 14b_status_slots 0
+  case "$STATUS" in
+    *"아래 · 왼쪽=없음; 아래 · 가운데=없음; 아래 · 오른쪽=없음; 진행 막대=o"*) check 14b 0 "bottom slots 없음, 진행 막대 row ($STATUS)";;
+    *) check 14b 1 "bottom slots not all 없음 or no 진행 막대 row ($STATUS)";;
+  esac
+  case "$STATUS" in
+    "위 · 왼쪽=없음; 위 · 가운데=챕터 제목; 위 · 오른쪽=없음;"*) check 14b_top 0 "top slots [없음][챕터 제목][없음]";;
+    *) check 14b_top 1 "top slots not [없음][챕터 제목][없음] ($STATUS)";;
+  esac
+  # 14c: the slot chooser of 아래 · 가운데
+  scroll_find "아래 · 가운데" || { leave_settings; return 1; }
+  tap_xy "$XY"
+  shot 14c_slot_list 2
+  dump; if has "쪽 번호" contains && has "없음"; then check 14c 0 "slot list with 쪽 번호 and 없음"; else check 14c 1 "slot list items missing"; fi
+  choose_item "쪽 번호" || { leave_settings; return 1; }
+  sleep 2; dump && log "14c: 아래 · 가운데 reads '$(row_value "아래 · 가운데")'"
+  leave_settings || return 1 # two pages (설정, 넘김·화면 설정): the book applies the slot once, back in front
   # 10b: same page as 10a_pre, footer now on
   shot 10b_footer_slots 2; rawshot 10b; perf_mark 10b
   raw_check 10b 10a_pre 10b content
@@ -470,7 +582,8 @@ reading_settings() { # 14, 14b, 14c, then 10b (+rawshot, no_relayout): the foote
 # ------------------------------------------------------------------ reader steps: H3, TOC, go-to, end of book
 
 toc_shots() { # 15: 목차 (header: 지금 · 화 번호 · 검색, pager bar); 15b: one page on with the pager's [다음 ▶]
-  # From a known state, whatever 14d left on screen (CI 30: its reading-settings popup, which took both 목차 lookups)
+  # From a known state, whatever 14d left on screen (CI 30: its reading-settings popup, which took both 목차 lookups).
+  # 15b pages with the pager's [다음 ▶] (or PAGE_DOWN): since 672e85d a drag scrolls and flings the list instead.
   fresh_reader sample-cp949.txt text/plain
   show_chrome || return 1
   tap_label "목차" contains || return 1
@@ -509,31 +622,40 @@ goto_numpad() { # 15c: 페이지 이동 with its number pad ([페이지] [%] [�
   shot 15c_goto_numpad 2
   back # 취소: the reader stays where it was
 }
-choose_volume_mode() {
-  open_popup || return 1
-  scroll_find "볼륨 키" || return 1
-  tap_xy "$XY"; sleep 1
-  dump || return 1
-  if has "아래 = 다음 페이지 (기본)" && has "위 = 다음 페이지 (방향 반전)" && has "넘기지 않음 (볼륨 조절)"; then check 14d_list 0 "the 3 volume-key entries"
-  else check 14d_list 1 "volume-key entries missing"; back; return 1; fi
-  if [ "$1" = "위 = 다음 페이지 (방향 반전)" ]; then shot 14d_volume_mode 0; fi
-  tap_label "$1" || return 1
-  sleep 2 # the list closes first: a BACK sent at once can reach the list being dismissed (CI 30)
-  close_popup
+choose_volume_mode() { # choose_volume_mode on|off: 볼륨 키 방향 반전 (on = 위 = 다음) on 넘김·화면 설정 over the open
+  # book, with 볼륨 키로 넘김 on; then back to the book. The volume keys left the quick options (672e85d): two toggles of
+  # 버튼 · 키 replace the popup's 3-entry list (아래 = 다음 / 위 = 다음 / 넘기지 않음), so 14d_list checks them instead.
+  local v i s
+  open_turning_over_reader || return 1
+  scroll_find "볼륨 키로 넘김" || { leave_settings; return 1; }
+  align "볼륨 키로 넘김" 400; dump # 볼륨 키 방향 반전 is the next row
+  if [ "$1" = on ]; then
+    v=$(row_checked "볼륨 키로 넘김"); i=$(row_checked "볼륨 키 방향 반전"); s=$(row_value "볼륨 키로 넘김")
+    if has "볼륨 키 방향 반전" && [ "$v" = on ] && [ "$i" = off ] && [ "${s#볼륨 아래 = 다음}" != "$s" ]; then
+      check 14d_list 0 "버튼 · 키: 볼륨 키로 넘김 on ('$s'), 볼륨 키 방향 반전 off"
+    else check 14d_list 1 "볼륨 키로 넘김 '$v' ('$s'), 볼륨 키 방향 반전 '$i' (want on, '볼륨 아래 = 다음…', off)"; fi
+  fi
+  set_toggle "볼륨 키로 넘김" on || { leave_settings; return 1; }
+  set_toggle "볼륨 키 방향 반전" "$1" || { leave_settings; return 1; }
+  dump && log "14d: 볼륨 키로 넘김 reads '$(row_value "볼륨 키로 넘김")'"
+  if [ "$1" = on ]; then shot 14d_volume_mode 0; fi
+  leave_settings # two pages; the reader reads the key setting when it is back in front
 }
-volume_default() { # 아래 = 다음 again, also after a failed 14d: later steps turn with VOLUME_DOWN (CI 30: 14d stopped
-  # with 위 = 다음 set, and 56c's VOLUME_DOWN went back a page); a fresh reader when the popup can't be opened
-  if ! popup_focused && choose_volume_mode "아래 = 다음 페이지 (기본)"; then return 0; fi
-  log "14d: setting 아래 = 다음 again from a fresh reader"
-  fresh_reader sample-cp949.txt text/plain
-  choose_volume_mode "아래 = 다음 페이지 (기본)"
+volume_default() { # 볼륨 키 방향 반전 off again, also after a failed 14d: later steps turn with VOLUME_DOWN (CI 30: 14d stopped
+  # with 위 = 다음 set, and 56c's VOLUME_DOWN went back a page); through the library's 설정 when that fails over the book
+  if on_top ReaderActivity && ! popup_focused && choose_volume_mode off; then return 0; fi
+  log "14d: setting 볼륨 키 방향 반전 off again through the library's 설정"
+  open_turning_page || return 1
+  set_toggle "볼륨 키로 넘김" on
+  set_toggle "볼륨 키 방향 반전" off
 }
-volume_mode() { # 14d (R U5): 위 = 다음 makes VOLUME_UP the next page without a relayout; then the default again
+volume_mode() { # 14d (R U5): 위 = 다음 (볼륨 키 방향 반전 on 넘김·화면 설정) makes VOLUME_UP the next page without a relayout;
+  # then the default again
   fresh_reader sample-cp949.txt text/plain
   local n0 n1
   show_chrome && n0=$(page_no); hide_chrome
   perf_mark 14d_before
-  choose_volume_mode "위 = 다음 페이지 (방향 반전)" || { volume_default; return 1; }
+  choose_volume_mode on || { volume_default; return 1; }
   perf_mark 14d_changed
   no_relayout 14d_norelayout 14d_before 14d_changed
   popup_focused && log "14d: a popup still has the focus before VOLUME_UP"
@@ -595,13 +717,14 @@ end_of_book() { # 17b: a long-press on the blank part of a page selects nothing;
 
 # ------------------------------------------------------------------ scroll mode (S §1.15), 60–69b
 
-scroll_on() { # 60: the sample EPUB switched to 스크롤 in the popup (넘기는 방식 sits under 더보기, C27)
+scroll_on() { # 60: the sample EPUB switched to 스크롤 by 넘기는 방식, which left the quick options for 넘김·화면 설정
+  # (672e85d; its section header has the same name, so the row is the last match); the book switches once back in front
   fresh_reader sample.epub application/epub+zip
   perf_mark 60a
-  open_popup || return 1
-  popup_tap "넘기는 방식" contains || return 1
-  choose "스크롤" || { back; return 1; }
-  sleep 2; close_popup
+  open_turning_over_reader || return 1
+  pick_setting "넘기는 방식" "스크롤" exact -1 || { leave_settings; return 1; }
+  dump && log "60: 넘기는 방식 reads '$(row_value "넘기는 방식")'"
+  leave_settings || return 1
   shot 60_scroll_on 2; perf_mark 60b
   # Scroll mode logs no `RAPerf show` line yet: position checks 60/66/68/69 are logged for the eye, not CHECKed.
   log "60: first_is 60a 60b: $(python3 tools/ci/perf_log.py first_is 60a 60b) (log only)"
@@ -610,7 +733,11 @@ scroll_moves() { # 61–66 in the scroll mode set by 60
   hide_chrome
   local top bot
   rawshot 61a
-  adb shell input swipe 360 1100 360 500 400; shot 61_scroll_drag 2; rawshot 61b
+  # 61: a 600 px drag up. 스크롤 움직임 자동 follows the finger on every device and a release faster than the minimum
+  # fling velocity (50 dp/s = 100 px/s here) flings since 672e85d: the old 400 ms swipe (1500 px/s) would coast on. At
+  # 9 s (about 67 px/s) it stays a plain drag, so 61–63 still end near the start of chapter 2 for 64. Not `drag`: each
+  # `input motionevent` is a process start, and a DOWN left alone for the 500 ms long-press would select text.
+  adb shell input swipe 360 1100 360 500 9000; shot 61_scroll_drag 2; rawshot 61b
   read -r top bot <<<"$(pv_rows)"
   raw_check 61_header 61a 61b "$top" $((top + 80))
   # The footer band stays put; its live values follow the position (14c's 아래 가운데 = 쪽 번호 until 52, the progress
@@ -653,7 +780,8 @@ scroll_moves() { # 61–66 in the scroll mode set by 60
   shot 66_scroll_seam 1
   log "66: section $s0 -> $s after $i steps (log only: scroll mode logs no show line yet)"
 }
-scroll_release() { # 67: 스크롤 움직임 → 손을 떼면 이동, the book reopened, a slow 300 px swipe
+scroll_release() { # 67: 스크롤 움직임 → 손을 떼면 이동, the book reopened, a slow 300 px swipe (a release steps a
+  # screen; only 손가락을 따라 이동 flings)
   open_turning_page || return 1
   pick_setting "스크롤 움직임" "손을 떼면 이동" || return 1
   fresh_reader sample.epub application/epub+zip
@@ -670,7 +798,7 @@ scroll_round_trip() { # 68: ⋮ → 페이지로 보기 (the page holds the old 
   log "69: same_start 68 69: $(python3 tools/ci/perf_log.py same_start 68 69) (log only)"
 }
 scroll_off() { # 69b: 스크롤 움직임 → 자동 (the row shows only in SCROLL), then ⋮ → 페이지로 보기; logged only
-  open_turning_page && pick_setting "스크롤 움직임" "자동" # the item reads "자동 (이 기기: …)" (choose falls back to contains)
+  open_turning_page && pick_setting "스크롤 움직임" "자동" # the item reads "자동 (손가락을 따라 이동)" (contains)
   fresh_reader sample.epub application/epub+zip
   if reader_more "페이지로 보기"; then hide_chrome; else log "69b: no '페이지로 보기' (already paged?)"; hide_chrome; fi
   shot 69b_back_to_paged 1
@@ -948,52 +1076,55 @@ notes_ink() { # 90: 인용문 색 표시 → 흑백 무늬 on the quotes; then �
 
 # ------------------------------------------------------------------ anchor checks (A §6.6 → 52–57)
 
-footer_toggle() { # 52: footer slots and header changed: the text box stays pixel-identical, no relayout
+footer_toggle() { # 52: footer slots and header changed on 넘김·화면 설정 (over the book; the slots left the quick options):
+  # once the book is back in front, the text box stays pixel-identical, no relayout
   fresh_reader sample-cp949.txt text/plain
   goto_page 3 || return 1 # a full page of text (the book was left on its short last page by 18)
-  open_popup || return 1
-  set_slot "아래 가운데" "없음" || return 1 # 10b had set 쪽 번호
-  close_popup
+  open_turning_over_reader || return 1
+  set_slot "아래 · 가운데" "없음" || { leave_settings; return 1; } # 10b had set 쪽 번호
+  leave_settings || return 1
   rawshot 52a; perf_mark 52a
-  open_popup || return 1
-  set_slot "아래 가운데" "쪽 번호" || return 1
-  set_slot "아래 오른쪽" "시계 · 배터리" || return 1
-  set_slot "위 가운데" "없음" || return 1
-  close_popup
+  open_turning_over_reader || return 1
+  set_slot "아래 · 가운데" "쪽 번호" || { leave_settings; return 1; }
+  set_slot "아래 · 오른쪽" "시계 · 배터리" || { leave_settings; return 1; }
+  set_slot "위 · 가운데" "없음" || { leave_settings; return 1; }
+  leave_settings || return 1
   shot 52_footer_toggle_same_text 1; rawshot 52b; perf_mark 52b
   raw_check 52 52a 52b content
   no_relayout 52 52a 52b
 }
-progress_toggle() { # 53: 진행 막대 off: same text box, no relayout; then on again
-  open_popup || return 1
-  popup_tap "진행 막대" contains || return 1
-  close_popup
+progress_toggle() { # 53: 진행 막대 off (넘김·화면 설정, over the book): same text box, no relayout; then on again
+  open_turning_over_reader || return 1
+  set_toggle "진행 막대" off || { leave_settings; return 1; }
+  leave_settings || return 1
   shot 53_progress_toggle_same_text 1; rawshot 53; perf_mark 53
   raw_check 53 52b 53 content
   no_relayout 53 52b 53
-  open_popup && popup_tap "진행 막대" contains; close_popup
+  open_turning_over_reader && set_toggle "진행 막대" on; leave_settings
 }
-margin_v_exact() { # 54: 상하 여백 +10 keeps the exact first character; then back to "0" (K8)
+margin_v_exact() { # 54: 상하 여백 +10 (설정 → 읽기 설정, over the book; the margins left the quick options) keeps the exact
+  # first character when the book applies it, back in front; then back to "0" (K8)
   local i v
   perf_mark 54a
-  open_popup || return 1
-  scroll_find "상하 여백 늘리기" || return 1
+  open_reading_page || return 1
+  scroll_find "상하 여백 늘리기" || { leave_settings; return 1; }
   for i in 1 2 3 4 5; do tap_xy "$XY"; sleep 1; done
-  close_popup
+  dump && log "54: 상하 여백 reads '$(stepper_value "상하 여백")'"
+  leave_settings || return 1 # one page: one BACK, then the one relayout
   sleep 1; perf_mark 54b
   shot 54_margin_v_exact 0
   perf_check 54 first_is 54a 54b
-  open_popup || return 1
-  scroll_find "상하 여백 줄이기" || { close_popup; return 1; }
+  open_reading_page || return 1
+  scroll_find "상하 여백 줄이기" || { leave_settings; return 1; }
   for i in $(seq 1 45); do # back to "0" whatever the +10 taps did (K8: 55 needs the content rows)
     dump; v=$(stepper_value "상하 여백")
     case "$v" in 0) break;; −*|-*) tap_xy "$(xy_of "상하 여백 늘리기")";; *) tap_xy "$(xy_of "상하 여백 줄이기")";; esac
     sleep 1
   done
   [ "$v" = 0 ]; check 54r $? "상하 여백 restored to '$v'"
-  close_popup
+  leave_settings
 }
-font_up_down() { # 55: 글자 크기 +1 then −1 gives back the exact text box
+font_up_down() { # 55: 글자 크기 +1 then −1 (still in the quick options) gives back the exact text box
   rawshot 55a
   open_popup || return 1
   popup_tap "글자 크기 늘리기" exact 2 || return 1
@@ -1002,17 +1133,19 @@ font_up_down() { # 55: 글자 크기 +1 then −1 gives back the exact text box
   shot 55_font_up_down 1; rawshot 55b
   raw_check 55 55a 55b content
 }
-page_break_paragraph() { # 56: 페이지 나눔 = 문단 단위 keeps the first character; the next page; then 줄 단위 again
+page_break_paragraph() { # 56: 페이지 나눔 = 문단 단위 (설정 → 읽기 설정, over the book) keeps the first character when the
+  # book applies it, back in front; the next page; then 줄 단위 again. The chooser items read "문단 단위 — …" (contains).
   perf_mark 56a
-  open_popup || return 1
-  popup_tap "문단 단위" || return 1
-  close_popup
+  open_reading_page || return 1
+  pick_setting "페이지 나눔" "문단 단위" exact || { leave_settings; return 1; }
+  dump && log "56: 페이지 나눔 reads '$(row_value "페이지 나눔")'"
+  leave_settings || return 1
   sleep 1; perf_mark 56b
   perf_check 56 first_is 56a 56b
   adb shell input keyevent KEYCODE_VOLUME_DOWN
   shot 56_page_break_paragraph 2; perf_mark 56c
   log "56: the next page (a paragraph start, checked by eye): $(python3 tools/ci/perf_log.py last 56c)"
-  open_popup && popup_tap "줄 단위"; close_popup
+  open_reading_page && pick_setting "페이지 나눔" "줄 단위" exact; leave_settings
 }
 dialog_no_reflow() { # 57 (H4): the 페이지 이동 dialog leaves the page pixel-identical, no relayout
   fresh_reader sample-cp949.txt text/plain
@@ -1100,11 +1233,10 @@ restore_offer() {
   else check 96 1 "샘플 EPUB not on the 읽고 있는 책 shelf (title 읽고 있는 책: $(has "읽고 있는 책" && echo yes || echo no))"; fi
   tap_label "샘플 EPUB" contains || return 1
   sleep 5
-  open_popup || return 1
-  scroll_find "좌우 여백" contains || return 1
+  open_reading_page || return 1 # the margins are on 설정 → 읽기 설정 since 672e85d (⚙ → 전체 읽기 설정)
   margins_zero 97
   shot 97_restored_margins 1
-  close_popup
+  leave_settings
   open_settings || return 1
   scroll_find "백업 및 복원" || return 1
   tap_xy "$XY"; sleep 3
@@ -1152,8 +1284,9 @@ shot 10_txt_page1 4
 adb shell input keyevent KEYCODE_VOLUME_DOWN; shot 11_txt_page2 2
 adb shell input tap 600 900; shot 12_txt_tap_right 2; rawshot 12b
 step 13_chrome_pin chrome_pin
-step 14_reading_settings reading_settings
-step 14d_volume_mode volume_mode
+# 14, 14d, 52 and 53 go to 설정 and back (twice for most): more time than the 300 s default
+STEP_TIMEOUT=480 step 14_reading_settings reading_settings
+STEP_TIMEOUT=480 step 14d_volume_mode volume_mode
 step 15_toc toc_shots
 show_chrome
 if tap_label "검색" contains; then sleep 1; adb shell input text "English" ; adb shell input keyevent KEYCODE_ENTER; shot 16_search 4; back; fi
@@ -1218,8 +1351,8 @@ step 89p_notes_paged notes_paged
 step 90_highlight_ink notes_ink
 
 log "anchored layout (A §6.6)"
-step 52_footer_toggle footer_toggle
-step 53_progress_toggle progress_toggle
+STEP_TIMEOUT=480 step 52_footer_toggle footer_toggle
+STEP_TIMEOUT=480 step 53_progress_toggle progress_toggle
 step 54_margin_v_exact margin_v_exact
 step 55_font_up_down font_up_down
 step 56_page_break_paragraph page_break_paragraph

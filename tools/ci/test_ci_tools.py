@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Unit tests for the pure CI helpers: perf_log.py, find_node.py, raw_equal.py and the crafted restore backup of
-make_samples.py. Run from the repository root: python3 -m unittest tools/ci/test_ci_tools.py"""
+"""Unit tests for the pure CI helpers: perf_log.py, find_node.py, ui_rows.py, raw_equal.py and the crafted restore
+backup of make_samples.py. Run from the repository root: python3 -m unittest tools/ci/test_ci_tools.py"""
 import json
 import os
 import struct
@@ -14,6 +14,7 @@ sys.path.insert(0, HERE)
 
 import perf_log  # noqa: E402
 import raw_equal  # noqa: E402
+import ui_rows  # noqa: E402
 
 
 def line(t, kind, s, o, a, g=1, ms=12, pid=4242):
@@ -223,6 +224,96 @@ class FindNodeTest(unittest.TestCase):
 
     def test_empty_box_is_never_found(self):
         self.assertEqual(self.find("숨김"), "")
+
+
+def settings_xml(rows):
+    """A settings page dump: each row (text, bounds, extra attributes) one node, in document order."""
+    body = "\n".join(f'    <node index="{i}" text="{t}" class="{"android.widget.Switch" if "checkable" in a else "android.widget.TextView"}" '
+                     f'content-desc="" {a} bounds="{b}" />' for i, (t, b, a) in enumerate(rows))
+    return ("<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>\n<hierarchy rotation=\"0\">\n"
+            '  <node index="0" text="" class="android.widget.FrameLayout" content-desc="" bounds="[0,0][720,1440]">\n'
+            f"{body}\n  </node>\n</hierarchy>\n")
+
+
+SWITCH_ON = 'checkable="true" checked="true"'
+SWITCH_OFF = 'checkable="true" checked="false"'
+PLAIN = 'checkable="false" checked="false"'
+# 넘김·화면 설정 at density 2: section headers start at x 0, row titles and summaries at x 32 (16 dp row padding);
+# kit summaries carry U+2060 word joiners between Hangul syllables (keepAll).
+STATUS_ROWS = [
+    ("상태 표시줄", "[0,209][720,311]", PLAIN),
+    ("위 · 아래 줄의 왼쪽 · 가운데 · 오른쪽에 보일 정보를 고르세요.", "[0,311][720,427]", PLAIN),
+    ("위 · 가운데", "[32,447][190,493]", PLAIN),
+    ("챕⁠터 제⁠목", "[32,493][160,537]", PLAIN),
+    ("아래 · 가운데", "[32,577][210,623]", PLAIN),
+    ("없⁠음", "[32,623][110,667]", PLAIN),
+    ("진행 막대", "[32,707][160,753]", PLAIN),
+    ("화면 맨 아래에 읽은 위치를 가는 선과 점으로 표시", "[32,753][560,837]", PLAIN),
+    ("", "[584,740][688,804]", SWITCH_ON),
+    ("상태 표시 글자 크기", "[32,890][300,936]", PLAIN),  # a stepper row: no summary
+    ("11sp", "[460,890][604,936]", PLAIN),
+    ("볼륨 키 방향 반전", "[32,989][260,1035]", PLAIN),
+    ("볼륨 위 키로 다음 페이지를 넘깁니다", "[32,1035][500,1079]", PLAIN),
+    ("", "[584,1002][688,1066]", SWITCH_OFF),
+    ("넘기는 방식", "[0,1119][720,1221]", PLAIN),  # the section header, then its row of the same name
+    ("넘기는 방식", "[32,1241][190,1287]", PLAIN),
+    ("스크롤", "[32,1287][100,1331]", PLAIN),
+]
+
+
+class UiRowsTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.page = self.write("page.xml", STATUS_ROWS)
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def write(self, name, rows):
+        path = os.path.join(self.dir.name, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(settings_xml(rows))
+        return path
+
+    def tool(self, *args):
+        out = subprocess.run([sys.executable, os.path.join(HERE, "ui_rows.py"), *args], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip()
+
+    def test_value_is_the_summary_without_joiners(self):
+        ns = ui_rows.nodes(self.page)
+        self.assertEqual(ui_rows.value(ns, "아래 · 가운데"), "없음")
+        self.assertEqual(ui_rows.value(ns, "위 · 가운데"), "챕터 제목")
+        self.assertEqual(ui_rows.value(ns, "볼륨 키 방향 반전"), "볼륨 위 키로 다음 페이지를 넘깁니다")
+
+    def test_a_section_header_of_the_same_name_is_skipped(self):
+        self.assertEqual(ui_rows.value(ui_rows.nodes(self.page), "넘기는 방식"), "스크롤")
+
+    def test_no_summary_and_no_row(self):
+        ns = ui_rows.nodes(self.page)
+        self.assertIsNone(ui_rows.value(ns, "상태 표시 글자 크기"))  # the next row's title is 53 px lower
+        self.assertIsNone(ui_rows.value(ns, "아래 · 오른쪽"))
+
+    def test_checked_reads_the_switch_on_the_row(self):
+        ns = ui_rows.nodes(self.page)
+        self.assertEqual(ui_rows.checked(ns, "진행 막대"), "on")
+        self.assertEqual(ui_rows.checked(ns, "볼륨 키 방향 반전"), "off")
+        self.assertIsNone(ui_rows.checked(ns, "아래 · 가운데"))  # 진행 막대's switch is a row lower
+        self.assertIsNone(ui_rows.checked(ns, "없는 행"))
+
+    def test_cli_value_checked_and_missing(self):
+        self.assertEqual(self.tool("value", self.page, "아래 · 가운데"), "없음")
+        self.assertEqual(self.tool("checked", self.page, "진행 막대"), "on")
+        self.assertEqual(self.tool("value", self.page, "아래 · 오른쪽"), "")
+        self.assertEqual(self.tool("value", os.path.join(self.dir.name, "none.xml"), "아래 · 가운데"), "")
+
+    def test_cli_values_take_the_first_dump_that_shows_the_row(self):
+        lower = self.write("lower.xml", [
+            ("아래 · 가운데", "[32,200][210,246]", PLAIN), ("쪽 번호", "[32,246][130,290]", PLAIN),
+            ("아래 · 오른쪽", "[32,330][210,376]", PLAIN), ("시계 · 배터리", "[32,376][200,420]", PLAIN),
+        ])
+        self.assertEqual(self.tool("values", f"{self.page},{lower}", "위 · 가운데|아래 · 가운데|아래 · 오른쪽|위 · 왼쪽"),
+                         "위 · 가운데=챕터 제목; 아래 · 가운데=없음; 아래 · 오른쪽=시계 · 배터리; 위 · 왼쪽=?")
 
 
 def raw_image(path, w, h, rows, header=16):
