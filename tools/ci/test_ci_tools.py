@@ -192,7 +192,7 @@ UI_XML = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
   <node index="0" text="" class="android.widget.FrameLayout" content-desc="" bounds="[0,0][720,1440]">
     <node index="0" text="" class="android.widget.ImageButton" content-desc="책 메뉴" bounds="[640,200][704,264]" />
     <node index="1" text="" class="android.widget.SeekBar" content-desc="" bounds="[100,1300][620,1340]" />
-    <node index="2" text="아래 가운데: 없음" class="android.widget.TextView" content-desc="" bounds="[20,500][240,560]" />
+    <node index="2" text="" class="android.widget.ImageButton" content-desc="보기: 자세히" bounds="[20,500][240,560]" />
     <node index="3" text="" class="android.widget.ImageButton" content-desc="책 메뉴" bounds="[640,400][704,464]" />
     <node index="4" text="숨김" class="android.widget.TextView" content-desc="" bounds="[0,0][0,0]" />
   </node>
@@ -214,8 +214,9 @@ class FindNodeTest(unittest.TestCase):
     def test_centre_by_label_and_index(self):
         self.assertEqual(self.find("책 메뉴"), "672 232")
         self.assertEqual(self.find("책 메뉴", "exact", "-1"), "672 432")
-        self.assertEqual(self.find("아래 가운데:", "contains"), "130 530")
-        self.assertEqual(self.find("아래 가운데:"), "")
+        self.assertEqual(self.find("보기: ", "contains"), "130 530")  # the library's view toggle (set_list_mode)
+        self.assertEqual(self.find("보기: "), "")
+        self.assertEqual(self.find("보기: 자세히"), "130 530")
 
     def test_box_and_class(self):
         self.assertEqual(self.find("책 메뉴", "exact", "0", "--box"), "640 200 704 264")
@@ -239,33 +240,43 @@ def settings_xml(rows):
 SWITCH_ON = 'checkable="true" checked="true"'
 SWITCH_OFF = 'checkable="true" checked="false"'
 PLAIN = 'checkable="false" checked="false"'
-# 넘김·화면 설정 at density 2: section headers start at x 0, row titles and summaries at x 32 (16 dp row padding);
-# kit summaries carry U+2060 word joiners between Hangul syllables (keepAll).
-STATUS_ROWS = [
-    ("상태 표시줄", "[0,209][720,311]", PLAIN),
-    ("위 · 아래 줄의 왼쪽 · 가운데 · 오른쪽에 보일 정보를 고르세요.", "[0,311][720,427]", PLAIN),
-    ("위 · 가운데", "[32,447][190,493]", PLAIN),
-    ("챕⁠터 제⁠목", "[32,493][160,537]", PLAIN),
-    ("아래 · 가운데", "[32,577][210,623]", PLAIN),
-    ("없⁠음", "[32,623][110,667]", PLAIN),
-    ("진행 막대", "[32,707][160,753]", PLAIN),
-    ("화면 맨 아래에 읽은 위치를 가는 선과 점으로 표시", "[32,753][560,837]", PLAIN),
-    ("", "[584,740][688,804]", SWITCH_ON),
-    ("상태 표시 글자 크기", "[32,890][300,936]", PLAIN),  # a stepper row: no summary
-    ("11sp", "[460,890][604,936]", PLAIN),
-    ("볼륨 키 방향 반전", "[32,989][260,1035]", PLAIN),
-    ("볼륨 위 키로 다음 페이지를 넘깁니다", "[32,1035][500,1079]", PLAIN),
-    ("", "[584,1002][688,1066]", SWITCH_OFF),
-    ("넘기는 방식", "[0,1119][720,1221]", PLAIN),  # the section header, then its row of the same name
-    ("넘기는 방식", "[32,1241][190,1287]", PLAIN),
-    ("스크롤", "[32,1287][100,1331]", PLAIN),
+# 화면·밝기 (68aa271) at density 2, a few of its rows: section headers start at x 0 (their 16 dp padding is inside the box),
+# row titles and summaries at x 32 (16 dp row padding); kit summaries carry U+2060 word joiners between Hangul
+# syllables (keepAll). The slot titles have no " · " since 68aa271 ("아래 가운데", as the quick status panel says).
+SCREEN_ROWS = [
+    ("상태 표시줄", "[0,160][720,226]", PLAIN),  # the first section: no line above it
+    ("위 가운데", "[32,246][170,292]", PLAIN),
+    ("챕⁠터 제⁠목", "[32,292][160,336]", PLAIN),
+    ("아래 가운데", "[32,376][190,422]", PLAIN),
+    ("없⁠음", "[32,422][110,466]", PLAIN),
+    ("진행 막대", "[32,506][160,552]", PLAIN),
+    ("화⁠면 맨 아⁠래 가⁠는 선", "[32,552][330,596]", PLAIN),
+    ("", "[584,539][688,603]", SWITCH_ON),
+    ("상태 글자 크기", "[32,655][250,701]", PLAIN),  # a stepper row: no summary
+    ("11", "[460,655][604,701]", PLAIN),
+    ("모두 ‘없음’인 줄은 숨깁니다.", "[0,723][720,787]", PLAIN),  # a note: its 16 dp padding is inside its box
+]
+# 넘기기·터치·키 (68aa271) at density 2, a few of its rows: a later section's header carries the 8 dp gap and the black line
+# above it inside its own box.
+TURNING_ROWS = [
+    ("넘기기", "[0,160][720,226]", PLAIN),
+    ("넘기는 방식", "[32,246][190,292]", PLAIN),
+    ("스크롤", "[32,292][100,336]", PLAIN),
+    ("스와이프·길게 누르기", "[0,900][720,984]", PLAIN),
+    ("위아래 스와이프로 넘김", "[32,1004][330,1050]", PLAIN),
+    ("위⁠로 밀⁠면 다⁠음 페⁠이⁠지", "[32,1050][330,1094]", PLAIN),
+    ("", "[584,1017][688,1081]", SWITCH_OFF),
+    ("버⁠튼·키", "[0,1134][720,1218]", PLAIN),
+    ("볼륨 키", "[32,1238][150,1284]", PLAIN),
+    ("아⁠래 = 다⁠음 · 위 = 이⁠전", "[32,1284][380,1328]", PLAIN),
 ]
 
 
 class UiRowsTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
-        self.page = self.write("page.xml", STATUS_ROWS)
+        self.page = self.write("page.xml", SCREEN_ROWS)
+        self.turning = self.write("turning.xml", TURNING_ROWS)
 
     def tearDown(self):
         self.dir.cleanup()
@@ -283,52 +294,64 @@ class UiRowsTest(unittest.TestCase):
 
     def test_value_is_the_summary_without_joiners(self):
         ns = ui_rows.nodes(self.page)
-        self.assertEqual(ui_rows.value(ns, "아래 · 가운데"), "없음")
-        self.assertEqual(ui_rows.value(ns, "위 · 가운데"), "챕터 제목")
-        self.assertEqual(ui_rows.value(ns, "볼륨 키 방향 반전"), "볼륨 위 키로 다음 페이지를 넘깁니다")
+        self.assertEqual(ui_rows.value(ns, "아래 가운데"), "없음")
+        self.assertEqual(ui_rows.value(ns, "위 가운데"), "챕터 제목")
+        turning = ui_rows.nodes(self.turning)
+        self.assertEqual(ui_rows.value(turning, "볼륨 키"), "아래 = 다음 · 위 = 이전")
+        self.assertEqual(ui_rows.value(turning, "넘기는 방식"), "스크롤")
 
     def test_a_section_header_of_the_same_name_is_skipped(self):
-        self.assertEqual(ui_rows.value(ui_rows.nodes(self.page), "넘기는 방식"), "스크롤")
+        # As the old 넘김·화면 설정 had (its 넘기는 방식 section over the row of that name): the header is never the row.
+        ns = ui_rows.nodes(self.write("same.xml", [
+            ("넘기는 방식", "[0,1119][720,1221]", PLAIN),
+            ("넘기는 방식", "[32,1241][190,1287]", PLAIN),
+            ("스크롤", "[32,1287][100,1331]", PLAIN),
+        ]))
+        self.assertEqual(ui_rows.value(ns, "넘기는 방식"), "스크롤")
 
     def test_no_summary_and_no_row(self):
         ns = ui_rows.nodes(self.page)
-        self.assertIsNone(ui_rows.value(ns, "상태 표시 글자 크기"))  # the next row's title is 53 px lower
-        self.assertIsNone(ui_rows.value(ns, "아래 · 오른쪽"))
+        self.assertIsNone(ui_rows.value(ns, "상태 글자 크기"))  # the note below starts at x 0, not at the title's edge
+        self.assertIsNone(ui_rows.value(ns, "아래 오른쪽"))
+        self.assertIsNone(ui_rows.value(ui_rows.nodes(self.turning), "버튼·키"))  # a header has no summary
 
     def test_checked_reads_the_switch_on_the_row(self):
         ns = ui_rows.nodes(self.page)
         self.assertEqual(ui_rows.checked(ns, "진행 막대"), "on")
-        self.assertEqual(ui_rows.checked(ns, "볼륨 키 방향 반전"), "off")
-        self.assertIsNone(ui_rows.checked(ns, "아래 · 가운데"))  # 진행 막대's switch is a row lower
+        self.assertEqual(ui_rows.checked(ui_rows.nodes(self.turning), "위아래 스와이프로 넘김"), "off")
+        self.assertIsNone(ui_rows.checked(ns, "아래 가운데"))  # 진행 막대's switch is a row lower
+        self.assertIsNone(ui_rows.checked(ui_rows.nodes(self.turning), "볼륨 키"))  # a chooser row has no switch
         self.assertIsNone(ui_rows.checked(ns, "없는 행"))
 
     def test_cli_value_checked_and_missing(self):
-        self.assertEqual(self.tool("value", self.page, "아래 · 가운데"), "없음")
+        self.assertEqual(self.tool("value", self.page, "아래 가운데"), "없음")
+        self.assertEqual(self.tool("value", self.turning, "볼륨 키"), "아래 = 다음 · 위 = 이전")
         self.assertEqual(self.tool("checked", self.page, "진행 막대"), "on")
-        self.assertEqual(self.tool("value", self.page, "아래 · 오른쪽"), "")
-        self.assertEqual(self.tool("value", os.path.join(self.dir.name, "none.xml"), "아래 · 가운데"), "")
+        self.assertEqual(self.tool("value", self.page, "아래 오른쪽"), "")
+        self.assertEqual(self.tool("value", os.path.join(self.dir.name, "none.xml"), "아래 가운데"), "")
 
     def test_cli_values_take_the_first_dump_that_shows_the_row(self):
         lower = self.write("lower.xml", [
-            ("아래 · 가운데", "[32,200][210,246]", PLAIN), ("쪽 번호", "[32,246][130,290]", PLAIN),
-            ("아래 · 오른쪽", "[32,330][210,376]", PLAIN), ("시계 · 배터리", "[32,376][200,420]", PLAIN),
+            ("아래 가운데", "[32,200][190,246]", PLAIN), ("쪽 번호", "[32,246][130,290]", PLAIN),
+            ("아래 오른쪽", "[32,330][190,376]", PLAIN), ("시계 · 배터리", "[32,376][200,420]", PLAIN),
         ])
-        self.assertEqual(self.tool("values", f"{self.page},{lower}", "위 · 가운데|아래 · 가운데|아래 · 오른쪽|위 · 왼쪽"),
-                         "위 · 가운데=챕터 제목; 아래 · 가운데=없음; 아래 · 오른쪽=시계 · 배터리; 위 · 왼쪽=?")
+        self.assertEqual(self.tool("values", f"{self.page},{lower}", "위 가운데|아래 가운데|아래 오른쪽|위 왼쪽"),
+                         "위 가운데=챕터 제목; 아래 가운데=없음; 아래 오른쪽=시계 · 배터리; 위 왼쪽=?")
 
 
-# The 독서 노트 hub's 인용문 tab in CI 34 (86_notes_quotes.png, density 2): toolbar, tabs, filter chips, then one day
-# header over two quotes of one word each, every quote with its meta line (the book's title in 《》).
+# The 독서 노트 hub's 인용문 tab as in CI 34 (86_notes_quotes.png, density 2), with a3b8826's 40 dp chips on a 48 dp row
+# (the list starts 8 px lower): toolbar, tabs, filter chips, then one day header over two quotes of one word each, every
+# quote with its meta line (the book's title in 《》, the time alone: the day header names the day).
 HUB_ROWS = [
     ("독서 노트", "[104,75][520,133]", PLAIN),
     ("전체", "[0,161][120,257]", PLAIN), ("인용문", "[120,161][240,257]", PLAIN), ("메모", "[240,161][360,257]", PLAIN),
-    ("모든 책", "[32,270][182,334]", PLAIN), ("최신순", "[198,270][340,334]", PLAIN),
-    ("모든 색", "[357,270][507,334]", PLAIN),
-    ("오늘 · 10월 4일 (일)", "[32,357][266,403]", PLAIN),
-    ("“345”", "[32,432][110,478]", PLAIN),
-    ("《sample-utf8》 · 프롤로그 · 2% · 01:42", "[32,488][476,524]", PLAIN),
-    ("“Reader”", "[32,608][156,654]", PLAIN),
-    ("《sample-utf8》 · 프롤로그 · 1% · 01:42", "[32,664][476,700]", PLAIN),
+    ("모든 책 ▾", "[32,266][182,346]", PLAIN), ("최신순 ▾", "[198,266][340,346]", PLAIN),
+    ("모든 색 ▾", "[357,266][507,346]", PLAIN),
+    ("오늘 · 10월 4일 (일)", "[32,365][266,411]", PLAIN),
+    ("“345”", "[32,440][110,486]", PLAIN),
+    ("《sample-utf8》 · 프롤로그 · 2% · 01:42", "[32,496][476,532]", PLAIN),
+    ("“Reader”", "[32,616][156,662]", PLAIN),
+    ("《sample-utf8》 · 프롤로그 · 1% · 01:42", "[32,672][476,708]", PLAIN),
 ]
 
 
@@ -352,20 +375,21 @@ class HubRowsTest(unittest.TestCase):
 
     def test_a_short_quote_under_the_day_header_is_the_first_note(self):
         hub = self.write(HUB_ROWS)
-        self.assertEqual(self.tool("note", hub), "71 455")  # “345”, not the header nor a chip
-        self.assertEqual(self.tool("day", hub), "149 380")
+        self.assertEqual(self.tool("note", hub), "71 463")  # “345”, not the header nor a chip
+        self.assertEqual(self.tool("day", hub), "149 388")
 
     def test_a_book_header_and_its_author_are_never_the_note(self):
         ns = ui_rows.nodes(self.write(HUB_ROWS[:7] + [
-            ("《sample-utf8》 · 2", "[32,357][300,403]", PLAIN), ("테스트 작가", "[324,357][688,403]", PLAIN),
+            ("《sample-utf8》 · 2개", "[32,365][300,411]", PLAIN), ("테스트 작가", "[324,365][688,411]", PLAIN),
         ] + HUB_ROWS[8:]))
-        self.assertEqual(hub_rows.pick(ns, "note"), (71, 455))
+        self.assertEqual(hub_rows.pick(ns, "note"), (71, 463))
         self.assertIsNone(hub_rows.pick(ns, "day"))
 
     def test_headers_by_their_shapes(self):
-        for t in ("오늘 · 10월 4일 (일)", "어제 · 9월 29일 (월)", "9월 28일 (일)", "2025년 12월 3일 (수)", "《제목》 · 12"):
+        for t in ("오늘 · 10월 4일 (일)", "어제 · 9월 29일 (월)", "9월 28일 (일)", "2025년 12월 3일 (수)", "《제목》 · 12개"):
             self.assertTrue(hub_rows.header(t), t)
-        for t in ("“345”", "《sample-utf8》 · 프롤로그 · 2% · 01:42", "《sample-utf8》(휴지통) · 37%", "모든 책"):
+        for t in ("“345”", "《sample-utf8》 · 프롤로그 · 2% · 01:42", "《sample-utf8》(휴지통) · 37%", "모든 책 ▾",
+                  "《제목》 · 21:04"):
             self.assertFalse(hub_rows.header(t), t)
 
     def test_nothing_below_the_chips(self):
