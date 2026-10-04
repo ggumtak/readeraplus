@@ -184,8 +184,35 @@ step() { # step name function: one best-effort UI step in its own shell (STEP_TI
   fi
   return 0
 }
+list_swipe() { # list_swipe down|up: one swipe INSIDE the active scroll container (its largest scrollable box in the last
+  # dump): down shows what is below, moving the list up by 60 % of the box (about 800 px on a settings page)
+  local gesture
+  gesture=$(python3 - "$1" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+up = sys.argv[1] == 'up'
+boxes=[]
+try:
+    nodes = list(ET.parse('/tmp/ui.xml').getroot().iter('node'))
+except Exception:
+    nodes = []
+for n in nodes:
+    if n.get('scrollable')!='true': continue
+    m=re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',n.get('bounds',''))
+    if not m: continue
+    x0,y0,x1,y1=map(int,m.groups())
+    if y1-y0>100: boxes.append(((x1-x0)*(y1-y0),x0,y0,x1,y1))
+if boxes:
+    _,x0,y0,x1,y1=max(boxes); x=x0+min(80,(x1-x0)//2);h=y1-y0
+    a,b=y0+int(h*.85),y0+int(h*.25)
+else:
+    x,a,b=100,1150,450
+print(x,b,x,a) if up else print(x,a,x,b)
+PY
+  )
+  adb shell input swipe $gesture 1000; sleep 1
+}
 scroll_find() { # scroll_find "label" [exact|contains]: scroll INSIDE the active scroll container (a page, a dialog's list)
-  local i y gesture prev="" last=""
+  local i y prev="" last=""
   XY=""
   for i in $(seq 1 14); do
     dump || return 1
@@ -202,25 +229,7 @@ scroll_find() { # scroll_find "label" [exact|contains]: scroll INSIDE the active
       prev=""
     fi
     # Down first; past 8 swipes (the end of the list) back up, for a row above the first one shown.
-    gesture=$(python3 - "$i" <<'PY'
-import re, sys, xml.etree.ElementTree as ET
-up = int(sys.argv[1]) > 8
-boxes=[]
-for n in ET.parse('/tmp/ui.xml').getroot().iter('node'):
-    if n.get('scrollable')!='true': continue
-    m=re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',n.get('bounds',''))
-    if not m: continue
-    x0,y0,x1,y1=map(int,m.groups())
-    if y1-y0>100: boxes.append(((x1-x0)*(y1-y0),x0,y0,x1,y1))
-if boxes:
-    _,x0,y0,x1,y1=max(boxes); x=x0+min(80,(x1-x0)//2);h=y1-y0
-    a,b=y0+int(h*.85),y0+int(h*.25)
-else:
-    x,a,b=100,1150,450
-print(x,b,x,a) if up else print(x,a,x,b)
-PY
-    )
-    adb shell input swipe $gesture 1000; sleep 1
+    if [ "$i" -gt 8 ]; then list_swipe up; else list_swipe down; fi
   done
   log "NOT FOUND '$1' after scrolling (lowest rows after the swipes down: $last)"; XY=""; return 1
 }
@@ -567,11 +576,12 @@ reading_settings() { # 14 the quick options (⚙); 14s their "전체 읽기 설�
   if [ -n "$label0" ] && [ "$label0" = "$label1" ]; then check 14s_back 0 "back on the book with BACK, label '$label1' as before"
   else check 14s_back 1 "label '$label0' before 설정, '$label1' after BACK"; fi
   perf_check 14s_same same_start 14s_a 14s_b
-  # 14b: the status slots, now on 넘김·화면 설정 (⋮ → 설정); the shot frames the section by its first row (scroll_find,
-  # no align), unless status_rows could not read that row
+  # 14b: the status slots, now on 넘김·화면 설정 (⋮ → 설정). The shot shows the screen status_rows read its last row on,
+  # 진행 막대: 아래 · 왼쪽 … 아래 · 오른쪽, the other rows 14b judges, are on it too (about 135 px apart). Only when
+  # 진행 막대 came up near the top without them does one swipe up bring them back (not scroll_find: it swipes down first).
   open_turning_over_reader || return 1
   status_rows
-  case "$STATUS" in "위 · 왼쪽=?"*) ;; *) scroll_find "위 · 왼쪽" ;; esac
+  if has "진행 막대" && [ -n "$(missing "아래 · 왼쪽" "아래 · 가운데" "아래 · 오른쪽")" ]; then list_swipe up; dump; fi
   shot 14b_status_slots 0
   case "$STATUS" in
     *"; 아래 · 왼쪽=없음; 아래 · 가운데=없음; 아래 · 오른쪽=없음; 진행 막대=on") check 14b 0 "bottom slots 없음, 진행 막대 on ($STATUS)";;
@@ -924,24 +934,28 @@ library_multiselect() { # 46c: a long-press on a book starts multi-select ("1권
   dump || return 1
   if has "권 선택" contains; then check 46c 0 "selection toolbar shown"; back; else check 46c 1 "no selection toolbar"; return 1; fi
 }
-status_page() { # 51: 설정 → 넘김·화면 설정 at the 상태 표시줄 section, its six slot rows checked in the dump of the screen
-  # the shot shows (kept as ui_fail_51_status_page.xml on a FAIL). No align: on settings pages it dragged the list past
-  # the rows (CI 34, likely CI 31 too: its dumps rightly had none). scroll_find frames the section, and scrolls once
-  # more only when 아래 · 오른쪽 is still below: slot rows that leave the screen then were seen on the one before.
-  local slots=("위 · 왼쪽" "위 · 가운데" "위 · 오른쪽" "아래 · 왼쪽" "아래 · 가운데" "아래 · 오른쪽") t on before="" above="" gone=""
+status_page() { # 51: 설정 → 넘김·화면 설정 at the 상태 표시줄 section, its six slot rows checked in the dumps of the
+  # screens on the way to the shot (the last kept as ui_fail_51_status_page.xml on a FAIL). No align: on settings pages
+  # it dragged the list past the rows (CI 34, likely CI 31 too: its dumps rightly had none). scroll_find puts the header
+  # on screen; while 아래 · 오른쪽 is still below, one more swipe (about 800 px, two at most: the rows span about 930 px
+  # under the header). A row counts when any of these screens showed it: one that left the top was seen just before.
+  local slots=("위 · 왼쪽" "위 · 가운데" "위 · 오른쪽" "아래 · 왼쪽" "아래 · 가운데" "아래 · 오른쪽") t i on seen above="" gone=""
   open_turning_page || return 1
   scroll_find "상태 표시줄" || { check 51 1 "no 상태 표시줄 section on 넘김·화면 설정"; return 1; }
-  if ! has "아래 · 오른쪽"; then
-    before=$(present "${slots[@]}")
-    scroll_find "아래 · 오른쪽" || dump # a failed search's last dump is one swipe behind the screen
-  fi
+  seen=$(present "${slots[@]}")
+  for i in 1 2; do
+    has "아래 · 오른쪽" && break
+    list_swipe down
+    dump || { check 51 1 "no dump after a swipe to 아래 · 오른쪽"; return 1; }
+    seen="$seen, $(present "${slots[@]}")"
+  done
   shot 51_status_page 2
   on=$(present "${slots[@]}")
   for t in "${slots[@]}"; do
     case ", $on, " in *", $t, "*) continue ;; esac
-    case ", $before, " in *", $t, "*) above="$above, $t" ;; *) gone="$gone, $t" ;; esac
+    case ", $seen, " in *", $t, "*) above="$above, $t" ;; *) gone="$gone, $t" ;; esac
   done
-  if [ -z "$gone" ]; then check 51 0 "the shot shows the slot rows $on${above:+ (${above#, } just above it, seen before the last scroll)}"
+  if [ -z "$gone" ]; then check 51 0 "the shot shows the slot rows $on${above:+ (${above#, } just above it, seen before the last swipe)}"
   else
     cp /tmp/ui.xml shots/ui_fail_51_status_page.xml 2>/dev/null
     check 51 1 "slot rows ${gone#, } not found (the shot shows: ${on:-none}${above:+; above it: ${above#, }})"
@@ -1018,32 +1032,13 @@ notes_lookup() { # 84: 사전·번역 cancelled, then 웹 검색 (logged only)
   shot 84_lookup 4
   back; sleep 2
 }
-hub_xy() { # hub_xy note|day: "x y" of the topmost hub text below the bars in the last dump; nothing when none.
-  # note: a note's text (a long line), never a day header ("오늘 · 10월 4일 (일)", "9월 28일 (일)", "2025년 …") or a book
-  # header ("《제목》 · 3"): CI 34's 87/88 tapped "오늘 · …" for the first row. day: the first day header.
-  python3 - "$1" <<'PY'
-import re, sys, xml.etree.ElementTree as ET
-DAY = re.compile(r'((오늘|어제) · |\d{4}년 )?\d{1,2}월 \d{1,2}일 \(.\)')
-day = sys.argv[1] == 'day'
-try:
-  nodes = list(ET.parse('/tmp/ui.xml').getroot().iter('node'))
-except Exception:
-  nodes = []
-best = None
-for n in nodes:
-  t = n.get('text') or ''
-  m = re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', n.get('bounds', ''))
-  if not m: continue
-  if day:
-    if not DAY.fullmatch(t): continue
-  elif len(t) < 12 or DAY.fullmatch(t) or t.startswith('《'):
-    continue
-  x0, y0, x1, y1 = map(int, m.groups())
-  if y0 >= 300 and (best is None or y0 < best[0]): best = (y0, (x0 + x1) // 2, (y0 + y1) // 2)
-if best: print(*best[1:])
-PY
+hub_xy() { python3 tools/ci/hub_rows.py "$1" /tmp/ui.xml; } # hub_xy note|day: "x y" of the first note's text / day header
+first_row_xy() { # the first note's text in the last dump (never a header: CI 34's 87/88 tapped "오늘 · …"), else a point
+  # in the list, logged (to stderr: the caller reads "x y" from stdout)
+  local xy; xy=$(hub_xy note)
+  if [ -z "$xy" ]; then xy="360 600"; log "first_row_xy: no note text in the dump, tapping $xy" >&2; fi
+  echo "$xy"
 }
-first_row_xy() { local xy; xy=$(hub_xy note); echo "${xy:-360 600}"; } # the first note's text, else a fallback point
 notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select, 89 단어
   # 87's chip offers the way back to the book's saved place, and only when that is not the quote's page (PLAN §1.6.1:
   # if (!isOnCurrentPage(saved)) returnNav.onJump(saved)). 80–84 made the quotes on the page sample-utf8.txt was saved

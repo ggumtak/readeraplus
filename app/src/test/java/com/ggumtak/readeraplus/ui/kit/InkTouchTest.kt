@@ -65,15 +65,29 @@ class InkTouchTest {
         assertEquals(0, d.up(220f, 110f))
         d.down(100f, 100f)
         assertEquals(0, d.up(20f, 95f)) // the other way, released without a move first
-        // The axis is the one the drag first crossed the slop on: a sideways start that turns down pages nothing.
-        d.down(100f, 100f)
-        assertTrue(d.move(140f, 105f))
-        assertEquals(0, d.up(140f, 400f))
         // Vertical drags page as before; a tie is vertical.
         d.down(100f, 300f)
         assertEquals(1, d.up(110f, 200f))
         d.down(100f, 100f)
         assertEquals(-1, d.up(150f, 150f))
+    }
+
+    @Test fun aVerticalListPagesByWhereTheFingerLifts() {
+        val d = PageDrag(20f)
+        // A swipe that starts sideways and turns down or up still pages (the first move past the slop fixes nothing).
+        d.down(100f, 100f)
+        assertTrue(d.move(140f, 105f))
+        assertEquals(-1, d.up(140f, 400f))
+        d.down(100f, 100f)
+        assertTrue(d.move(145f, 110f))
+        assertEquals(1, d.up(160f, -200f))
+        // A vertical start that ends mostly sideways, or back within the slop of the start, pages nothing.
+        d.down(100f, 100f)
+        assertTrue(d.move(100f, 140f))
+        assertEquals(0, d.up(300f, 160f))
+        d.down(100f, 100f)
+        assertTrue(d.move(100f, 200f))
+        assertEquals(0, d.up(105f, 110f))
     }
 
     @Test fun aGridStillPagesOnEitherAxis() {

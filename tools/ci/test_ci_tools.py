@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Unit tests for the pure CI helpers: perf_log.py, find_node.py, ui_rows.py, raw_equal.py and the crafted restore
-backup of make_samples.py. Run from the repository root: python3 -m unittest tools/ci/test_ci_tools.py"""
+"""Unit tests for the pure CI helpers: perf_log.py, find_node.py, ui_rows.py, hub_rows.py, raw_equal.py and the crafted
+restore backup of make_samples.py. Run from the repository root: python3 -m unittest tools/ci/test_ci_tools.py"""
 import json
 import os
 import struct
@@ -12,6 +12,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import hub_rows  # noqa: E402
 import perf_log  # noqa: E402
 import raw_equal  # noqa: E402
 import ui_rows  # noqa: E402
@@ -314,6 +315,62 @@ class UiRowsTest(unittest.TestCase):
         ])
         self.assertEqual(self.tool("values", f"{self.page},{lower}", "위 · 가운데|아래 · 가운데|아래 · 오른쪽|위 · 왼쪽"),
                          "위 · 가운데=챕터 제목; 아래 · 가운데=없음; 아래 · 오른쪽=시계 · 배터리; 위 · 왼쪽=?")
+
+
+# The 독서 노트 hub's 인용문 tab in CI 34 (86_notes_quotes.png, density 2): toolbar, tabs, filter chips, then one day
+# header over two quotes of one word each, every quote with its meta line (the book's title in 《》).
+HUB_ROWS = [
+    ("독서 노트", "[104,75][520,133]", PLAIN),
+    ("전체", "[0,161][120,257]", PLAIN), ("인용문", "[120,161][240,257]", PLAIN), ("메모", "[240,161][360,257]", PLAIN),
+    ("모든 책", "[32,270][182,334]", PLAIN), ("최신순", "[198,270][340,334]", PLAIN),
+    ("모든 색", "[357,270][507,334]", PLAIN),
+    ("오늘 · 10월 4일 (일)", "[32,357][266,403]", PLAIN),
+    ("“345”", "[32,432][110,478]", PLAIN),
+    ("《sample-utf8》 · 프롤로그 · 2% · 01:42", "[32,488][476,524]", PLAIN),
+    ("“Reader”", "[32,608][156,654]", PLAIN),
+    ("《sample-utf8》 · 프롤로그 · 1% · 01:42", "[32,664][476,700]", PLAIN),
+]
+
+
+class HubRowsTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def write(self, rows):
+        path = os.path.join(self.dir.name, "hub.xml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(settings_xml(rows))
+        return path
+
+    def tool(self, *args):
+        out = subprocess.run([sys.executable, os.path.join(HERE, "hub_rows.py"), *args], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip()
+
+    def test_a_short_quote_under_the_day_header_is_the_first_note(self):
+        hub = self.write(HUB_ROWS)
+        self.assertEqual(self.tool("note", hub), "71 455")  # “345”, not the header nor a chip
+        self.assertEqual(self.tool("day", hub), "149 380")
+
+    def test_a_book_header_and_its_author_are_never_the_note(self):
+        ns = ui_rows.nodes(self.write(HUB_ROWS[:7] + [
+            ("《sample-utf8》 · 2", "[32,357][300,403]", PLAIN), ("테스트 작가", "[324,357][688,403]", PLAIN),
+        ] + HUB_ROWS[8:]))
+        self.assertEqual(hub_rows.pick(ns, "note"), (71, 455))
+        self.assertIsNone(hub_rows.pick(ns, "day"))
+
+    def test_headers_by_their_shapes(self):
+        for t in ("오늘 · 10월 4일 (일)", "어제 · 9월 29일 (월)", "9월 28일 (일)", "2025년 12월 3일 (수)", "《제목》 · 12"):
+            self.assertTrue(hub_rows.header(t), t)
+        for t in ("“345”", "《sample-utf8》 · 프롤로그 · 2% · 01:42", "《sample-utf8》(휴지통) · 37%", "모든 책"):
+            self.assertFalse(hub_rows.header(t), t)
+
+    def test_nothing_below_the_chips(self):
+        self.assertEqual(self.tool("note", self.write(HUB_ROWS[:7])), "")
+        self.assertEqual(self.tool("day", os.path.join(self.dir.name, "none.xml")), "")
 
 
 def raw_image(path, w, h, rows, header=16):

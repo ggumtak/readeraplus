@@ -10,8 +10,9 @@ shows the row wins (the same section read before and after a drag).
   ui_rows.py value DUMPS "title"      the summary under the row's title: a valueRow's value ("없음", "쪽 번호")
   ui_rows.py checked DUMPS "title"    "on" / "off": the row's switch
   ui_rows.py values DUMPS "t1|t2|…"   "t1=v1; t2=v2; …", "?" for a row no dump shows
-screenshots.sh reads one row of one dump at a time (value, checked on /tmp/ui.xml, right after the scroll_find that put
-the row on screen). `values` and several dumps are kept for manual use: reading the ui_fail_*.xml dumps of a run.
+screenshots.sh reads one row of one dump at a time (value, checked on /tmp/ui.xml: the dump on hand when it shows the
+row, else the one from the scroll_find that put it on screen). `values` and several dumps are kept for manual use:
+reading the ui_fail_*.xml dumps of a run. hub_rows.py reads its dumps with nodes().
 Summaries built by the kit go through keepAll (a U+2060 word joiner between two Hangul syllables): it is removed.
 """
 import re

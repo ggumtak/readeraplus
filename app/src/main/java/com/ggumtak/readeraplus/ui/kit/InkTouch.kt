@@ -86,9 +86,10 @@ private fun pageTouch(ev: MotionEvent, drag: PageDrag, pager: ListPager?): Boole
 }
 
 /**
- * A tap stays a tap; a drag past [slop] makes exactly one page decision on release, on the axis it first crossed the
- * slop on (a tie is vertical). [axisBoth] pages on either axis (the grids); a vertical-only list still takes a sideways
- * drag (intercepted, so it never ends as a tap on a row) and pages nothing for it.
+ * A tap stays a tap; any drag past [slop] is the list's (intercepted, so it never ends as a tap on a row) and makes
+ * exactly one page decision on release. [axisBoth] (the grids) pages on the axis the drag first crossed the slop on (a
+ * tie is vertical). A vertical-only list pages by where the finger lifts: mostly vertical and past the slop
+ * ([TapSlop.releaseToList]), else nothing, so a swipe that starts sideways and turns up or down still pages.
  */
 class PageDrag(private val slop: Float, private val axisBoth: Boolean=false) {
     private var x=0f; private var y=0f; private var active=false; private var horizontal=false
@@ -98,12 +99,16 @@ class PageDrag(private val slop: Float, private val axisBoth: Boolean=false) {
         if (!active) return false
         if (dragging) return true
         val dx=abs(x-this.x);val dy=abs(y-this.y)
-        if (maxOf(dx,dy)>slop) { dragging=true;horizontal=dx>dy }
+        if (maxOf(dx,dy)>slop) { dragging=true;horizontal=axisBoth && dx>dy }
         return dragging
     }
     fun up(x: Float,y: Float): Int {
         move(x,y)
-        val delta=if (!horizontal) this.y-y else if (axisBoth) this.x-x else 0f
+        val delta=when {
+            axisBoth -> if (horizontal) this.x-x else this.y-y
+            TapSlop.releaseToList(x-this.x,y-this.y,slop) -> this.y-y
+            else -> 0f
+        }
         val dir=if (!dragging || delta==0f) 0 else if (delta>0f) 1 else -1
         cancel();return dir
     }
