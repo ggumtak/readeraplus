@@ -176,15 +176,22 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             max = 100
             contentDescription = "밝기"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                /** A touch drag is running: its end saves. A step without one (keys, TalkBack) saves at once. */
+                var tracking = false
+
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
                     if (!fromUser || bindingBrightness) return
                     // The icon never says "auto" mid-drag: the first user move switches to the manual look.
                     if (boundAuto == true) applyBrightnessLook(false)
-                    light.onDrag(p / 100f, false)
+                    light.onDrag(p / 100f, !tracking)
                 }
 
-                override fun onStartTrackingTouch(s: SeekBar) {}
+                override fun onStartTrackingTouch(s: SeekBar) {
+                    tracking = true
+                }
+
                 override fun onStopTrackingTouch(s: SeekBar) {
+                    tracking = false
                     light.onDrag(s.progress / 100f, true)
                 }
             })
@@ -340,8 +347,19 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         }
     }
 
-    /** True while the top-row bookmark is hidden by the width guard (the ⋮ menu then offers 북마크 추가/삭제). */
+    /**
+     * True while the top-row bookmark is hidden by the width guard. The ⋮ menu decides from the live width instead
+     * (ReaderActivity.bookmarkInChrome, C22).
+     */
     val bookmarkHidden: Boolean get() = bookmark.visibility != View.VISIBLE
+
+    /**
+     * A rotation with the bars up: the width guard and the label width follow the new width now. Equal insets in
+     * both orientations (fullscreen, gesture navigation) never reach [setInsets], which would otherwise do it.
+     */
+    fun onConfigurationChanged() {
+        if (isVisible) sizeForWidth()
+    }
 
     /** Views of the chrome itself (the host lays out other overlays around them). */
     fun owns(v: View): Boolean = v === top || v === bottom || v === seekInfo

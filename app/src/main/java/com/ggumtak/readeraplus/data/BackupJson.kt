@@ -757,14 +757,17 @@ internal object BackupJson {
 
     /**
      * The `book_prefs` row after restoring a backup entry over [current] (pure; null = no row now): the backup's
-     * override and episode label win when it has them; the finish time is the backup's when it has one, but always
-     * 0 when the restored book isn't [haveRead] (a finish time belongs to a finished book). The return mark (U §3.3)
-     * belongs to a reading position: the backup's wins unless [deviceNewer] (this device read the book later than the
-     * backup) and the device has one of its own. Null when nothing is left.
+     * episode label wins when it has one; the finish time is the backup's when it has one, but always 0 when the
+     * restored book isn't [haveRead] (a finish time belongs to a finished book). The TXT override changes the parse
+     * and so every quote's offsets, like the encoding (N §5.6): when [deviceNewer] (this device read the book later
+     * than the backup) the device's stays, none included; otherwise the backup's wins when it has one. The return
+     * mark (U §3.3) belongs to a reading position: the backup's wins unless [deviceNewer] and the device has one of
+     * its own. Null when nothing is left.
      */
     fun mergePrefs(current: PrefsRow?, backup: BackupPrefs?, haveRead: Boolean, deviceNewer: Boolean = false): PrefsRow? {
         val merged = PrefsRow(
-            txtOverride = backup?.txtOverride?.let(BookPrefs::overrideJson) ?: current?.txtOverride,
+            txtOverride = if (deviceNewer) current?.txtOverride
+            else backup?.txtOverride?.let(BookPrefs::overrideJson) ?: current?.txtOverride,
             finishedAt = when {
                 !haveRead -> 0L
                 backup != null && backup.finishedAt > 0 -> backup.finishedAt

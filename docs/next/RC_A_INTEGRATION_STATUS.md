@@ -162,3 +162,39 @@ CI 32(ba698e4)는 충돌 없이 PASS 81건, FAIL 1건(57)이었다. 51은 재시
 CI 33(e922861): 앱 충돌 0, CHECK 81건 전부 PASS. 크래시 버퍼의 한 줄은 에뮬레이터의 Gmail(com.google.android.gm) 기록이다.
 57은 예열 뒤 재그리기 비교로 EQUAL, 57_firstframe(정보)은 DIFF 3457로 CI 28–32와 같다. 스크롤 60–69(61 머리·바닥 띠 고정,
 64 돌아가기 칩)는 스크롤 재그리기 수정(6e8670e) 뒤에도 통과했다. 남은 것은 코멧 실기기 점검(DEVICE_CHECKLIST.md)이다.
+
+## W1 독립 리뷰 (2026-10-04)
+독립 검증을 통과한 22건을 모두 반영했다. 건너뛴 항목은 없다.
+
+### 데이터
+- data-emptytrash-unwarned-notes: 휴지통 비우기는 질문이 노트를 센 책 id만 지운다(`Library.emptyTrash(ids, deleteFiles)`, 아직 휴지통에 있는 것만). 질문이 열린 동안 스캔이 휴지통에 넣은 책은 남는다. 목록을 못 읽었으면 아무것도 지우지 않고 "비우지 못했습니다".
+- data-restore-quote-text-match-collapses: 글자만 같은 인용(다른 sig) 대응은 한 번만 쓴다. 두 sig가 모두 있을 때만 대응하며, sig ''(이전 인용)은 위치 키로만 맞춘다. BackupMergeTest 2건 추가.
+- data-txtoverride-restore-not-newer-wins: 책별 TXT 덮어쓰기는 인코딩처럼 더 최근에 읽은 쪽이 이긴다(기기가 더 최근이면 기기 값, 지운 값 포함). BackupR2Test 추가.
+- data-notes-order-keys-race: `Notes.page`/`refs`는 키 스캔을 한 번만 읽어 순서와 행을 같은 스캔에 묶는다.
+- data-store-write-deletes-before-write: MediaStore 경로는 새 백업을 게시한 뒤에 같은 이름의 이전 행을 지우고 이름을 되돌린다. 쓰기가 실패하면 이전 백업이 남는다.
+- data-restore-offer-settled-on-error: `AutoBackup.search`가 실패를 던지고 읽지 못한 파일 수를 센다. 복원 제안은 검색이 끝까지 됐고 읽지 못한 파일이 없을 때만 닫힌다.
+- data-last-read-no-gen-bump: 리더가 멈추거나 책을 닫으며 위치를 저장한 뒤 `notesGen`을 한 번 올린다(쪽마다가 아님). NOTES_SPEC §5.1에 추가.
+
+### 독서 노트·서재
+- notes-library-paged-row-tap: 노트 행이 자기 탭·길게 누르기 리스너를 가진다(쪽 단위 목록에서도 열기·메뉴·선택 토글). CI 단계 89p 추가.
+- notes-library-selectall-restore-deletes-unchecked: 2만 건 넘는 선택과 내보내기 대상은 cacheDir 파일로 정확히 저장한다. "모두 선택"으로 되살리지 않는다. 파일이 없으면 선택은 비고, 내보내기는 "내보내지 못했습니다"만 알린다. NOTES_SPEC §9.4 갱신.
+- notes-library-queued-writes-cancelled: 서재의 직렬 쓰기는 UNDISPATCHED + NonCancellable로 Activity가 사라져도 탭 순서대로 저장된다.
+- notes-library-scroll-mode-no-prefetch: ListPager가 스크롤 모드에서도 onPaged를 불러 미리 읽는다.
+- notes-library-hub-cardbutton-eink-pressed: e-ink에서 노트 행의 ⋮·다시 찾기·색 칸은 눌림 배경이 없다.
+- notes-library-restore-offer-activity-scope: 복원은 프로세스 범위에서 돈다. 도중에 다시 만들어진 서재는 스캔을 붙잡고 "복원하는 중…"을 보이며 결과를 받는다(제안을 다시 띄우지 않음).
+- notes-library-first-load-failure-resets-query: 첫 로드가 실패해도 요청한 질의(책·탭)로 돌아간다.
+
+### 리더 부가 기능
+- extras-1: 길게 누르기는 페이지에 그려지는 인용에만 붙는다(K2 규칙 공유 `QuoteHighlights.drawn`). SelectionActionsTest 추가.
+- extras-2: 메모 저장 실패는 "저장하지 못했습니다"를 띄우고 입력한 글로 편집기를 다시 연다. 삭제 실패는 서재와 같은 "삭제하지 못했습니다"를 쓴다(지침의 "저장하지 못했습니다" 대신).
+- extras-3: 인용·북마크를 못 불러오면 "…을/를 불러오지 못했습니다 / 눌러서 다시 시도"를 보이고 목록·캐시는 그대로 둔다.
+
+### 밝기·크롬
+- settings-light-1: 설정의 "기기 밝기 직접 조절" 부제도 원래 자동 밝기면 "(자동 밝기는 다시 켜짐)"을 붙인다(`DeviceLight.readOrigAuto`).
+- settings-light-2: 기기 경로의 Ⓐ는 조명 스레드가 기기 밝기를 다시 읽은 뒤 한 번만 막대를 묶는다.
+- settings-light-3: 키·TalkBack으로 바꾼 밝기도 끌기가 끝난 것처럼 저장한다.
+- chrome-thumbs-1: 돌아가기 칩·띠는 점프가 바로 페이지를 보였을 때만 다시 묶는다. 비동기면 새 페이지와 같은 프레임에서 묶이고, 배치 실패 시에는 이전 페이지 기준으로 다시 묶는다.
+- chrome-thumbs-2: 크롬이 열린 채 회전하면 onConfigurationChanged에서 폭 기준을 다시 정한다.
+
+### 검사
+tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci/screenshots.sh 통과. 애니메이션 추가, 첫 페이지 전 새 작업, 위치 이동 없음.

@@ -95,7 +95,11 @@ internal object QuoteHighlights {
         return out
     }
 
-    private fun drawn(q: Quote, section: Int, sig: String?, anchorMatch: ((Quote) -> Boolean?)?): Boolean =
+    /**
+     * Whether [q] is drawn on [section] under [sig]: the one K2 rule for the page and for a long press, which must
+     * not snap to a quote whose place changed (not drawn: its offsets point at other text).
+     */
+    fun drawn(q: Quote, section: Int, sig: String?, anchorMatch: ((Quote) -> Boolean?)?): Boolean =
         q.section == section && !QuoteRows.placeChanged(q.sig, sig, if (sig != null && q.sig != sig) anchorMatch?.invoke(q) else null)
 
     /** [quotes] (database order) with [added] inserted where the database will list it: after every row ≤ it. */

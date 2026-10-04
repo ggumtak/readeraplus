@@ -5,6 +5,7 @@ import com.ggumtak.readeraplus.engine.PageBreakMode
 import com.ggumtak.readeraplus.reader.extras.VoiceChoice
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.KeyMap
+import com.ggumtak.readeraplus.reader.LightPolicy
 import com.ggumtak.readeraplus.render.DeviceCleanInfo
 import com.ggumtak.readeraplus.render.StatusFit
 import com.ggumtak.readeraplus.settings.AppSettings
@@ -431,12 +432,16 @@ object R3Rows {
         else -> SWIPE_BRIGHTNESS
     }
 
-    /** "기기 밝기 직접 조절" subtitle. */
-    fun brightnessDevice(on: Boolean, restore: Boolean, canWrite: Boolean, none: Boolean): String = when {
+    /**
+     * "기기 밝기 직접 조절" subtitle. [origAuto]: the original mode is automatic, which leaving the reader turns back on
+     * even when the level stays (UI_SPEC §4.3 fix 2): the reader's options panel says the same (LightPolicy).
+     */
+    fun brightnessDevice(on: Boolean, restore: Boolean, canWrite: Boolean, none: Boolean, origAuto: Boolean = false): String = when {
         none -> "이 기기는 앱이 전면광을 바꿀 수 없습니다"
         on && !canWrite -> "'시스템 설정 수정' 권한이 필요합니다 · 눌러서 허용"
         !on -> "전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다"
         restore -> "기기 전체 밝기를 바꿉니다 · 리더를 나가면 원래대로"
+        origAuto -> LightPolicy.DEVICE_ON_KEEP_AUTO
         else -> "기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지"
     }
 

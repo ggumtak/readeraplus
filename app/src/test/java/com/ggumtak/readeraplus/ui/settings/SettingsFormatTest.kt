@@ -225,6 +225,11 @@ class SettingsFormatTest {
         assertEquals("기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지", R3Rows.brightnessDevice(true, false, true, false))
         assertEquals("'시스템 설정 수정' 권한이 필요합니다 · 눌러서 허용", R3Rows.brightnessDevice(true, true, false, false))
         assertEquals("이 기기는 앱이 전면광을 바꿀 수 없습니다", R3Rows.brightnessDevice(true, true, true, true))
+        // UI_SPEC §4.3 fix 2: an automatic original comes back on leave even when the level stays.
+        assertEquals("기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지 (자동 밝기는 다시 켜짐)",
+            R3Rows.brightnessDevice(true, false, true, false, origAuto = true))
+        assertEquals("기기 전체 밝기를 바꿉니다 · 리더를 나가면 원래대로", R3Rows.brightnessDevice(true, true, true, false, origAuto = true))
+        assertEquals("전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다", R3Rows.brightnessDevice(false, false, true, false, origAuto = true))
         assertTrue(R3Rows.NO_PERMISSION_SCREEN.endsWith("adb shell appops set com.ggumtak.readeraplus WRITE_SETTINGS allow"))
     }
 

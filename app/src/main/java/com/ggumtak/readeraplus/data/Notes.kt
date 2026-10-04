@@ -149,10 +149,12 @@ object Notes {
         val t0 = System.nanoTime()
         val keys: List<Key> = when {
             q.text.isNotBlank() -> {
-                val order = ordered(q, books)
+                // One key scan for the order and the rows it indexes: a note write between two loads would make the
+                // second a different scan.
+                val k = keys(q)
+                val order = ordered(q, k, books)
                 val from = NotesSql.pageOffset(index)
                 val to = minOf(order.size, from + NotesSql.pageLimit(index))
-                val k = keys(q)
                 if (from >= to) emptyList() else List(to - from) { i -> k.key(order[from + i]) }
             }
             !q.order.byBook -> readKeys(NotesSql.datePage(q, index))
@@ -183,7 +185,7 @@ object Notes {
             return out.toArray()
         }
         val k = keys(q)
-        val order = ordered(q, null)
+        val order = ordered(q, k, null)
         return LongArray(order.size) { k.packed(order[it]) }
     }
 
@@ -273,9 +275,11 @@ object Notes {
         }
     }
 
-    /** Row indexes of the key scan in [q]'s tab and order. */
-    private fun ordered(q: NotesQuery, books: List<NoteBook>?): IntArray {
-        val k = keys(q)
+    /**
+     * Row indexes of the key scan [k] (= [keys] of [q], loaded once by the caller, which indexes [k] with the result)
+     * in [q]'s tab and order. A book order's [books] only give the book id order, so a rescan there is harmless.
+     */
+    private fun ordered(q: NotesQuery, k: NotesKeys, books: List<NoteBook>?): IntArray {
         val bookIds = if (q.order.byBook) (books ?: books(q)).map { it.id } else null
         return orderCache.getOrLoad(OrderKey(k, q.tab, q.order, NotesSql.styleFilter(q), bookIds)) {
             val rows = k.filter(q.copy(style = NotesSql.styleFilter(q)))

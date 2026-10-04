@@ -749,7 +749,9 @@ fun fillNotePlaces(bookId: Long, quotes: Map<Long, NotePlace>, bookmarks: Map<Lo
 - `setTrashed`, the scanner's trash and revive, `updateMeta` (titles show in the hub);
 - **[Δ]** `writeFile` / `moveFile` (a refreshed file changes the parsed title and the path the hub's open check and
   the export read), and the backup's placeholder inserts (§5.6);
-- `Backup.import`.
+- `Backup.import`;
+- **[Δ]** the reader's position save on pause or close (`last_read_at` feeds the hub's BOOK_RECENT order and the R
+  arm's time; once per pause / close, not per page turn).
 
 `resetProgress` does not bump it: it touches no notes. `deleteBookRows` also runs `DELETE FROM lookups WHERE
 book_id = ?`.
@@ -1457,8 +1459,11 @@ owner highlight, so it draws in scroll mode. Peek ends at the first user settle.
   disabled while selecting.
   - **[Δ]** There is no `LongHashSet` on the platform, and no AndroidX. Use a `HashSet<Long>`: 10k boxed entries are
     about 0.5 MB, and only while selecting.
-  - `onSaveInstanceState` stores it as a `LongArray`. Above 20,000 entries it stores the query instead, with a
-    "select all" flag, to keep the Bundle under the 1 MB binder limit.
+  - `onSaveInstanceState` stores it as a `LongArray`. **[Δ]** Above 20,000 entries it writes the array to a file in
+    `cacheDir` and stores only the file name, to keep the Bundle under the 1 MB binder limit. Never the query with a
+    "select all" flag: that would bring back rows the user unchecked (and then delete or export them) and drop refs
+    selected in other tabs. A file that is gone at restore restores no rows. A pending export's refs are saved the
+    same way; when their file is gone, the picker's result toasts "내보내지 못했습니다" and writes nothing.
 - Toolbar ⋮: 모두 선택 (`Notes.refs(q)` on IO: every row under the query) · 선택 해제.
 - **색 바꾸기** → `QuotePalette` → `Library.setQuoteStyles(quoteIds, s)` → toast "인용문 {n}개의 색을 바꿨습니다".
 - **삭제** → `confirm("노트 삭제", "선택한 {n}개를 삭제할까요?" + (" 리뷰는 책에서 지워집니다." if reviews), "삭제")`.

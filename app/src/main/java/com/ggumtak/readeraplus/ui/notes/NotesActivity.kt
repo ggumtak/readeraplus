@@ -75,6 +75,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedWriter
+import java.io.File
 import java.io.IOException
 import java.io.OutputStream
 import java.io.OutputStreamWriter
@@ -109,7 +110,6 @@ class NotesActivity : Activity() {
         private const val STATE_FIRST = "notes.s.first"
         private const val STATE_SELECTING = "notes.s.selecting"
         private const val STATE_SELECTION = "notes.s.selection"
-        private const val STATE_SELECT_ALL = "notes.s.selectAll"
         private const val STATE_SEARCH_OPEN = "notes.s.searchOpen"
         private const val STATE_EXPORT_FORMAT = "notes.s.exportFormat"
         private const val STATE_EXPORT_REFS = "notes.s.exportRefs"
@@ -191,8 +191,9 @@ class NotesActivity : Activity() {
     private val releaseHold = Runnable { releaseDrawHold() }
     private val moveTimeout = Runnable { val r = rowWindow.takeMove(); if (r >= 0) showRow(r) }
     private val searchRunnable = Runnable { applySearch(searchEdit.text.toString()) }
-    private var restoreSelectAll = false
     private var pendingFirst = 0
+    /** The pending export's refs were saved to a cache file that is gone: its result only reports the failure. */
+    private var exportLost = false
 
     // ============================================================================================ lifecycle
 
@@ -201,16 +202,25 @@ class NotesActivity : Activity() {
         openedAt = SystemClock.uptimeMillis()
         QuoteLook.update(Settings.app.highlightLook, DeviceClass.cached(this))
         q = initialQuery(savedInstanceState)
+        // A failed first load falls back to the requested query (book, tab, order, search), not to NotesQuery();
+        // rowWindow is empty until the first apply, so no page load reads this windowQ.
+        windowQ = q
         val s = savedInstanceState
         if (s != null) {
             pendingFirst = s.getInt(STATE_FIRST, 0)
             if (s.getBoolean(STATE_SELECTING)) {
                 selecting = true
-                s.getLongArray(STATE_SELECTION)?.forEach { selected += it }
-                restoreSelectAll = s.getBoolean(STATE_SELECT_ALL)
+                // A lost file restores no rows: never a wider selection than the user made.
+                restoreRefs(s, STATE_SELECTION)?.forEach { selected += it }
             }
             exportFormat = s.getString(STATE_EXPORT_FORMAT)?.let { n -> NotesExport.Format.entries.firstOrNull { it.name == n } }
-            exportRefs = if (s.getBoolean(STATE_EXPORT_ALL)) null else s.getLongArray(STATE_EXPORT_REFS)
+            if (exportFormat != null && !s.getBoolean(STATE_EXPORT_ALL)) {
+                exportRefs = restoreRefs(s, STATE_EXPORT_REFS)
+                if (exportRefs == null) {
+                    exportFormat = null
+                    exportLost = true
+                }
+            }
         }
         setContentView(buildUi())
         if (s?.getBoolean(STATE_SEARCH_OPEN) == true || q.text.isNotEmpty()) openSearch(focus = false)
@@ -219,7 +229,6 @@ class NotesActivity : Activity() {
         window.decorView.viewTreeObserver.addOnPreDrawListener(drawHold)
         handler.postDelayed(releaseHold, NotesWindow.FIRST_DRAW_WAIT_MS)
         reload(pendingFirst)
-        if (restoreSelectAll) selectAll()
     }
 
     private fun initialQuery(s: Bundle?): NotesQuery {
@@ -262,17 +271,42 @@ class NotesActivity : Activity() {
         out.putInt(STATE_FIRST, if (::list.isInitialized) list.firstVisiblePosition else pendingFirst)
         out.putBoolean(STATE_SEARCH_OPEN, ::searchRow.isInitialized && searchRow.visibility == View.VISIBLE)
         out.putBoolean(STATE_SELECTING, selecting)
-        if (selecting) {
-            // A huge selection is saved as its query ("select all") to stay far below the 1 MB binder limit.
-            if (NotesWindow.saveAsQuery(selected.size)) out.putBoolean(STATE_SELECT_ALL, true)
-            else out.putLongArray(STATE_SELECTION, selected.toLongArray())
-        }
+        if (selecting) saveRefs(out, STATE_SELECTION, selected.toLongArray())
         val f = exportFormat
         if (f != null) {
             out.putString(STATE_EXPORT_FORMAT, f.name)
             val refs = exportRefs
-            if (refs == null || NotesWindow.saveAsQuery(refs.size)) out.putBoolean(STATE_EXPORT_ALL, true)
-            else out.putLongArray(STATE_EXPORT_REFS, refs)
+            if (refs == null) out.putBoolean(STATE_EXPORT_ALL, true) else saveRefs(out, STATE_EXPORT_REFS, refs)
+        }
+    }
+
+    /**
+     * Saves [refs] under [key]: in the Bundle, or above [NotesWindow.MAX_SAVED_SELECTION] in a cache file named there
+     * (the Bundle stays far below the 1 MB binder limit). Exact either way, never "select all" (N §9.4).
+     */
+    private fun saveRefs(out: Bundle, key: String, refs: LongArray) {
+        if (!NotesWindow.saveToFile(refs.size)) {
+            out.putLongArray(key, refs)
+            return
+        }
+        val name = "$key.refs"
+        try {
+            File(cacheDir, name).outputStream().use { NotesWindow.writeRefs(it, refs) }
+            out.putString("$key.file", name)
+        } catch (t: Throwable) {
+            Log.w(NotesPerf.TAG, "saving $key failed", t)
+        }
+    }
+
+    /** [saveRefs]'s refs back; null when none were saved or the file is gone. */
+    private fun restoreRefs(s: Bundle, key: String): LongArray? {
+        s.getLongArray(key)?.let { return it }
+        val name = s.getString("$key.file") ?: return null
+        return try {
+            File(cacheDir, name).inputStream().use { NotesWindow.readRefs(it) }
+        } catch (t: Throwable) {
+            Log.w(NotesPerf.TAG, "restoring $key failed", t)
+            null
         }
     }
 
@@ -365,12 +399,7 @@ class NotesActivity : Activity() {
         list = InkListView(this)
         adapter = NotesAdapter(this, rowWindow, rowCallbacks)
         list.adapter = adapter
-        list.setOnItemClickListener { _, _, position, _ -> adapter.rowAt(position)?.let { onRowTap(it, position) } }
-        list.setOnItemLongClickListener { _, v, position, _ ->
-            val row = adapter.rowAt(position) ?: return@setOnItemLongClickListener false
-            if (selecting) toggle(row, position) else menus.rowMenu(row, v)
-            true
-        }
+        // Row taps and long presses: each row's own listeners (NotesAdapter.bind), so they work when paged too.
         content.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         emptyText = emptyMessage("").apply { keepAll() }
         emptyButton = outlineButton("기록 켜기") { setRecordLookups(true) }.apply { visibility = View.GONE }
@@ -763,6 +792,7 @@ class NotesActivity : Activity() {
         }
         override fun onLookUp(row: NoteRow) { menus.lookUp(row) }
         override fun onBookHeader(book: NoteBook) { setBook(book.id) }
+        override fun onRowTap(row: NoteRow, position: Int) = this@NotesActivity.onRowTap(row, position)
     }
 
     private fun onRowTap(row: NoteRow, position: Int) {
@@ -883,7 +913,10 @@ class NotesActivity : Activity() {
         val refs = exportRefs
         exportFormat = null
         exportRefs = null
+        val lost = exportLost
+        exportLost = false
         val uri = data?.data
+        if (lost && resultCode == RESULT_OK) toast("내보내지 못했습니다")
         if (resultCode != RESULT_OK || uri == null || format == null) return
         runExport(uri, format, refs, q)
     }

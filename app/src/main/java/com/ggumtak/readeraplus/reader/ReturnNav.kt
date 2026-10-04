@@ -26,8 +26,11 @@ internal interface ReturnHost {                       // implemented by ReaderAc
     fun currentPosition(): DocPosition                // paged: page start; scroll: top line
     fun isOnCurrentPage(pos: DocPosition): Boolean    // paged: on the page; scroll: in the visible range
     fun globalPageOf(pos: DocPosition): Int           // 1-based; estimate until counted (never "~")
-    /** Jump without creating a return point; the chrome stays as it is. Scroll mode: top-line placement. */
-    fun jumpToReturn(pos: DocPosition)
+    /**
+     * Jump without creating a return point; the chrome stays as it is. Scroll mode: top-line placement. True when
+     * the new page is already shown; false when it shows later (a layout or an image preload), with its own bind.
+     */
+    fun jumpToReturn(pos: DocPosition): Boolean
     fun charProgressOf(pos: DocPosition): Float       // counts.charProgress
     fun clampPosition(pos: DocPosition): DocPosition = pos
     fun locateFraction(f: Float): DocPosition         // counts.locateFraction
@@ -195,9 +198,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         val here = host.currentPosition()
         val t = state.useMark(here, host.isOnCurrentPage(m)) ?: return
         notePage(here) // the place left becomes the other place
-        host.jumpToReturn(t)
-        host.onReturnChanged()
-        refresh()
+        jump(t)
     }
 
     private fun useOther() {
@@ -205,7 +206,16 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         val here = host.currentPosition()
         val t = state.useOther(here, m != null && host.isOnCurrentPage(m)) ?: return
         notePage(here)
-        host.jumpToReturn(t)
+        jump(t)
+    }
+
+    /**
+     * Jumps to [t] and rebinds the views when its page is already up. A jump that shows its page later leaves the
+     * old page up meanwhile: the host binds the chip and the strip with the new page, in its frame (one e-ink update
+     * per tap, not the chip vanishing over the old page first).
+     */
+    private fun jump(t: DocPosition) {
+        if (!host.jumpToReturn(t)) return
         host.onReturnChanged()
         refresh()
     }

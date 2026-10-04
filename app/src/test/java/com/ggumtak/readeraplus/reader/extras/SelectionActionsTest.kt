@@ -104,6 +104,20 @@ class SelectionActionsTest {
     }
 
     @Test
+    fun aLongPressSnapsOnlyToADrawnQuote() {
+        // The long press uses the page's rule: a moved quote (other sig, anchor gone) is not drawn and not snapped to.
+        val moved = q(1, 0, 0, 5).copy(sig = "old")
+        assertFalse(QuoteHighlights.drawn(moved, 0, "now") { false })
+        assertFalse(QuoteHighlights.drawn(moved, 0, "now", null))
+        assertTrue(QuoteHighlights.drawn(moved, 0, "now") { true })
+        // Same sig, a legacy row, or a host without places: drawn; another section never.
+        assertTrue(QuoteHighlights.drawn(q(2, 0, 0, 5).copy(sig = "now"), 0, "now") { false })
+        assertTrue(QuoteHighlights.drawn(q(3, 0, 0, 5), 0, "now") { null })
+        assertTrue(QuoteHighlights.drawn(moved, 0, null, null))
+        assertFalse(QuoteHighlights.drawn(q(4, 1, 0, 5), 0, null, null))
+    }
+
+    @Test
     fun epubQuotesRemainVisibleWithoutParseSignatures() {
         val rows = listOf(q(1, 0, 0, 5, 3).copy(sig = "previous"))
         assertEquals(3, QuoteHighlights.forSection(rows, 0, "").single().style)

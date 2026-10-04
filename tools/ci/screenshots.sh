@@ -915,6 +915,25 @@ notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select
   shot 89_notes_words 2
   dump; if has "다시 찾기"; then check 89 0 "word row with 다시 찾기"; else check 89 1 "no word row (or the empty state, no browser)"; fi
 }
+notes_paged() { # 89p: 목록 넘기기 → 쪽 단위, a tap on a hub row still opens the book (the rows take their own taps:
+  # a paged list keeps every touch for paging); then 자동 again
+  open_settings || return 1
+  pick_setting "목록 넘기기" "쪽 단위" || return 1
+  restart_library
+  open_drawer || return 1
+  drawer_tap "독서 노트" || return 1
+  sleep 3
+  tap_label "인용문" || return 1
+  sleep 2
+  dump; if ! has "모든 색" contains; then check 89p 1 "paged hub: no 인용문 tab"; open_settings && pick_setting "목록 넘기기" "자동"; return 1; fi
+  local xy; xy=$(first_row_xy)
+  tap_xy "$xy"
+  shot 89p_notes_paged_jump 5
+  dump; if ! has "모든 색" contains; then check 89p 0 "paged hub: a row tap opens the book"
+  else check 89p 1 "paged hub: a row tap left the hub on screen"; fi
+  back; sleep 2
+  open_settings && pick_setting "목록 넘기기" "자동"
+}
 notes_ink() { # 90: 인용문 색 표시 → 흑백 무늬 on the quotes; then 자동 again
   local i
   open_settings || return 1
@@ -1195,6 +1214,7 @@ step 80_82_quotes notes_quotes
 step 83_toc_quotes notes_toc
 step 84_lookup notes_lookup
 step 85_89_notes_hub notes_hub
+step 89p_notes_paged notes_paged
 step 90_highlight_ink notes_ink
 
 log "anchored layout (A §6.6)"

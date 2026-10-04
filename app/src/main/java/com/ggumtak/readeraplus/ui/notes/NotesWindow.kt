@@ -128,14 +128,33 @@ class NotesWindow<P>(val pageRows: Int = PAGE_ROWS, val maxPages: Int = MAX_PAGE
         const val FIRST_DRAW_WAIT_MS = 250L
         /** Search text debounce. */
         const val SEARCH_DEBOUNCE_MS = 300L
-        /** Above this many selected notes the saved state keeps the query ("select all") instead of the ids. */
+        /** Above this many selected notes the saved state keeps the ids in a cache file, not in the Bundle. */
         const val MAX_SAVED_SELECTION = 20_000
 
         /** The first row of 1-based pager page [page] that moves [step] rows a page. */
         fun rowForPage(page: Int, step: Int): Int = ((page - 1).coerceAtLeast(0)) * step.coerceAtLeast(1)
 
-        /** True when a selection of [size] is saved as its query (Bundle stays far below the 1 MB binder limit). */
-        fun saveAsQuery(size: Int): Boolean = size > MAX_SAVED_SELECTION
+        /**
+         * True when a selection of [size] is saved to a cache file (the Bundle stays far below the 1 MB binder limit).
+         * Never as its query: "select all" would bring back rows the user unchecked and drop those of other tabs.
+         */
+        fun saveToFile(size: Int): Boolean = size > MAX_SAVED_SELECTION
+
+        /** The saved-state file of a big selection: its size, then the packed refs. */
+        fun writeRefs(out: java.io.OutputStream, refs: LongArray) {
+            val d = java.io.DataOutputStream(java.io.BufferedOutputStream(out))
+            d.writeInt(refs.size)
+            for (r in refs) d.writeLong(r)
+            d.flush()
+        }
+
+        /** [writeRefs]'s refs back; throws on a short or damaged file (the caller then restores none). */
+        fun readRefs(input: java.io.InputStream): LongArray {
+            val d = java.io.DataInputStream(java.io.BufferedInputStream(input))
+            val n = d.readInt()
+            if (n < 0) throw java.io.IOException("bad size $n")
+            return LongArray(n) { d.readLong() }
+        }
 
         /** The first visible row to keep after a reload with [count] rows (clamped; 0 for an empty list). */
         fun clampFirst(first: Int, count: Int): Int = if (count <= 0) 0 else first.coerceIn(0, count - 1)

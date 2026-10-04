@@ -132,10 +132,28 @@ class NotesWindowTest {
         assertEquals(0, NotesWindow.rowForPage(1, 7))
         assertEquals(14, NotesWindow.rowForPage(3, 7))
         assertEquals(0, NotesWindow.rowForPage(0, 7))
-        assertFalse(NotesWindow.saveAsQuery(20_000))
-        assertTrue(NotesWindow.saveAsQuery(20_001))
+        assertFalse(NotesWindow.saveToFile(20_000))
+        assertTrue(NotesWindow.saveToFile(20_001))
         assertEquals(0, NotesWindow.clampFirst(40, 0))
         assertEquals(9, NotesWindow.clampFirst(40, 10))
         assertEquals(0, NotesWindow.clampFirst(-3, 10))
+    }
+
+    @Test
+    fun aBigSelectionRoundTripsExactly() {
+        // The exact refs come back (an unchecked row stays unchecked), not "select all".
+        val refs = LongArray(30_000) { (2L shl 56) or (it * 3L) }.also { it[7] = (1L shl 56) or 99L }
+        val out = java.io.ByteArrayOutputStream()
+        NotesWindow.writeRefs(out, refs)
+        assertTrue(refs.contentEquals(NotesWindow.readRefs(java.io.ByteArrayInputStream(out.toByteArray()))))
+        // A cut file restores nothing rather than a guess.
+        val cut = out.toByteArray().copyOf(out.size() - 3)
+        var threw = false
+        try {
+            NotesWindow.readRefs(java.io.ByteArrayInputStream(cut))
+        } catch (_: java.io.IOException) {
+            threw = true
+        }
+        assertTrue(threw)
     }
 }

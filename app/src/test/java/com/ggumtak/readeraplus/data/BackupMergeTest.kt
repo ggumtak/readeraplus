@@ -66,6 +66,27 @@ class BackupMergeTest {
         assertEquals(1, same.inserts.size)
     }
 
+    @Test
+    fun aTextOnlyMatchTakesOneIncomingQuote() {
+        // Two backup quotes of the same short text at two places (sig s1) vs one device quote under other TXT
+        // options (sig s2): one is that device quote, the other is another quote and is inserted.
+        val plan = BackupMerge.quotes(listOf(quote(1, 0, 10, 12, text = "그래", sig = "s2")),
+            listOf(bq(0, 40, 42, text = "그래", sig = "s1"), bq(5, 80, 82, text = "그래", sig = "s1")))
+        assertEquals(listOf(bq(5, 80, 82, text = "그래", sig = "s1")), plan.inserts)
+    }
+
+    @Test
+    fun aLegacyQuoteWithoutSignatureMatchesOnlyByPlace() {
+        // A device quote with sig '' and a backup quote of the same text at other offsets: not provably the same.
+        val plan = BackupMerge.quotes(listOf(quote(1, 0, 10, 12, text = "그래")),
+            listOf(bq(0, 40, 42, text = "그래", sig = "s1")))
+        assertEquals(listOf(bq(0, 40, 42, text = "그래", sig = "s1")), plan.inserts)
+        assertTrue(plan.fills.isEmpty())
+        // The same offsets still match (the key rule).
+        assertTrue(BackupMerge.quotes(listOf(quote(1, 0, 10, 12, text = "그래")),
+            listOf(bq(0, 10, 12, text = "그래", sig = "s1"))).inserts.isEmpty())
+    }
+
     // ---- bookmarks ----
 
     @Test

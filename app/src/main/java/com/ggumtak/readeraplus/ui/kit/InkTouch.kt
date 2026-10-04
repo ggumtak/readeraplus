@@ -125,8 +125,9 @@ class ListPager(val list: AbsListView,val bar: InkPagerBar,private val cols: Int
             override fun onScrollStateChanged(view: AbsListView,state: Int) {}
             override fun onScroll(view: AbsListView,first: Int,visible: Int,total: Int) {
                 // A hidden bar (scroll mode) needs no label on every scroll frame; showing it lays the list out again.
-                if (bar.visibility!=View.VISIBLE) return
-                update();onPaged?.invoke(first,(first+visible-1).coerceAtLeast(first))
+                if (bar.visibility==View.VISIBLE) update()
+                // Every move, scroll mode included: the hub's prefetch (N §9.7) keeps placeholders off screen.
+                onPaged?.invoke(first,(first+visible-1).coerceAtLeast(first))
             }
         })
     }

@@ -54,6 +54,8 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
     private var swatchInk: Boolean? = null
     /** "시스템 설정 수정" as last read on IO; null until the first read (the subtitle then assumes it is granted). */
     private var canWrite: Boolean? = null
+    /** The device's original brightness mode is automatic ([DeviceLight.readOrigAuto]): the keep subtitle says so. */
+    private var origAuto = false
     /** Verdict NONE: the app cannot change the front light here (the light rows are disabled). */
     private var lightNone = false
     /** The user went to the permission page from "기기 밝기 직접 조절": turn it on when they come back granted. */
@@ -199,11 +201,15 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
     private fun refreshLight() {
         val appCtx = activity.applicationContext
         activity.scope.launch {
-            val (write, verdict) = withContext(Dispatchers.IO) {
-                runCatching { SystemSettings.System.canWrite(appCtx) }.getOrDefault(false) to
-                    runCatching { DeviceLight.verdict(appCtx) }.getOrDefault(DeviceLight.VERDICT_UNKNOWN)
+            val (write, verdict, auto) = withContext(Dispatchers.IO) {
+                Triple(
+                    runCatching { SystemSettings.System.canWrite(appCtx) }.getOrDefault(false),
+                    runCatching { DeviceLight.verdict(appCtx) }.getOrDefault(DeviceLight.VERDICT_UNKNOWN),
+                    DeviceLight.readOrigAuto(appCtx),
+                )
             }
             canWrite = write
+            if (auto != null) origAuto = auto
             lightNone = verdict == DeviceLight.VERDICT_NONE
             if (pendingDevice) {
                 pendingDevice = false
@@ -228,7 +234,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         }
         deviceRow?.let { row ->
             row.setRowEnabled(!none)
-            row.setSummary(R3Rows.brightnessDevice(app.brightnessDevice, app.brightnessRestore, canWrite != false, none))
+            row.setSummary(R3Rows.brightnessDevice(app.brightnessDevice, app.brightnessRestore, canWrite != false, none, origAuto))
             row.setToggleChecked(app.brightnessDevice)
         }
         restoreRow?.let { row ->

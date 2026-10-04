@@ -160,12 +160,17 @@ internal object DeviceLight {
      * the device's current one, which the first write would record).
      */
     fun loadOrigAuto(ctx: Context) {
-        try {
-            val p = prefs(ctx)
-            val mode = if (p.getBoolean(K_PENDING, false)) p.getInt(K_ORIG_MODE, MANUAL)
-            else SystemSettings.System.getInt(ctx.contentResolver, KEY_MODE, MANUAL)
-            origAuto = mode != MANUAL
-        } catch (t: Throwable) { /* unknown: the plain subtitle */ }
+        readOrigAuto(ctx)?.let { origAuto = it } // unknown: the plain subtitle
+    }
+
+    /** IO: [loadOrigAuto]'s value without setting it (the settings page's subtitle); null when unknown. */
+    fun readOrigAuto(ctx: Context): Boolean? = try {
+        val p = prefs(ctx)
+        val mode = if (p.getBoolean(K_PENDING, false)) p.getInt(K_ORIG_MODE, MANUAL)
+        else SystemSettings.System.getInt(ctx.contentResolver, KEY_MODE, MANUAL)
+        mode != MANUAL
+    } catch (t: Throwable) {
+        null
     }
 
     /**
@@ -253,6 +258,16 @@ internal object DeviceLight {
 
     /** Re-reads the setting (after the observer fired, or to position the slider). Any thread. */
     fun refresh() { if (ctx != null) h().post(readTask) }
+
+    /**
+     * Main thread: [r] runs on main after the light thread's work queued so far (a [restore] and [refresh] posted
+     * before it), so [deviceOut] is the device's level by then. False when nothing could be queued (not initialised).
+     */
+    fun postAfterRead(r: Runnable): Boolean {
+        if (ctx == null) return false
+        h().post { main.post(r) }
+        return true
+    }
 
     private val readTask = Runnable {
         val c = ctx ?: return@Runnable

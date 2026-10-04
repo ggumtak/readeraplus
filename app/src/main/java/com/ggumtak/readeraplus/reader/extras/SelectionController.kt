@@ -151,7 +151,12 @@ class SelectionController(private val host: ReaderHost) {
         val sec = host.currentPosition().section
         ensureQuotes()
 
-        val q = QuoteCache.get(host.book.id)?.firstOrNull { it.section == sec && off >= it.start && off < it.end }
+        // Only a quote the page draws (K2): one whose place changed is not drawn here, and a press on its old range
+        // selects the word pressed, not that hidden quote.
+        val sig = sessionSig(sec)
+        val q = QuoteCache.get(host.book.id)?.firstOrNull {
+            off >= it.start && off < it.end && QuoteHighlights.drawn(it, sec, sig) { c -> ContentsDialog.anchorMatch(host, c) }
+        }
         var s: Int
         var e: Int
         if (q != null) {
@@ -791,9 +796,13 @@ class SelectionController(private val host: ReaderHost) {
 
     private fun sameBook(bookId: Long): Boolean = runCatching { host.book.id }.getOrNull() == bookId
 
+    /** The session's parse signature at [section] (NotePlaceHost), null without places. */
+    private fun sessionSig(section: Int): String? =
+        (host as? NotePlaceHost)?.let { h -> runCatching { h.notePlace(DocPosition(section, 0)) }.getOrNull()?.sig }
+
     /** The section's "quotes" highlights from [all] (with their styles), as the reader builds them. Main thread. */
     private fun applyQuoteHighlights(section: Int, all: List<Quote>) {
-        val sig = (host as? NotePlaceHost)?.let { h -> runCatching { h.notePlace(DocPosition(section, 0)) }.getOrNull()?.sig }
+        val sig = sessionSig(section)
         runCatching { host.setHighlights("quotes", section, QuoteHighlights.forSection(all, section, sig) { ContentsDialog.anchorMatch(host, it) }) }
     }
 
@@ -811,15 +820,20 @@ class SelectionController(private val host: ReaderHost) {
         }
     }
 
-    private fun editQuoteNote(q: Quote) {
+    /** The memo editor of [q]; a failed save says so and opens again with the typed text (never lost silently). */
+    private fun editQuoteNote(q: Quote, initial: String = q.note) {
         clear()
-        ctx.multilinePrompt("인용문 메모", q.note, "메모", minLines = 3) { note ->
+        ctx.multilinePrompt("인용문 메모", initial, "메모", minLines = 3) { note ->
             scope.launch {
-                val all = withContext(Dispatchers.IO) {
-                    runCatching { Library.updateQuoteNote(q.id, note.trim()) }
-                    runCatching { Library.quotes(q.bookId) }.getOrNull()
+                val (ok, all) = withContext(Dispatchers.IO) {
+                    runCatching { Library.updateQuoteNote(q.id, note.trim()) }.isSuccess to
+                        runCatching { Library.quotes(q.bookId) }.getOrNull()
                 }
                 if (all != null) QuoteCache.put(q.bookId, all)
+                if (!ok && !ctx.isFinishing && !ctx.isDestroyed) {
+                    ctx.toast("저장하지 못했습니다")
+                    editQuoteNote(q, note)
+                }
             }
         }
     }
@@ -828,10 +842,11 @@ class SelectionController(private val host: ReaderHost) {
         clear()
         ctx.confirm("인용문 삭제", "이 인용문을 삭제할까요?", "삭제") {
             scope.launch {
-                val all = withContext(Dispatchers.IO) {
-                    runCatching { Library.deleteQuote(q.id) }
-                    runCatching { Library.quotes(q.bookId) }.getOrNull()
+                val (ok, all) = withContext(Dispatchers.IO) {
+                    runCatching { Library.deleteQuote(q.id) }.isSuccess to
+                        runCatching { Library.quotes(q.bookId) }.getOrNull()
                 }
+                if (!ok && !ctx.isFinishing && !ctx.isDestroyed) ctx.toast("삭제하지 못했습니다")
                 if (all != null) {
                     QuoteCache.put(q.bookId, all)
                     if (sameBook(q.bookId)) applyQuoteHighlights(q.section, all)

@@ -732,6 +732,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         configChanged = true
         // The page view's new size arrives through onSizeChanged → relayout.
         root.requestApplyInsets()
+        // Unchanged insets never reach chrome.setInsets: the bars (if up) are sized for the new width here.
+        chrome.onConfigurationChanged()
     }
 
     override fun onTrimMemory(level: Int) {
@@ -2304,6 +2306,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             // Nothing valid on screen to fall back to.
             showError("페이지를 배치하지 못했습니다.")
         } else {
+            // The old page stays: the return chip / strip (a return jump binds them with its page) match it again.
+            if (chromeVisible) bindChrome() else returnNav.bind()
             toast("이 부분을 표시하지 못했습니다")
         }
     }
@@ -3790,7 +3794,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             return s.counts.globalPage(sec, if (idx >= 0) idx else s.counts.estimatePageIndex(sec, pos.offset))
         }
 
-        override fun jumpToReturn(pos: DocPosition) = jumpTo(pos.section, pos.offset, -1)
+        override fun jumpToReturn(pos: DocPosition): Boolean {
+            jumpTo(pos.section, pos.offset, -1)
+            // No navigation pending: display() showed the page now (a layout or preload shows it later, and binds).
+            return navJob == null
+        }
         override fun charProgressOf(pos: DocPosition): Float =
             session?.counts?.charProgress(pos.section, pos.offset) ?: 0f
 
@@ -4318,7 +4326,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /**
      * Saves the position to the library. [persistText] (pause, close) also records which parse the coordinates
-     * belong to (TXT), so a later open under other parse options can find the place again ([TextPositions]).
+     * belong to (TXT), so a later open under other parse options can find the place again ([TextPositions]), and
+     * bumps `notesGen` after the commit: last_read_at feeds the hub's BOOK_RECENT order and the review arm's time
+     * (N §5.1), once per pause or close, not per page.
      */
     private fun savePositionNow(persistText: Boolean = false) {
         handler.removeCallbacks(saveRunnable)
@@ -4329,7 +4339,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (curLayout == null) return
         val pos = anchor
         val prog = progress()
-        ReaderIo.launch { Library.savePosition(b.id, pos.section, pos.offset, prog) }
+        ReaderIo.launch {
+            Library.savePosition(b.id, pos.section, pos.offset, prog)
+            if (persistText) Library.notesChanged()
+        }
         if (persistText) writeTextPosition(b, s, pos)
     }
 

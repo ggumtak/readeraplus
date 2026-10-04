@@ -657,10 +657,15 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         container.addView(ctx.emptyMessage("불러오는 중…"))
         val bookId = book.id
         scope.launch {
-            val list = withContext(Dispatchers.IO) { runCatching { Library.bookmarks(bookId) }.getOrDefault(emptyList()) }
-                .sortedWith(compareBy({ it.section }, { it.offset }))
-            tabLabels[1]?.text = if (list.isEmpty()) "북마크" else "북마크 ${list.size}"
+            val loaded = withContext(Dispatchers.IO) { runCatching { Library.bookmarks(bookId) }.getOrNull() }
             container.removeAllViews()
+            if (loaded == null) {
+                // Not "none": the user's bookmarks are still there. The tab label stays as it was.
+                container.addView(retryMessage("북마크를 불러오지 못했습니다\n\n눌러서 다시 시도") { loadBookmarks(container) })
+                return@launch
+            }
+            val list = loaded.sortedWith(compareBy({ it.section }, { it.offset }))
+            tabLabels[1]?.text = if (list.isEmpty()) "북마크" else "북마크 ${list.size}"
             if (list.isEmpty()) {
                 container.addView(ctx.emptyMessage(TocText.noBookmarks(Settings.app.bookmarkByTouch)))
                 return@launch
@@ -697,21 +702,33 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         if (stale()) return
         trackedMenu(anchor, listOf(
             MenuItem("이동", R.drawable.ic_bookmark) { goAndClose(DocPosition(b.section, b.offset)) },
-            MenuItem("메모 편집", R.drawable.ic_edit) {
-                ctx.multilinePrompt("북마크 메모", b.note, "메모", minLines = 3) { text ->
-                    scope.launch {
-                        withContext(Dispatchers.IO) { runCatching { Library.updateBookmarkNote(b.id, text.trim()) } }
-                        loadBookmarks(container)
-                    }
-                }
-            },
+            MenuItem("메모 편집", R.drawable.ic_edit) { editBookmarkNote(b, b.note, container) },
             MenuItem("삭제", R.drawable.ic_delete) {
                 scope.launch {
-                    withContext(Dispatchers.IO) { runCatching { Library.deleteBookmark(b.id) } }
+                    val ok = withContext(Dispatchers.IO) { runCatching { Library.deleteBookmark(b.id) }.isSuccess }
+                    if (!ok) failed("삭제하지 못했습니다")
                     loadBookmarks(container)
                 }
             },
         ))
+    }
+
+    /** The bookmark's memo editor; a failed save says so and opens again with the typed text (never lost). */
+    private fun editBookmarkNote(b: Bookmark, initial: String, container: FrameLayout) {
+        ctx.multilinePrompt("북마크 메모", initial, "메모", minLines = 3) { text ->
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) { runCatching { Library.updateBookmarkNote(b.id, text.trim()) }.isSuccess }
+                loadBookmarks(container)
+                if (!ok && failed("저장하지 못했습니다")) editBookmarkNote(b, text, container)
+            }
+        }
+    }
+
+    /** A failed write's toast while the reader is alive (true then). */
+    private fun failed(text: String): Boolean {
+        if (ctx.isFinishing || ctx.isDestroyed) return false
+        ctx.toast(text)
+        return true
     }
 
     // ------------------------------------------------------------------ 인용문
@@ -724,11 +741,24 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         val bookId = book.id
         scope.launch {
             val loaded = withContext(Dispatchers.IO) { runCatching { Library.quotes(bookId) }.getOrNull() }
-            if (loaded != null) QuoteCache.put(bookId, loaded)
-            setQuotes(loaded.orEmpty())
+            if (loaded == null) {
+                // Not "none" (the user would think the quotes lost): the rows and the cache stay as they were; no
+                // list is shown, so there is nothing to 모두 공유.
+                quotes = emptyList()
+                if (tab == 2) shareAll.visibility = View.GONE
+                container.removeAllViews()
+                container.addView(retryMessage("인용문을 불러오지 못했습니다\n\n눌러서 다시 시도") { loadQuotes(container) })
+                return@launch
+            }
+            QuoteCache.put(bookId, loaded)
+            setQuotes(loaded)
             showQuotes(container, keep)
         }
     }
+
+    /** A failed load's message: a tap loads again. */
+    private fun retryMessage(text: String, retry: () -> Unit): TextView =
+        ctx.emptyMessage(text).apply { setOnClickListener { retry() } }
 
     /** New quote rows (a load or a recolour): reading order, the session sig, the filter kept while it applies. */
     private fun setQuotes(all: List<Quote>) {
@@ -877,27 +907,32 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             MenuItem("복사", R.drawable.ic_content_copy) { TextActions.copy(ctx, q.text) },
             MenuItem("공유", R.drawable.ic_share) { TextActions.share(ctx, quoteShareText(q), book.title) },
             MenuItem("색 바꾸기", R.drawable.ic_ink_highlighter) { recolour(swatchAnchor(anchor), q, container) },
-            MenuItem("메모", R.drawable.ic_edit) {
-                ctx.multilinePrompt("인용문 메모", q.note, "메모", minLines = 3) { text ->
-                    scope.launch {
-                        withContext(Dispatchers.IO) { runCatching { Library.updateQuoteNote(q.id, text.trim()) } }
-                        loadQuotes(container)
-                    }
-                }
-            },
+            MenuItem("메모", R.drawable.ic_edit) { editQuoteNote(q, q.note, container) },
             MenuItem("삭제", R.drawable.ic_delete) {
                 ctx.confirm("인용문 삭제", "이 인용문을 삭제할까요?", "삭제") {
                     scope.launch {
-                        val remaining = withContext(Dispatchers.IO) {
-                            runCatching { Library.deleteQuote(q.id) }
-                            runCatching { Library.quotes(book.id) }.getOrNull()
+                        val (ok, remaining) = withContext(Dispatchers.IO) {
+                            runCatching { Library.deleteQuote(q.id) }.isSuccess to
+                                runCatching { Library.quotes(book.id) }.getOrNull()
                         }
+                        if (!ok) failed("삭제하지 못했습니다")
                         if (remaining != null && !stale()) refreshQuoteHighlights(host, q.section, remaining)
                         loadQuotes(container)
                     }
                 }
             },
         ))
+    }
+
+    /** The quote's memo editor; a failed save says so and opens again with the typed text (never lost). */
+    private fun editQuoteNote(q: Quote, initial: String, container: FrameLayout) {
+        ctx.multilinePrompt("인용문 메모", initial, "메모", minLines = 3) { text ->
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) { runCatching { Library.updateQuoteNote(q.id, text.trim()) }.isSuccess }
+                loadQuotes(container)
+                if (!ok && failed("저장하지 못했습니다")) editQuoteNote(q, text, container)
+            }
+        }
     }
 
     private fun quoteShareText(q: Quote): String {

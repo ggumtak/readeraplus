@@ -206,10 +206,13 @@ internal class LightController(private val host: LightHost) {
             setManual(v)
         } else {
             host.saveApp(app.copy(brightness = -1f))
-            apply(-1f)
-            bind()
+            // Device path: the slider binds once the light thread has put the device's level back and read it
+            // (systemPos), in one top-bar update; the window path knows its position now.
+            if (!apply(-1f) || !DeviceLight.postAfterRead(rebindAuto)) bind()
         }
     }
+
+    private val rebindAuto = Runnable { if (!destroyed && app.brightness < 0f && host.chromeVisible) bind() }
 
     fun onSwipeSwitch(on: Boolean) {
         if (on && !swipeUsable) { bind(); return }
@@ -300,16 +303,18 @@ internal class LightController(private val host: LightHost) {
      * The reader's brightness [pos] (0..1; < 0 = the device's own) through the path in use. No allocation. [moving]:
      * a drag in progress (its level is persisted for fix 1 only when it settles).
      */
-    private fun apply(pos: Float, moving: Boolean = false) {
+    /** Applies slider position [pos] (< 0 = auto). True when the device's level is being read back on the light thread. */
+    private fun apply(pos: Float, moving: Boolean = false): Boolean {
         val a = host.activity
         if (deviceOn()) {
             ReaderWindow.applyBrightness(a, -1f)          // one source of truth: no window override on top
             // Before the first page afterFirstPage applies it; while paused (a late IO result or touch cancel)
             // nothing may land after the leave restore: onResume re-applies.
-            if (!ready || !resumed) return
+            if (!ready || !resumed) return false
             deviceUsed = true
             if (pos < 0f) {
                 DeviceLight.restore(); DeviceLight.refresh()
+                return true
             } else {
                 DeviceLight.set(LightCurve.out(pos))
                 if (!moving) DeviceLight.settle()
@@ -318,6 +323,7 @@ internal class LightController(private val host: LightHost) {
             if (deviceUsed) { deviceUsed = false; DeviceLight.restore() }   // switch off, NONE, revoked
             ReaderWindow.applyBrightness(a, pos)
         }
+        return false
     }
 
     /** Slider position of the device's own brightness (auto look, drag start). */

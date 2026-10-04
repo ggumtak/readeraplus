@@ -10,6 +10,7 @@ import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.settings.ErrorLines
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -23,11 +24,26 @@ import kotlinx.coroutines.withContext
  * - [새로 시작]: settle the offer, release the scan; the old files stay on disk (BackupPage can still restore them);
  * - [다른 백업 보기] (only with more than one candidate): pick another backup, which shows the same dialog for it;
  * - [복원]: "복원하는 중…" on the status strip, restore on IO, toast "책 N권의 기록을 복원했습니다", start the first
- *   scan and recreate the library (list mode and sort come from the backup).
+ *   scan and recreate the library (list mode and sort come from the backup). The restore runs in the process, not
+ *   the activity: a library recreated or reopened meanwhile ([busy]) holds its scan, shows "복원하는 중…" and takes
+ *   the result instead of offering again.
  *
  * [onReleased] runs on the main thread when the offer is over without a restore (the activity starts the held scan).
  */
 internal class AutoRestorePrompt(private val activity: LibraryActivity, private val onReleased: () -> Unit) {
+
+    companion object {
+        /** Process-wide: a restore runs past the activity that started it. Main thread only. */
+        private val process = MainScope()
+        private var restoring = false
+        /** A finished restore's outcome no library has taken yet. */
+        private var finished: Result<Int>? = null
+        /** The prompt of the library alive now, which takes [finished]. */
+        private var live: AutoRestorePrompt? = null
+
+        /** A restore runs or its outcome waits: the library holds its scan and [start]s a prompt as for an offer. */
+        val busy: Boolean get() = restoring || finished != null
+    }
 
     /** Candidates are being read, or the dialog is up: a second `refreshVisible` must not start another round. */
     var active = false
@@ -38,35 +54,47 @@ internal class AutoRestorePrompt(private val activity: LibraryActivity, private 
     fun start() {
         if (active) return
         active = true
+        live = this
+        if (restoring) {
+            // Started by an earlier library: its outcome comes here ([deliver]).
+            activity.setLocalStatus("복원하는 중…")
+            return
+        }
+        if (finished != null) {
+            deliver()
+            return
+        }
         val app = activity.applicationContext
         activity.scope.launch {
             val found = withContext(Dispatchers.IO) {
                 runCatching {
-                    val cands = AutoBackup.findCandidates(app)
-                    val best = AutoBackup.pickDefault(cands)
+                    val f = AutoBackup.search(app, includeOwn = false)
+                    val best = AutoBackup.pickDefault(f.candidates)
                     // The late-answer line: this install already has reading history of its own.
-                    Triple(cands, best, best != null && Library.lastOpened() != null)
+                    Triple(f, best, best != null && Library.lastOpened() != null)
                 }.getOrNull()
             }
             if (activity.isFinishing || activity.isDestroyed) return@launch
-            if (found == null) {
-                // Unreadable (IO error): the offer stays pending (asked again next visit); this visit scans.
+            val best = found?.second
+            if (found == null || best == null && found.first.unreadable > 0) {
+                // Unreadable (IO error, or a listed file whose header failed): the offer stays pending (asked again
+                // next visit); this visit scans.
                 active = false
                 onReleased()
                 return@launch
             }
-            val best = found.second
             if (best == null) {
-                // None with content (or unreadable): never ask again on this install.
+                // None with content: never ask again on this install.
                 settle()
                 return@launch
             }
-            ask(best, found.first, found.third)
+            ask(best, found.first.candidates, found.third)
         }
     }
 
     /** Closes the dialog without answering (the activity is going away; the offer stays pending). */
     fun dismiss() {
+        if (live === this) live = null
         active = false
         val d = dialog
         dialog = null
@@ -106,7 +134,8 @@ internal class AutoRestorePrompt(private val activity: LibraryActivity, private 
     private fun restore(c: AutoBackup.Candidate) {
         val app = activity.applicationContext
         activity.setLocalStatus("복원하는 중…")
-        activity.scope.launch {
+        restoring = true
+        process.launch {
             val r = withContext(Dispatchers.IO) {
                 runCatching {
                     val n = AutoBackup.restore(app, c)
@@ -115,18 +144,31 @@ internal class AutoRestorePrompt(private val activity: LibraryActivity, private 
                     n
                 }
             }
-            activity.setLocalStatus(null)
-            active = false
-            r.onSuccess { n ->
-                activity.toast(LibraryText.restoredMessage(n))
-                // The first scan of this install, held until now; it runs on in the background over the recreate.
-                LibraryJobs.startScan(app, announce = true)
-                activity.recreate()
-            }.onFailure {
-                // The offer stays pending (asked again next visit); this visit scans as usual.
-                activity.toast(ErrorLines.line("복원하지 못했습니다", it))
-                onReleased()
-            }
+            restoring = false
+            finished = r
+            // This library, or the one recreated meanwhile; none alive: the next one takes it in [start].
+            live?.deliver()
+        }
+    }
+
+    /** Main thread: the finished restore's toast, then the held first scan and a recreate (failed: the scan only). */
+    private fun deliver() {
+        val r = finished ?: return
+        if (activity.isFinishing || activity.isDestroyed) return
+        finished = null
+        if (live === this) live = null
+        val app = activity.applicationContext
+        activity.setLocalStatus(null)
+        active = false
+        r.onSuccess { n ->
+            activity.toast(LibraryText.restoredMessage(n))
+            // The first scan of this install, held until now; it runs on in the background over the recreate.
+            LibraryJobs.startScan(app, announce = true)
+            activity.recreate()
+        }.onFailure {
+            // The offer stays pending (asked again next visit); this visit scans as usual.
+            activity.toast(ErrorLines.line("복원하지 못했습니다", it))
+            onReleased()
         }
     }
 

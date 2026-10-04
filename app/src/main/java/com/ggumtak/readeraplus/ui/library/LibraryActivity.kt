@@ -84,6 +84,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -376,8 +377,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         updatePermissionPanel()
         val lastScan = Settings.raw().getLong(LibraryJobs.PREF_LAST_SCAN, 0L)
         cancelAutoScan()
-        // The restore offer first (C35): its scan waits for the answer, the newly granted one included.
-        val offer = access && InstallState.offerPending(this)
+        // The restore offer first (C35): its scan waits for the answer, the newly granted one included. A restore
+        // started by an earlier library (rotation, Back) holds it too and is reported here, not offered again.
+        val offer = access && (InstallState.offerPending(this) || AutoRestorePrompt.busy)
         if (offer) {
             scanHeld = true
             (restorePrompt ?: AutoRestorePrompt(this) { releaseHeldScan() }.also { restorePrompt = it }).start()
@@ -1801,9 +1803,12 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             reloadAfterWrites = true
         }
         pendingWrites++
-        scope.launch {
+        // The row on screen already shows the change: the write runs even when the activity goes away meanwhile
+        // (rotation, Back right after a tap). UNDISPATCHED queues it now, in tap order; NonCancellable keeps a
+        // destroyed scope from dropping it. Only the follow-up below (toast, done, reload) is skipped then.
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             val r = try {
-                withContext(writeDispatcher) { runCatching(write) }
+                withContext(NonCancellable + writeDispatcher) { runCatching(write) }
             } finally {
                 pendingWrites--
             }

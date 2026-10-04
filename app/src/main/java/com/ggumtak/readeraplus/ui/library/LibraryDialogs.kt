@@ -269,12 +269,18 @@ private fun LibraryActivity.confirmDelete(b: Book) {
     }
 }
 
-/** "휴지통 비우기": like [confirmDelete], for every trashed book ([독서 노트] opens the hub unfiltered). */
+/**
+ * "휴지통 비우기": like [confirmDelete], for every trashed book ([독서 노트] opens the hub unfiltered). Only the books
+ * counted here are deleted: one trashed while the question is open keeps its notes ([Library.emptyTrash]).
+ */
 internal fun LibraryActivity.confirmEmptyTrash() {
+    var counted: List<Long>? = null
     notesCountThen({
         val ids = Library.books(LibraryQuery(Shelf.TRASH, null, ""), LibrarySort.RECENT).map { it.id }
+        counted = ids
         if (ids.isEmpty()) 0 else Notes.countForBooks(ids)
     }) { notes ->
+        val ids = counted
         val cb = deleteFileCheckBox()
         val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
         val d = alert().setTitle("휴지통 비우기")
@@ -282,7 +288,10 @@ internal fun LibraryActivity.confirmEmptyTrash() {
             .setView(box)
             .setPositiveButton("비우기") { _, _ ->
                 val deleteFiles = cb.isChecked
-                io("비우지 못했습니다", { Library.emptyTrash(deleteFiles) }) {
+                io("비우지 못했습니다", {
+                    // The trash could not be listed: nothing was counted, so nothing is deleted.
+                    Library.emptyTrash(ids ?: error("trash not listed"), deleteFiles)
+                }) {
                     toast("휴지통을 비웠습니다")
                     changed(collections = true)
                 }

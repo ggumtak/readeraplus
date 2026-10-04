@@ -23,6 +23,7 @@ import com.ggumtak.readeraplus.data.NoteRow
 import com.ggumtak.readeraplus.data.NotesPage
 import com.ggumtak.readeraplus.data.NotesTab
 import com.ggumtak.readeraplus.reader.extras.QuoteSwatch
+import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.QuoteLook
 import com.ggumtak.readeraplus.ui.kit.CardButton
 import com.ggumtak.readeraplus.ui.kit.Ink
@@ -54,6 +55,8 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
         fun onSwatch(row: NoteRow, anchor: View)
         fun onLookUp(row: NoteRow)
         fun onBookHeader(book: NoteBook)
+        /** A tap on the row: open, edit, or toggle while selecting. */
+        fun onRowTap(row: NoteRow, position: Int)
     }
 
     override fun getCount(): Int = window.count
@@ -72,7 +75,7 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
     }
 
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val h = (convertView?.tag as? Holder) ?: Holder(ctx)
+        val h = (convertView?.tag as? Holder) ?: Holder(ctx, eink)
         val page = window.pageFor(position)
         val row = page?.rows?.getOrNull(window.indexIn(position))
         if (page == null || row == null) {
@@ -108,6 +111,10 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
         h.swatchCell.visibility = View.GONE
         h.lookUp.visibility = View.GONE
         h.menu.setOnClickListener { cb.onMenu(row, it) }
+        // The row's own listeners, like the library cards: a paged list (e-ink) consumes its touches for paging and
+        // never runs the ListView's item click; a vertical drag past the slop still becomes the list's (PageDrag).
+        h.body.setOnClickListener { cb.onRowTap(row, position) }
+        h.body.setOnLongClickListener { cb.onMenu(row, it); true }
 
         when (kind) {
             NoteKind.QUOTE, NoteKind.BOOKMARK -> {
@@ -226,7 +233,14 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
     }
 
     /** One row view: day/book header, checkbox column, content, right column (swatch or 다시 찾기, then ⋮). */
-    private class Holder(ctx: Context) {
+    /** A Comet: the row's buttons show no pressed state ([Holder]). */
+    private val eink = DeviceClass.cached(ctx) == true
+
+    /**
+     * One row's views. [eink]: ⋮, 다시 찾기 and the swatch drop the pressed background, as the library's card buttons
+     * do (N §3.3 [Δ]): the menu or the change is the feedback, one e-ink update per tap instead of three.
+     */
+    private class Holder(ctx: Context, eink: Boolean) {
         val root: LinearLayout = ctx.vertical()
         val header: LinearLayout = ctx.horizontal {
             setPadding(ctx.dp(16), 0, ctx.dp(16), 0)
@@ -297,6 +311,11 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
             root.addView(body, lp())
             root.addView(divider, LinearLayout.LayoutParams(MATCH_PARENT, 1).apply { leftMargin = ctx.dp(16) })
             title.isSingleLine = true
+            if (eink) {
+                lookUp.background = null
+                menu.background = null
+                swatchCell.background = null
+            }
             root.tag = this
         }
 

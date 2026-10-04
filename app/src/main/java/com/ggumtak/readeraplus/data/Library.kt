@@ -431,9 +431,16 @@ object Library {
         invalidateCover(bookId)
     }
 
-    fun emptyTrash(deleteFiles: Boolean) {
+    /**
+     * "휴지통 비우기" of the books [ids] that are still in the trash. The ids are the ones the question counted notes
+     * over: a book trashed since (a scan marking a vanished file) stays in the trash, so its notes are never deleted
+     * without the warning (NOTES_SPEC §10.1).
+     */
+    fun emptyTrash(ids: Collection<Long>, deleteFiles: Boolean) {
         val db = db()
+        val wanted = ids.toHashSet()
         val trashed = db.queryList(LibrarySql.SELECT_TRASHED_IDS, null) { it.getLong(0) to (it.getString(1) ?: "") }
+            .filter { it.first in wanted }
         if (trashed.isEmpty()) return
         val removed = ArrayList<Pair<Long, String>>(trashed.size)
         var failed = 0

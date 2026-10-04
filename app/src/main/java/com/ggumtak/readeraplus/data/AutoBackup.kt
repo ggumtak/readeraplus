@@ -68,6 +68,8 @@ object AutoBackup {
     /** [Δ] Header only (read with android.util.JsonReader, `books` skipped); [uri] for MediaStore/SAF sources. */
     class Candidate(val file: File?, val uri: Uri?, val createdAt: Long, val auto: Boolean, val installId8: String?,
                     val summary: Summary)
+    /** A search that ran to the end ([search]): the [candidates] read, and how many listed files were [unreadable]. */
+    class Found(val candidates: List<Candidate>, val unreadable: Int)
 
     private const val TAG = "AutoBackup"
     /** The clock went back more than this since the last check: due again (S §3.2). */
@@ -414,11 +416,10 @@ object AutoBackup {
     @TargetApi(29)
     private fun storeWrite(ctx: Context, name: String, data: BackupData, busy: () -> Boolean) {
         val r = ctx.contentResolver
-        // A second write in the same minute: MediaStore would name the new row "… (1).json", which no rotation or
-        // delete recognises. Replace the earlier row of that name instead.
-        parseAutoName(name)?.first?.let { id8 ->
-            for ((uri, n) in storeRows(ctx, id8)) if (n == name) r.delete(uri, null, null)
-        }
+        // A second write in the same minute replaces the earlier row of that name, but only once the new one is
+        // published (S §3.1: a failed write leaves the good backup in place).
+        val same = parseAutoName(name)?.first?.let { id8 -> storeRows(ctx, id8).filter { it.second == name }.map { it.first } }
+            .orEmpty()
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, JSON_MIME)
@@ -436,6 +437,19 @@ object AutoBackup {
             } catch (_: Throwable) {
             }
             throw t
+        }
+        if (same.isEmpty()) return
+        // MediaStore named the new row "… (1).json" next to the old one, which no rotation or delete recognises:
+        // the old row goes and the new one takes its name.
+        try {
+            for (old in same) r.delete(old, null, null)
+            val shown = r.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            if (shown != null && shown != name) {
+                r.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, name) }, null, null)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "replacing $name failed: $t")
         }
     }
 
@@ -511,55 +525,64 @@ object AutoBackup {
      * As [findCandidates]; [includeOwn] also lists this install's own auto files (BackupPage's "자동 백업에서 복원",
      * S §3.8) — without file access then only those, through MediaStore.
      */
-    fun findCandidates(context: Context, includeOwn: Boolean): List<Candidate> {
+    fun findCandidates(context: Context, includeOwn: Boolean): List<Candidate> = try {
+        search(context, includeOwn).candidates
+    } catch (t: Throwable) {
+        Log.w(TAG, "candidates failed", t)
+        emptyList()
+    }
+
+    /**
+     * As [findCandidates], but a failure (install check, listing) throws and a listed file whose header could not be
+     * read is counted: the restore offer settles only after a search that saw everything it listed (S §3.4).
+     */
+    fun search(context: Context, includeOwn: Boolean): Found {
         val ctx = context.applicationContext ?: context
-        try {
-            InstallState.verify(ctx)
-            val mine = InstallState.id8(ctx)
-            val out = ArrayList<Candidate>()
-            if (canReadFiles(ctx)) {
-                val dir = backupDir()
-                val autoFiles = dir.listFiles()?.filter { it.isFile }.orEmpty()
-                val manualFiles = listOf(Environment.DIRECTORY_DOWNLOADS, Environment.DIRECTORY_DOCUMENTS)
-                    .flatMap { File(primaryRoot(), it).listFiles()?.filter { f -> f.isFile }.orEmpty() }
-                // Keyed by what [listed] returns: the name in the backup folder, the full path of a manual export
-                // (the same name may be in Download/ and Documents/).
-                val byKey = HashMap<String, File>()
-                autoFiles.forEach { byKey[it.name] = it }
-                manualFiles.forEach { byKey[it.absolutePath] = it }
-                val list = listed(autoFiles.map { it.name to it.lastModified() },
-                    manualFiles.map { it.absolutePath to it.lastModified() }, mine, includeOwn)
-                for (l in list) {
-                    if (out.size >= MAX_CANDIDATES) break
-                    val f = byKey[l.name] ?: continue
-                    if (f.length() > Backup.MAX_BYTES) continue
-                    val h = try {
-                        f.inputStream().use(::readHeader)
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "unreadable backup ${f.name}: $t")
-                        continue
-                    }
-                    out += candidate(f, null, l, h)
+        InstallState.verify(ctx)
+        val mine = InstallState.id8(ctx)
+        val out = ArrayList<Candidate>()
+        var unreadable = 0
+        if (canReadFiles(ctx)) {
+            val dir = backupDir()
+            val autoFiles = dir.listFiles()?.filter { it.isFile }.orEmpty()
+            val manualFiles = listOf(Environment.DIRECTORY_DOWNLOADS, Environment.DIRECTORY_DOCUMENTS)
+                .flatMap { File(primaryRoot(), it).listFiles()?.filter { f -> f.isFile }.orEmpty() }
+            // Keyed by what [listed] returns: the name in the backup folder, the full path of a manual export
+            // (the same name may be in Download/ and Documents/).
+            val byKey = HashMap<String, File>()
+            autoFiles.forEach { byKey[it.name] = it }
+            manualFiles.forEach { byKey[it.absolutePath] = it }
+            val list = listed(autoFiles.map { it.name to it.lastModified() },
+                manualFiles.map { it.absolutePath to it.lastModified() }, mine, includeOwn)
+            for (l in list) {
+                if (out.size >= MAX_CANDIDATES) break
+                val f = byKey[l.name] ?: continue
+                if (f.length() > Backup.MAX_BYTES) continue
+                val h = try {
+                    f.inputStream().use(::readHeader)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "unreadable backup ${f.name}: $t")
+                    unreadable++
+                    continue
                 }
-            } else if (includeOwn && Build.VERSION.SDK_INT >= 29) {
-                val rows = storeRows(ctx, mine).associateBy({ it.second }, { it.first })
-                for (l in listed(rows.keys.map { it to 0L }, emptyList(), mine, includeOwn = true)) {
-                    if (out.size >= MAX_CANDIDATES) break
-                    val uri = rows[l.name] ?: continue
-                    val h = try {
-                        (ctx.contentResolver.openInputStream(uri) ?: continue).use(::readHeader)
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "unreadable backup ${l.name}: $t")
-                        continue
-                    }
-                    out += candidate(null, uri, l, h)
-                }
+                out += candidate(f, null, l, h)
             }
-            return out
-        } catch (t: Throwable) {
-            Log.w(TAG, "candidates failed", t)
-            return emptyList()
+        } else if (includeOwn && Build.VERSION.SDK_INT >= 29) {
+            val rows = storeRows(ctx, mine).associateBy({ it.second }, { it.first })
+            for (l in listed(rows.keys.map { it to 0L }, emptyList(), mine, includeOwn = true)) {
+                if (out.size >= MAX_CANDIDATES) break
+                val uri = rows[l.name] ?: continue
+                val h = try {
+                    (ctx.contentResolver.openInputStream(uri) ?: continue).use(::readHeader)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "unreadable backup ${l.name}: $t")
+                    unreadable++
+                    continue
+                }
+                out += candidate(null, uri, l, h)
+            }
         }
+        return Found(out, unreadable)
     }
 
     private fun candidate(file: File?, uri: Uri?, l: Listed, h: BackupHeader): Candidate = Candidate(

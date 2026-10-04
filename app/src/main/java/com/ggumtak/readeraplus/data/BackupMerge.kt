@@ -114,6 +114,8 @@ internal object BackupMerge {
         val byKey = HashMap<String, Entry>()
         val byText = HashMap<String, MutableList<Entry>>()
         val fills = LinkedHashMap<Long, QuoteFill>()
+        // Entries a text-only match already took: each stands for one quote, so it absorbs one incoming quote at most.
+        val consumed = HashSet<Entry>()
         fun index(key: String, e: Entry) {
             byKey.putIfAbsent(key, e)
             byText.getOrPut(e.text) { ArrayList(1) } += e
@@ -123,7 +125,11 @@ internal object BackupMerge {
         }
         for (q in incoming) {
             val key = quoteKey(q.section, q.start, q.end)
-            val e = byKey[key] ?: byText[q.text]?.firstOrNull { it.sig != q.sig }
+            // Same text under another signature: the same quote at other offsets (other TXT options). Both sigs must
+            // be known; a legacy quote (sig '') differs from every real sig and would absorb any quote of that text.
+            val e = byKey[key] ?: byText[q.text]
+                ?.firstOrNull { it.sig.isNotEmpty() && q.sig.isNotEmpty() && it.sig != q.sig && it !in consumed }
+                ?.also { consumed += it }
             if (e == null) {
                 inserts += q
                 index(key, Entry(-1, q.style, q.frac, q.note, q.text, q.sig, inserts.size - 1, null))
