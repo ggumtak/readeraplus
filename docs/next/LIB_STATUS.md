@@ -16,7 +16,7 @@
   썸네일/그리드는 GridView 하나를 함께 쓴다(`LibraryGridMath`: 열, 셀 높이 184/138, 제목 줄 수 고정, 셀 높이 정확).
   보기 전환은 이미 읽은 행을 다시 묶는다. 쿼리 0, 표지 생성 0이고 첫 번째로 보이는 책을 유지한다.
   표지는 모든 보기에서 정규 크기(96×136 dp − 2) 하나만 쓴다. 다중 선택 표시는 2 dp 테두리 + 20 dp 체크 상자다.
-- **목록 넘기기:** `ListPaging.paged(listPaging, DeviceClass.cached)`. 쪽 단위에서는 fast scroller 없음(C2), `InkPagerBar` + `ListPager`, 숫자 패드 "쪽 번호".
+- **목록 넘기기:** `ListPaging.paged(listPaging)` (2026-10-04부터 쪽 단위일 때만; 자동 = e-ink 쪽 단위는 없어짐, PLAN 맨 위 지시). 쪽 단위에서는 fast scroller 없음(C2), `InkPagerBar` + `ListPager`, 숫자 패드 "쪽 번호".
   전체/요약은 측정 기반(잘린 행이 다음 쪽 첫 행), 썸네일/그리드는 높이에 맞춘 고정 행이다.
   쪽이 보인 뒤 다음 쪽 표지를 미리 읽는다(`CoverLoader.prefetch`, 화면 요청 뒤에 대기). 키 넘김도 pager를 쓴다.
 - **polish 14:** 카드 padding (10,10,6,10), 테두리 없음, LINE_LIGHT 1 px 구분선(양쪽 8 dp 안쪽), 눌림은 PRESSED 채움, 표지 1 px 테두리 유지,

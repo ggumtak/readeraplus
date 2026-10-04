@@ -70,6 +70,7 @@ import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.iconButton
+import com.ggumtak.readeraplus.ui.kit.InkEditText
 import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
@@ -94,8 +95,9 @@ import android.provider.Settings as SystemSettings
 /**
  * Library (launcher) screen, ReadEra-style in black & white: toolbar (drawer / shelf title / view toggle / search /
  * overflow), a drawer overlay with every shelf plus 독서 노트 · 단어장, four views (전체 cards, 요약 rows, 썸네일 and
- * 그리드 covers in one GridView), paging on e-ink (ListPager + pager bar, no fast scroller) or scrolling, grouped
- * shelves, search-as-you-type, sort, book menu actions, multi-select with batch actions (T1-13), collections, trash,
+ * 그리드 covers in one GridView), scrolling (the default, every device) or paged with 목록 넘기기 = 쪽 단위 (ListPager
+ * + pager bar, no fast scroller), grouped shelves, search-as-you-type, sort, book menu actions, multi-select with batch
+ * actions (T1-13), collections, trash,
  * storage permission flow, background scanning with a status row, SAF open/import, open-last-on-start, the idle auto
  * backup and the fresh-install restore offer.
  *
@@ -696,7 +698,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         searchRow = vertical { visibility = View.GONE }
         val row = horizontal { setPadding(dp(12), 0, dp(4), 0); minimumHeight = dp(52) }
         row.addView(icon(R.drawable.ic_search, 22, Ink.GRAY))
-        searchEdit = EditText(this).apply {
+        searchEdit = InkEditText(this).apply {
             hint = "제목, 작가, 파일 이름"
             setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT

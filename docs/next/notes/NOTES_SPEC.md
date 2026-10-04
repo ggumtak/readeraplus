@@ -1,5 +1,8 @@
 # NOTES_SPEC: 독서 노트 · 단어장 · 인용문 색 · 서재 보기 · 페이지 썸네일 · 서재 ⋮ 오작동 (task #19, contract R3)
 
+> **2026-10-04 사용자 지시로 대체:** 목록 넘기기의 "자동 = e-ink 쪽 단위"는 없어졌다. 서재와 독서 노트는 기본으로 모든 기기에서
+> 스크롤하고 "쪽 단위 (한 화면씩)"를 고를 때만 쪽 단위다 (`ListPaging.paged(setting)`, PLAN 맨 위 지시). 아래의 e-ink 기본 쪽 단위 서술은 그 전 설계다.
+
 Status: the buildable spec for task #19. It was written read-only against the working tree of 2026-09-30 (R2
 uncommitted, `LibrarySchema.DB_VERSION = 2` in the tree). Paths are relative to
 `app/src/main/java/com/ggumtak/readeraplus/`; tests live under `app/src/test/java/…/<same path>`.

@@ -39,6 +39,7 @@ import com.ggumtak.readeraplus.ui.kit.frameLp
 import com.ggumtak.readeraplus.ui.kit.fullScreenDialog
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
+import com.ggumtak.readeraplus.ui.kit.InkEditText
 import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.inkPagerKeys
 import com.ggumtak.readeraplus.ui.kit.inkPaging
@@ -183,7 +184,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         val root = ctx.vertical { setBackgroundColor(Ink.WHITE) }
         val bar = ctx.horizontal { minimumHeight = ctx.dp(56); setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
         bar.addView(ctx.flatIcon(R.drawable.ic_arrow_back, "뒤로") { dialog.dismiss() })
-        edit = EditText(ctx).apply {
+        edit = InkEditText(ctx).apply {
             hint = "책에서 검색"
             setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT

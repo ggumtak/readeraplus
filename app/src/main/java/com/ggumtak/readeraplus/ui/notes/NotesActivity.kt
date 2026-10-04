@@ -58,6 +58,7 @@ import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.iconButton
+import com.ggumtak.readeraplus.ui.kit.InkEditText
 import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.keepAll
 import com.ggumtak.readeraplus.ui.kit.label
@@ -326,18 +327,30 @@ class NotesActivity : Activity() {
         @Suppress("DEPRECATION") super.onBackPressed()
     }
 
-    /** Page keys / volume keys page the list (paged mode), as in the library. */
+    /**
+     * Page keys / volume keys move the list a screen at a time, as in the library: a page of the pager (쪽 단위), else
+     * one screen of the scrolling list at once (a running fling stops first).
+     */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (paged && ::list.isInitialized) {
+        if (::list.isInitialized) {
             val code = event.keyCode
             val dir = LibraryText.pageDirection(code, Settings.app)
             val isVolume = code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN
             if (dir != 0 && (!searchEdit.isFocused || isVolume)) {
-                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) pager.page(dir)
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    if (paged) pager.page(dir) else scrollScreen(dir)
+                }
                 return true
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    private fun scrollScreen(dir: Int) {
+        if (list.visibility != View.VISIBLE || list.childCount == 0) return
+        val h = list.height - list.paddingTop - list.paddingBottom
+        list.smoothScrollBy(0, 0)
+        list.scrollListBy(dir * (h - dp(24)).coerceAtLeast(dp(48)))
     }
 
     private fun releaseDrawHold() {
@@ -463,7 +476,7 @@ class NotesActivity : Activity() {
 
     private fun buildSearchRow(): LinearLayout {
         val row = horizontal { minimumHeight = dp(52); setPadding(dp(16), 0, dp(4), 0) }
-        searchEdit = EditText(this).apply {
+        searchEdit = InkEditText(this).apply {
             setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 17f)
             hint = "인용문·메모·단어·책 제목 검색"
             setSingleLine(true)

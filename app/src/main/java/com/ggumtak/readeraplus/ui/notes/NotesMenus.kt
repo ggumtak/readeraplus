@@ -9,7 +9,6 @@ import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.BaseAdapter
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -46,6 +45,7 @@ import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.fullScreenDialog
 import com.ggumtak.readeraplus.ui.kit.horizontal
+import com.ggumtak.readeraplus.ui.kit.InkEditText
 import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
@@ -346,7 +346,7 @@ internal class NotesMenus(private val a: NotesActivity) {
         }
     }
 
-    /** 책 선택: a full-screen paged list of the books with notes under the tab, filtered by title. */
+    /** 책 선택: a full-screen list (paged with 쪽 단위) of the books with notes under the tab, filtered by title. */
     fun bookChooser() {
         val q0 = a.q.copy(bookId = null)
         a.scope.launch {
@@ -360,7 +360,7 @@ internal class NotesMenus(private val a: NotesActivity) {
         val root = a.vertical { setBackgroundColor(Ink.WHITE) }
         var dialog: android.app.Dialog? = null
         root.addView(a.toolbar("책 선택", R.drawable.ic_arrow_back, onNav = { dialog?.dismiss() }), lp())
-        val filter = EditText(a).apply {
+        val filter = InkEditText(a).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             hint = "책 제목"
             setSingleLine(true)

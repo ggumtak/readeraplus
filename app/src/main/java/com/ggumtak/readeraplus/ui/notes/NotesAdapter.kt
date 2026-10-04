@@ -113,7 +113,7 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
         h.swatchCell.visibility = View.GONE
         h.lookUp.visibility = View.GONE
         h.menu.setOnClickListener { cb.onMenu(row, it) }
-        // The row's own listeners, like the library cards: a paged list (e-ink) consumes its touches for paging and
+        // The row's own listeners, like the library cards: a paged list (쪽 단위) consumes its touches for paging and
         // never runs the ListView's item click; a drag past the slop still becomes the list's (PageDrag). Only the
         // item view takes them: the body and a day header take no touch, so a tap anywhere on the row is the root's
         // (CI 34: a tap on the first row's "오늘" header did nothing), one accessibility node per row, and the
