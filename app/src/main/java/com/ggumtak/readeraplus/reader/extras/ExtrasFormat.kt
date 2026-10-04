@@ -475,8 +475,20 @@ internal object StyleChoice {
     /** Label of the saved-styles button when no saved style matches. */
     const val USER_LABEL = "내 스타일"
 
-    /** The first preset whose typography and page colours equal [s] exactly, or null ("직접 설정"). */
+    /** The first preset whose typography and page colours equal [s] exactly, or null ("기본" or "직접 설정"). */
     fun selected(s: ReaderSettings): StylePreset? = StylePreset.entries.firstOrNull { it.matches(s) }
+
+    /**
+     * True when [s] has the defaults' typography and page colours (the fields a preset sets): "기본". The defaults
+     * match no preset since 웹소설 became the 마루뷰어 page (2026-10-04); untouched settings are not "직접 설정".
+     */
+    fun isDefault(s: ReaderSettings): Boolean {
+        val d = ReaderSettings()
+        return s.fontId == d.fontId && s.fontWeight == d.fontWeight && s.lineHeightPct == d.lineHeightPct &&
+            s.paragraphSpacingPct == d.paragraphSpacingPct && s.indentPct == d.indentPct &&
+            s.letterSpacingPm == d.letterSpacingPm && s.align == d.align && s.lineBreak == d.lineBreak &&
+            s.pageTheme == d.pageTheme
+    }
 
     /** The first saved style [s] looks exactly like, or null. */
     fun selectedUser(s: ReaderSettings, styles: List<UserStyle>): UserStyle? = styles.firstOrNull { it.matches(s) }

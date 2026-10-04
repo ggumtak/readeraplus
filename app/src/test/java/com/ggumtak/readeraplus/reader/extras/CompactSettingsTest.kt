@@ -80,8 +80,9 @@ class CompactSettingsTest {
     @Test
     fun defaultsKeepTheEarlierWebNovelTypographyOnWhite() {
         val d = ReaderSettings()
-        // 웹소설 became the MaruViewer page (2026-10-04); the defaults stayed e-ink first: no preset ("직접 설정").
+        // 웹소설 became the MaruViewer page (2026-10-04); the defaults stayed e-ink first: no preset, the row says "기본".
         assertNull(StyleChoice.selected(d))
+        assertTrue(StyleChoice.isDefault(d))
         assertEquals(PageTheme.PAPER, d.pageTheme)
         assertEquals("nanummyeongjo", d.fontId)
         assertEquals(500, d.fontWeight)
@@ -118,6 +119,30 @@ class CompactSettingsTest {
         assertEquals(PageTheme.PAPER, StylePreset.RIDI.applyTo(m).pageTheme)
         assertEquals(PageTheme.PAPER, StylePreset.BOOK.applyTo(m).pageTheme)
         assertEquals(StylePreset.RIDI.applyTo(d), StylePreset.RIDI.applyTo(m))
+    }
+
+    @Test
+    fun defaultLookIsTheDefaultsTypographyAndPageColours() {
+        val d = ReaderSettings()
+        // What a style leaves alone keeps "기본": font size, margins, status bar, 흑백 반전, TXT options.
+        val untouched = d.copy(fontSizeSp = 24f, marginLeftDp = 12, footerLeft = StatusItem.NONE, invert = true, txtStripIndent = !d.txtStripIndent)
+        assertTrue(StyleChoice.isDefault(untouched))
+        // Any field a preset sets leaves it ("직접 설정"), and so does every preset.
+        val tweaks = listOf(
+            d.copy(fontId = "ridibatang"), d.copy(fontWeight = 400), d.copy(lineHeightPct = 170), d.copy(paragraphSpacingPct = 200),
+            d.copy(indentPct = 100), d.copy(letterSpacingPm = 10), d.copy(align = Align.JUSTIFY), d.copy(lineBreak = LineBreakMode.CHAR),
+            d.copy(pageTheme = PageTheme.MARU),
+        )
+        for (t in tweaks) assertFalse(t.toString(), StyleChoice.isDefault(t))
+        for (p in StylePreset.entries) assertFalse(p.name, StyleChoice.isDefault(p.applyTo(d)))
+        // A preset applied and the fields put back is "기본" again: the check covers exactly what a preset sets.
+        for (p in StylePreset.entries) {
+            val s = p.applyTo(d)
+            assertTrue(p.name, StyleChoice.isDefault(s.copy(
+                fontId = d.fontId, fontWeight = d.fontWeight, lineHeightPct = d.lineHeightPct, paragraphSpacingPct = d.paragraphSpacingPct,
+                indentPct = d.indentPct, letterSpacingPm = d.letterSpacingPm, align = d.align, lineBreak = d.lineBreak, pageTheme = d.pageTheme,
+            )))
+        }
     }
 
     @Test

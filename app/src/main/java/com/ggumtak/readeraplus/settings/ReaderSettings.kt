@@ -98,7 +98,7 @@ data class ReaderSettings(
  * [MARU] (웹소설) is MaruViewer's page as measured on the user's screenshot (2026-10-04): 나눔명조 Regular, a 2 em
  * line pitch, one empty line between paragraphs, ragged right, no indent, on the [PageTheme.MARU] colours. The
  * defaults of [ReaderSettings] keep the earlier 웹소설 typography (weight 500, a 1 em paragraph gap) on white, so they
- * match no preset ("직접 설정").
+ * match no preset: the 스타일 row calls them "기본" (`StyleChoice.isDefault`).
  */
 enum class StylePreset(val label: String, val description: String) {
     MARU("웹소설", "마루뷰어 · 나눔명조 · 어두운 회색 바탕 · 그림자 · 넓은 줄/문단 간격 · 왼쪽 정렬"),
@@ -245,7 +245,10 @@ data class AppSettings(
     val einkRefreshMethod: Int = EINK_REFRESH_AUTO,
     /** How long the black frame of [EINK_REFRESH_FLASH] (and of the fallback) stays up: 100 / 200 / 350 ms. */
     val einkFlashMs: Int = 100,
-    /** Refresh cadence while the page is inverted (밤 모드): -1 = same as [einkRefreshEvery], else every N turns. */
+    /**
+     * Refresh cadence while the page is dark (흑백 반전, or the 마루뷰어 화면 색: `PagePalette.dark`): -1 = same as
+     * [einkRefreshEvery], else every N turns.
+     */
     val einkRefreshEveryNight: Int = -1,
     /** Refresh on turns to / from pages with pictures (≥ 7.5% of the page). Off by default: app flashes are opt-in. */
     val einkFlashImages: Boolean = false,

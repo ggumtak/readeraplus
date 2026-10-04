@@ -49,6 +49,8 @@ class EinkChoicesTest {
         assertTrue(AppSettings().einkFlashMs in EinkChoices.FLASH_MS)
         assertEquals(listOf("낮과 같게", "3쪽마다", "5쪽마다", "10쪽마다", "20쪽마다"), EinkChoices.NIGHT.map { EinkChoices.night(it) })
         assertEquals(AppSettings().einkRefreshEveryNight, EinkChoices.NIGHT[0])
+        // The cadence covers every dark page (PagePalette.dark), so the row names the 마루뷰어 화면 색 too.
+        assertEquals("어두운 화면(흑백 반전 · 마루뷰어)에서", EinkChoices.NIGHT_TITLE)
     }
 
     @Test

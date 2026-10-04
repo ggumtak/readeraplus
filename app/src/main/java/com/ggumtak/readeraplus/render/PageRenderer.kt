@@ -20,6 +20,8 @@ import com.ggumtak.readeraplus.engine.LineGeometry
 import com.ggumtak.readeraplus.engine.LineInfo
 import com.ggumtak.readeraplus.engine.RunStyle
 import com.ggumtak.readeraplus.engine.SectionLayout
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -45,8 +47,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val palette = PagePalette.of(settings)
     private val fg = palette.text
     private val bg = palette.background
-    /** Text shadow in px (radius 0 = none; Paint.setShadowLayer would drop a zero radius anyway). */
-    private val shadowRadius = if (palette.hasShadow) palette.shadowRadiusDp * density else 0f
+    /** Text shadow in px (radius 0 = none); the radius is Paint.setShadowLayer's, not the blur ([PagePalette.radiusForSigma]). */
+    private val shadowRadius = palette.shadowRadiusPx(density)
     private val shadowDx = palette.shadowDxDp * density
     private val shadowDy = palette.shadowDyDp * density
     private val onePx = 1f
@@ -131,6 +133,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private var prefetchedPage = -1
     /** Failed image lines are remembered without constructing cache-key Strings on scroll frames. */
     private val failedImages = ConcurrentHashMap.newKeySet<LineInfo>()
+    /** The measurer's paints that carry the text shadow (set once per paint, see [shadow]). */
+    private val shadowed: MutableSet<TextPaint> = Collections.newSetFromMap(IdentityHashMap<TextPaint, Boolean>())
 
     init {
         val fm = statusPaint.fontMetrics
@@ -594,8 +598,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     ) {
         val paint = measurer.paintFor(style)
         paint.color = fg
-        // The measurer's paints belong to this renderer: only a palette with a shadow ever sets one.
-        if (shadowRadius > 0f) paint.setShadowLayer(shadowRadius, shadowDx, shadowDy, palette.shadowColor)
+        if (shadowRadius > 0f) shadow(paint)
         val shift = when {
             style.baselineShift > 0 -> -0.35f * em
             style.baselineShift < 0 -> 0.2f * em
@@ -626,6 +629,19 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
                 val sy = Math.round(y - size * 0.32f).toFloat()
                 canvas.drawRect(x0, sy, x1, sy + thick, line)
             }
+        }
+    }
+
+    /**
+     * Gives [paint] the palette's text shadow once: setShadowLayer is a JNI call that builds a new native blur every
+     * time. The measurer's paints belong to this renderer, so only a palette with a shadow ever sets one. Small
+     * thumbnails ([thumbnail]) go without it: under a pixel at their scale, it would only cost a blurred pass per glyph.
+     */
+    private fun shadow(paint: TextPaint) {
+        if (!thumbnail) {
+            if (shadowed.add(paint)) paint.setShadowLayer(shadowRadius, shadowDx, shadowDy, palette.shadowColor)
+        } else if (shadowed.remove(paint)) {
+            paint.clearShadowLayer()
         }
     }
 

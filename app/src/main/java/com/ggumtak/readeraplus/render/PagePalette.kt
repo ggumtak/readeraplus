@@ -14,17 +14,24 @@ internal class PagePalette private constructor(
     val text: Int,
     /** Status lines: their texts, the battery icon and the progress line. */
     val status: Int,
-    /** Text shadow toward the lower right, in dp; a [shadowRadiusDp] of 0 is no shadow. */
+    /** Text shadow toward the lower right, in dp; a [shadowSigmaDp] of 0 is no shadow. */
     val shadowDxDp: Float,
     val shadowDyDp: Float,
-    val shadowRadiusDp: Float,
+    /**
+     * The shadow's blur as the Gaussian's standard deviation in dp (half a CSS blur radius): what a screenshot
+     * measures. It is not Paint.setShadowLayer's radius; [shadowRadiusPx] converts.
+     */
+    val shadowSigmaDp: Float,
     val shadowColor: Int,
     /** A dark page: night quote fills, the e-ink night cadence (AppSettings.einkRefreshEveryNight). */
     val dark: Boolean,
     /** Pictures are drawn through the night filter (inverted), so no white box glares on the black page. */
     val invertImages: Boolean,
 ) {
-    val hasShadow: Boolean get() = shadowRadiusDp > 0f && (shadowColor ushr 24) != 0
+    val hasShadow: Boolean get() = shadowSigmaDp > 0f && (shadowColor ushr 24) != 0
+
+    /** Paint.setShadowLayer's radius in px for this page's blur at [density]; 0 (no shadow) without one. */
+    fun shadowRadiusPx(density: Float): Float = if (hasShadow) radiusForSigma(shadowSigmaDp * density) else 0f
 
     /**
      * Grey [v] of the white page (0 = black … 255 = white: selection, search and TTS fills, the ink quote greys) on
@@ -48,26 +55,44 @@ internal class PagePalette private constructor(
         /** Black on white (the default). */
         val PAPER = PagePalette(
             background = 0xFFFFFFFF.toInt(), text = OPAQUE, status = OPAQUE,
-            shadowDxDp = 0f, shadowDyDp = 0f, shadowRadiusDp = 0f, shadowColor = 0, dark = false, invertImages = false,
+            shadowDxDp = 0f, shadowDyDp = 0f, shadowSigmaDp = 0f, shadowColor = 0, dark = false, invertImages = false,
         )
 
         /** 흑백 반전: white on black, pictures inverted, no shadow (whatever the theme). */
         val NIGHT = PagePalette(
             background = OPAQUE, text = 0xFFFFFFFF.toInt(), status = 0xFFFFFFFF.toInt(),
-            shadowDxDp = 0f, shadowDyDp = 0f, shadowRadiusDp = 0f, shadowColor = 0, dark = true, invertImages = true,
+            shadowDxDp = 0f, shadowDyDp = 0f, shadowSigmaDp = 0f, shadowColor = 0, dark = true, invertImages = true,
         )
 
         /**
          * MaruViewer's page, measured on the user's 1080 px phone screenshot (2026-10-04): a flat #323232, neutral
-         * #DDDDDD text with a nearly black shadow ≈ 3 px right and 1.5–2 px down that falls off within ≈ 1.5 px
-         * (≈ 2.6–3 px per dp), the status line in light gold. Pictures keep their colours (a colour theme, not a
-         * night mode).
+         * #DDDDDD text, the status line in light gold. The text shadow is a fit of a shifted, Gaussian-blurred copy
+         * of the glyphs to five text blocks (residual ≈ 1 grey level): ≈ 2.2 px right, ≈ 1.1 px down, sigma ≈ 1.25 px,
+         * black at ≈ 88 %; at ≈ 2.6–3 px per dp that is 0.8 / 0.4 / 0.45 dp. Pictures keep their colours (a colour
+         * theme, not a night mode); a transparent one shows the page through it.
          */
         val MARU = PagePalette(
             background = 0xFF323232.toInt(), text = 0xFFDDDDDD.toInt(), status = 0xFFF0D096.toInt(),
-            shadowDxDp = 1.0f, shadowDyDp = 0.6f, shadowRadiusDp = 0.6f, shadowColor = 0xD9000000.toInt(),
+            shadowDxDp = 0.8f, shadowDyDp = 0.4f, shadowSigmaDp = 0.45f, shadowColor = 0xE0000000.toInt(),
             dark = true, invertImages = false,
         )
+
+        /** Android blurs a shadow by sigma = [SIGMA_PER_RADIUS] · radius + [MIN_SIGMA_PX] px. */
+        private const val SIGMA_PER_RADIUS = 0.57735f
+        private const val MIN_SIGMA_PX = 0.5f
+
+        /**
+         * The Paint.setShadowLayer radius (px) that blurs by [sigmaPx]. The radius is not the blur's reach: Android
+         * (HWUI's Blur::convertRadiusToSigma, on hardware and bitmap canvases alike) draws a Gaussian of
+         * sigma = 0.57735 · radius + 0.5 px, so 0.5 px is the sharpest shadow it draws and a radius of 0 draws none.
+         */
+        fun radiusForSigma(sigmaPx: Float): Float = maxOf(0.01f, (sigmaPx - MIN_SIGMA_PX) / SIGMA_PER_RADIUS)
+
+        /**
+         * True when [a] and [b] differ at most in a 화면 색 that 흑백 반전 hides: both draw the same page, so the
+         * change needs no repaint (no thumbnail redraw, no e-ink update).
+         */
+        fun drawSame(a: ReaderSettings, b: ReaderSettings): Boolean = of(a) === of(b) && a.copy(pageTheme = b.pageTheme) == b
 
         fun of(s: ReaderSettings): PagePalette = of(s.pageTheme, s.invert)
 

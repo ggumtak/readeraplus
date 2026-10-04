@@ -597,7 +597,13 @@ object EinkChoices {
 
     fun flash(ms: Int): String = "${ms}ms" + if (ms == AppSettings().einkFlashMs) " (기본)" else ""
 
-    /** "밤 모드(반전)에서" ([AppSettings.einkRefreshEveryNight]): -1 = same as by day. */
+    /**
+     * The cadence row of a dark page ([AppSettings.einkRefreshEveryNight]): 흑백 반전, and the 마루뷰어 화면 색 since
+     * 2026-10-04 (`PagePalette.dark`); it was "밤 모드(반전)에서".
+     */
+    const val NIGHT_TITLE = "어두운 화면(흑백 반전 · 마루뷰어)에서"
+
+    /** [NIGHT_TITLE]'s choices: -1 = same as by day. */
     val NIGHT: List<Int> = listOf(-1, 3, 5, 10, 20)
 
     fun night(value: Int): String = if (value < 0) "낮과 같게" else SettingsFormat.refreshEvery(value)

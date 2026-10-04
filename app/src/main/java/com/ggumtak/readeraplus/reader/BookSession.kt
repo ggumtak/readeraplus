@@ -26,6 +26,7 @@ import com.ggumtak.readeraplus.render.FontCatalog
 import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.render.FontSource
 import com.ggumtak.readeraplus.render.ImageCache
+import com.ggumtak.readeraplus.render.PagePalette
 import com.ggumtak.readeraplus.render.PageRenderer
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import kotlinx.coroutines.CancellationException
@@ -198,14 +199,18 @@ class BookSession(
         return true
     }
 
-    /** Applies new settings: RELAYOUT when layout-affecting fields changed, REPAINT for colours/footer only. */
+    /**
+     * Applies new settings: RELAYOUT when layout-affecting fields changed, REPAINT for colours/footer only, NONE when
+     * the page looks the same (also a 화면 색 that 흑백 반전 hides: [PagePalette.drawSame]).
+     */
     fun updateSettings(new: ReaderSettings, anchor: AnchorSpec? = null): Change {
         if (new == settings) return Change.NONE
         // Only what can change this book's pages counts: the other format's options and weight steps that keep the
         // same font file (only the synthetic stroke changes) are a repaint.
         val relayout = LayoutKeys.layoutChanged(forLayout(settings), forLayout(new), document.format)
+        val same = PagePalette.drawSame(settings, new)
         settings = new
-        if (!relayout) return Change.REPAINT
+        if (!relayout) return if (same) Change.NONE else Change.REPAINT
         rebuild(anchor)
         return Change.RELAYOUT
     }

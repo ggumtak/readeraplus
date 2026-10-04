@@ -3,7 +3,6 @@ package com.ggumtak.readeraplus.render
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.util.Log
@@ -17,6 +16,8 @@ import com.ggumtak.readeraplus.format.BookDocument
  * [size] (called by the typesetter on its background thread) also keeps the compressed bytes in a small LRU,
  * so a later [get] from the drawing thread usually only decodes and never touches the book file.
  * Bitmaps are never recycled on eviction: a page being drawn may still hold one (GC frees them).
+ * Opaque pictures are kept as RGB_565 (half the memory); transparent ones keep their alpha, so the page's own colour
+ * shows through them (white, the 마루뷰어 grey, black under the night filter) and one bitmap suits every palette.
  */
 class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 * 1024) {
 
@@ -135,15 +136,13 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
         val d = BitmapFactory.Options()
         d.inSampleSize = ImageMath.sampleSize(iw, ih, tw, th)
         // Honoured only for opaque images (JPEG, opaque PNG/WebP/GIF): the decoder itself falls back to
-        // ARGB_8888 when the image has an alpha channel, which is then composited onto white below.
+        // ARGB_8888 when the image has an alpha channel, which is kept (no matte: the renderer draws it over the page).
         d.inPreferredConfig = Bitmap.Config.RGB_565
         val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, d) ?: return null
-        val alpha = decoded.hasAlpha()
-        if (!alpha && decoded.width == tw && decoded.height == th) return decoded
-        // Scale to the target and/or composite transparency onto white in one pass (RGB_565: half the memory).
-        val out = Bitmap.createBitmap(tw, th, Bitmap.Config.RGB_565)
+        if (decoded.width == tw && decoded.height == th) return decoded
+        // Scale to the target in one pass (an empty ARGB_8888 bitmap is transparent).
+        val out = Bitmap.createBitmap(tw, th, if (decoded.hasAlpha()) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565)
         val c = Canvas(out)
-        if (alpha) c.drawColor(Color.WHITE)
         c.drawBitmap(decoded, null, Rect(0, 0, tw, th), Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG))
         decoded.recycle()
         return out

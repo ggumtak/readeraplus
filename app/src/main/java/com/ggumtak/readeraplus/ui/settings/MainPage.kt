@@ -124,7 +124,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         }.also(body::addView)
         addBrightness(body, app)
         addHighlightLook(body, app)
-        body.addView(ctx.toggleRow("터치로 흑백 반전", "좌측 상단을 터치해 흰 바탕 ↔ 검은 바탕 전환", app.invertByTouch) { v ->
+        body.addView(ctx.toggleRow("터치로 흑백 반전", "좌측 상단을 터치해 화면 색 ↔ 검은 바탕 전환", app.invertByTouch) { v ->
             editApp { it.copy(invertByTouch = v) }
         })
         body.addView(ctx.toggleRow("터치로 북마크", "우측 상단을 터치해 북마크 추가 / 삭제", app.bookmarkByTouch) { v ->

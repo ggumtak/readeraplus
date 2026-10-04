@@ -202,7 +202,8 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
 
     // ---------------------------------------------------------------- 스타일 · 내 스타일 (T1-8)
 
-    private fun styleLabel(r: ReaderSettings): String = StyleChoice.selected(r)?.label ?: CUSTOM_STYLE
+    private fun styleLabel(r: ReaderSettings): String =
+        StyleChoice.selected(r)?.label ?: if (StyleChoice.isDefault(r)) DEFAULT_STYLE else CUSTOM_STYLE
 
     private fun userLabel(r: ReaderSettings): String {
         val list = Settings.userStyles
@@ -336,8 +337,10 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     companion object {
         const val SCOPE_NOTE = "여기의 설정은 모든 책에 적용됩니다. TXT 정리 설정만 책마다 따로 정할 수 있습니다. 읽던 책으로 돌아가면 바뀐 설정으로 한 번 다시 배치합니다."
         const val CUSTOM_STYLE = "직접 설정"
-        const val RESET_SUMMARY = "이 페이지의 화면 색 · 글자 · 문단 · 페이지 설정 (TXT 정리 · 흑백 반전 · 상태 표시는 그대로)"
-        const val RESET_MESSAGE = "이 페이지의 스타일 · 글자 · 문단 · 페이지 · EPUB 설정을 기본값으로 되돌릴까요? " +
+        /** The 스타일 row for the defaults' own look, which no preset matches since 웹소설 became the 마루뷰어 page. */
+        const val DEFAULT_STYLE = "기본"
+        const val RESET_SUMMARY = "이 페이지의 화면 색 · 글자 · 문단 · 페이지 · EPUB 설정 (TXT 정리 · 흑백 반전 · 상태 표시는 그대로)"
+        const val RESET_MESSAGE = "이 페이지의 화면 색 · 글자 · 문단 · 페이지 · EPUB 설정을 기본값으로 되돌릴까요? " +
             "TXT 정리 설정, 흑백 반전과 상태 표시(넘김·화면 설정)는 그대로입니다."
         private val ALIGNS = listOf(Align.LEFT, Align.JUSTIFY)
         private val BREAKS = listOf(LineBreakMode.WORD, LineBreakMode.CHAR)

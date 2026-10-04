@@ -333,9 +333,9 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
             updateCleanWarning()
         })
         var nightRow: View? = null
-        nightRow = ctx.valueRow("밤 모드(반전)에서", EinkChoices.night(app.einkRefreshEveryNight)) {
+        nightRow = ctx.valueRow(EinkChoices.NIGHT_TITLE, EinkChoices.night(app.einkRefreshEveryNight)) {
             val opts = EinkChoices.NIGHT
-            ctx.chooser("밤 모드(반전)에서", opts.map { EinkChoices.night(it) }, opts.indexOf(Settings.app.einkRefreshEveryNight)) { i ->
+            ctx.chooser(EinkChoices.NIGHT_TITLE, opts.map { EinkChoices.night(it) }, opts.indexOf(Settings.app.einkRefreshEveryNight)) { i ->
                 editApp { it.copy(einkRefreshEveryNight = opts[i]) }
                 nightRow?.setSummary(EinkChoices.night(opts[i]))
                 updateCleanWarning()

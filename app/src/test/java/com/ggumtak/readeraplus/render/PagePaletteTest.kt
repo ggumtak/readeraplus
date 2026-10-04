@@ -56,17 +56,46 @@ class PagePaletteTest {
         assertEquals(0xFF323232.toInt(), m.background)
         assertEquals(0xFFDDDDDD.toInt(), m.text)
         assertEquals(0xFFF0D096.toInt(), m.status)
-        // A short, nearly black shadow toward the lower right (≈ 3 px right, 1.5–2 px down at ≈ 2.75 px per dp).
+        // A short, nearly black shadow toward the lower right, fitted to the screenshot: ≈ 2.2 px right, 1.1 px down,
+        // sigma ≈ 1.25 px, 88 % black (at ≈ 2.75 px per dp).
         assertTrue(m.hasShadow)
-        assertEquals(1.0f, m.shadowDxDp, 0f)
-        assertEquals(0.6f, m.shadowDyDp, 0f)
-        assertEquals(0.6f, m.shadowRadiusDp, 0f)
-        assertEquals(0xD9000000.toInt(), m.shadowColor)
+        assertEquals(0.8f, m.shadowDxDp, 0f)
+        assertEquals(0.4f, m.shadowDyDp, 0f)
+        assertEquals(0.45f, m.shadowSigmaDp, 0f)
+        assertEquals(0xE0000000.toInt(), m.shadowColor)
         // A dark page (night quote fills, the night e-ink cadence) whose pictures keep their colours.
         assertTrue(m.dark)
         assertFalse(m.invertImages)
         // ≈ 9.4 : 1, like the screenshot.
         assertEquals(9.4, contrast(m.text, m.background), 0.1)
+    }
+
+    @Test
+    fun shadowRadiusIsAndroidsForTheMeasuredBlur() {
+        // Android blurs by sigma = 0.57735 · radius + 0.5 px: the radius is what gives the measured sigma back.
+        for (sigma in listOf(0.6f, 1.0f, 1.24f, 2f, 5f)) {
+            assertEquals("sigma $sigma", sigma, 0.57735f * PagePalette.radiusForSigma(sigma) + 0.5f, 1e-4f)
+        }
+        // 0.5 px is the sharpest Android draws; a radius of 0 would draw no shadow at all.
+        assertEquals(0.01f, PagePalette.radiusForSigma(0.5f), 0f)
+        assertEquals(0.01f, PagePalette.radiusForSigma(0.2f), 0f)
+        // On a 2.75 density phone the 마루뷰어 blur (sigma 1.24 px) is a radius of ≈ 1.28 px, not the sigma itself.
+        val m = PagePalette.MARU
+        assertEquals(1.28f, m.shadowRadiusPx(2.75f), 0.01f)
+        assertTrue(m.shadowRadiusPx(1f) > 0f)
+        assertEquals(0f, PagePalette.PAPER.shadowRadiusPx(2.75f), 0f)
+        assertEquals(0f, PagePalette.NIGHT.shadowRadiusPx(2.75f), 0f)
+    }
+
+    @Test
+    fun aThemeThatInvertHidesDrawsTheSamePage() {
+        val night = ReaderSettings(invert = true)
+        assertTrue(PagePalette.drawSame(night, night.copy(pageTheme = PageTheme.MARU)))
+        assertTrue(PagePalette.drawSame(night.copy(pageTheme = PageTheme.MARU), night))
+        // Without 흑백 반전 the theme is seen; anything else changed is a repaint too.
+        assertFalse(PagePalette.drawSame(ReaderSettings(), ReaderSettings(pageTheme = PageTheme.MARU)))
+        assertFalse(PagePalette.drawSame(night, night.copy(pageTheme = PageTheme.MARU, fontWeight = 600)))
+        assertFalse(PagePalette.drawSame(night, ReaderSettings()))
     }
 
     @Test

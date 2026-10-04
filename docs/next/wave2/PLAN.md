@@ -267,7 +267,7 @@ lives in 설정 now; nothing was dropped.
 | Section | Rows in order |
 |---|---|
 | (note) | 여기의 설정은 모든 책에 적용 … 읽던 책으로 돌아가면 바뀐 설정으로 한 번 다시 배치합니다. |
-| 스타일 | 스타일 (preset chooser, "직접 설정" when none matches; 웹소설 = the 마루뷰어 page incl. its colours, 2026-10-04) · 내 스타일 (saved styles, 새 스타일로 저장…, 관리…; a style carries its 화면 색) · **화면 색** (흰 바탕 (기본) / 마루뷰어 — 어두운 회색 바탕 · 밝은 글자 · 그림자; a repaint, no re-layout) · note (흑백 반전 on 넘김·화면 설정 wins while on) |
+| 스타일 | 스타일 (preset chooser, "기본" for the defaults' look, "직접 설정" when nothing matches; 웹소설 = the 마루뷰어 page incl. its colours, 2026-10-04) · 내 스타일 (saved styles, 새 스타일로 저장…, 관리…; a style carries its 화면 색) · **화면 색** (흰 바탕 (기본) / 마루뷰어 — 어두운 회색 바탕 · 밝은 글자 · 그림자; a repaint, no re-layout) · note (흑백 반전 on 넘김·화면 설정 wins while on) |
 | 글자 | 글꼴 · 글자 크기 · 굵기 · 글자 간격 |
 | 문단 | 줄 간격 · 문단 간격 · 들여쓰기 · 정렬 · 줄바꿈 |
 | 페이지 | **좌우 여백** · **상하 여백** · note (as before) · 페이지 여백 (hides the steppers when off) · **페이지 나눔** · 외톨이 줄 방지 |
