@@ -146,6 +146,25 @@ class CompactSettingsTest {
     }
 
     @Test
+    fun defaultChoiceUndoesAnyPreset() {
+        val d = ReaderSettings()
+        assertTrue(StyleChoice.DEFAULT_CHOICE.startsWith("기본 ("))
+        for (p in StylePreset.entries) {
+            // A preset with the user's own size, margins, 흑백 반전 and TXT options …
+            val s = p.applyTo(d.copy(fontSizeSp = 23.5f, marginLeftDp = 30, invert = true, txtBlankLines = 2))
+            val back = StyleChoice.applyDefault(s)
+            // … goes back to "기본" (no preset marked) and keeps everything that is not part of a style.
+            assertTrue(p.name, StyleChoice.isDefault(back))
+            assertNull(p.name, StyleChoice.selected(back))
+            assertEquals(23.5f, back.fontSizeSp, 0f)
+            assertEquals(30, back.marginLeftDp)
+            assertTrue(back.invert)
+            assertEquals(2, back.txtBlankLines)
+            assertEquals(d.copy(fontSizeSp = 23.5f, marginLeftDp = 30, invert = true, txtBlankLines = 2), back)
+        }
+    }
+
+    @Test
     fun selectedPresetFollowsTypographyAndPageColours() {
         val d = ReaderSettings()
         for (p in StylePreset.entries) {
