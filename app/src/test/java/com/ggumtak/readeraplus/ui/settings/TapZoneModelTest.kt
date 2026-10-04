@@ -146,7 +146,9 @@ class TapZoneModelTest {
             listOf("좌우 넘김", "어디든 다음", "어디든 이전", "위아래 넘김", "직접 지정"),
             TapZoneMode.values().map { TapZoneModel.modeName(it) },
         )
-        assertEquals("왼쪽 1/3 = 이전 · 나머지 = 다음", TapZoneModel.modeDescription(TapZoneMode.LEFT_RIGHT))
+        // Plain sentences, no "=" (2026-10-04).
+        assertEquals("왼쪽 1/3은 이전, 나머지는 다음", TapZoneModel.modeDescription(TapZoneMode.LEFT_RIGHT))
+        assertEquals("위는 이전, 아래는 다음", TapZoneModel.modeDescription(TapZoneMode.TOP_BOTTOM))
         assertEquals("9칸에 동작을 직접 지정", TapZoneModel.modeDescription(TapZoneMode.CUSTOM))
         // The preview and the key chooser say 듣기, as the reader does.
         assertEquals("듣기", TapZoneModel.shortLabel(TapAction.TTS))

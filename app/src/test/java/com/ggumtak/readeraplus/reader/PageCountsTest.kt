@@ -136,16 +136,16 @@ class PageCountsTest {
         val first = c.chapterStart(0, 2, false)
         assertEquals(4, first)
         inp.setChapterPage(c.globalPage(0, 2), 1, first)
-        assertEquals("3/3", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
+        assertEquals("3 / 3", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
         // The chapter: from page 4 up to the next entry at the top of section 2 (page 11): 7 pages.
         val next = c.chapterStart(2, 0, true)
         inp.setChapterPage(c.globalPage(0, 3), first, next)
-        assertEquals("1/7", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
+        assertEquals("1 / 7", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
         inp.setChapterPage(c.globalPage(1, 4), first, next)
-        assertEquals("7/7", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
+        assertEquals("7 / 7", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
         // The last chapter ends with the book.
         inp.setChapterPage(c.globalPage(2, 1), next, c.total() + 1)
-        assertEquals("2/5", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
+        assertEquals("2 / 5", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
     }
 
     @Test

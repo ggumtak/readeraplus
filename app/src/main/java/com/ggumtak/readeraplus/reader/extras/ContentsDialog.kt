@@ -161,7 +161,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         root.addView(bar, lp())
         // tabs
         val tabs = ctx.horizontal()
-        listOf("목차", "북마크", "인용문", "썸네일").forEachIndexed { i, name ->
+        listOf("목차", "북마크", "인용문", "미리보기").forEachIndexed { i, name ->
             val cell = ctx.vertical {
                 gravity = Gravity.CENTER_HORIZONTAL
                 background = pressableBackground()

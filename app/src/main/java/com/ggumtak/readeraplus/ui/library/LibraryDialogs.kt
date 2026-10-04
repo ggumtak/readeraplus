@@ -393,8 +393,8 @@ internal fun LibraryActivity.showNoPermissionScreen() {
     alert().setTitle("권한 화면을 열 수 없습니다")
         .setMessage(
             "이 기기에서는 ‘모든 파일 접근’ 설정 화면을 열 수 없습니다.\n\n" +
-                "• ‘스캔 폴더 추가’로 책 폴더를 고르면 그 폴더의 책을 가져올 수 있습니다.\n" +
-                "• PC에 연결해 다음 명령으로 권한을 줄 수도 있습니다.\n\n" + LibraryText.ADB_HINT,
+                "· ‘스캔 폴더 추가’로 책 폴더를 고르면 그 폴더의 책을 가져올 수 있습니다.\n" +
+                "· PC에 연결해 다음 명령으로 권한을 줄 수도 있습니다.\n\n" + LibraryText.ADB_HINT,
         )
         .setPositiveButton("스캔 폴더 추가") { _, _ -> pickTree() }
         .setNeutralButton("명령 복사") { _, _ ->

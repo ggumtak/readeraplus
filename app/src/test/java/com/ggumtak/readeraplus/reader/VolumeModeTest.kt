@@ -67,12 +67,13 @@ class VolumeModeTest {
     }
 
     @Test fun summariesAndTheKeyTesterDescribeTheLiveMapping() {
-        assertEquals("아래 = 다음 · 위 = 이전", SettingsFormat.volumeValue(AppSettings()))
-        assertEquals("위 = 다음 · 아래 = 이전", SettingsFormat.volumeValue(AppSettings(invertVolumeKeys = true)))
+        // Plain sentences, no "=" (2026-10-04).
+        assertEquals("아래 키로 다음 페이지", SettingsFormat.volumeValue(AppSettings()))
+        assertEquals("위 키로 다음 페이지", SettingsFormat.volumeValue(AppSettings(invertVolumeKeys = true)))
         assertEquals("넘기지 않음", SettingsFormat.volumeValue(AppSettings(volumeKeysTurn = false)))
         // One "볼륨 키" chooser for the direction and off, the default first; each entry sets its mode.
         assertEquals(
-            listOf("아래 = 다음 · 위 = 이전 (기본)", "위 = 다음 · 아래 = 이전", "넘기지 않음 (소리 크기 조절)"),
+            listOf("아래 키로 다음 페이지 (기본)", "위 키로 다음 페이지", "넘기지 않음 (소리 크기 조절)"),
             SettingsFormat.VOLUME_CHOICES.map { it.first },
         )
         assertEquals(KeyMap.volumeMode(AppSettings()), SettingsFormat.VOLUME_CHOICES[0].second)

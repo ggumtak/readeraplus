@@ -11,6 +11,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.StateListDrawable
 import android.os.Build
 import android.os.Looper
@@ -268,12 +269,17 @@ fun Context.toolbar(
 
 // ---------------------------------------------------------------- settings-style rows
 
+/** The black rule between groups (settings sections, ⋮ menu groups): 1 dp, at least 2 px (1 px is faint on e-ink). */
+fun Context.groupLinePx(): Int = dp(1).coerceAtLeast(2)
+
 /**
- * A settings section's header: 15 sp bold black on one line, on the rows' 16 dp start line (12 dp above it, 4 dp to
- * the first row). Marked as a heading for TalkBack (API 28+), so a swipe by headings jumps from group to group.
+ * A settings section's header: 18 sp bold black on one line (larger than the 17 sp row titles), on the rows' 16 dp
+ * start line, 16 dp under whatever is above it and right on its rows (the first row's own 10 dp padding is the only
+ * gap: nearer to its rows than rows are to each other). Marked as a heading for TalkBack (API 28+), so a swipe by
+ * headings jumps from group to group.
  */
-fun Context.sectionHeader(text: String): TextView = label(text, 15f, bold = true, maxLines = 1).apply {
-    setPadding(dp(16), dp(12), dp(16), dp(4))
+fun Context.sectionHeader(text: String): TextView = label(text, 18f, bold = true, maxLines = 1).apply {
+    setPadding(dp(16), dp(16), dp(16), 0)
     if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
 }
 
@@ -460,17 +466,35 @@ private fun matchSystemBars(dialog: Window, owner: Window) {
     }
 }
 
-class MenuItem(val label: String, val iconRes: Int? = null, val checked: Boolean? = null, val enabled: Boolean = true, val onClick: () -> Unit)
+/** A row of [popupMenu]; [groupStart] starts a new group of rows (a black rule above it, unless it is the first row). */
+class MenuItem(
+    val label: String,
+    val iconRes: Int? = null,
+    val checked: Boolean? = null,
+    val enabled: Boolean = true,
+    val groupStart: Boolean = false,
+    val onClick: () -> Unit,
+)
 
-/** Anchored popup menu (no animation, black border). */
+/**
+ * Anchored popup menu (no animation, black border). A [MenuItem.groupStart] row draws the groups' black rule
+ * ([groupLinePx], as between settings sections) at its top inside its own 48 dp: the menu is no taller for it.
+ */
 fun Context.popupMenu(anchor: View, items: List<MenuItem>, widthDp: Int = 240): PopupWindow {
     val list = vertical { background = borderBox(); setPadding(0, dp(4), 0, dp(4)) }
     val popup = PopupWindow(list, dp(widthDp), WRAP_CONTENT, true)
-    items.forEach { item ->
+    items.forEachIndexed { i, item ->
         val r = horizontal {
             minimumHeight = dp(48)
             setPadding(dp(16), 0, dp(16), 0)
-            background = pressableBackground()
+            background = if (item.groupStart && i > 0) {
+                LayerDrawable(arrayOf(pressableBackground(), ColorDrawable(Ink.LINE))).apply {
+                    setLayerGravity(1, Gravity.TOP or Gravity.FILL_HORIZONTAL)
+                    setLayerHeight(1, groupLinePx())
+                }
+            } else {
+                pressableBackground()
+            }
             isEnabled = item.enabled
             setOnClickListener { popup.dismiss(); item.onClick() }
         }

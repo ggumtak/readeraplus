@@ -96,7 +96,7 @@ class EinkChoicesTest {
         assertEquals(
             "e-ink 제어: Bigme xrz\n" +
                 "기기 새로고침 (GC16 · CLEAN): 사용 가능\n" +
-                "e-ink 화면 모드 바꾸기: 가능\n" +
+                "화면 모드 바꾸기: 가능\n" +
                 "기기의 잔상 제거: 켜짐 · 10쪽마다\n" +
                 "화면: 720 × 1440 px · 320 dpi",
             text,

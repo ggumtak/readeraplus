@@ -34,10 +34,10 @@ object TapZoneModel {
 
     /** One-line description of a mode (the centre is the menu in every mode; the preview below shows it). */
     fun modeDescription(mode: TapZoneMode): String = when (mode) {
-        TapZoneMode.LEFT_RIGHT -> "왼쪽 1/3 = 이전 · 나머지 = 다음"
+        TapZoneMode.LEFT_RIGHT -> "왼쪽 1/3은 이전, 나머지는 다음"
         TapZoneMode.ALL_NEXT -> "왼쪽 가장자리만 이전"
         TapZoneMode.ALL_PREV -> "오른쪽 가장자리만 다음"
-        TapZoneMode.TOP_BOTTOM -> "위 = 이전 · 아래 = 다음"
+        TapZoneMode.TOP_BOTTOM -> "위는 이전, 아래는 다음"
         TapZoneMode.CUSTOM -> "9칸에 동작을 직접 지정"
     }
 

@@ -10,12 +10,16 @@ class FormatTest {
 
     @Test
     fun fileSizes() {
-        assertEquals("0 B", Fmt.fileSize(0))
-        assertEquals("532 B", Fmt.fileSize(532))
-        assertEquals("1.00 KB", Fmt.fileSize(1024))
-        assertEquals("812 KB", Fmt.fileSize(812L * 1024))
-        assertEquals("15.3 MB", Fmt.fileSize((15.3 * 1024 * 1024).toLong()))
-        assertEquals("1.05 GB", Fmt.fileSize((1.05 * 1024 * 1024 * 1024).toLong()))
+        // 책 정보 says a size as the library card does (one wording in the app, 2026-10-04).
+        assertEquals("0B", Fmt.fileSize(0))
+        assertEquals("532B", Fmt.fileSize(532))
+        assertEquals("1KB", Fmt.fileSize(1024))
+        assertEquals("812KB", Fmt.fileSize(812L * 1024))
+        assertEquals("3.4MB", Fmt.fileSize((3.4 * 1024 * 1024).toLong()))
+        assertEquals("15MB", Fmt.fileSize((15.3 * 1024 * 1024).toLong()))
+        for (n in longArrayOf(0, 532, 1024, 3_565_158, 16_043_212, 1L shl 31)) {
+            assertEquals(com.ggumtak.readeraplus.ui.library.LibraryText.formatSize(n), Fmt.fileSize(n))
+        }
     }
 
     @Test

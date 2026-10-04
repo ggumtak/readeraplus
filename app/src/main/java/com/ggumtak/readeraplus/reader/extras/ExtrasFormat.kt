@@ -13,9 +13,9 @@ import com.ggumtak.readeraplus.settings.UserStyles
 import com.ggumtak.readeraplus.ui.kit.isNoSpace
 import com.ggumtak.readeraplus.ui.kit.ownMessage
 import com.ggumtak.readeraplus.ui.kit.userMessage
+import com.ggumtak.readeraplus.ui.library.LibraryText
 import com.ggumtak.readeraplus.ui.settings.SettingsFormat
 import java.io.IOException
-import java.util.Locale
 import java.util.regex.PatternSyntaxException
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -26,23 +26,8 @@ import kotlin.math.roundToInt
 
 internal object Fmt {
 
-    /** "532 B", "812 KB", "15.3 MB", "1.05 GB". */
-    fun fileSize(bytes: Long): String {
-        if (bytes < 1024) return "${bytes.coerceAtLeast(0)} B"
-        val units = arrayOf("KB", "MB", "GB", "TB")
-        var v = bytes / 1024.0
-        var u = 0
-        while (v >= 1024 && u < units.size - 1) {
-            v /= 1024.0
-            u++
-        }
-        val num = when {
-            v < 10 -> String.format(Locale.US, "%.2f", v)
-            v < 100 -> String.format(Locale.US, "%.1f", v)
-            else -> v.roundToInt().toString()
-        }
-        return "$num ${units[u]}"
-    }
+    /** "532B", "812KB", "3.4MB": the library card's wording ([LibraryText.formatSize]), one size wording in the app. */
+    fun fileSize(bytes: Long): String = LibraryText.formatSize(bytes)
 
     /** Reading time: "0분", "1분 미만", "45분", "3시간 12분". */
     fun duration(seconds: Long): String {
@@ -467,7 +452,7 @@ internal object StatusUi {
 
     /** "외톨이 줄 방지" summary: in 문단 단위 only paragraphs taller than a page are split. */
     fun widowSummary(mode: PageBreakMode): String =
-        if (mode == PageBreakMode.PARAGRAPH) "한 페이지보다 긴 문단에만" else "문단 첫 줄 · 끝 줄이 홀로 남지 않게"
+        if (mode == PageBreakMode.PARAGRAPH) "한 쪽보다 긴 문단에만" else "문단 첫 줄 · 끝 줄이 홀로 남지 않게"
 }
 
 /**
@@ -662,12 +647,12 @@ internal object SleepChoice {
 
     /**
      * The control bar's note while the timer runs: "3분 뒤 멈춤" ([remainingMs], rounded up), "이 챕터 끝나면 멈춤" /
-     * "다음 챕터 끝나면 멈춤" ([chaptersLeft] boundaries to go); "" when no timer runs.
+     * "다음 챕터 끝나면 멈춤" / "챕터 3개 끝나면 멈춤" ([chaptersLeft] boundaries to go); "" when no timer runs.
      */
     fun barNote(remainingMs: Long, chaptersLeft: Int): String = when {
         chaptersLeft == 1 -> "이 챕터 끝나면 멈춤"
         chaptersLeft == 2 -> "다음 챕터 끝나면 멈춤"
-        chaptersLeft > 2 -> "챕터 ${chaptersLeft}개 뒤 멈춤"
+        chaptersLeft > 2 -> "챕터 ${chaptersLeft}개 끝나면 멈춤"     // as 설정's summary (SettingsFormat.sleepSummary)
         remainingMs > 0 -> "${(remainingMs + 59_999L) / 60_000L}분 뒤 멈춤"
         else -> ""
     }

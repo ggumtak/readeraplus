@@ -10,6 +10,7 @@ import android.widget.LinearLayout
 import com.ggumtak.readeraplus.reader.DeviceLight
 import com.ggumtak.readeraplus.reader.extras.Fmt
 import com.ggumtak.readeraplus.reader.extras.QuoteSwatch
+import com.ggumtak.readeraplus.reader.extras.StatusUi
 import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.QuoteStyles
 import com.ggumtak.readeraplus.settings.AppSettings
@@ -31,8 +32,9 @@ import kotlinx.coroutines.withContext
 import android.provider.Settings as SystemSettings
 
 /**
- * "화면·밝기": 상태 표시줄 (the six slots, 진행 막대, 상태 글자 크기; UI_SPEC §5.5, anchor §2.7), 화면 (전체 화면, 화면 켜짐
- * 유지, 화면 방향, 인용문 색 표시 with its swatches; NOTES §11) and 밝기 (UI_SPEC §4.6, brightness.md §5.6: 스와이프로
+ * "화면·밝기": 위쪽 상태 표시줄 and 아래쪽 상태 표시줄 (three slots each, titled by their place only, then 진행 막대 and
+ * 상태 글자 크기 with the bottom band; UI_SPEC §5.5, anchor §2.7), 화면 (전체 화면, 화면 켜짐 유지, 화면 방향, 인용문 색
+ * 표시 with its swatches; NOTES §11) and 밝기 (UI_SPEC §4.6, brightness.md §5.6: 스와이프로
  * 밝기 조절, 기기 밝기 직접 조절 and its permission flow, 나갈 때 원래 밝기로, 밝기 방식 다시 묻기, the device's own
  * light settings). The status bands are repainted only (they live in the margins), so nothing here re-lays the page.
  */
@@ -98,20 +100,16 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
 
     // ---------------------------------------------------------------- 상태 표시줄 (UI_SPEC §5.5, anchor §2.7)
 
+    /**
+     * The two bands, a section each ("위쪽 상태 표시줄" / "아래쪽 상태 표시줄"): six rows that read alike in one block
+     * hid where the top band ends. A row says only its place (왼쪽 / 가운데 / 오른쪽, its header says the band); its
+     * chooser's title says both ("아래 가운데").
+     */
     private fun addStatusBar(body: LinearLayout) {
         val r = Settings.reader
-        body.section("상태 표시줄")
-        for (band in 0..1) for (pos in 0..2) {
-            val title = R3Rows.slotTitle(band, pos)
-            val k = band * 3 + pos
-            slotRows[k] = ctx.valueRow(title, r.slot(band, pos).label) {
-                val all = StatusItem.entries
-                ctx.chooser(title, all.map { R3Rows.slotChoice(it) }, all.indexOf(Settings.reader.slot(band, pos))) { i ->
-                    if (Settings.reader.slot(band, pos) != all[i]) editOwn { it.withSlot(band, pos, all[i]) }
-                    slotRows[k]?.setSummary(all[i].label)
-                    updateStatusUi()
-                }
-            }.also(body::addView)
+        for (band in 0..1) {
+            body.section(R3Rows.bandHeader(band))
+            for (pos in 0..2) addSlotRow(body, r, band, pos)
         }
         body.addView(ctx.toggleRow("진행 막대", R3Rows.PROGRESS_SUMMARY, r.progressBar) { v ->
             editOwn { it.copy(progressBar = v) }
@@ -124,6 +122,18 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         body.addView(ctx.note(R3Rows.STATUS_NOTE))
         fitWarning = ctx.warning(R3Rows.FIT_NOTE).also(body::addView)
         updateStatusUi()
+    }
+
+    private fun addSlotRow(body: LinearLayout, r: ReaderSettings, band: Int, pos: Int) {
+        val k = band * 3 + pos
+        slotRows[k] = ctx.valueRow(StatusUi.posWord(pos), r.slot(band, pos).label) {
+            val all = StatusItem.entries
+            ctx.chooser(R3Rows.slotTitle(band, pos), all.map { R3Rows.slotChoice(it) }, all.indexOf(Settings.reader.slot(band, pos))) { i ->
+                if (Settings.reader.slot(band, pos) != all[i]) editOwn { it.withSlot(band, pos, all[i]) }
+                slotRows[k]?.setSummary(all[i].label)
+                updateStatusUi()
+            }
+        }.also(body::addView)
     }
 
     /** The size row shows while a band has text; the warning while a band with items has no room in its margin. */

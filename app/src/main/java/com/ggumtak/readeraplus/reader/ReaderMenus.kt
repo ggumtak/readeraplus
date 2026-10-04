@@ -25,9 +25,10 @@ import kotlinx.coroutines.withContext
 private const val MENU_TAG = "ReaderMenus"
 
 /**
- * The reader's ⋮ menu (ReadEra order, B/W): 페이지 이동 · 페이지 썸네일 · (narrow) 북마크 추가/삭제 · 스크롤로 보기
- * (페이지로 보기) · 자동 넘김 (자동 스크롤) · 화면 새로고침 · 독서 노트 · 책 정보 · 내 리뷰 · 즐겨찾기·컬렉션 · 설정. At
- * most 11 rows (≤ 536 dp), so it fits the Comet's 720 dp without scrolling. Sharing the file and the trash are the
+ * The reader's ⋮ menu (ReadEra order, B/W), in four groups parted by a black rule: moving (페이지 이동 · 페이지
+ * 미리보기 · (narrow) 북마크 추가/삭제) | the view (스크롤로 보기 (페이지로 보기) · 자동 넘김 (자동 스크롤) · 화면
+ * 새로고침) | this book (독서 노트 · 책 정보 · 내 리뷰 · 즐겨찾기·컬렉션) | 설정. At most 11 rows (≤ 536 dp: the rules
+ * are inside the rows), so it fits the Comet's 720 dp without scrolling. Sharing the file and the trash are the
  * library's book menu's.
  */
 internal fun ReaderActivity.showOverflowMenu(anchor: View) {
@@ -36,24 +37,24 @@ internal fun ReaderActivity.showOverflowMenu(anchor: View) {
     val bookmarked = isCurrentPageBookmarked()
     val items = listOfNotNull(
         MenuItem("페이지 이동", R.drawable.ic_find_in_page) { guarded { ReaderPanels.showGoTo(this) } },
-        if (!scrollMode) MenuItem("페이지 썸네일", R.drawable.ic_grid_view) { guarded { ReaderPanels.showContents(this, 3) } } else null,
+        if (!scrollMode) MenuItem("페이지 미리보기", R.drawable.ic_grid_view) { guarded { ReaderPanels.showContents(this, 3) } } else null,
         // C22 (narrow): only while the top bar is too narrow for its bookmark button (U §2.2 width guard).
         if (!bookmarkInChrome()) {
             MenuItem(if (bookmarked) "북마크 삭제" else "북마크 추가", R.drawable.ic_bookmark_add) { toggleBookmark() }
         } else null,
         // S §1.2: the quick way into scroll mode and always the way back.
-        MenuItem(ScrollWiring.modeItem(scrollMode), if (scrollMode) R.drawable.ic_auto_stories else R.drawable.ic_view_list) {
+        MenuItem(ScrollWiring.modeItem(scrollMode), if (scrollMode) R.drawable.ic_auto_stories else R.drawable.ic_view_list, groupStart = true) {
             toggleReadMode()
         },
         MenuItem(ScrollWiring.autoItem(scrollMode, autoTurnOn), R.drawable.ic_timer) { toggleAutoTurn() },
         // After the popup has disappeared from the panel, or its outline stays as ghosting.
         MenuItem("화면 새로고침", R.drawable.ic_refresh) { refreshAfterDraw(POPUP_GONE_MS) },
         // N §6.7: this book's notes in the hub; a note tapped there comes back through onNewIntent (N §6.3).
-        MenuItem("독서 노트", R.drawable.ic_format_quote) { guarded { NotesActivity.open(this, NotesTab.ALL, bk.id) } },
+        MenuItem("독서 노트", R.drawable.ic_format_quote, groupStart = true) { guarded { NotesActivity.open(this, NotesTab.ALL, bk.id) } },
         MenuItem("책 정보", R.drawable.ic_info) { guarded { ReaderPanels.showDocumentInfo(this, bk, document) } },
         MenuItem("내 리뷰", R.drawable.ic_rate_review) { guarded { ReaderPanels.showReview(this) } },
         MenuItem("즐겨찾기·컬렉션", R.drawable.ic_playlist_add) { showAddMenu(anchor, bk) },
-        MenuItem("설정", R.drawable.ic_settings) { guarded { openAppSettings() } },
+        MenuItem("설정", R.drawable.ic_settings, groupStart = true) { guarded { openAppSettings() } },
     )
     guarded { popupMenu(anchor, items, widthDp = 260) }
 }

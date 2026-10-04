@@ -23,12 +23,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * "e-ink 화면" (T1-3): 새로고침 (the full refresh cadence by day and on dark pages, chapter and picture refreshes, the
- * device's own ghost clearing and the double-flash warning) and 화면 모드 (the reader page's e-ink mode, and a folded
- * "고급" group with the refresh method, the flash length, the refresh test and the diagnostics). The device probe runs
- * once on IO when the page is built; its result fills the mode row, its note and the device line in one pass.
+ * "e-ink 새로고침" (T1-3; "e-ink 화면" until 2026-10-04, too close to 화면·밝기 above it): 자동 새로고침 (the full refresh
+ * cadence by day and on dark pages, chapter and picture refreshes, the device's own ghost clearing and the double-flash
+ * warning) and 화면 모드 (the reader page's e-ink mode, and a folded "고급" group with the refresh method, the flash
+ * length, the refresh test and the diagnostics). The device probe runs once on IO when the page is built; its result
+ * fills the mode row, its note and the device line in one pass.
  */
-internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_EINK, "e-ink 화면") {
+internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_EINK, TITLE) {
     /** The refresh test while open (dismissed with the page). */
     private var testDialog: Dialog? = null
     private lateinit var cleanText: TextView
@@ -56,7 +57,7 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
     // ---------------------------------------------------------------- 새로고침
 
     private fun addRefresh(body: LinearLayout, app: AppSettings) {
-        body.section("새로고침")
+        body.section("자동 새로고침")
         body.addView(ctx.stepperRow("전체 새로고침", app.einkRefreshEvery.toFloat(), 0f, 20f, 1f, { SettingsFormat.refreshEvery(it.toInt()) }) { v ->
             editApp { it.copy(einkRefreshEvery = v.toInt()) }
             updateCleanWarning()
@@ -88,10 +89,10 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
 
     private fun addMode(body: LinearLayout, app: AppSettings) {
         body.section("화면 모드")
-        modeRow = ctx.valueRow("e-ink 화면 모드", SettingsFormat.einkMode(app.einkMode)) {
+        modeRow = ctx.valueRow("화면 모드", SettingsFormat.einkMode(app.einkMode)) {
             val opts = SettingsFormat.EINK_MODES
             val sel = opts.indexOfFirst { it.second == Settings.app.einkMode }.coerceAtLeast(0)
-            ctx.chooser("e-ink 화면 모드", opts.map { it.first }, sel) { i ->
+            ctx.chooser("화면 모드", opts.map { it.first }, sel) { i ->
                 editApp { it.copy(einkMode = opts[i].second) }
                 modeRow?.setSummary(SettingsFormat.einkMode(opts[i].second))
             }
@@ -180,8 +181,10 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         }
     }
 
-    private companion object {
-        const val MODE_NOTE = "‘기기 설정 따름’은 책을 다시 열 때 적용됩니다."
-        const val MODE_UNAVAILABLE = "이 기기에서는 바꿀 수 없습니다 · 기기 e-ink 설정을 쓰세요"
+    companion object {
+        /** The page's title and the main list's row. */
+        const val TITLE = "e-ink 새로고침"
+        private const val MODE_NOTE = "‘기기 설정 따름’은 책을 다시 열 때 적용됩니다."
+        private const val MODE_UNAVAILABLE = "이 기기에서는 바꿀 수 없습니다 · 기기 e-ink 설정을 쓰세요"
     }
 }

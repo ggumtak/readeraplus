@@ -33,6 +33,12 @@
 > 상하 여백이 다시 들어왔다(7행, 384 dp). 상태 표시 "챕터 쪽 번호"는 챕터 안의 쪽 "2/32". 위 지시들의 이름도 이 지시로
 > 바뀌었다: 넘김·화면 설정 → 위 세 페이지, 목록 넘기기 "쪽 단위 (한 화면씩)" → "한 화면씩", 서재 보기 전체 · 요약 · 썸네일 ·
 > 그리드 → 자세히 · 간단히 · 큰 표지 · 작은 표지, 돌아가기 "N 페이지로" → "N쪽으로". 행 순서는 §1.6.3, CI는 §5.3.
+> 같은 날의 리뷰 반영: 묶음 머리글은 18 sp, 묶음 사이 20 dp 간격과 2 px 검은 줄, 묶음 안 행 사이에는 줄이 없다. 첫 화면은 읽기
+> 화면 · 조작·기능 · 서재 · 책 가져오기 · 기타 다섯 묶음(한 묶음에 한 종류의 행), 화면·밝기의 상태 표시줄은 위쪽 · 아래쪽 두
+> 묶음(행 이름은 왼쪽 · 가운데 · 오른쪽), "e-ink 화면" → "e-ink 새로고침", 리더 · 서재 ⋮ 메뉴도 줄로 묶음을 나눈다. 문장에 "="를
+> 쓰지 않고("왼쪽 1/3은 이전, 나머지는 다음", "아래 키로 다음 페이지"), 세는 쪽과 쪽 번호는 "쪽", 화면 한 장은 "페이지"다(§1.6.3).
+> 챕터 쪽 번호는 쪽 번호와 같은 띄어쓰기 "2 / 32", 크기는 어디서나 "3.4MB", 서재 ⋮의 스캔은 "지금 스캔", "페이지 썸네일" →
+> "페이지 미리보기".
 
 
 Status: build plan, read-only against the repo. It was written on 2026-09-30 against HEAD `92be04f` ("WIP checkpoint: R2
@@ -131,7 +137,7 @@ Each row names the sources, what collides, the decision, and who applies it (lan
 | **C19** | **`onTrimMemory`.** R: `UI_HIDDEN` (every visit to recents) drops the images, so the condition changes. S adds `scroll?.onTrimMemory()`. N W2 clears the thumbnail LRU at `RUNNING_LOW` and above. | One gate: `val low = level >= TRIM_MEMORY_BACKGROUND \|\| level == TRIM_MEMORY_RUNNING_LOW \|\| level == TRIM_MEMORY_RUNNING_CRITICAL`. When `low` is true, run `session?.trimMemory()`, `scroll?.onTrimMemory()` and `thumbs?.clear()`. | H1 (the condition); RC-A |
 | **C20** | **`ReaderActivity` lifecycle hooks come from 4 specs** (R marker and state, S presence and auto-backup, U light and return mark, N probe, places and anchor check). | The fixed orders are in §1.6.2. | H1; RC-A |
 | **C21** | **`viewPart()` and `applyAppSettings()`.** U drops `a.pinChrome` and adds `a.brightnessDevice`. S adds `a.readMode` and `a.scrollStyle`. N needs `a.highlightLook` to repaint live. U makes `LightController` the only writer of `page.brightnessSwipe`. | `viewPart` = today's list − `a.pinChrome` + `a.brightnessDevice`, `a.readMode`, `a.scrollStyle`, `a.highlightLook`. The volume keys are read live and need no entry. The `applyAppSettings` order is in §1.6.2. | P0 (drop pinChrome); RC-A |
-| **C22** | **`ReaderMenus` ⋮ items.** S adds "스크롤로 보기 / 페이지로 보기" and "자동 스크롤". U adds "북마크 추가/삭제" when the top-row bookmark is hidden (< 352 dp). N adds "독서 노트" after "내 리뷰", and in W2 "페이지 썸네일" after "페이지 이동" (hidden in scroll mode). | Final order: 목차 … 페이지 이동 · (W2) 페이지 썸네일 · (narrow) 북마크 추가/삭제 · 스크롤로 보기/페이지로 보기 · 자동 넘김/자동 스크롤 · … 내 리뷰 · 독서 노트 · …. Existing items keep their places. | RC-A |
+| **C22** | **`ReaderMenus` ⋮ items.** S adds "스크롤로 보기 / 페이지로 보기" and "자동 스크롤". U adds "북마크 추가/삭제" when the top-row bookmark is hidden (< 352 dp). N adds "독서 노트" after "내 리뷰", and in W2 "페이지 썸네일" after "페이지 이동" (hidden in scroll mode). | Final order: 목차 … 페이지 이동 · (W2) 페이지 썸네일 (페이지 미리보기, in groups since the 2026-10-04 review: §1.6.3) · (narrow) 북마크 추가/삭제 · 스크롤로 보기/페이지로 보기 · 자동 넘김/자동 스크롤 · … 내 리뷰 · 독서 노트 · …. Existing items keep their places. | RC-A |
 | **C23** | **Return point vs TOC/search/note jumps.** U ReturnNav rules ★1–★5; N `onJump(saved)` after an open-at-note; A anchors. | ReturnPoints stores offsets, so anchors don't affect it. For an open-at-note, `onJump(saved)` runs in the **same main-thread message** as `showPage` (one e-ink update). `onNewIntent` with a jump for the same book → `goTo(remember = true)` → the normal chain rule. | RC-A |
 | **C24** | **Chip placement vs U2 bands.** U: `bottomMargin = insets[3] + 12 dp + 4 dp`. A: the footer text band now sits in the bottom margin. | Keep U's formula. The chip is an overlay: it may cover the footer band for up to 2 turns and never resizes the page (U6a). | RU; RC-A |
 | **C25** | **`ReaderHost` KDoc.** S covers the scroll window and motion; U covers `goTo(remember)` = return point. | Both land in P0 (KDoc only). | P0 |
@@ -261,12 +267,22 @@ different book runs `closeCurrentBook()` and then `startOpen(intent)`.
 #### 1.6.3 Final settings rows
 
 **2026-10-04, at the user's request (68aa271, 79cd1a5, a3b8826): plain Korean everywhere, and 설정's groups easy to
-tell apart.** One look on every settings page: section headers 15 sp bold black on the rows' 16 dp start line, with a
-full-width black 1 px line above every section but a page's first (drawn by the header itself, `LinearLayout.section`;
-this reverses UI_SPEC polish 12's spacing-only groups); a black chevron on a row that opens another screen, a grey
-drop-down on a row that opens a chooser; notes 14 sp grey, wrapped between words; the few warnings black; a disabled row
-keeps its reason in #555; rows that depend on a switch are hidden while it is off; stepper buttons are "<title> 줄이기" /
-"<title> 늘리기". Choices read "값 (설명)" and only choosers mark "(기본)"; quotes are ‘’, sentences 합니다체.
+tell apart.** One look on every settings page: section headers **18 sp** bold black (larger than the 17 sp row titles)
+on the rows' 16 dp start line, right on their rows (the first row's own 10 dp padding is the only gap); above every
+section but a page's first, a 20 dp gap and a full-width black rule of 1 dp, at least 2 px (`groupLinePx`), then 16 dp
+to the header: about 30 dp of white from the last row's text, so a group's pause is far larger than a row's (all drawn
+by the header itself, `LinearLayout.section`; this reverses UI_SPEC polish 12's spacing-only groups). The rows inside a
+group have no lines. A black chevron on a row that opens another screen, a grey drop-down on a row that opens a chooser;
+notes 14 sp grey, wrapped between words, inside the section they explain; the few warnings black; a disabled row keeps
+its reason in #555; rows that depend on a switch are hidden while it is off; stepper buttons are "<title> 줄이기" /
+"<title> 늘리기". Choices read "값 (설명)" and only choosers mark "(기본)"; quotes are ‘’, sentences 합니다체; no "="
+in a sentence ("왼쪽 1/3은 이전, 나머지는 다음", "아래 키로 다음 페이지"). **Page words:** a counted page or a page number
+is "쪽" ("3쪽으로", "10쪽마다", "한 쪽보다 긴 문단에만", "1–N쪽"); the screen page as a thing is "페이지" ("다음 페이지",
+"페이지 이동", "페이지 넘김", "이 페이지 고정", "페이지 미리보기"). Sizes are the library card's ("3.4MB", `LibraryText.formatSize`)
+everywhere. The ⋮ menus have groups too (`MenuItem.groupStart`: the same black rule at the top of the row, inside its
+48 dp): the reader's 페이지 이동 · 페이지 미리보기 · (북마크) | 스크롤로 보기 · 자동 넘김 · 화면 새로고침 | 독서 노트 · 책
+정보 · 내 리뷰 · 즐겨찾기·컬렉션 | 설정; the library's 정렬 · 보기 · (새 컬렉션 / 휴지통 비우기) | 파일 열기 · Wi-Fi로 책
+받기 | 지금 스캔 · 스캔 폴더 추가 | 설정.
 
 **Quick options ⚙ (`ReadingSettingsPopup`; 672e85d replaced the 9-row popup and its 더보기, 68aa271 brought the
 margins back).** Only what is changed while reading, no scroll, nothing that expands; 48 dp rows and buttons, 384 dp in
@@ -277,24 +293,30 @@ all (`PopupGeometry.QUICK_HEIGHT_DP`, under the Comet's 56% cap):
 2. 굵기
 3. 줄 간격
 4. 문단 간격 (kept at the user's request; GPT's review proposed only four rows)
-5. 좌우 여백 (−40 … +40 in steps of 2, "0" = the default margin; a step turns 여백 사용 on: `QuickFields.withSide`)
-6. 상하 여백 (the same, `QuickFields.withVertical`)
+5. 좌우 여백 (−40 … +40 in steps of 2, "0" = the default margin; a step turns 여백 사용 on: `QuickFields.withSide`.
+   While 여백 사용 is off both steppers show the margin the page has, the minimal 4 dp ("−36", `QuickFields.sideUi`),
+   and the first step starts there and leaves the other axis at 4 dp: nothing moves but the margin stepped)
+6. 상하 여백 (the same, `QuickFields.withVertical` / `verticalUi`)
 7. 글꼴 (drop-down list)
 
 The seven rows edit the same global `ReaderSettings` fields as 읽기 설정, with the same steps, ranges and values; a change
 is applied onto the saved settings (`QuickFields.onto`), steppers debounced 250 ms. Nothing else was dropped: everything
 else lives in 설정.
 
-**설정 main list (`MainPage`): three groups.**
+**설정 main list (`MainPage`): small groups, one kind of row each** (the review of 2026-10-04: the old 읽기 block of
+eight look-alike rows filled the first screen without a break, and 서재 mixed pages, choosers and a switch).
 
 | Group | Rows in order |
 |---|---|
-| 읽기 | 이 책의 TXT 정리 › (opened from a TXT book only) · 읽기 설정 › · 글꼴 관리 › · 넘기기·터치·키 › · 화면·밝기 › · e-ink 화면 › · 듣기 설정 › · 사전·번역·검색 › |
-| 서재 | 책 스캔 › · Wi-Fi로 책 받기 › · 읽기 기록 › · 정렬 · 보기 (자세히 / 간단히 (한 줄) / 큰 표지 (3열) / 작은 표지 (4열), the library's own chooser texts) · **목록 넘기기** (스크롤 / 한 화면씩; N) · 시작할 때 읽던 책 열기 (R §4.8) |
-| 기타 | 백업·복원 › · 캐시 비우기 · 설정 초기화 (keeps the TXT defaults, scan folders, assigned keys, library sort and view, 목록 넘기기, 자동 백업, 찾아본 단어 기록, 기기 밝기 직접 조절, web search and voice: `SettingsReset`) · 정보 › |
+| 읽기 화면 | 이 책의 TXT 정리 › (opened from a TXT book only) · 읽기 설정 › · 글꼴 관리 › · 화면·밝기 › · e-ink 새로고침 › |
+| 조작·기능 | 넘기기·터치·키 › ("터치: 좌우 넘김 · 볼륨 키 · 지정 키 2개", "스크롤" first in scroll mode) · 듣기 설정 › · 사전·번역·검색 › |
+| 서재 | 정렬 · 보기 (자세히 / 간단히 (한 줄) / 큰 표지 (3열) / 작은 표지 (4열), the library's own chooser texts) · **목록 넘기기** (스크롤 / 한 화면씩; N) · 시작할 때 읽던 책 열기 (R §4.8; "끄면 서재부터 · 앱이 강제로 닫혔을 때는 그 책으로") |
+| 책 가져오기 | 책 스캔 › · Wi-Fi로 책 받기 › |
+| 기타 | 읽기 기록 › · 백업·복원 › · 캐시 비우기 · 설정 초기화 (keeps the TXT defaults, scan folders, assigned keys, library sort and view, 목록 넘기기, 자동 백업, 찾아본 단어 기록, 기기 밝기 직접 조절, web search and voice: `SettingsReset`; summary "읽기 · 화면 · 듣기 설정을 기본값으로") · 정보 › |
 
-Opened from the reader (`OpenBook.info` set; memory only, no IO) the list has no 서재 group, no 백업·복원 (a restore under
-an open book is unsafe) and no 캐시 비우기 (no walk over the open book's cache); a TXT book gets 이 책의 TXT 정리 first.
+Opened from the reader (`OpenBook.info` set; memory only, no IO) the list has no 서재 and 책 가져오기 groups, no 읽기 기록,
+no 백업·복원 (a restore under an open book is unsafe) and no 캐시 비우기 (no walk over the open book's cache): 읽기 화면 ·
+조작·기능 · 기타 (설정 초기화 · 정보); a TXT book gets 이 책의 TXT 정리 first.
 Whatever needs those rows opens 설정 from the library (the CI does: 45/46, 89p, 98).
 
 **설정 → 읽기 설정 (`ReadingPage`; the main list's 읽기 설정 and the quick options' link):**
@@ -307,7 +329,8 @@ Whatever needs those rows opens 설정 from the library (the CI does: 45/46, 89p
 | 문단 | 줄 간격 · 문단 간격 · 들여쓰기 · 정렬 · 줄바꿈 (단어 단위 / 글자 단위) |
 | 여백·페이지 | 여백 사용 (off hides the next three) · **좌우 여백** · **상하 여백** · note · **페이지 나눔** (줄 단위 (기본) / 문단 단위 (페이지 아래가 빌 수 있음)) · 외톨이 줄 방지 |
 | 파일 | 이 책의 TXT 정리 › (the reader's TXT book only) · TXT 정리 기본값 › · EPUB 출판사 스타일 |
-| 기타 | 넘기기·터치·키 › · 화면·밝기 › (only when opened straight from the quick options, with no main list under it) · 기본값으로 되돌리기 (흑백 반전 and the TXT options kept; 화면 색 back to 흰 바탕) |
+| 다른 설정 | 모든 설정 › (the main list, without its library rows while a book is open; only when opened straight from the quick options, with no main list under it) |
+| 되돌리기 | 기본값으로 되돌리기 (흑백 반전 and the TXT options kept; 화면 색 back to 흰 바탕) |
 
 **설정 → 이 책의 TXT 정리 (`BookTxtPage`):** 본문: 인코딩 · 빈 줄 처리 · 줄 앞 공백 지우기 · 끊어진 줄 합치기 · 바꾸기
 규칙 › | 챕터: 챕터 자동 인식 · 챕터 제목 강조 · 챕터 규칙 (정규식) (both hidden while 자동 인식 is off) | 기본값 (only while
@@ -319,32 +342,33 @@ every TXT book without options of its own.
 Settings changes reach the open book once, when the reader is back in front (`onResume` compares
 `Settings.reader.withTxt(override)` with what the session has): one re-layout, the first character kept.
 
-**설정 → 넘기기·터치·키 (`PageTurningPage`, SET; with 화면·밝기 and e-ink 화면 it replaces 넘김·화면 설정, 68aa271):**
+**설정 → 넘기기·터치·키 (`PageTurningPage`, SET; with 화면·밝기 and e-ink 새로고침 it replaces 넘김·화면 설정, 68aa271):**
 
 | Section | Rows in order | Source |
 |---|---|---|
 | 넘기기 | 넘기는 방식 (페이지 넘김 (기본) / 스크롤 (위아래로 읽기); SCROLL starts `probeAsync`) · 스크롤 움직임 (SCROLL only: 손가락을 따라 (기본) / 손을 떼면 이동) · note · 끝까지 읽으면 ‘다 읽은 책’으로 · 자동 넘김 간격 · note | S §1.2 |
 | 화면 터치 | 좌우 넘김 · 어디든 다음 · 어디든 이전 · 위아래 넘김 · 직접 지정 (radio rows) · the preview (3×3 editor in 직접 지정) · 왼쪽 위 터치로 흑백 반전 · 오른쪽 위 터치로 북마크 · 다음·이전 바꾸기 (no **메뉴 고정**: deleted in P0) | U §2.6 |
 | 스와이프·길게 누르기 | 좌우 스와이프로 넘김 (in SCROLL: "좌우로 밀면 한 화면씩") · 위아래 스와이프로 넘김 (**disabled** in SCROLL, `setRowEnabled`) · 길게 눌러 선택 · 길게 누르기 시간 (hidden while off) | S §1.2 |
-| 버튼·키 | **볼륨 키** (one chooser: 아래 = 다음 · 위 = 이전 (기본) / 위 = 다음 · 아래 = 이전 / 넘기지 않음 (소리 크기 조절); disabled with "키 지정에서 정함" while a volume key has another action; 키 지정 with a volume key and 다음/이전 페이지 sets the direction) · 페이지 키를 길게 누르면 · 키 지정 · the assigned keys · 키 테스트 | R §9.3–9.4 |
+| 버튼·키 | **볼륨 키** (one chooser: 아래 키로 다음 페이지 (기본) / 위 키로 다음 페이지 / 넘기지 않음 (소리 크기 조절); disabled with "키 지정에서 정함" while a volume key has another action; 키 지정 with a volume key and 다음/이전 페이지 sets the direction) · 페이지 키를 길게 누르면 · 키 지정 · the assigned keys · 키 테스트 | R §9.3–9.4 |
 
 **설정 → 화면·밝기 (`ScreenPage`, new 68aa271):**
 
 | Section | Rows in order | Source |
 |---|---|---|
-| 상태 표시줄 | 위 왼쪽 / 위 가운데 / 위 오른쪽 / 아래 왼쪽 / 아래 가운데 / 아래 오른쪽 (valueRows; the chooser lists "쪽 번호 (12 / 3259)" with **챕터 쪽 번호 (2/32)**, the page within its chapter, right under it) · 진행 막대 · 상태 글자 크기 (while a band shows text) · note · A's fit warning | U §5.5, A §2.7, R2 |
+| 위쪽 상태 표시줄 | 왼쪽 / 가운데 / 오른쪽 (valueRows titled by the place only, the band is the header's; the chooser's title says both, "위 왼쪽"; it lists "쪽 번호 (12 / 3259)" with **챕터 쪽 번호 (2 / 32)**, the page within its chapter, right under it, and "배터리 (80)": the page draws the icon and the bare number) | U §5.5, A §2.7, R2 |
+| 아래쪽 상태 표시줄 | 왼쪽 / 가운데 / 오른쪽 (the same) · 진행 막대 · 상태 글자 크기 (while a band shows text) · note · A's fit warning | U §5.5, A §2.7 |
 | 화면 | 전체 화면 · 화면 켜짐 유지 · 화면 방향 · **인용문 색 표시** (with the swatch strip) · note | N §11 |
 | 밝기 | 스와이프로 밝기 조절 · **기기 밝기 직접 조절** · **나갈 때 원래 밝기로** (only while the switch above is on) · **밝기 방식 다시 묻기** · **기기 조명 설정** › | U §4.6 |
 
-**설정 → e-ink 화면 (`EinkPage`, new 68aa271; the main row's summary "10쪽마다 새로고침 · 어두운 화면 5쪽마다"):**
-새로고침: 전체 새로고침 (N쪽마다 / 끔) · 어두운 화면에서 · 새 챕터에서 새로고침 · 그림 페이지에서 새로고침 · the device's
-own ghost clearing and the double-flash warning | 화면 모드: e-ink 화면 모드 · note · 고급 (folded: 새로고침 방식 · 깜빡임 길이
-· note · 새로고침 시험 · 진단).
+**설정 → e-ink 새로고침 (`EinkPage`, new 68aa271 as "e-ink 화면", renamed in the review of 2026-10-04: too close to
+화면·밝기 above it; the main row's summary "10쪽마다 새로고침 · 어두운 화면 5쪽마다"):** 자동 새로고침: 전체 새로고침 (N쪽마다
+/ 끔) · 어두운 화면에서 · 새 챕터에서 새로고침 · 그림 페이지에서 새로고침 · the device's own ghost clearing and the
+double-flash warning | 화면 모드: 화면 모드 · note · 고급 (folded: 새로고침 방식 · 깜빡임 길이 · note · 새로고침 시험 · 진단).
 
 **Other pages (SET):** 듣기 설정 (음성: 목소리 · 속도 · 음높이 | 읽는 동안: 읽는 문장 표시 · 멈춤 예약 | 음성 엔진: 음성
 엔진 설정 ›) · 사전·번역·검색 (웹 검색 | 사전·번역 앱 | **단어장**: 찾아본 단어 기록, N §11) · 책 스캔 (스캔 | 스캔할 폴더 |
-제외할 폴더) · 글꼴 관리 (읽기 글꼴 | 글꼴 추가) · **백업·복원** (백업: 백업 파일 만들기 | **자동 백업** (S §3.8): 매일 자동
-백업 · 지금 자동 백업 (while on) · 자동 백업 파일 지우기 · privacy note | 복원: 목록에서 복원 · 파일에서 복원 · N §11's merge
+제외할 폴더) · 글꼴 관리 (읽기 글꼴 | 글꼴 추가) · **백업·복원** (백업: 백업 파일 만들기 · the privacy note (it covers every backup) | **자동 백업** (S §3.8): 매일 자동
+백업 · 지금 자동 백업 (while on) · 자동 백업 파일 지우기 | 복원: 목록에서 복원 · 파일에서 복원 · N §11's merge
 note with the [Δ] sentence) · 정보 (version | 라이선스 | 문제 해결: 기기 정보·조명 진단, folded: the device lines with
 **최근 종료** (R §4.7, API 30+) and **조명 진단** (U §4.6)).
 
@@ -1097,10 +1121,10 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 11 | `13f_clear` | `tap_label "지우기"` | strip gone, pin outline | U |
 | 12 | `13g_seek_chip`, `13h_chip_gone` (+ `rawshot 10a_pre`) | two seeks with the menu open, close; volume-down ×2; `rawshot 10a_pre` (chrome closed) | chip "‹ 3쪽으로 \| ✕" (the first origin) above the progress line; gone after 2 turns | U |
 | 13 | `14_reading_settings` | as today | **68aa271:** centred popup (16 ± 1 px gaps): one top bar 전체 읽기 설정 › · 닫기, then 글자 크기 · 굵기 · 줄 간격 · 문단 간격 · 좌우 여백 · 상하 여백 (96 px rows) · 글꼴, no 더보기, no scrollbar; CHECK 14q: the popup's 좌우 여백 / 상하 여백 read "0"; "전체 읽기 설정" opens 설정 → 읽기 설정 (여백·페이지: "좌우 여백 0", "상하 여백 0", CHECK 14m), BACK returns to the same page | U, S, A |
-| 14 | `14b_status_slots` | ⋮ → 설정 → 화면·밝기 → 상태 표시줄 (its first section, 68aa271; slot rows "위 왼쪽" … "아래 오른쪽") | 위 [없음][챕터 제목][없음], 아래 all 없음; 진행 막대 on | U |
-| 15 | `14c_slot_list` | the 아래 가운데 row; "쪽 번호 (12 / 3259)" | 12 items with examples ("챕터 쪽 번호 (2/32)" right under 쪽 번호); "없음" checked | U |
+| 14 | `14b_status_slots` | ⋮ → 설정 → 화면·밝기 → 위쪽 상태 표시줄 · 아래쪽 상태 표시줄 (its first two sections; each band's rows 왼쪽 / 가운데 / 오른쪽, read under their header: `slot_row`, `ui_rows.py` "header › row") | 위 [없음][챕터 제목][없음], 아래 all 없음; 진행 막대 on | U |
+| 15 | `14c_slot_list` | the 가운데 row under 아래쪽 상태 표시줄; "쪽 번호 (12 / 3259)" | 12 items with examples ("챕터 쪽 번호 (2 / 32)" right under 쪽 번호); "없음" checked | U |
 | 16 | `10b_footer_slots` (+ `rawshot 10b`) | after 14c's `back` (popup closed, chrome hidden, same page as `10a_pre`) | footer centre "N / M" centred on the text column above the line; **`raw_equal 10a_pre 10b` over the content rows: EQUAL** (turning the footer on did not move the text); **[Δ]** `no_relayout 10a_pre 10b` (perf marks at both rawshots) | U, A |
-| 17 | `14d_volume_mode` | ⋮ → 설정 → 넘기기·터치·키 → 버튼·키 → 볼륨 키 (one chooser again, 68aa271; was the popup's 더보기) → "위 = 다음 · 아래 = 이전"; back; VOLUME_UP; tap 360 720; find "페이지 이동, " | the row read "아래 = 다음 · 위 = 이전" and its chooser lists the 3 entries (14d_list); the label is one page further; then restore "아래 = 다음 · 위 = 이전 (기본)" and close the chrome | R (H3) |
+| 17 | `14d_volume_mode` | ⋮ → 설정 → 넘기기·터치·키 → 버튼·키 → 볼륨 키 (one chooser again, 68aa271; was the popup's 더보기) → "위 키로 다음 페이지"; back; VOLUME_UP; tap 360 720; find "페이지 이동, " | the row read "아래 키로 다음 페이지" and its chooser lists the 3 entries (14d_list); the label is one page further; then restore "아래 키로 다음 페이지 (기본)" and close the chrome | R (H3) |
 | 18 | `15_toc`, `16_search` | as today | TOC title 20 sp bold | U |
 | 19 | `17_selection` | as today | one row of 5 (복사 · 인용 · 메모 · 사전·번역 · ⋮); the 인용 cell shows a yellow dot with ▾ | U, N |
 | 20 | `20_epub_page1`, `21_epub_page4`, `22_epub_page9` | as today | narrower column (560 px) | S |
@@ -1108,10 +1132,10 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 22 | `69b_back_to_paged` | ⋮ → "페이지로 보기"; 스크롤 움직임 → 손가락을 따라 (기본) | logged only (restores defaults for later steps) | PLAN |
 | 23 | `30_big_txt`, `31_big_txt_later`, `32_big_txt_reopen` | as today; **[Δ]** `perf_mark 31` before closing, `perf_mark 32` after the reopen | reopen shows the same first line (anchored open): **[Δ]** `first_is 31 32` | A |
 | 24 | `40_library_after` | as today | library (no resume: `am start -n` has no action) | R |
-| 25 | `42_library_compact` + CHECK 42b | 12 extra samples, ⋮ (더보기) → 책 스캔 (a3b8826: the scan left the drawer), 보기 → 간단히; tap 2 px inside the ⋮'s right edge | 88 dp rows, ⋮ column, "새 책"; 42b: menu open | N |
+| 25 | `42_library_compact` + CHECK 42b | 12 extra samples, ⋮ (더보기) → 지금 스캔 (a3b8826: the scan left the drawer; 지금 스캔 as 설정 → 책 스캔's row since the 2026-10-04 review), 보기 → 간단히; tap 2 px inside the ⋮'s right edge | 88 dp rows, ⋮ column, "새 책"; 42b: menu open | N |
 | 26 | `43_library_thumbs`, `44_library_grid` | 보기 → 큰 표지 / 작은 표지 (were 썸네일 / 그리드), then back to 자세히 | 3 columns (96×136) / 4 columns, one-line titles | N |
 | 27 | `45_library_paged`, `46_library_page2` + CHECK 46 | 설정 from the library → 서재 → 목록 넘기기 → 한 화면씩; swipe up | pager "1 / N", no cut card except the one leading page 2, no fast-scroll thumb; "2 / N"; restore 스크롤 | N |
-| 28 | `50_settings`, `51_status_page` (+ `50b_stats`, `50c_wifi`, `50d_eink_settings`, `50e_eink_advanced`) | the library's ⋮ (더보기) → 설정; 설정 → 화면·밝기 (상태 표시줄 first); drawer → 읽기 기록; ⋮ → Wi-Fi로 책 받기; 설정 → e-ink 화면, its 고급 opened | three groups 읽기 · 서재 · 기타, a black line above every section but the first, filled off knobs, trailing controls end at x = 688; six slot rows + 진행 막대 | U, S, A |
+| 28 | `50_settings`, `51_status_page` (+ `50b_stats`, `50c_wifi`, `50d_eink_settings`, `50e_eink_advanced`) | the library's ⋮ (더보기) → 설정; 설정 → 화면·밝기 (위쪽 / 아래쪽 상태 표시줄 first); drawer → 읽기 기록; ⋮ → Wi-Fi로 책 받기; 설정 → e-ink 새로고침, its 고급 opened | five groups 읽기 화면 · 조작·기능 · 서재 · 책 가져오기 · 기타, 18 sp headers with a 2 px black rule above every section but the first, filled off knobs, trailing controls end at x = 688; six slot rows (two sections) + 진행 막대 | U, S, A |
 | 29 | `80_quote_saved` | select in sample-utf8.txt → 인용 | yellow fill, **no toast** | N |
 | 30 | `81_palette`, `81b_green` | long-press 인용 → palette → 초록 | 6 cells with 노랑 ringed; then green fill | N |
 | 31 | `82_quote_popup` | long-press the first quote | palette row above "복사 · 메모 · 인용 삭제 · 사전·번역 · ⋮", no grey selection fill | N |
@@ -1127,7 +1151,7 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 41 | `55_font_up_down` | 글자 크기 +1, then −1 | `raw_equal` with the shot before the change: EQUAL (content rows valid again: 54 restored "0") | A |
 | 42 | `56_page_break_paragraph` | **[Δ]** `perf_mark 56a`; ⚙ → 전체 읽기 설정 → 페이지 나눔 = 문단 단위; back; `perf_mark 56b`; next page | **[Δ]** `first_is 56a 56b`; the next page starts at a paragraph start (logged `o:` of the next `show TURN` is a block start: checked by eye from the shot); restore 줄 단위 | A |
 | 43 | `57_dialog_no_reflow` | fullscreen on; `rawshot 57_open`, wait 3 s, `rawshot 57_still_b` (CHECK `57_still` EQUAL); one warm-up 페이지 이동 open/cancel; `rawshot 57_before`; 페이지 이동 open (number pad seen), cancel (dialog gone, one more BACK if not); `rawshot 57_after` | `raw_equal 57_before 57_after` EQUAL; **[Δ]** `no_relayout`. The cold first frame differs from every redraw by a few hundred edge pixels per screen (CI 28–32, rasterization, no relayout): logged as `57_firstframe (info)` | A (H4) |
-| 44 | `92_thumbs`, `93_thumbs_next` (W2) | ⋮ → 페이지 썸네일; swipe | 4×3 (or 5×3) grid, current page framed, labels = footer numbers, marks; next grid page | N |
+| 44 | `92_thumbs`, `93_thumbs_next` (W2) | ⋮ → 페이지 미리보기 (페이지 썸네일 until the 2026-10-04 review); swipe | 4×3 (or 5×3) grid, current page framed, labels = footer numbers, marks; next grid page | N |
 | 45 | `70_before` … `78_closed_then_recents` | R §7 block (kill, force-stop, history intent `-f 0x10100000`, `install -r`, second book + kill, don't-keep-activities, Back control) | `top_is ReaderActivity` + `same` PASS for 71–77; 78: `top_is LibraryActivity` | R (H1) |
 | 46 | `95_restore_offer`, `96_restored`, `97_restored_margins`, `98_backup_page` | S §3.9 (crafted backup, `pm clear`, appops) — **last** | the offer dialog; 96: 8 s after 복원, drawer → 읽고 있는 책 shelf: toolbar title 읽고 있는 책, drawer closed, 샘플 EPUB listed; "좌우 여백 0" and "상하 여백 0" from a legacy 18/16 backup; the 자동 백업 section (설정 from the library → 백업·복원: the list 설정 shows over a book has no 백업·복원) | S, A |
 
@@ -1183,7 +1207,7 @@ Every shot: `logcat -b crash` is empty and there is no "draw failed".
   4. install over it;
   5. Back then 강제 중지 → library;
   6. 정보 → "최근 종료" lists real reasons.
-- **Volume:** 볼륨 키 = 위 = 다음 (설정 → 넘기기·터치·키) works once back in the book; 키 지정 with a volume key sets the
+- **Volume:** 볼륨 키 → 위 키로 다음 페이지 (설정 → 넘기기·터치·키) works once back in the book; 키 지정 with a volume key sets the
   direction.
 - **Scroll:** S §5.2 Comet STEP items 1–9 and phone SMOOTH items 1–9.
 - **Brightness:** U D1 (answer the question; 조명 진단 screenshots), D5 (force-stop put-back test).

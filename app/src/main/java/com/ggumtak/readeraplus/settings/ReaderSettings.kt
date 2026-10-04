@@ -321,14 +321,15 @@ enum class StatusItem(val label: String, val short: String, val example: String?
     CHAPTER("챕터 제목", "챕터 제목", "제3화 비밀"),
     BOOK_TITLE("책 제목", "책 제목", null),
     PAGE("쪽 번호", "쪽 번호", "12 / 3259"),
-    CHAPTER_PAGES_LEFT("챕터 쪽 번호", "챕터 쪽", "2/32"),            // the name of its old meaning (pages left) stays
+    CHAPTER_PAGES_LEFT("챕터 쪽 번호", "챕터 쪽", "2 / 32"),          // the name of its old meaning (pages left) stays
     PERCENT("진행률", "진행률", "34%"),
     EPISODE("회차", "회차", "123/540화"),
     TIME_LEFT_EPISODE("챕터 남은 시간", "챕터 시간", "챕터 3분"),
     TIME_LEFT_BOOK("책 남은 시간", "책 남은 시간", "책 7시간 20분"),
     CLOCK("시계", "시계", "14:05"),
-    BATTERY("배터리", "배터리", "80%"),                      // [Δ] no "▭": U+25AD is missing from some firmware fonts
-    CLOCK_BATTERY("시계 · 배터리", "시계·배터리", "14:05 · 80%");
+    // The page draws the battery icon, then the bare number: no "%" here either.
+    BATTERY("배터리", "배터리", "80"),                       // [Δ] no "▭": U+25AD is missing from some firmware fonts
+    CLOCK_BATTERY("시계 · 배터리", "시계·배터리", "14:05 · 80");
 
     /** Titles are the only items shortened with "…" when their slot is narrow. Numbers never are. */
     val elastic: Boolean get() = this == CHAPTER || this == BOOK_TITLE

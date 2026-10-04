@@ -467,7 +467,7 @@ internal object LibraryText {
         if (inGroup) return "이 항목에 책이 없습니다."
         return when (shelf) {
             Shelf.READING_NOW -> "${Shelf.READING_NOW.label}이 없습니다.\n책을 열면 여기에 표시됩니다."
-            // The [책 스캔] and [파일 열기] buttons under it say the rest.
+            // The [지금 스캔] and [파일 열기] buttons under it say the rest.
             Shelf.ALL -> "책이 없습니다."
             Shelf.FAVORITES -> "즐겨찾기한 책이 없습니다.\n" +
                 if (flagButtons) "카드의 별 버튼으로 추가하세요." else "책 메뉴에서 ‘즐겨찾기에 추가’를 고르세요."

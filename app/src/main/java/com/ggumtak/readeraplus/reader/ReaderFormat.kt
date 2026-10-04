@@ -38,8 +38,11 @@ object ReaderFormat {
         return if (is24 && h < 10) "0$h:$mm" else "$h:$mm"
     }
 
-    /** The status's 챕터 쪽 번호 (R2): "2/32", the page within its chapter over the chapter's pages (total ≥ page). */
-    fun chapterPage(page: Int, total: Int): String = "$page/${maxOf(total, page)}"
+    /**
+     * The status's 챕터 쪽 번호 (R2): "2 / 32", the page within its chapter over the chapter's pages (total ≥ page),
+     * spaced as [pageLabel]: both page numbers can share a band.
+     */
+    fun chapterPage(page: Int, total: Int): String = "$page / ${maxOf(total, page)}"
 
     /**
      * The footer's 회차 item (T1-5): "123/540화" — the episode [number] of the current TOC entry over the book's

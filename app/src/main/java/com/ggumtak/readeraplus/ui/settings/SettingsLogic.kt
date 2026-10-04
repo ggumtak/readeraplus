@@ -238,7 +238,7 @@ object SettingsFormat {
 
     fun longPressChoice(ms: Int): String = longPress(ms) + if (ms == AppSettings().longPressMs) " (기본)" else ""
 
-    /** A received book's second line on the Wi-Fi page: "12.3 MB · 서재에 추가됨". */
+    /** A received book's second line on the Wi-Fi page: "12MB · 서재에 추가됨". */
     fun received(bytes: Long, added: Boolean): String =
         bytes(bytes) + if (added) " · 서재에 추가됨" else " · 서재에 추가하지 못함"
 
@@ -253,17 +253,8 @@ object SettingsFormat {
 
     fun orientation(value: Int): String = ORIENTATIONS.firstOrNull { it.second == value }?.first ?: "자동 회전"
 
-    fun bytes(n: Long): String {
-        if (n < 1024) return "${n.coerceAtLeast(0)} B"
-        val units = arrayOf("KB", "MB", "GB", "TB")
-        var v = n / 1024.0
-        var u = 0
-        while (v >= 1024 && u < units.size - 1) {
-            v /= 1024
-            u++
-        }
-        return if (v >= 100) String.format(Locale.US, "%.0f %s", v, units[u]) else String.format(Locale.US, "%.1f %s", v, units[u])
-    }
+    /** "12MB", "3.4MB": the library's one size wording ([LibraryText.formatSize]), as in "200MB까지". */
+    fun bytes(n: Long): String = LibraryText.formatSize(n)
 
     /** 30 → "30초", 60 → "1분", 90 → "1분 30초". */
     fun seconds(sec: Int): String {
@@ -306,8 +297,8 @@ object SettingsFormat {
 
     /** The "볼륨 키" chooser (P8): each entry's mode, in order; the default first. */
     val VOLUME_CHOICES: List<Pair<String, VolumeMode>> = listOf(
-        "아래 = 다음 · 위 = 이전 (기본)" to VolumeMode.DOWN_NEXT,
-        "위 = 다음 · 아래 = 이전" to VolumeMode.UP_NEXT,
+        "아래 키로 다음 페이지 (기본)" to VolumeMode.DOWN_NEXT,
+        "위 키로 다음 페이지" to VolumeMode.UP_NEXT,
         "넘기지 않음 (소리 크기 조절)" to VolumeMode.OFF,
     )
 
@@ -316,8 +307,8 @@ object SettingsFormat {
         if (KeyMap.volumeBound(app)) return VOLUME_BOUND
         return when (KeyMap.volumeMode(app)) {
             VolumeMode.OFF -> "넘기지 않음"
-            VolumeMode.UP_NEXT -> "위 = 다음 · 아래 = 이전"
-            VolumeMode.DOWN_NEXT -> "아래 = 다음 · 위 = 이전"
+            VolumeMode.UP_NEXT -> "위 키로 다음 페이지"
+            VolumeMode.DOWN_NEXT -> "아래 키로 다음 페이지"
         }
     }
 
@@ -414,7 +405,7 @@ object R3Rows {
 
     // ---- 페이지 표시 (scroll SPEC §2.4, anchor §3.3 / §4.4)
 
-    const val MARGIN_NOTE = "0 = 기본 여백. 상태 표시줄은 상하 여백 안에 표시됩니다."
+    const val MARGIN_NOTE = "0이 기본 여백입니다. 상태 표시줄은 상하 여백 안에 나옵니다."
 
     val PAGE_BREAKS: List<PageBreakMode> = listOf(PageBreakMode.LINE, PageBreakMode.PARAGRAPH)
 
@@ -435,7 +426,7 @@ object R3Rows {
 
     // ---- 상태 표시줄 (UI_SPEC §5.5, anchor §2.7)
 
-    /** At the end of 상태 표시줄 (화면·밝기). */
+    /** At the end of the status bands (화면·밝기, under 아래쪽 상태 표시줄). */
     const val STATUS_NOTE = "모두 ‘없음’인 줄은 숨깁니다."
     /** 진행 막대's summary: the quick status panel's wording, one copy. */
     const val PROGRESS_SUMMARY = StatusUi.PROGRESS_SUMMARY
@@ -445,8 +436,14 @@ object R3Rows {
     /** Margin used for the bands while "페이지 여백" is off (anchor §2.7). */
     const val NO_MARGIN_DP = 4
 
-    /** "위 왼쪽" … "아래 오른쪽" ([band] 0 = top, [pos] 0..2 = left, centre, right), as the quick status panel says. */
+    /**
+     * A slot chooser's title: "위 왼쪽" … "아래 오른쪽" ([band] 0 = top, [pos] 0..2 = left, centre, right), as the quick
+     * status panel says. The rows themselves say only the place ([StatusUi.posWord]) under their band's [bandHeader].
+     */
     fun slotTitle(band: Int, pos: Int): String = "${StatusUi.bandWord(band)} ${StatusUi.posWord(pos)}"
+
+    /** The section of a band's three slot rows on 화면·밝기: "위쪽 상태 표시줄" / "아래쪽 상태 표시줄". */
+    fun bandHeader(band: Int): String = "${StatusUi.bandWord(band)}쪽 상태 표시줄"
 
     /** A slot chooser entry: "쪽 번호 (12 / 3259)", or the bare label for items without an example. */
     fun slotChoice(item: StatusItem): String = item.label + (item.example?.let { " ($it)" } ?: "")
@@ -505,7 +502,7 @@ object R3Rows {
         if (fullAccess) {
             location + if (lastAt > 0) " · 마지막 ${SettingsFormat.dateTime(lastAt, tz, now)}" else ""
         } else {
-            "$location · 다시 설치하면 모든 파일 접근을 허용해야 찾습니다"
+            "$location · 재설치 후에는 ‘모든 파일 접근’이 필요합니다"
         }
 
     /** The status line after "지금 자동 백업". */
@@ -564,12 +561,12 @@ object R3Rows {
  * and the voice. [MESSAGE] names every one of them.
  */
 object SettingsReset {
-    const val MESSAGE = "글자 · 넘기기 · 화면 · 밝기 · e-ink · 듣기 설정을 초기화할까요?\n" +
-        "TXT 정리 설정 · 스캔 폴더 · 지정한 키 · 정렬과 보기 · 목록 넘기기 · 자동 백업 · 찾아본 단어 기록 · " +
-        "기기 밝기 직접 조절 · 웹 검색 · 목소리는 그대로 둡니다."
+    const val MESSAGE = "글자 · 넘기기 · 화면 · 밝기 · e-ink · 듣기 설정을 기본값으로 되돌릴까요?\n\n" +
+        "그대로 두는 것: 스캔 폴더 · 지정한 키 · TXT 정리 설정 · 서재 정렬과 보기 · 목록 넘기기 · 자동 백업 · " +
+        "찾아본 단어 기록 · 기기 밝기 직접 조절 · 웹 검색 · 목소리"
 
-    /** The 설정 초기화 row's summary (the exceptions are in [MESSAGE]). */
-    const val SUMMARY = "글자 · 넘기기 · 화면 · 듣기 설정을 기본값으로"
+    /** The 설정 초기화 row's summary, one line on 360 dp (the exceptions are in [MESSAGE]). */
+    const val SUMMARY = "읽기 · 화면 · 듣기 설정을 기본값으로"
 
     fun app(old: AppSettings): AppSettings = AppSettings().copy(
         scanFolders = old.scanFolders,
@@ -598,7 +595,7 @@ object SettingsReset {
     )
 }
 
-/** The rows of "e-ink 화면" (T1-3): choices, labels, the main list's summary and the device readout. */
+/** The rows of "e-ink 새로고침" (T1-3): choices, labels, the main list's summary and the device readout. */
 object EinkChoices {
     /** "새로고침 방식" ([AppSettings.einkRefreshMethod]): the chooser's label to value, in its order. */
     val METHODS: List<Pair<String, Int>> = listOf(
@@ -689,7 +686,7 @@ object EinkChoices {
         listOf(
             "e-ink 제어: " + (vendor ?: "없음 (검은 화면을 잠깐 띄워 잔상을 지웁니다)"),
             "기기 새로고침 (GC16 · CLEAN): " + if (hasXrz) "사용 가능" else "없음",
-            "e-ink 화면 모드 바꾸기: " + if (viewMode) "가능" else "안 됨",
+            "화면 모드 바꾸기: " + if (viewMode) "가능" else "안 됨",
             deviceClean(clean) ?: "기기의 잔상 제거: 확인할 수 없음",
             "화면: $widthPx × $heightPx px · $dpi dpi",
         ).joinToString("\n")

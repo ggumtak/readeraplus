@@ -12,7 +12,7 @@ internal class StatusInputs {
     @JvmField var bar = -1f                                       // char progress of the page start; last page = 1; -1 = off
     @JvmField var chapterTitle: String? = null; @JvmField var bookTitle: String? = null
     @JvmField var chapterStartsHere = false                       // the page begins the chapter: CHAPTER draws nothing (§6 P1-16)
-    @JvmField var chapterPage = -1; @JvmField var chapterPages = -1   // R2 "2/32"; -1 = unknown (no TOC)
+    @JvmField var chapterPage = -1; @JvmField var chapterPages = -1   // R2 "2 / 32"; -1 = unknown (no TOC)
     @JvmField var minutesEpisode = -1; @JvmField var minutesBook = -1
     @JvmField var epNumbered = false; @JvmField var epNumber = -1; @JvmField var epMax = -1
     @JvmField var tocIndex = -1; @JvmField var tocCount = 0
@@ -164,8 +164,8 @@ internal object StatusText {
         return int(buf, n, minute)
     }
 
-    fun chapterPage(buf: CharArray, at: Int, page: Int, total: Int): Int =   // "2/32" (total ≥ page)
-        int(buf, put(buf, int(buf, at, page), '/'), maxOf(total, page))
+    fun chapterPage(buf: CharArray, at: Int, page: Int, total: Int): Int =   // "2 / 32" (total ≥ page), as [page]
+        int(buf, put(buf, int(buf, at, page), PAGE_SEP), maxOf(total, page))
 
     fun episode(buf: CharArray, at: Int, numbered: Boolean, n: Int, max: Int, idx: Int, count: Int): Int {  // "123/540화" / "87/612"
         if (numbered && n > 0) {

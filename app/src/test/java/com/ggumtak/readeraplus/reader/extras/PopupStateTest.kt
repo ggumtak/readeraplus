@@ -204,6 +204,7 @@ class PopupStateTest {
         assertEquals("30분 뒤 멈춤", SleepChoice.barNote(30 * 60_000L, 0))
         assertEquals("이 챕터 끝나면 멈춤", SleepChoice.barNote(0L, 1))
         assertEquals("다음 챕터 끝나면 멈춤", SleepChoice.barNote(0L, 2))
-        assertEquals("챕터 3개 뒤 멈춤", SleepChoice.barNote(0L, 3))
+        assertEquals("챕터 3개 끝나면 멈춤", SleepChoice.barNote(0L, 3))
+        assertEquals(com.ggumtak.readeraplus.ui.settings.SettingsFormat.sleepSummary(0, 3), SleepChoice.barNote(0L, 3))
     }
 }

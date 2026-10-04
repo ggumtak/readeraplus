@@ -59,19 +59,18 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             ctx.textButton("Wi-Fi 설정") { openWifiSettings() },
         ).apply { visibility = View.GONE }.also(body::addView)
         folderRow = ctx.infoRow("받는 폴더", "확인 중…").also(body::addView)
+        // The rules of the transfer, with the address they are about (after 받은 파일 they read as that list's).
+        body.addView(ctx.note(
+            "이 화면이 열려 있는 동안만 받습니다. 다시 열면 주소가 바뀝니다.\n" +
+                "TXT·EPUB 파일, 하나에 200MB까지 받습니다.\n" +
+                "게스트 Wi-Fi에서는 연결되지 않을 수 있습니다.",
+        ))
 
         // The header is renamed with the count ("받은 파일 (3)").
         receivedHeader = body.section("받은 파일")
         receivedBox = ctx.vertical().also(body::addView)
         errorText = ctx.warning("").apply { visibility = View.GONE }.also(body::addView)
         fillReceived()
-
-        // The rules of the transfer, at the end with no header of their own.
-        body.addView(ctx.note(
-            "이 화면이 열려 있는 동안만 받습니다. 다시 열면 주소가 바뀝니다.\n" +
-                "TXT·EPUB 파일, 하나에 200MB까지 받습니다.\n" +
-                "게스트 Wi-Fi에서는 연결되지 않을 수 있습니다.",
-        ))
         return ctx.pageScroll(body)
     }
 

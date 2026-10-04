@@ -115,12 +115,14 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         addPage(body, r)
         addFiles(body, r)
 
-        body.section("기타")
-        // Opened straight from the quick options (no main list below it): the way on to the other reading pages.
+        // Opened straight from the quick options (no main list below it): one way on to every other page (the main
+        // list, without its library rows while a book is open), under a header of its own.
         if (activity.isRoot(this)) {
-            body.addView(ctx.navRow("넘기기·터치·키", null) { activity.push(SettingsActivity.PAGE_PAGE_TURNING) })
-            body.addView(ctx.navRow("화면·밝기", null) { activity.push(SettingsActivity.PAGE_SCREEN) })
+            body.section("다른 설정")
+            body.addView(ctx.navRow("모든 설정", "넘기기 · 화면 · e-ink · 듣기 · 사전") { activity.push(SettingsActivity.PAGE_MAIN) })
         }
+        // Alone: the page's one destructive row.
+        body.section("되돌리기")
         body.addView(ctx.row(RESET_TITLE, RESET_SUMMARY) { reset() })
         return ctx.pageScroll(body)
     }

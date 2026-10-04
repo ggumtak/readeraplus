@@ -152,7 +152,7 @@ internal class NotesMenus(private val a: NotesActivity) {
 
     /** 전체 보기: the whole quote in a scrolling dialog with [복사] [공유] [닫기]. */
     private fun fullView(row: NoteRow) = withFull(row) { body, note ->
-        val text = a.label(body.trim() + if (note.isBlank()) "" else "\n\n메모  " + note.trim(), 16f).apply {
+        val text = a.label(body.trim() + if (note.isBlank()) "" else "\n\n메모: " + note.trim(), 16f).apply {
             setLineSpacing(0f, 1.25f)
             setTextIsSelectable(true)
             setPadding(a.dp(24), a.dp(8), a.dp(24), a.dp(8))

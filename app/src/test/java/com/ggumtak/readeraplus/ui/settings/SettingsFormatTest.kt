@@ -28,12 +28,14 @@ import java.util.TimeZone
 class SettingsFormatTest {
     @Test
     fun bytes() {
-        assertEquals("0 B", SettingsFormat.bytes(0))
-        assertEquals("1023 B", SettingsFormat.bytes(1023))
-        assertEquals("1.0 KB", SettingsFormat.bytes(1024))
-        assertEquals("12.3 MB", SettingsFormat.bytes((12.3 * 1024 * 1024).toLong()))
-        assertEquals("150 MB", SettingsFormat.bytes(150L * 1024 * 1024))
-        assertEquals("2.0 GB", SettingsFormat.bytes(2L * 1024 * 1024 * 1024))
+        // The library card's wording everywhere (Wi-Fi's received files, 캐시 비우기), as in "200MB까지".
+        assertEquals("0B", SettingsFormat.bytes(0))
+        assertEquals("1023B", SettingsFormat.bytes(1023))
+        assertEquals("1KB", SettingsFormat.bytes(1024))
+        assertEquals("3.4MB", SettingsFormat.bytes((3.4 * 1024 * 1024).toLong()))
+        assertEquals("12MB", SettingsFormat.bytes((12.3 * 1024 * 1024).toLong()))
+        assertEquals("150MB", SettingsFormat.bytes(150L * 1024 * 1024))
+        assertEquals("2GB", SettingsFormat.bytes(2L * 1024 * 1024 * 1024))
     }
 
     @Test
@@ -154,8 +156,8 @@ class SettingsFormatTest {
 
     @Test
     fun receivedLine() {
-        assertEquals("12.3 MB · 서재에 추가됨", SettingsFormat.received((12.3 * 1024 * 1024).toLong(), added = true))
-        assertEquals("500 B · 서재에 추가하지 못함", SettingsFormat.received(500, added = false))
+        assertEquals("12MB · 서재에 추가됨", SettingsFormat.received((12.3 * 1024 * 1024).toLong(), added = true))
+        assertEquals("500B · 서재에 추가하지 못함", SettingsFormat.received(500, added = false))
     }
 
     // ---------------------------------------------------------------- R3 rows
@@ -240,16 +242,20 @@ class SettingsFormatTest {
     fun slotLabels() {
         val titles = (0..1).flatMap { b -> (0..2).map { p -> R3Rows.slotTitle(b, p) } }
         assertEquals(listOf("위 왼쪽", "위 가운데", "위 오른쪽", "아래 왼쪽", "아래 가운데", "아래 오른쪽"), titles)
+        // On 화면·밝기 each band is a section of its own; its rows say only the place.
+        assertEquals(listOf("위쪽 상태 표시줄", "아래쪽 상태 표시줄"), (0..1).map { R3Rows.bandHeader(it) })
+        assertEquals(listOf("왼쪽", "가운데", "오른쪽"), (0..2).map { com.ggumtak.readeraplus.reader.extras.StatusUi.posWord(it) })
         // The quick status panel names the slots the same way.
         assertEquals("아래 오른쪽: 시계", com.ggumtak.readeraplus.reader.extras.StatusUi.slotDescription(1, 2, StatusItem.CLOCK))
         assertEquals("없음", R3Rows.slotChoice(StatusItem.NONE))
         assertEquals("시계 (14:05)", R3Rows.slotChoice(StatusItem.CLOCK))
         assertEquals("쪽 번호 (12 / 3259)", R3Rows.slotChoice(StatusItem.PAGE))
         // R2: the chapter's page sits right under the book's.
-        assertEquals("챕터 쪽 번호 (2/32)", R3Rows.slotChoice(StatusItem.CHAPTER_PAGES_LEFT))
+        assertEquals("챕터 쪽 번호 (2 / 32)", R3Rows.slotChoice(StatusItem.CHAPTER_PAGES_LEFT))
         assertEquals(StatusItem.PAGE.ordinal + 1, StatusItem.CHAPTER_PAGES_LEFT.ordinal)
         assertEquals("챕터 남은 시간 (챕터 3분)", R3Rows.slotChoice(StatusItem.TIME_LEFT_EPISODE))
-        assertEquals("배터리 (80%)", R3Rows.slotChoice(StatusItem.BATTERY))
+        // The page draws the battery icon, then the bare number: the example promises no "%".
+        assertEquals("배터리 (80)", R3Rows.slotChoice(StatusItem.BATTERY))
         // A title has no example: the chooser does not repeat the name.
         assertEquals("책 제목", R3Rows.slotChoice(StatusItem.BOOK_TITLE))
         assertEquals("모두 ‘없음’인 줄은 숨깁니다.", R3Rows.STATUS_NOTE)
@@ -309,7 +315,7 @@ class SettingsFormatTest {
         )
         assertEquals("다운로드/ReaderaPlus/backup", R3Rows.autoBackupSummary(true, loc, 0L, utc, now))
         assertEquals(
-            "다운로드/ReaderaPlus/backup · 다시 설치하면 모든 파일 접근을 허용해야 찾습니다",
+            "다운로드/ReaderaPlus/backup · 재설치 후에는 ‘모든 파일 접근’이 필요합니다",
             R3Rows.autoBackupSummary(false, loc, 1790683200000L, utc, now),
         )
         for (o in AutoBackup.Outcome.entries) assertTrue(R3Rows.autoBackupOutcome(o, loc).isNotBlank())

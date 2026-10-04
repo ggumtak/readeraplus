@@ -33,7 +33,7 @@ class SettingsActivity : Activity() {
         const val PAGE_PAGE_TURNING = "page_turning"
         /** "화면·밝기": the status bar, the screen (전체 화면, 화면 방향, 인용문 색 표시) and the brightness. */
         const val PAGE_SCREEN = "screen"
-        /** "e-ink 화면": refresh cadence, chapter / picture refreshes, the page mode and the 고급 group. */
+        /** "e-ink 새로고침": refresh cadence, chapter / picture refreshes, the page mode and the 고급 group. */
         const val PAGE_EINK = "eink"
         const val PAGE_FONTS = "fonts"
         const val PAGE_TTS = "tts"

@@ -1388,7 +1388,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 when (shelf) {
                     // 읽고 있는 책 fills by opening a book: no scan or file buttons there.
                     Shelf.ALL, Shelf.DOWNLOADS, Shelf.FOLDERS, Shelf.FORMATS -> {
-                        buttons += "책 스캔" to { manualScan() }
+                        buttons += "지금 스캔" to { manualScan() }
                         buttons += "파일 열기" to { openFilePicker() }
                     }
                     Shelf.COLLECTIONS -> buttons += "새 컬렉션" to { newCollection(null) }
@@ -1695,19 +1695,24 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     // ============================================================================================ overflow
 
-    /** ⋮: the library's own work (the drawer only moves between shelves). */
+    /**
+     * ⋮: the library's own work (the drawer only moves between shelves), in groups parted by a black rule: this list
+     * (정렬 · 보기 · 새 컬렉션 / 휴지통 비우기) | one book in (파일 열기 · Wi-Fi로 책 받기) | the scan (지금 스캔 · 스캔
+     * 폴더 추가) | 설정.
+     */
     private fun showOverflow(anchor: View) {
         val items = ArrayList<MenuItem>()
         items += MenuItem("정렬: ${sort.label}", R.drawable.ic_sort) { chooseSort() }
         items += MenuItem("보기: ${listMode.label}", modeIcon(listMode)) { chooseMode() }
         if (shelf == Shelf.COLLECTIONS && group == null) items += MenuItem("새 컬렉션", R.drawable.ic_add) { newCollection(null) }
         if (shelf == Shelf.TRASH) items += MenuItem("휴지통 비우기", R.drawable.ic_delete_forever) { confirmEmptyTrash() }
-        items += MenuItem("파일 열기", R.drawable.ic_file_open) { openFilePicker() }
-        items += MenuItem("스캔 폴더 추가", R.drawable.ic_create_new_folder) { pickTree() }
+        items += MenuItem("파일 열기", R.drawable.ic_file_open, groupStart = true) { openFilePicker() }
         // Books received there are in the database when this screen resumes: onResume reloads the list and counts.
         items += MenuItem("Wi-Fi로 책 받기", R.drawable.ic_download) { SettingsActivity.open(this, SettingsActivity.PAGE_WIFI) }
-        items += MenuItem("책 스캔", R.drawable.ic_refresh) { manualScan() }
-        items += MenuItem("설정", R.drawable.ic_settings) { SettingsActivity.open(this) }
+        // "지금 스캔", as the row of 설정 → 책 스캔 that does the same.
+        items += MenuItem("지금 스캔", R.drawable.ic_refresh, groupStart = true) { manualScan() }
+        items += MenuItem("스캔 폴더 추가", R.drawable.ic_create_new_folder) { pickTree() }
+        items += MenuItem("설정", R.drawable.ic_settings, groupStart = true) { SettingsActivity.open(this) }
         popupMenu(anchor, items, 260)
     }
 

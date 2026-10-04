@@ -121,6 +121,8 @@ internal class StatsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         content.addView(summaryGrid(d.periods))
         content.addView(text(ReadingStats.streakLine(d.streak.first, d.streak.second)))
         content.addView(text(ReadingStats.speedLine(d.cpm)))
+        // How the time above is counted: in its own section, not after the last one (it read as 올해 다 읽은 책's).
+        content.addView(ctx.note("한 쪽에 2초 넘게 머문 시간만 셉니다 (쪽마다 5분까지). 연속 기록은 하루 5분 이상 읽은 날만 셉니다."))
 
         content.section("최근 ${HeatmapModel.WEEKS}주")
         val heat = HeatmapView(ctx).apply {
@@ -143,8 +145,6 @@ internal class StatsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
 
         content.section("올해 다 읽은 책")
         addFinished(d.finished)
-
-        content.addView(ctx.note("한 쪽에 2초 넘게 머문 시간만, 쪽마다 5분까지 셉니다. 연속 기록은 하루 5분 이상 읽은 날만 셉니다."))
     }
 
     /** 오늘 | 이번 주 / 이번 달 | 올해: each with its time and "312쪽 · 18.2만 자". */

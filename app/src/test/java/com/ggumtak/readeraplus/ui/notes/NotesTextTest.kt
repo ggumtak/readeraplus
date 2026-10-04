@@ -115,7 +115,7 @@ class NotesTextTest {
         )
         assertTrue(NotesText.emptyText(NotesTab.BOOKMARKS, "", false, true, true).endsWith("\n화면 오른쪽 위 모서리를 눌러도 됩니다"))
         assertEquals("북마크가 없습니다\n\n읽는 중에 메뉴의 북마크 버튼을 누르세요", NotesText.emptyText(NotesTab.BOOKMARKS, "", false, true, false))
-        assertEquals("인용문이 없습니다\n\n본문을 길게 눌러 문장을 선택한 뒤 ‘인용’을 누르세요", NotesText.emptyText(NotesTab.QUOTES, "", false, true, true))
+        assertEquals("인용문이 없습니다\n\n본문을 길게 누른 뒤 ‘인용’을 누르세요", NotesText.emptyText(NotesTab.QUOTES, "", false, true, true))
         for (t in NotesTab.entries) {
             val text = NotesText.emptyText(t, "", false, true, true)
             assertTrue(text.isNotBlank())

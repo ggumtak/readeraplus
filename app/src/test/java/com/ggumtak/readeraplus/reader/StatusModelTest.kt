@@ -44,7 +44,7 @@ class StatusModelTest {
     fun everyItemInEverySlot() {
         val expected = mapOf(
             StatusItem.CHAPTER to "제3화 비밀", StatusItem.BOOK_TITLE to "책 제목", StatusItem.PAGE to "12 / 3259",
-            StatusItem.PERCENT to "34%", StatusItem.CHAPTER_PAGES_LEFT to "2/32", StatusItem.EPISODE to "123/540화",
+            StatusItem.PERCENT to "34%", StatusItem.CHAPTER_PAGES_LEFT to "2 / 32", StatusItem.EPISODE to "123/540화",
             StatusItem.TIME_LEFT_EPISODE to "챕터 3분", StatusItem.TIME_LEFT_BOOK to "책 7시간 20분", StatusItem.CLOCK to "14:05",
         )
         for (band in 0..1) for (pos in 0..2) for ((item, text) in expected) {
@@ -176,9 +176,9 @@ class StatusModelTest {
         val inp = inputs().apply { chapterPage = -1; chapterPages = -1 }
         assertNull(m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
         inp.chapterPage = 32
-        assertEquals("32/32", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))     // the chapter's last page
+        assertEquals("32 / 32", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))     // the chapter's last page
         inp.chapterPage = 1; inp.chapterPages = 1
-        assertEquals("1/1", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
+        assertEquals("1 / 1", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
     }
 
     @Test
@@ -209,7 +209,7 @@ class StatusModelTest {
         assertEquals("책 제목", m.sample(StatusItem.BOOK_TITLE, inp))
         assertEquals("12 / 3259", m.sample(StatusItem.PAGE, inp))
         assertEquals("34%", m.sample(StatusItem.PERCENT, inp))
-        assertEquals("2/32", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
+        assertEquals("2 / 32", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
         assertEquals("123/540화", m.sample(StatusItem.EPISODE, inp))
         assertEquals("챕터 3분", m.sample(StatusItem.TIME_LEFT_EPISODE, inp))
         assertEquals("책 7시간 20분", m.sample(StatusItem.TIME_LEFT_BOOK, inp))

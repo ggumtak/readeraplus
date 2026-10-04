@@ -23,6 +23,7 @@ import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.InkToggle
 import com.ggumtak.readeraplus.ui.kit.dp
+import com.ggumtak.readeraplus.ui.kit.groupLinePx
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.keepAll
@@ -96,23 +97,26 @@ internal fun Context.pageBody(): LinearLayout = vertical {
 
 /**
  * Starts a section: its bold header (tag "section"), returned so a page can rename it ("받은 파일 (3)") or hide it. A
- * section after another one in this container gets an 8 dp gap and a full-width black 1 px line above its header, so
- * every group reads as its own block when scanning a long page; the first one has none (the toolbar's line is right
- * above it, also after a top note or 정보's header block). This reverses UI_SPEC polish 12 (spacing only) on purpose:
- * the categories were too hard to tell apart (user, 2026-10-04). The gap and the line are the header's own background,
- * so hiding the header hides them too. Static views: no extra e-ink update.
+ * section after another one in this container gets a 20 dp gap and a full-width black rule (1 dp, at least 2 px: a
+ * 1 px line is faint on e-ink) above its header: about 30 dp of white from the last row's text, the rule, 16 dp, the
+ * 18 sp header, then its rows, so every group reads as its own block when scanning a long page. The rows inside a group
+ * have no lines: the rules are the groups' only lines. The first section has none (the toolbar's line is right above
+ * it, also after a top note or 정보's header block). This reverses UI_SPEC polish 12 (spacing only) on purpose: the
+ * categories were too hard to tell apart (user, 2026-10-04). The gap and the rule are the header's own background, so
+ * hiding the header hides them too. Static views: no extra e-ink update.
  */
 internal fun LinearLayout.section(text: String): TextView {
     val after = (0 until childCount).any { getChildAt(it).tag == SECTION_TAG }
     val header = context.sectionHeader(text).apply { tag = SECTION_TAG }
     if (after) {
-        val gap = context.dp(8)
+        val gap = context.dp(20)
+        val lineH = context.groupLinePx()
         header.background = LayerDrawable(arrayOf(ColorDrawable(Ink.LINE))).apply {
             setLayerGravity(0, Gravity.TOP or Gravity.FILL_HORIZONTAL)
-            setLayerHeight(0, 1)
+            setLayerHeight(0, lineH)
             setLayerInsetTop(0, gap)
         }
-        header.setPadding(header.paddingLeft, header.paddingTop + gap + 1, header.paddingRight, header.paddingBottom)
+        header.setPadding(header.paddingLeft, header.paddingTop + gap + lineH, header.paddingRight, header.paddingBottom)
     }
     addView(header)
     return header

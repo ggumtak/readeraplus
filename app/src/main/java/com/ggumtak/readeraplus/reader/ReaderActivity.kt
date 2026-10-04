@@ -2778,7 +2778,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /**
      * Fills [inp] for page [p] of [l] (the page on screen): only the inputs of the items a slot shows ([all] = every
      * item, for [statusSample]), and the progress line's position when it is on. O(1) per item except the chapter
-     * lookup (O(log C)); allocates nothing for the items themselves.
+     * lookup (O(log C)); allocates nothing for the items themselves (but the boxed section key of [chapterStart]).
      */
     private fun fillStatus(s: BookSession, l: SectionLayout, p: PageInfo, inp: StatusInputs, sample: Boolean, all: Boolean) {
         val st = s.settings
@@ -2951,7 +2951,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         inp.setChapterPage(c.globalPage(sec, pageIdx), first, end)
     }
 
-    /** [PageCounts.chapterStart] of TOC entry [i]: its section's layout when cached, else the estimate. */
+    /**
+     * [PageCounts.chapterStart] of TOC entry [i]: its section's layout when cached, else the estimate. An entry in
+     * another section is looked up in [BookSession.peek] (an Int-keyed HashMap: a section number above 127 is boxed,
+     * one small object, at most twice per turn); an entry in [sec] uses [l] and allocates nothing.
+     */
     private fun chapterStart(s: BookSession, l: SectionLayout, sec: Int, i: Int): Int {
         val c = s.counts
         val ns = s.chapters.section(i)

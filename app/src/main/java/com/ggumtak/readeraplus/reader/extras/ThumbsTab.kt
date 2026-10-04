@@ -31,9 +31,9 @@ import com.ggumtak.readeraplus.ui.kit.vertical
 import kotlin.math.roundToInt
 
 /**
- * The contents dialog's 4th tab, 썸네일 (NOTES_SPEC §12, library.md §3.1/3.4): a grid page of page thumbnails
- * ([ThumbGridView]) over an [InkPagerBar] ("1 / 272 · 11쪽"; a label tap opens the number pad, page N → its grid
- * page). Thumbnails come from the host's [PageThumbsHost]; a tap jumps with [PageJumpHost.goToPage] and closes the
+ * The contents dialog's 4th tab, 미리보기 (was 썸네일; NOTES_SPEC §12, library.md §3.1/3.4): a grid page of page
+ * thumbnails ([ThumbGridView]) over an [InkPagerBar] ("1 / 272 · 11쪽"; a label tap opens the number pad, page N → its
+ * grid page). Thumbnails come from the host's [PageThumbsHost]; a tap jumps with [PageJumpHost.goToPage] and closes the
  * dialog through [close]. Swipes (either axis), ◀ ▶ and the page keys ([page], a [PageTarget]) move a grid page.
  *
  * One e-ink update per grid page: the old grid stays until the host reports the new batch (complete, or partial after
@@ -75,7 +75,7 @@ internal class ThumbsTab(private val host: ReaderHost, private val close: () -> 
     private val readyFallback = Runnable { fireReady() }
 
     init {
-        grid.contentDescription = "페이지 썸네일"
+        grid.contentDescription = "페이지 미리보기"
         grid.onTap = { cell -> open(cell) }
         grid.onPage = { dir -> page(dir) }
         grid.onSize = { w, h -> resized(w, h) }

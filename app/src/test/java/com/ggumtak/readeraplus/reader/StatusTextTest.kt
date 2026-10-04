@@ -51,10 +51,11 @@ class StatusTextTest {
                 assertEquals(ReaderFormat.chapterPage(page, total), text { b, at -> StatusText.chapterPage(b, at, page, total) })
             }
         }
-        assertEquals("2/32", text { b, at -> StatusText.chapterPage(b, at, 2, 32) })
-        assertEquals("32/32", text { b, at -> StatusText.chapterPage(b, at, 32, 32) })
-        assertEquals("1/1", text { b, at -> StatusText.chapterPage(b, at, 1, 1) })
-        assertEquals("5/5", text { b, at -> StatusText.chapterPage(b, at, 5, 3) })     // an estimate below the page
+        // Spaced like the book's page number ("12 / 3259"): the two can share a band.
+        assertEquals("2 / 32", text { b, at -> StatusText.chapterPage(b, at, 2, 32) })
+        assertEquals("32 / 32", text { b, at -> StatusText.chapterPage(b, at, 32, 32) })
+        assertEquals("1 / 1", text { b, at -> StatusText.chapterPage(b, at, 1, 1) })
+        assertEquals("5 / 5", text { b, at -> StatusText.chapterPage(b, at, 5, 3) })     // an estimate below the page
     }
 
     @Test
@@ -128,6 +129,6 @@ class StatusTextTest {
         assertEquals("1234", String(tiny))
         assertEquals(4, StatusText.timeLeft(tiny, 2, true, 440))
         assertEquals(4, StatusText.chapterPage(tiny, 0, 123, 456))
-        assertEquals("123/", String(tiny))
+        assertEquals("123 ", String(tiny))
     }
 }

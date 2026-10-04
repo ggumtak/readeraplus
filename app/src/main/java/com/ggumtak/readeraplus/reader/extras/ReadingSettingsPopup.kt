@@ -17,6 +17,7 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.engine.LineBreakMode
 import com.ggumtak.readeraplus.format.ParseOptions
+import com.ggumtak.readeraplus.reader.LayoutKeys
 import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.ReaderHost
@@ -155,16 +156,17 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         root.addView(stepperRow("문단 간격", cur.paragraphSpacingPct.toFloat(), 0f, 300f, 10f, { Fmt.pct(it.toInt()) }) {
             update(cur.copy(paragraphSpacingPct = it.toInt()), debounce = true)
         })
-        // The margins as on 읽기 설정: "0" = the default margin, −40..+40 in steps of 2 (stored values stay dp).
+        // The margins as on 읽기 설정: "0" = the default margin, −40..+40 in steps of 2 (stored values stay dp). While
+        // 여백 사용 is off they show the margin the page has (QuickFields.sideUi / verticalUi).
         root.addView(stepperRow(
             "좌우 여백",
-            SideMargin.toUi(cur.marginLeftDp).coerceIn(SideMargin.UI_MIN, SideMargin.UI_MAX).toFloat(),
+            QuickFields.sideUi(cur).toFloat(),
             SideMargin.UI_MIN.toFloat(), SideMargin.UI_MAX.toFloat(), SideMargin.UI_STEP.toFloat(),
             { SideMargin.label(it.toInt()) },
         ) { update(QuickFields.withSide(cur, it.toInt()), debounce = true) })
         root.addView(stepperRow(
             "상하 여백",
-            VerticalMargin.toUi(cur.marginTopDp).coerceIn(VerticalMargin.UI_MIN, VerticalMargin.UI_MAX).toFloat(),
+            QuickFields.verticalUi(cur).toFloat(),
             VerticalMargin.UI_MIN.toFloat(), VerticalMargin.UI_MAX.toFloat(), VerticalMargin.UI_STEP.toFloat(),
             { VerticalMargin.label(it.toInt()) },
         ) { update(QuickFields.withVertical(cur, it.toInt()), debounce = true) })
@@ -322,15 +324,41 @@ internal object QuickFields {
         fontId = src.fontId,
     )
 
-    /** 좌우 여백 at stepper value [ui] ("0" = the default margin); a step while "여백 사용" is off turns it on. */
+    /**
+     * The 좌우 여백 stepper's value: the margin the page has, so while "여백 사용" is off the minimal margin
+     * ([LayoutKeys.TINY_MARGIN_DP], "−36"), not the stored one the page does not use.
+     */
+    fun sideUi(s: ReaderSettings): Int =
+        SideMargin.toUi(if (s.pageMargins) s.marginLeftDp else LayoutKeys.TINY_MARGIN_DP).coerceIn(SideMargin.UI_MIN, SideMargin.UI_MAX)
+
+    /** The 상하 여백 stepper's value, as [sideUi]. */
+    fun verticalUi(s: ReaderSettings): Int =
+        VerticalMargin.toUi(if (s.pageMargins) s.marginTopDp else LayoutKeys.TINY_MARGIN_DP)
+            .coerceIn(VerticalMargin.UI_MIN, VerticalMargin.UI_MAX)
+
+    /**
+     * 좌우 여백 at stepper value [ui] ("0" = the default margin). A step while "여백 사용" is off turns it on: from the
+     * minimal margin the stepper showed ([sideUi]), and the top and bottom keep the minimal margin they had (they would
+     * jump to their stored values otherwise, an axis the user did not touch).
+     */
     fun withSide(s: ReaderSettings, ui: Int): ReaderSettings {
         val dp = SideMargin.toDp(ui)
-        return s.copy(marginLeftDp = dp, marginRightDp = dp, pageMargins = true)
+        val tb = if (s.pageMargins) null else LayoutKeys.TINY_MARGIN_DP
+        return s.copy(
+            marginLeftDp = dp, marginRightDp = dp,
+            marginTopDp = tb ?: s.marginTopDp, marginBottomDp = tb ?: s.marginBottomDp,
+            pageMargins = true,
+        )
     }
 
-    /** 상하 여백 at stepper value [ui], as [withSide]. */
+    /** 상하 여백 at stepper value [ui], as [withSide] (the sides keep the minimal margin when it turns the margins on). */
     fun withVertical(s: ReaderSettings, ui: Int): ReaderSettings {
         val dp = VerticalMargin.toDp(ui)
-        return s.copy(marginTopDp = dp, marginBottomDp = dp, pageMargins = true)
+        val lr = if (s.pageMargins) null else LayoutKeys.TINY_MARGIN_DP
+        return s.copy(
+            marginTopDp = dp, marginBottomDp = dp,
+            marginLeftDp = lr ?: s.marginLeftDp, marginRightDp = lr ?: s.marginRightDp,
+            pageMargins = true,
+        )
     }
 }

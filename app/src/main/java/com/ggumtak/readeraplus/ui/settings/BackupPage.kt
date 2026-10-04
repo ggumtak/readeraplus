@@ -49,6 +49,8 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         body.section("백업")
         exportRow = ctx.row("백업 파일 만들기", lastBackupText()) { createBackup() }.also(body::addView)
         backupStatus = statusLine(body)
+        // About every backup, manual or automatic: here, not under 자동 백업 only.
+        body.addView(ctx.note(R3Rows.BACKUP_PRIVACY))
 
         addAutoBackup(body)
 
@@ -103,7 +105,6 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         autoNowRow?.setShown(app.autoBackup)
         body.addView(ctx.row("자동 백업 파일 지우기", null) { deleteAutoFiles() })
         autoStatus = statusLine(body)
-        body.addView(ctx.note(R3Rows.BACKUP_PRIVACY))
     }
 
     /** "다운로드/ReaderaPlus/backup". */

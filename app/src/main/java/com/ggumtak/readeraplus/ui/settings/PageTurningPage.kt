@@ -34,7 +34,7 @@ import com.ggumtak.readeraplus.ui.kit.vertical
  * the auto-turn interval), 화면 터치 (the tap-zone mode with a visual preview, a 3×3 editor in 직접 지정, and the two
  * corner switches), 스와이프·길게 누르기 (swipes and the long-press time) and 버튼·키 (the volume keys, key hold, key →
  * action bindings with the "이 키로 할 동작" chooser, the key test). Every row is an app setting; the reading settings
- * live on 읽기 설정, the status bar and brightness on 화면·밝기, the refreshes on e-ink 화면.
+ * live on 읽기 설정, the status bar and brightness on 화면·밝기, the refreshes on e-ink 새로고침.
  */
 internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_PAGE_TURNING, "넘기기·터치·키") {
     private val modeRows = LinkedHashMap<TapZoneMode, View>()
