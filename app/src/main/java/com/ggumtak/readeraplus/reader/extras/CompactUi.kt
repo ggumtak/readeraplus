@@ -30,16 +30,16 @@ import com.ggumtak.readeraplus.ui.kit.vertical
 
 /*
  * Building blocks of the quick reading options (⚙) and their drop-down lists, sized for the ~6" 360×720 dp e-ink
- * screen: 56 dp rows split by light 1 px lines inset 12 dp (black above the "전체 읽기 설정" row), 16 sp labels, 17 sp
- * values, 48 dp stepper buttons on the label's own row, 48 dp list rows. No card boxes, no animations.
+ * screen: 48 dp rows split by light 1 px lines inset 12 dp, 16 sp labels, 17 sp values, 48 dp stepper buttons on the
+ * label's own row, 48 dp list rows. No card boxes, no animations.
  */
 internal object Compact {
     /**
-     * Row height: 48 dp touch targets with room around them. The popup ([PopupGeometry.QUICK_ROWS] rows between two
-     * [BAR_DP] bars, 376 dp) fits under the 56% cap of the Comet (403 dp) without scrolling.
+     * Row height: the 48 dp touch target of its stepper buttons. The popup (the [BAR_DP] top bar and
+     * [PopupGeometry.QUICK_ROWS] rows, 384 dp) fits under the 56% cap of the Comet (403 dp) without scrolling.
      */
-    const val ROW_DP = 56
-    /** The title bar ("읽기 설정 · 모든 책에 적용 · 닫기") and the "전체 읽기 설정 ›" row. */
+    const val ROW_DP = 48
+    /** The top bar ("전체 읽기 설정 ›" · 닫기). */
     const val BAR_DP = 48
     const val LABEL_SP = 16f
     const val VALUE_SP = 17f
@@ -57,7 +57,7 @@ internal object Compact {
 
 /**
  * Row background: white (gray while pressed when [pressable]) with a 1 px line along the top when [topLine]: black
- * and full width (a group starts: "전체 읽기 설정", other dialogs' bars), or light and inset 12 dp when [light] (an
+ * and full width (a group starts: a list's actions, other dialogs' bars), or light and inset 12 dp when [light] (an
  * ordinary popup row).
  */
 internal fun Context.compactRowBackground(pressable: Boolean, topLine: Boolean, light: Boolean = false): Drawable {
@@ -72,12 +72,12 @@ internal fun Context.compactRowBackground(pressable: Boolean, topLine: Boolean, 
 
 /**
  * A horizontal settings row (min [Compact.ROW_DP], 12 dp side padding, no vertical padding: the 48 dp stepper
- * buttons sit centred in it); clickable (pressed = gray) when [onClick] is set.
+ * buttons fill its height) under a light line; clickable (pressed = gray) when [onClick] is set.
  */
-internal fun Context.compactRow(topLine: Boolean = true, strongLine: Boolean = false, onClick: ((View) -> Unit)? = null): LinearLayout = horizontal {
+internal fun Context.compactRow(topLine: Boolean = true, onClick: ((View) -> Unit)? = null): LinearLayout = horizontal {
     minimumHeight = dp(Compact.ROW_DP)
     setPadding(dp(Compact.PAD_DP), 0, dp(Compact.PAD_DP - 4), 0)
-    background = compactRowBackground(onClick != null, topLine, light = !strongLine)
+    background = compactRowBackground(onClick != null, topLine, light = true)
     if (onClick != null) setOnClickListener(onClick)
 }
 

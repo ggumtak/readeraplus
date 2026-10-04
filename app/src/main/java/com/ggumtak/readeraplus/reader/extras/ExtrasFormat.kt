@@ -76,22 +76,22 @@ internal object Fmt {
 
     fun pct(v: Int): String = "$v%"
 
-    /** Indent in % of em → "없음", "1em", "1.25em". */
+    /** Indent in % of a character's width (em) → "없음", "1자", "1.25자". */
     fun em(pct: Int): String {
         if (pct <= 0) return "없음"
         val whole = pct / 100
         val frac = pct % 100
         return when {
-            frac == 0 -> "${whole}em"
-            frac % 10 == 0 -> "$whole.${frac / 10}em"
-            else -> "$whole.${frac.toString().padStart(2, '0')}em"
+            frac == 0 -> "${whole}자"
+            frac % 10 == 0 -> "$whole.${frac / 10}자"
+            else -> "$whole.${frac.toString().padStart(2, '0')}자"
         }
     }
 
-    /** Letter spacing in per-mille of em → "기본", "+2%", "-1%", "+1.5%". */
+    /** Letter spacing in per-mille of em → "기본", "+2%", "−1%" (U+2212, as [signed]), "+1.5%". */
     fun letterSpacing(pm: Int): String {
         if (pm == 0) return "기본"
-        val sign = if (pm > 0) "+" else "-"
+        val sign = if (pm > 0) "+" else "\u2212"
         val a = abs(pm)
         return if (a % 10 == 0) "$sign${a / 10}%" else "$sign${a / 10}.${a % 10}%"
     }
@@ -133,10 +133,13 @@ internal object Fmt {
         return clean.coerceIn(min, max)
     }
 
-    /** "없음" or "N개 켜짐" for TXT replace rules: the rules the parser applies ([RuleList.enabledCount]). */
+    /**
+     * The 바꾸기 규칙 row: "N개 켜짐" (the rules the parser applies, [RuleList.enabledCount]), or "없음 · 광고 문구 등
+     * 지우기" saying what the rules are for.
+     */
     fun rulesLabel(rules: String): String {
         val n = RuleList.enabledCount(rules)
-        return if (n == 0) "없음" else "${n}개 켜짐"
+        return if (n == 0) "없음 · 광고 문구 등 지우기" else "${n}개 켜짐"
     }
 
     /** Number of non-comment rule lines without "=>" or whose pattern does not compile. */
@@ -353,13 +356,13 @@ internal object SearchText {
  * Size / placement maths of the quick reading options (⚙) and the drop-down lists they open (px in the reader
  * window). Sized for the ~6" 360×720 dp e-ink screen (U polish 7): centred, the whole width but 8 dp on each side
  * (≤ 400 dp), 8 dp under the status-bar inset, and at most 56% of the height, so the lower part of the page stays in
- * view as the preview while the whole popup ([QUICK_HEIGHT_DP] = 376 dp) never scrolls.
+ * view as the preview while the whole popup ([QUICK_HEIGHT_DP] = 384 dp) never scrolls.
  */
 internal object PopupGeometry {
-    /** The quick options' rows: 글자 크기, 굵기, 줄 간격, 문단 간격, 글꼴 (between the title bar and "전체 읽기 설정"). */
-    const val QUICK_ROWS = 5
-    /** The whole popup: the title bar, [QUICK_ROWS] rows and the "전체 읽기 설정" row (376 dp). */
-    const val QUICK_HEIGHT_DP = Compact.BAR_DP + QUICK_ROWS * Compact.ROW_DP + Compact.BAR_DP
+    /** The quick options' rows under the top bar: 글자 크기, 굵기, 줄 간격, 문단 간격, 좌우 여백, 상하 여백, 글꼴. */
+    const val QUICK_ROWS = 7
+    /** The whole popup: the top bar ("전체 읽기 설정 ›" · 닫기) and [QUICK_ROWS] rows (48 + 7 × 48 = 384 dp). */
+    const val QUICK_HEIGHT_DP = Compact.BAR_DP + QUICK_ROWS * Compact.ROW_DP
     /** Space left beside the popup, both sides together (dp): it is centred, 8 dp from each edge. */
     const val SIDE_GAP_DP = 16
     const val MAX_WIDTH_DP = 400
@@ -431,7 +434,7 @@ internal object PopupGeometry {
  * 설정). A status change only repaints the page (the bands live in the margins), so none of this touches the layout.
  */
 internal object StatusUi {
-    const val FIT_NOTE = "여백이 좁아 위 · 아래 정보가 보이지 않습니다. 상하 여백을 늘리세요."
+    const val FIT_NOTE = "상하 여백이 좁아 상태 표시줄이 가려집니다. 읽기 설정에서 ‘상하 여백’을 늘리세요."
     const val PROGRESS_SUMMARY = "화면 맨 아래 가는 선"
     /** Margin of a page whose "페이지 여백" switch is off (LayoutKeys.TINY_MARGIN_DP). */
     const val TINY_MARGIN_DP = 4
@@ -452,7 +455,7 @@ internal object StatusUi {
     /** "상태 글자 크기" shows only while some band has text. */
     fun showsSize(s: ReaderSettings): Boolean = s.hasHeader || s.hasFooterText
 
-    /** The grey [FIT_NOTE]: a band with items whose margin is too small to draw it. Nothing is disabled. */
+    /** The [FIT_NOTE] warning: a band with items whose margin is too small to draw it. Nothing is disabled. */
     fun showsFitNote(s: ReaderSettings): Boolean {
         val top = if (s.pageMargins) s.marginTopDp else TINY_MARGIN_DP
         val bottom = if (s.pageMargins) s.marginBottomDp else TINY_MARGIN_DP
@@ -464,7 +467,7 @@ internal object StatusUi {
 
     /** "외톨이 줄 방지" summary: in 문단 단위 only paragraphs taller than a page are split. */
     fun widowSummary(mode: PageBreakMode): String =
-        if (mode == PageBreakMode.PARAGRAPH) "한 쪽보다 긴 문단에만 적용" else "문단의 첫 줄/마지막 줄이 홀로 남지 않게"
+        if (mode == PageBreakMode.PARAGRAPH) "한 페이지보다 긴 문단에만" else "문단 첫 줄 · 끝 줄이 홀로 남지 않게"
 }
 
 /**

@@ -101,9 +101,9 @@ data class ReaderSettings(
  * match no preset: the 스타일 row calls them "기본" (`StyleChoice.isDefault`).
  */
 enum class StylePreset(val label: String, val description: String) {
-    MARU("웹소설", "마루뷰어 · 나눔명조 · 어두운 회색 바탕 · 그림자 · 넓은 줄/문단 간격 · 왼쪽 정렬"),
-    RIDI("전자책", "리디바탕 · 양쪽 정렬 · 글자 줄바꿈 · 1em 들여쓰기"),
-    BOOK("종이책", "나눔명조 · 양쪽 정렬 · 글자 줄바꿈 · 문단 간격 없이 들여쓰기");
+    MARU("웹소설", "마루뷰어 화면 · 나눔명조"),
+    RIDI("전자책", "리디바탕 · 양쪽 정렬"),
+    BOOK("종이책", "나눔명조 · 들여쓰기");
 
     fun applyTo(s: ReaderSettings): ReaderSettings = when (this) {
         MARU -> s.copy(
@@ -157,7 +157,7 @@ enum class TapZoneMode {
  * entry; add new ones at the end.
  */
 enum class TapAction(val label: String) {
-    /** Tap zone: nothing. Key binding: the reader leaves the key to the system (volume, …): "없음(시스템에 맡김)". */
+    /** Tap zone: nothing. Key binding: the reader leaves the key to the system (volume, …): "없음 (시스템에 맡김)". */
     NONE("없음"),
     NEXT("다음 페이지"),
     PREV("이전 페이지"),
@@ -166,7 +166,7 @@ enum class TapAction(val label: String) {
     TOC("목차"),
     SEARCH("검색"),
     SETTINGS("읽기 설정"),
-    TTS("TTS 읽기"),
+    TTS("듣기"),
     NEXT_CHAPTER("다음 챕터"),
     PREV_CHAPTER("이전 챕터"),
     REFRESH("화면 새로고침"),
@@ -184,7 +184,7 @@ enum class TapAction(val label: String) {
  */
 enum class KeyHold(val label: String) {
     REPEAT("계속 넘기기"),
-    CHAPTER("다음·이전 화로"),
+    CHAPTER("다음·이전 챕터로"),
     TEN("10쪽씩"),
     SINGLE("한 쪽만"),
 }
@@ -318,7 +318,7 @@ enum class LibraryListMode(val label: String) { LIST("전체"), COMPACT("요약"
 enum class StatusItem(val label: String, val short: String, val example: String?) {
     NONE("없음", "없음", null),
     CHAPTER("챕터 제목", "챕터 제목", "제3화 비밀"),
-    BOOK_TITLE("책 제목", "책 제목", "책 제목"),
+    BOOK_TITLE("책 제목", "책 제목", null),
     PAGE("쪽 번호", "쪽 번호", "12 / 3259"),
     PERCENT("진행률", "진행률", "34%"),
     CHAPTER_PAGES_LEFT("챕터 남은 쪽", "남은 쪽", "챕터 5쪽 남음"),
@@ -326,8 +326,8 @@ enum class StatusItem(val label: String, val short: String, val example: String?
     TIME_LEFT_EPISODE("이 화 남은 시간", "화 남은 시간", "이 화 3분"),
     TIME_LEFT_BOOK("책 남은 시간", "책 남은 시간", "책 7시간 20분"),
     CLOCK("시계", "시계", "14:05"),
-    BATTERY("배터리", "배터리", "80"),                       // [Δ] no "▭": U+25AD is missing from some firmware fonts
-    CLOCK_BATTERY("시계 · 배터리", "시계·배터리", "14:05 · 80");
+    BATTERY("배터리", "배터리", "80%"),                      // [Δ] no "▭": U+25AD is missing from some firmware fonts
+    CLOCK_BATTERY("시계 · 배터리", "시계·배터리", "14:05 · 80%");
 
     /** Titles are the only items shortened with "…" when their slot is narrow. Numbers never are. */
     val elastic: Boolean get() = this == CHAPTER || this == BOOK_TITLE

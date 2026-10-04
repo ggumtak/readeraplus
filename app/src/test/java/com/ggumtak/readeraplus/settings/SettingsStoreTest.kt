@@ -175,9 +175,10 @@ class SettingsStoreTest {
         assertEquals(mapOf(24 to TapAction.NEXT, 25 to TapAction.PREV), Settings.decodeKeyBindings("24:NEXT,25:PREV"))
         assertEquals(emptyMap<Int, TapAction>(), Settings.decodeKeyBindings(null))
         assertEquals(emptyMap<Int, TapAction>(), Settings.decodeKeyBindings("  "))
-        // Unknown actions (a newer build), bad codes and junk are skipped; the last entry for a key wins.
+        // Unknown actions (a newer build), bad codes and junk are skipped; the last entry for a key wins. Key code 0
+        // (every unnamed key, as the 키 지정 dialog promises) survives a restart.
         assertEquals(
-            mapOf(24 to TapAction.TOC, 92 to TapAction.NONE),
+            mapOf(24 to TapAction.TOC, 0 to TapAction.NEXT, 92 to TapAction.NONE),
             Settings.decodeKeyBindings("24:NEXT, x:PREV,25:FLY,:NEXT,0:NEXT,-3:NEXT,92 : NONE,junk,24:TOC"),
         )
         val all = TapAction.entries.withIndex().associate { (i, a) -> (100 + i) to a }

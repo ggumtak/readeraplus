@@ -10,6 +10,7 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
+import com.ggumtak.readeraplus.reader.extras.FontChooser
 import com.ggumtak.readeraplus.render.FontCatalog
 import com.ggumtak.readeraplus.render.FontInfo
 import com.ggumtak.readeraplus.render.FontManager
@@ -34,30 +35,39 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * "글꼴 관리": every font with a sample in its own face; tap = use for reading, delete user fonts, import .ttf/.otf
- * via SAF, rescan /sdcard/Fonts.
+ * "글꼴 관리": 읽기 글꼴 (every font with a sample in its own face; tap = use for reading, delete the fonts added to
+ * the app) and 글꼴 추가 (import .ttf/.otf/.ttc via SAF, read the Fonts folder of the internal storage again).
  */
 internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_FONTS, "글꼴 관리") {
     private lateinit var listBox: LinearLayout
+    private var rescanRow: View? = null
     private var loadGen = 0
 
     override fun build(): View {
         val body = ctx.pageBody()
-        body.section("글꼴 추가", first = true)
-        body.addView(ctx.row("글꼴 파일 추가", ".ttf · .otf · .ttc 파일을 골라 앱에 복사합니다 (여러 개 선택 가능)", ctx.icon(R.drawable.ic_add, 24)) {
-            pickFonts()
-        })
-        body.addView(ctx.row("글꼴 폴더 다시 읽기", "내부 저장소의 Fonts 폴더에 넣은 글꼴을 다시 찾습니다", ctx.icon(R.drawable.ic_refresh, 24)) {
-            rescan()
-        })
-        body.addView(ctx.note("내부 저장소의 'Fonts' 폴더(/sdcard/Fonts)에 글꼴 파일을 넣어 두면 복사하지 않고 바로 쓸 수 있습니다 (모든 파일 접근 권한 필요)."))
         body.section("읽기 글꼴")
         listBox = ctx.vertical().also(body::addView)
+        body.section("글꼴 추가")
+        body.addView(ctx.row("글꼴 파일 추가", "TTF · OTF · TTC · 여러 개 선택 가능", ctx.icon(R.drawable.ic_add, 24)) {
+            pickFonts()
+        })
+        rescanRow = ctx.row("Fonts 폴더 다시 읽기", rescanSummary(), ctx.icon(R.drawable.ic_refresh, 24)) {
+            rescan()
+        }.also(body::addView)
         load()
         return ctx.pageScroll(body)
     }
 
+    /** The Fonts folder is read in place, which needs all-files access. */
+    private fun rescanSummary(): String =
+        if (StorageAccess.granted(ctx)) "내부 저장소/Fonts · 복사 없이 바로 사용" else "모든 파일 접근을 허용해야 읽을 수 있습니다"
+
+    override fun onResume() {
+        rescanRow?.setSummary(rescanSummary())
+    }
+
     override fun onShown() {
+        rescanRow?.setSummary(rescanSummary())
         // The reading font may have changed in the reader popup meanwhile.
         val shown = shownFontId
         val current = Settings.reader.fontId
@@ -127,14 +137,15 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         for (f in fonts) listBox.addView(fontRow(f, faces[f.id], f.id == current, f.path.startsWith("$userDir/")))
         if (fonts.none { it.id == current }) {
             val fallback = fonts.firstOrNull { it.id == FontCatalog.DEFAULT_ID }?.name ?: "나눔명조"
-            missingNote = ctx.note("현재 글꼴('$current')을 찾을 수 없어 기본 글꼴($fallback)로 표시됩니다.").also(listBox::addView)
+            missingNote = ctx.note("사용하던 글꼴을 찾을 수 없어 기본 글꼴($fallback)로 읽습니다.").also(listBox::addView)
         }
     }
 
+    /** The row's third line: where the font comes from. */
     private fun sourceLabel(f: FontInfo, deletable: Boolean): String = when (f.source) {
-        FontSource.BUNDLED -> if (f.id == DEFAULT_FONT) "기본 제공 · 기본값" else "기본 제공"
+        FontSource.BUNDLED -> "기본 제공"
         FontSource.SYSTEM -> "시스템"
-        FontSource.USER -> if (deletable) "추가한 글꼴" else "Fonts 폴더"
+        FontSource.USER -> if (deletable) "내 글꼴 · 앱에 추가" else "내 글꼴 · Fonts 폴더"
     }
 
     private fun fontRow(f: FontInfo, face: Typeface?, selected: Boolean, deletable: Boolean): View {
@@ -148,12 +159,12 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         val texts = ctx.vertical()
         val title = ctx.label(f.name, 19f, maxLines = 1).apply { face?.let { typeface = it } }
         texts.addView(title)
-        val sample = ctx.label("가나다라 한글 글꼴 Aa 123", 16f, maxLines = 1).apply {
+        val sample = ctx.label(FontChooser.SAMPLE, 16f, maxLines = 1).apply {
             face?.let { typeface = it }
             setPadding(0, ctx.dp(4), 0, 0)
         }
         texts.addView(sample)
-        texts.addView(ctx.label(sourceLabel(f, deletable) + (if (f.variable) " · 가변 굵기" else "") + (if (f.boldPath != null) " · 굵은 글꼴 포함" else ""), 13f, color = Ink.GRAY).apply {
+        texts.addView(ctx.label(sourceLabel(f, deletable), 14f, color = Ink.GRAY).apply {
             setPadding(0, ctx.dp(4), 0, 0)
         })
         r.addView(texts, lp(0, WRAP_CONTENT, 1f))
@@ -177,15 +188,16 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         if (rows.containsKey(id)) missingNote?.let { listBox.removeView(it); missingNote = null }
     }
 
+    /** The moved check mark is the feedback (no toast). */
     private fun select(f: FontInfo) {
         if (Settings.reader.fontId == f.id) return
         editReader { it.copy(fontId = f.id) }
-        ctx.toast("읽기 글꼴: ${f.name}")
         if (rows.containsKey(f.id)) markSelected(f.id) else load()
     }
 
+    /** The row leaving the list is the feedback (no toast). */
     private fun delete(f: FontInfo) {
-        ctx.confirm("글꼴 삭제", "'${f.name}' 글꼴 파일을 앱에서 지울까요?", ok = "삭제") {
+        ctx.confirm("글꼴 삭제", "‘${f.name}’ 글꼴을 삭제할까요?", ok = "삭제") {
             activity.scope.launch {
                 val ok = withContext(Dispatchers.IO) { runCatching { FontManager.deleteUserFont(f.id) }.isSuccess }
                 if (!ok) {
@@ -193,7 +205,6 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
                     return@launch
                 }
                 if (Settings.reader.fontId == f.id) editReader { it.copy(fontId = DEFAULT_FONT) }
-                ctx.toast("삭제했습니다")
                 load()
             }
         }
@@ -258,7 +269,7 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
             }
             if (added.size == 1) {
                 val f = added[0]
-                ctx.confirm("글꼴 추가됨", "'${f.name}' 글꼴로 읽을까요?", ok = "사용") { select(f) }
+                ctx.confirm("글꼴 추가됨", "‘${f.name}’ 글꼴로 바꿀까요?", ok = "바꾸기") { select(f) }
             } else if (added.size > 1) {
                 ctx.toast("글꼴 ${added.size}개를 추가했습니다")
             }

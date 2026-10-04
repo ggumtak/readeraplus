@@ -11,7 +11,6 @@ import android.os.storage.StorageManager
 import android.provider.DocumentsContract
 import android.view.View
 import android.widget.LinearLayout
-import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.FileScanner
 import com.ggumtak.readeraplus.settings.Settings
@@ -21,6 +20,7 @@ import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
+import com.ggumtak.readeraplus.ui.library.LibraryText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,88 +28,111 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
-/** "파일 스캔": scan folders (SAF tree picker or typed path), excluded folders, scan now. */
-internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_SCAN, "파일 스캔") {
+/**
+ * "책 스캔": 스캔 (the all-files grant while it is missing, and 지금 스캔 with the scan's state as its summary), the
+ * folders to scan (SAF tree picker or a typed path; none = the default places) and the folders to skip. A folder row
+ * has a summary only to warn (outside every scan folder, not found).
+ */
+internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_SCAN, "책 스캔") {
     private lateinit var foldersBox: LinearLayout
     private lateinit var excludedBox: LinearLayout
-    private lateinit var statusText: TextView
     private var permRow: View? = null
-    private val sink: (String) -> Unit = { text -> if (::statusText.isInitialized) statusText.text = text }
+    private var scanRow: View? = null
+    private var accessNote: View? = null
+    /** Bumped by each [fillFolders]: an older folder check that arrives late draws nothing. */
+    private var fillGen = 0
+    private val sink: (String) -> Unit = { text -> scanRow?.setSummary(text) }
 
     override fun build(): View {
         val body = ctx.pageBody()
-        body.section("스캔할 폴더", first = true)
-        body.addView(ctx.note("폴더를 추가하면 그 폴더(와 하위 폴더)만 찾습니다. 목록이 비어 있으면 내부 저장소와 SD 카드 전체를 찾습니다."))
+        body.section("스캔")
+        permRow = ctx.row("모든 파일 접근 권한", StorageAccess.summary(ctx)) { StorageAccess.request(activity) }.also(body::addView)
+        // A scan started earlier (by another instance of this page, even in a previous activity) keeps running;
+        // its latest status shows here and its updates arrive through [sink].
+        scanRow = ctx.row("지금 스캔", if (ScanState.running) ScanState.status ?: "스캔 중…" else lastScanText()) { scanNow() }
+            .also(body::addView)
+        ScanState.sink = sink
+
+        body.section("스캔할 폴더")
+        body.addView(ctx.note("추가한 폴더(하위 폴더 포함)만 찾습니다. 없으면 아래 기본 위치를 찾습니다."))
         foldersBox = ctx.vertical().also(body::addView)
+        accessNote = ctx.note("모든 파일 접근을 허용해야 이 폴더를 읽을 수 있습니다.").apply { visibility = View.GONE }.also(body::addView)
         body.addView(ctx.buttonBar(
             ctx.textButton("폴더 추가") { pickFolder(SettingsActivity.REQ_ADD_SCAN_FOLDER) },
             ctx.textButton("경로 입력") { typePath(excluded = false) },
         ))
 
         body.section("제외할 폴더")
-        body.addView(ctx.note("숨김 폴더와 Android/data, Android/obb는 항상 건너뜁니다."))
         excludedBox = ctx.vertical().also(body::addView)
         body.addView(ctx.buttonBar(
             ctx.textButton("폴더 추가") { pickFolder(SettingsActivity.REQ_ADD_EXCLUDED_FOLDER) },
             ctx.textButton("경로 입력") { typePath(excluded = true) },
         ))
+        body.addView(ctx.note("숨김 폴더와 Android/data · obb는 늘 건너뜁니다."))
 
-        body.section("스캔")
-        permRow = ctx.row("모든 파일 접근 권한", StorageAccess.summary(ctx)) { StorageAccess.request(activity) }.also(body::addView)
-        body.addView(ctx.row("지금 스캔", "EPUB · TXT(1KB 이상) 파일을 찾아 서재에 추가하고, 사라진 파일은 목록에서 뺍니다") { scanNow() })
-        // A scan started earlier (by another instance of this page, even in a previous activity) keeps running;
-        // show its latest status and receive its updates.
-        statusText = ctx.note(if (ScanState.running) ScanState.status ?: "스캔 중…" else lastScanText()).also(body::addView)
-        ScanState.sink = sink
-        ScanState.host = ctx
-
+        updateAccess()
         fillFolders()
         return ctx.pageScroll(body)
     }
 
     override fun onShown() {
-        permRow?.setSummary(StorageAccess.summary(ctx))
+        updateAccess()
         ScanState.sink = sink
-        ScanState.host = ctx
     }
 
     override fun onResume() {
-        permRow?.setSummary(StorageAccess.summary(ctx))
+        // Back from the system's permission page.
+        updateAccess()
     }
 
     override fun onDestroy() {
-        if (ScanState.sink === sink) {
-            ScanState.sink = null
-            ScanState.host = null
-        }
+        if (ScanState.sink === sink) ScanState.sink = null
     }
 
+    /** The permission row shows only while all-files access is missing; so does the note under added folders. */
+    private fun updateAccess() {
+        val granted = StorageAccess.granted(ctx)
+        permRow?.setShown(!granted)
+        accessNote?.setShown(!granted && Settings.app.scanFolders.isNotEmpty())
+    }
+
+    /** Both folder lists, built once after one check of every path on IO (and of the default places when none). */
     private fun fillFolders() {
         val app = Settings.app
-        foldersBox.removeAllViews()
-        if (app.scanFolders.isEmpty()) {
-            val hint = ctx.note("기본 위치 (불러오는 중…)")
-            foldersBox.addView(hint)
-            val appCtx = activity.applicationContext
-            activity.scope.launch {
-                val roots = withContext(Dispatchers.IO) {
-                    runCatching { FileScanner.defaultRoots(appCtx).map { it.absolutePath } }.getOrDefault(emptyList())
-                }
-                hint.text = if (roots.isEmpty()) "기본 위치: 내부 저장소 전체"
-                else "기본 위치:\n" + roots.joinToString("\n") { "· " + FolderSets.displayName(it, StorageAccess.primaryRoot()) }
+        val gen = ++fillGen
+        val appCtx = activity.applicationContext
+        activity.scope.launch {
+            val (missing, roots) = withContext(Dispatchers.IO) {
+                val all = app.scanFolders + app.excludedFolders
+                all.filterNot { StorageAccess.isReadableDir(it) }.toSet() to
+                    if (app.scanFolders.isEmpty()) {
+                        runCatching { FileScanner.defaultRoots(appCtx).map { it.absolutePath } }.getOrDefault(emptyList())
+                    } else {
+                        emptyList()
+                    }
             }
-        } else {
-            for (p in FolderSets.sorted(app.scanFolders)) foldersBox.addView(folderRow(p, excluded = false))
-        }
-        excludedBox.removeAllViews()
-        if (app.excludedFolders.isEmpty()) {
-            excludedBox.addView(ctx.note("없음"))
-        } else {
-            for (p in FolderSets.sorted(app.excludedFolders)) excludedBox.addView(folderRow(p, excluded = true))
+            if (gen != fillGen) return@launch
+            foldersBox.removeAllViews()
+            if (app.scanFolders.isEmpty()) {
+                foldersBox.addView(ctx.note(
+                    if (roots.isEmpty()) "기본 위치: 내부 저장소 전체"
+                    else "기본 위치:\n" + roots.joinToString("\n") { "· " + FolderSets.displayName(it, StorageAccess.primaryRoot()) },
+                ))
+            } else {
+                for (p in FolderSets.sorted(app.scanFolders)) foldersBox.addView(folderRow(p, excluded = false, p in missing))
+            }
+            excludedBox.removeAllViews()
+            if (app.excludedFolders.isEmpty()) {
+                excludedBox.addView(ctx.note("없음"))
+            } else {
+                for (p in FolderSets.sorted(app.excludedFolders)) excludedBox.addView(folderRow(p, excluded = true, p in missing))
+            }
+            updateAccess()
         }
     }
 
-    private fun folderRow(path: String, excluded: Boolean): View {
+    /** One folder: its friendly name, and a summary only for a warning ([missing]: not found or not readable). */
+    private fun folderRow(path: String, excluded: Boolean, missing: Boolean): View {
         val remove = ctx.iconButton(R.drawable.ic_close, "목록에서 빼기") {
             editApp {
                 if (excluded) it.copy(excludedFolders = FolderSets.remove(it.excludedFolders, path))
@@ -117,16 +140,11 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             }
             fillFolders()
         }
-        val r = ctx.row(FolderSets.displayName(path, StorageAccess.primaryRoot()), path, remove)
-        val app = Settings.app
-        val inert = excluded && FolderSets.exclusionHasNoEffect(app.scanFolders, path)
-        if (inert) r.setSummary("$path\n(스캔할 폴더 밖이라 효과 없음)")
-        // Warn about folders that no longer exist (checked off the main thread).
-        activity.scope.launch {
-            val ok = withContext(Dispatchers.IO) { StorageAccess.isReadableDir(path) }
-            if (!ok) r.setSummary("$path\n(찾을 수 없거나 읽을 수 없는 폴더)")
-        }
-        return r
+        val warnings = listOfNotNull(
+            "스캔할 폴더 밖이라 효과 없음".takeIf { excluded && FolderSets.exclusionHasNoEffect(Settings.app.scanFolders, path) },
+            "찾을 수 없는 폴더".takeIf { missing },
+        )
+        return ctx.row(FolderSets.displayName(path, StorageAccess.primaryRoot()), warnings.joinToString(" · ").ifEmpty { null }, remove)
     }
 
     private fun pickFolder(requestCode: Int) {
@@ -137,7 +155,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             @Suppress("DEPRECATION")
             activity.startActivityForResult(intent, requestCode)
         } catch (_: Exception) {
-            ctx.toast("폴더 선택 화면을 열 수 없습니다. '경로 입력'을 사용하세요")
+            ctx.toast("폴더 선택 화면을 열 수 없습니다. ‘경로 입력’을 쓰세요")
         }
     }
 
@@ -160,7 +178,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
                 treeToPath(appCtx, uri)
             }
             if (path == null) {
-                ctx.toast("이 위치는 파일 경로로 바꿀 수 없습니다 (내부 저장소나 SD 카드의 폴더를 고르세요)")
+                ctx.toast("이 위치는 쓸 수 없습니다. 내부 저장소나 SD 카드의 폴더를 고르세요")
             } else {
                 addPath(path, excluded, checkExists = false)
             }
@@ -196,7 +214,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             if (checkExists) {
                 val ok = withContext(Dispatchers.IO) { StorageAccess.isReadableDir(path) }
                 if (!ok) {
-                    ctx.toast("폴더를 찾을 수 없거나 읽을 수 없습니다: $path")
+                    ctx.toast("폴더를 찾을 수 없거나 읽을 수 없습니다")
                     return@launch
                 }
             }
@@ -209,7 +227,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             if (excluded && FolderSets.exclusionHidesScanFolder(app.scanFolders, path)) {
                 ctx.confirm(
                     "스캔할 폴더를 제외할까요?",
-                    "'${FolderSets.displayName(path, StorageAccess.primaryRoot())}'에는 스캔할 폴더가 들어 있어서, 그 폴더의 책을 모두 찾지 않게 됩니다.",
+                    "‘${FolderSets.displayName(path, StorageAccess.primaryRoot())}’에는 스캔할 폴더가 들어 있어서, 그 폴더의 책을 모두 찾지 않게 됩니다.",
                     ok = "제외",
                 ) { commitAdd(result, excluded) }
                 return@launch
@@ -240,10 +258,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             return
         }
         ScanState.running = true
-        ScanState.publish(
-            if (StorageAccess.granted(ctx)) "스캔 중…"
-            else "모든 파일 접근 권한이 없으면 일부 폴더를 읽지 못할 수 있습니다. 스캔 중…",
-        )
+        ScanState.publish(if (StorageAccess.granted(ctx)) "스캔 중…" else "스캔 중… (권한이 없어 일부 폴더는 못 읽을 수 있음)")
         val appCtx = activity.applicationContext
         // Process-level job: the scan must finish (and clear ScanState.running) even if this activity goes away.
         ScanState.scope.launch {
@@ -254,29 +269,29 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
                     val now = System.currentTimeMillis()
                     if (now - lastPost >= 500) {
                         lastPost = now
-                        ScanState.post("스캔 중… 책 파일 ${found}개 발견")
+                        ScanState.post("스캔 중… 책 파일 ${found}개 찾음")
                     }
                 }
                 Settings.raw().edit().putLong(SettingsActivity.PREF_LAST_SCAN_AT, System.currentTimeMillis()).apply()
                 n
             }
             val done = result.fold(
-                onSuccess = { n -> "완료 — 서재에 ${n}권\n마지막 스캔: ${SettingsFormat.dateTime(System.currentTimeMillis())}" },
+                onSuccess = { n -> "${LibraryText.scanDoneMessage(n)} · ${SettingsFormat.dateTime(System.currentTimeMillis())}" },
                 onFailure = { e -> ErrorLines.withDetail(ErrorLines.line("스캔 실패", e), e) },
             )
-            ScanState.finish(appCtx, done, result.getOrNull()?.let { "스캔 완료: ${it}권" })
+            ScanState.finish(appCtx, done, result.getOrNull()?.let { LibraryText.scanDoneMessage(it) })
         }
     }
 
     private fun lastScanText(): String {
         val at = runCatching { Settings.raw().getLong(SettingsActivity.PREF_LAST_SCAN_AT, 0L) }.getOrDefault(0L)
-        return if (at > 0) "마지막 스캔: ${SettingsFormat.dateTime(at)}" else "아직 스캔하지 않았습니다"
+        return if (at > 0) "마지막 스캔: ${SettingsFormat.dateTime(at)}" else "아직 스캔하지 않음"
     }
 }
 
 /**
  * Process-wide state of the "지금 스캔" run: one scan at a time, and its status reaches whichever ScanPage is
- * currently shown (the page that started it may be gone). [sink], [host] and [status] are main-thread only.
+ * currently shown (the page that started it may be gone). [sink] and [status] are main-thread only.
  */
 internal object ScanState {
     @Volatile var running = false
@@ -284,8 +299,6 @@ internal object ScanState {
     var status: String? = null
         private set
     var sink: ((String) -> Unit)? = null
-    /** Activity of the page behind [sink]: the end-of-scan message is drawn in its window (no fading system toast). */
-    var host: Context? = null
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -304,14 +317,15 @@ internal object ScanState {
     }
 
     /**
-     * Any thread: ends the run, shows [text] and an optional [toast] — in the settings window when a scan page is
-     * still there, else through [appContext] (outlives pages).
+     * Any thread: ends the run and shows [text] on the scan page. [toast] is shown (through [appContext], which
+     * outlives pages) only when no scan page is there to show the result.
      */
     fun finish(appContext: Context, text: String, toast: String?) {
         main.post {
             running = false
+            val shown = sink != null
             publish(text)
-            if (toast != null) (host ?: appContext).toast(toast)
+            if (toast != null && !shown) appContext.toast(toast)
         }
     }
 }

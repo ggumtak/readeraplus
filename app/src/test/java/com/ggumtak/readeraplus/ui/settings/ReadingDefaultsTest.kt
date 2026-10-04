@@ -30,7 +30,7 @@ class ReadingDefaultsTest {
         assertEquals(d.epubPublisherStyles, out.epubPublisherStyles)
         // 화면 색 is on this page (스타일): back to 흰 바탕.
         assertEquals(PageTheme.PAPER, out.pageTheme)
-        // 넘김·화면 설정's settings and the TXT options are kept.
+        // 흑백 반전, 화면·밝기's status settings and the TXT options are kept.
         assertEquals(true, out.invert)
         assertEquals(StatusItem.CLOCK, out.footerCenter)
         assertEquals(mine.progressBar, out.progressBar)

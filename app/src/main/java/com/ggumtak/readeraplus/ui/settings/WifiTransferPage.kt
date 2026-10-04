@@ -45,8 +45,8 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
 
     override fun build(): View {
         val body = ctx.pageBody()
-        body.section("브라우저 주소", first = true)
-        body.addView(ctx.note("PC나 휴대폰이 같은 Wi-Fi에 있어야 합니다. 브라우저 주소창에 입력하세요:"))
+        body.section("브라우저 주소")
+        body.addView(ctx.note("같은 Wi-Fi에 연결된 PC나 휴대폰의 브라우저에 입력하세요."))
         urlText = ctx.label("주소를 준비하는 중…", 22f, bold = true).apply {
             setPadding(ctx.dp(16), ctx.dp(4), ctx.dp(16), ctx.dp(8))
             // Not selectable: a long-press would start a selection with handles (several e-ink updates).
@@ -58,20 +58,19 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             ctx.textButton("다시 시도") { startIfVisible() },
             ctx.textButton("Wi-Fi 설정") { openWifiSettings() },
         ).apply { visibility = View.GONE }.also(body::addView)
-        folderRow = ctx.row("받는 폴더", "확인 중…").also(body::addView)
+        folderRow = ctx.infoRow("받는 폴더", "확인 중…").also(body::addView)
 
-        body.section("받은 파일")
-        // The section header, renamed with the count ("받은 파일 (3)").
-        receivedHeader = body.getChildAt(body.childCount - 1) as TextView
+        // The header is renamed with the count ("받은 파일 (3)").
+        receivedHeader = body.section("받은 파일")
         receivedBox = ctx.vertical().also(body::addView)
-        errorText = ctx.note("").apply { setTextColor(Ink.BLACK); visibility = View.GONE }.also(body::addView)
+        errorText = ctx.warning("").apply { visibility = View.GONE }.also(body::addView)
         fillReceived()
 
-        body.section("알아 두기")
+        // The rules of the transfer, at the end with no header of their own.
         body.addView(ctx.note(
-            "이 화면을 닫으면 전송이 멈춥니다. 화면을 다시 열면 주소 끝의 접속 코드가 바뀝니다.\n" +
-                "TXT · EPUB 파일만, 한 파일에 200MB까지 받습니다.\n" +
-                "공유기의 게스트 네트워크·AP 격리에서는 연결되지 않을 수 있습니다.",
+            "이 화면이 열려 있는 동안만 받습니다. 다시 열면 주소가 바뀝니다.\n" +
+                "TXT·EPUB 파일, 하나에 200MB까지 받습니다.\n" +
+                "게스트 Wi-Fi에서는 연결되지 않을 수 있습니다.",
         ))
         return ctx.pageScroll(body)
     }
@@ -114,7 +113,7 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
                 showFailure("받을 폴더를 만들지 못했습니다", "저장 공간과 파일 접근 권한을 확인한 뒤 [다시 시도]를 누르세요.")
                 return@launch
             }
-            folderRow.setSummary(dir.absolutePath)
+            folderRow.setInfoValue(FolderSets.displayName(dir.absolutePath, StorageAccess.primaryRoot()))
             // The page may have gone meanwhile (a pause during the folder lookup).
             if (!shown || !activity.isResumedNow) return@launch
             val s = server ?: LanUpload(activity.applicationContext, dir, listener).also { server = it }
@@ -124,7 +123,7 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             } else {
                 urlText.text = result.url
                 urlText.setTextColor(Ink.BLACK)
-                statusText.text = "접속 코드는 주소 끝의 '${result.code}'입니다. 받은 파일은 바로 서재에 추가됩니다."
+                statusText.text = "받은 파일은 바로 서재에 추가됩니다."
                 statusText.visibility = View.VISIBLE
                 retryBar.visibility = View.GONE
             }
@@ -172,7 +171,7 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             receivedBox.addView(ctx.note("아직 받은 파일이 없습니다."))
             return
         }
-        for ((name, line) in received) receivedBox.addView(ctx.row(name, line))
+        for ((name, line) in received) receivedBox.addView(ctx.row(name, line, titleMaxLines = 2))
     }
 
     private fun openWifiSettings() {

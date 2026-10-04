@@ -268,12 +268,26 @@ fun Context.toolbar(
 
 // ---------------------------------------------------------------- settings-style rows
 
-fun Context.sectionHeader(text: String): TextView = label(text, 14f, bold = true).apply {
-    setPadding(dp(16), dp(24), dp(16), dp(8))
+/**
+ * A settings section's header: 15 sp bold black on one line, on the rows' 16 dp start line (12 dp above it, 4 dp to
+ * the first row). Marked as a heading for TalkBack (API 28+), so a swipe by headings jumps from group to group.
+ */
+fun Context.sectionHeader(text: String): TextView = label(text, 15f, bold = true, maxLines = 1).apply {
+    setPadding(dp(16), dp(12), dp(16), dp(4))
+    if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
 }
 
-/** Title + optional summary on the left, [trailing] view on the right. */
-fun Context.row(title: String, summary: String? = null, trailing: View? = null, onClick: ((View) -> Unit)? = null): LinearLayout {
+/**
+ * Title + optional summary on the left, [trailing] view on the right. [titleMaxLines] cuts a long title (a file or
+ * book name) with "…"; settings titles are short and never cut.
+ */
+fun Context.row(
+    title: String,
+    summary: String? = null,
+    trailing: View? = null,
+    titleMaxLines: Int = Int.MAX_VALUE,
+    onClick: ((View) -> Unit)? = null,
+): LinearLayout {
     val r = horizontal {
         minimumHeight = dp(56)
         setPadding(dp(16), dp(10), dp(16), dp(10))
@@ -283,7 +297,7 @@ fun Context.row(title: String, summary: String? = null, trailing: View? = null, 
         }
     }
     val texts = vertical()
-    texts.addView(label(title, 17f))
+    texts.addView(label(title, 17f, maxLines = titleMaxLines))
     if (summary != null) texts.addView(label(keepAll(summary), 14f, color = Ink.GRAY).apply { tag = "summary"; setPadding(0, dp(3), 0, 0) })
     r.addView(texts, lp(0, WRAP_CONTENT, 1f))
     if (trailing != null) r.addView(trailing)
@@ -317,9 +331,9 @@ fun TextView.lockWidthForValues(min: Float, max: Float, step: Float, format: (Fl
 }
 
 /**
- * "−  value  +" stepper. [format] renders the value; returns the row. The value box has a fixed width. A tap that
- * would leave the value unchanged (− at [min], + at [max]) does nothing: no redraw and no [onChange] (no save, no
- * re-layout behind it).
+ * "−  value  +" stepper; the buttons are "<title> 줄이기" / "<title> 늘리기". [format] renders the value; returns the
+ * row. The value box has a fixed width. A tap that would leave the value unchanged (− at [min], + at [max]) does
+ * nothing: no redraw and no [onChange] (no save, no re-layout behind it).
  */
 fun Context.stepperRow(
     title: String,
@@ -340,10 +354,11 @@ fun Context.stepperRow(
         valueText.text = format(v)
         onChange(v)
     }
+    // Named after the row ("글자 크기 줄이기"): TalkBack and the long-press label say which value they change.
     val box = horizontal {
-        addView(iconButton(com.ggumtak.readeraplus.R.drawable.ic_do_not_disturb_on, "줄이기") { set(v - step) })
+        addView(iconButton(com.ggumtak.readeraplus.R.drawable.ic_do_not_disturb_on, "$title 줄이기") { set(v - step) })
         addView(valueText)
-        addView(iconButton(com.ggumtak.readeraplus.R.drawable.ic_add_circle, "늘리기") { set(v + step) })
+        addView(iconButton(com.ggumtak.readeraplus.R.drawable.ic_add_circle, "$title 늘리기") { set(v + step) })
     }
     return row(title, null, box)
 }

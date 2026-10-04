@@ -31,8 +31,8 @@ import kotlinx.coroutines.withContext
 import java.time.ZoneId
 
 /**
- * "읽기 기록" (T1-6): summary (오늘 / 이번 주 / 이번 달 / 올해), streak, the 20-week 잔디 ([HeatmapView]), reading
- * speed, the books read most this month and "올해 다 읽은 책 N권". The queries run on IO when the page opens (and
+ * "읽기 기록" (T1-6): 읽은 시간 (오늘 / 이번 주 / 이번 달 / 올해, the streak and the reading speed), 최근 20주 (the
+ * 잔디, [HeatmapView]), the books read most this month and 올해 다 읽은 책. The queries run on IO when the page opens (and
  * again after a book opened from here was read); the page is static: filled once, no fling, nothing redraws while
  * it sits. Opened from the library drawer and the main settings list ([SettingsActivity.PAGE_STATS]).
  */
@@ -117,24 +117,19 @@ internal class StatsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         grid = d.grid
         dayGen++
 
-        content.section("요약", first = true)
+        content.section("읽은 시간")
         content.addView(summaryGrid(d.periods))
-
-        content.section("연속 읽기")
         content.addView(text(ReadingStats.streakLine(d.streak.first, d.streak.second)))
-        content.addView(ctx.note("5분 넘게 읽은 날을 셉니다."))
+        content.addView(text(ReadingStats.speedLine(d.cpm)))
 
-        content.section("읽기 잔디")
+        content.section("최근 ${HeatmapModel.WEEKS}주")
         val heat = HeatmapView(ctx).apply {
             setPadding(ctx.dp(16), ctx.dp(4), ctx.dp(16), 0)
             setGrid(d.grid)
             onDayTap = { day -> showDay(day) }
         }
         content.addView(heat, lp())
-        dayText = ctx.note("칸을 누르면 그날 읽은 시간과 책을 보여 줍니다.").also(content::addView)
-
-        content.section("읽는 속도")
-        content.addView(text(ReadingStats.speedLine(d.cpm)))
+        dayText = ctx.note("칸을 누르면 그날 기록이 보입니다.").also(content::addView)
 
         content.section("이번 달 많이 읽은 책")
         if (d.top.isEmpty()) {
@@ -142,14 +137,14 @@ internal class StatsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         } else {
             for ((b, t) in d.top) {
                 val sub = ReaderFormat.durationOfSeconds(t.seconds) + " · " + ReadingStats.progress(b.progress, b.haveRead)
-                content.addView(ctx.row(b.title, sub) { openBook(b) })
+                content.addView(ctx.row(b.title, sub, titleMaxLines = 2) { openBook(b) })
             }
         }
 
         content.section("올해 다 읽은 책")
         addFinished(d.finished)
 
-        content.addView(ctx.note("책을 펼친 채 2초 넘게 머문 쪽만 읽은 것으로 셉니다. 한 쪽에 오래 머물러도 5분까지만 셉니다."))
+        content.addView(ctx.note("한 쪽에 2초 넘게 머문 시간만, 쪽마다 5분까지 셉니다. 연속 기록은 하루 5분 이상 읽은 날만 셉니다."))
     }
 
     /** 오늘 | 이번 주 / 이번 달 | 올해: each with its time and "312쪽 · 18.2만 자". */
@@ -162,7 +157,7 @@ internal class StatsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
                 cell.addView(ctx.label(name, 14f, color = Ink.GRAY))
                 cell.addView(ctx.label(ReadingStats.time(t), 20f, bold = true).apply { setPadding(0, ctx.dp(4), 0, 0) })
                 val amount = ReadingStats.amount(t)
-                if (amount.isNotEmpty()) cell.addView(ctx.label(amount, 13f, color = Ink.GRAY).apply { setPadding(0, ctx.dp(3), 0, 0) })
+                if (amount.isNotEmpty()) cell.addView(ctx.label(amount, 14f, color = Ink.GRAY).apply { setPadding(0, ctx.dp(3), 0, 0) })
                 line.addView(cell, lp(0, WRAP_CONTENT, 1f))
             }
             box.addView(line, lp())
@@ -172,25 +167,24 @@ internal class StatsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
 
     private fun text(s: String): TextView = ctx.label(s, 17f).apply { setPadding(ctx.dp(16), ctx.dp(4), ctx.dp(16), ctx.dp(4)) }
 
-    /** "올해 다 읽은 책 N권", tapped open to list them (title, finish date; a tap opens the book). */
+    /** "3권" under the section's header, tapped open to list them (title, finish date; a tap opens the book). */
     private fun addFinished(list: List<Pair<Book, Long>>) {
-        val head = "올해 다 읽은 책 ${list.size}권"
         if (list.isEmpty()) {
-            content.addView(ctx.row(head, "끝까지 읽은 책이 여기에 모입니다"))
+            content.addView(ctx.note("아직 없습니다."))
             return
         }
         val items = ctx.vertical { visibility = View.GONE }
         val chevron: ImageView = ctx.icon(R.drawable.ic_expand_more, 24)
-        content.addView(ctx.row(head, "눌러서 목록 보기", chevron) { r ->
+        content.addView(ctx.row("${list.size}권", "목록 보기", chevron) { r ->
             val open = items.visibility != View.VISIBLE
             if (open && items.childCount == 0) {
                 for ((b, at) in list) {
-                    items.addView(ctx.row(b.title, ReadingStats.dayLabel(ReadingLog.day(at)) + " 완독") { openBook(b) })
+                    items.addView(ctx.row(b.title, ReadingStats.dayLabel(ReadingLog.day(at)) + " 다 읽음", titleMaxLines = 2) { openBook(b) })
                 }
             }
             items.visibility = if (open) View.VISIBLE else View.GONE
             chevron.setImageResource(if (open) R.drawable.ic_expand_less else R.drawable.ic_expand_more)
-            r.setSummary(if (open) "눌러서 접기" else "눌러서 목록 보기")
+            r.setSummary(if (open) "목록 접기" else "목록 보기")
         })
         content.addView(items, lp())
     }
@@ -215,7 +209,7 @@ internal class StatsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
 
     private fun openBook(book: Book) {
         if (book.trashed) {
-            ctx.toast("휴지통에 있는 책입니다. 먼저 복원하세요.")
+            ctx.toast("휴지통에 있는 책입니다 · 먼저 복원하세요")
             return
         }
         reloadOnResume = true

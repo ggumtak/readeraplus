@@ -201,7 +201,9 @@ class ReaderBuild9FixesTest {
     fun einkModeChoices() {
         val values = SettingsFormat.EINK_MODES.map { it.second }
         assertEquals(listOf(EINK_MODE_SYSTEM, EINK_MODE_HD, EINK_MODE_REGAL, EINK_MODE_FAST, EINK_MODE_NORMAL), values)
-        assertEquals("기기 설정 따름 (권장·기본)", SettingsFormat.einkMode(EINK_MODE_SYSTEM))
+        // The chooser marks the default; the row's value does not.
+        assertEquals("기기 설정 따름 (기본)", SettingsFormat.EINK_MODES[0].first)
+        assertEquals("기기 설정 따름", SettingsFormat.einkMode(EINK_MODE_SYSTEM))
         assertEquals("잔상 적게 (REGAL)", SettingsFormat.einkMode(EINK_MODE_REGAL))
         assertEquals(SettingsFormat.einkMode(EINK_MODE_SYSTEM), SettingsFormat.einkMode(12345))
     }

@@ -98,7 +98,7 @@ class CompactSettingsTest {
         val d = ReaderSettings(fontSizeSp = 18f, marginLeftDp = 30, marginRightDp = 30)
         val m = StylePreset.MARU.applyTo(d)
         assertEquals("웹소설", StylePreset.MARU.label)
-        assertTrue(StylePreset.MARU.description.startsWith("마루뷰어 · 나눔명조"))
+        assertTrue(StylePreset.MARU.description.startsWith("마루뷰어 화면 · 나눔명조"))
         // Measured on the MaruViewer screenshot: 나눔명조 Regular, 2 em line pitch, one empty line between paragraphs,
         // ragged right with breaks between words, no indent, default letter spacing, the dark grey page.
         assertEquals("nanummyeongjo", m.fontId)

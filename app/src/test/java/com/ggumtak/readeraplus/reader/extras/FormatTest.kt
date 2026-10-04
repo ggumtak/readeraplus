@@ -43,13 +43,13 @@ class FormatTest {
         assertEquals("20.5", Fmt.number(20.499998f))
         assertEquals("170%", Fmt.pct(170))
         assertEquals("없음", Fmt.em(0))
-        assertEquals("1em", Fmt.em(100))
-        assertEquals("1.25em", Fmt.em(125))
-        assertEquals("0.5em", Fmt.em(50))
-        assertEquals("0.05em", Fmt.em(5))
+        assertEquals("1자", Fmt.em(100))
+        assertEquals("1.25자", Fmt.em(125))
+        assertEquals("0.5자", Fmt.em(50))
+        assertEquals("0.05자", Fmt.em(5))
         assertEquals("기본", Fmt.letterSpacing(0))
         assertEquals("+2%", Fmt.letterSpacing(20))
-        assertEquals("-1%", Fmt.letterSpacing(-10))
+        assertEquals("\u22121%", Fmt.letterSpacing(-10))
         assertEquals("+1.5%", Fmt.letterSpacing(15))
         assertEquals("400", Fmt.weight(400))
         assertEquals("700", Fmt.weight(700))
@@ -83,8 +83,8 @@ class FormatTest {
 
     @Test
     fun replaceRules() {
-        assertEquals("없음", Fmt.rulesLabel(""))
-        assertEquals("없음", Fmt.rulesLabel("# 주석만\n\n"))
+        assertEquals("없음 · 광고 문구 등 지우기", Fmt.rulesLabel(""))
+        assertEquals("없음 · 광고 문구 등 지우기", Fmt.rulesLabel("# 주석만\n\n"))
         val rules = "# 광고 줄 지우기\n^\\s*광고.*$ => \n(\\S)\\.{3} => $1…\n잘못된[ => x\n화살표 없음\n => 빈 패턴"
         // The rules the parser applies (as RuleList.enabledCount): comments, "=> 빈 패턴" and the line without an arrow
         // are not rules; the invalid regex is counted (it is reported as invalid separately).

@@ -12,27 +12,28 @@ import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.toast
 
 /**
- * "TXT 기본 정리 설정" (T1-9): the global TXT options ([com.ggumtak.readeraplus.settings.ReaderSettings] `txt*`) that
- * every TXT book without its own settings uses. The rows and their wording are those of "이 책의 TXT 정리"
- * ([BookTxtPage], the labels of [ReadingSettingsPopup]'s companion); the replacement rules open the shared manager ([RulesDialog]). A change here re-parses
- * the TXT books that follow the defaults the next time each opens (their index key changes); books with their own
- * settings ("이 책에만 적용") keep theirs and their cached index.
+ * "TXT 정리 기본값" (T1-9): the global TXT options ([com.ggumtak.readeraplus.settings.ReaderSettings] `txt*`) that
+ * every TXT book without its own settings uses: 본문 (blank lines, leading spaces, broken lines, the replacement rules
+ * in the shared manager [RulesDialog]) and 챕터 (detection; the heading look and the rule only while it is on). The
+ * rows and their wording are those of "이 책의 TXT 정리" ([BookTxtPage], the labels of [ReadingSettingsPopup]'s
+ * companion). A change here re-parses the TXT books that follow the defaults the next time each opens (their index key
+ * changes); books with their own settings keep theirs and their cached index.
  */
-internal class TxtDefaultsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_TXT_DEFAULTS, "TXT 기본 정리 설정") {
+internal class TxtDefaultsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_TXT_DEFAULTS, TITLE) {
     private var blankRow: View? = null
     private var joinRow: View? = null
     private var regexRow: View? = null
     private var rulesRow: View? = null
+    private var stripRow: View? = null
+    private var detectRow: View? = null
+    private var headingsRow: View? = null
 
     override fun build(): View {
         val r = Settings.reader
         val body = ctx.pageBody()
-        body.addView(ctx.note(
-            "책마다 따로 정하지 않은 모든 TXT 책에 쓰입니다. 한 권만 바꾸려면 그 책을 읽다가 ⚙ → 전체 읽기 설정 → '이 책의 TXT 정리'를 쓰세요. " +
-                "여기서 바꾸면 TXT 책을 다음에 열 때 한 번 다시 정리하므로 조금 느리게 열립니다.",
-        ))
+        body.addView(ctx.note("따로 정하지 않은 TXT 책에 쓰입니다. 바꾸면 다음에 열 때 한 번 다시 정리합니다."))
 
-        body.section("줄과 문단")
+        body.section("본문")
         blankRow = ctx.valueRow("빈 줄 처리", ReadingSettingsPopup.blankLabel(r.txtBlankLines)) {
             val sel = BLANK_MODES.indexOf(Settings.reader.txtBlankLines).coerceAtLeast(0)
             ctx.chooser("빈 줄 처리", BLANK_MODES.map { ReadingSettingsPopup.blankLabel(it) }, sel) { i ->
@@ -40,68 +41,84 @@ internal class TxtDefaultsPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
                 blankRow?.setSummary(ReadingSettingsPopup.blankLabel(BLANK_MODES[i]))
             }
         }.also(body::addView)
-        body.addView(ctx.toggleRow("원본 들여쓰기 제거", "파일의 앞 공백 대신 들여쓰기 설정 사용", r.txtStripIndent) { v ->
+        stripRow = ctx.toggleRow("줄 앞 공백 지우기", "읽기 설정의 들여쓰기를 씁니다", r.txtStripIndent) { v ->
             editReader { it.copy(txtStripIndent = v) }
-        })
+        }.also(body::addView)
         joinRow = ctx.valueRow("끊어진 줄 합치기", ReadingSettingsPopup.joinLabel(r.txtJoinWrappedLines)) {
             val sel = JOIN_MODES.indexOf(Settings.reader.txtJoinWrappedLines).coerceAtLeast(0)
-            ctx.chooser("끊어진 줄 합치기", JOIN_MODES.map { ReadingSettingsPopup.joinLabel(it) }, sel) { i ->
+            ctx.chooser("끊어진 줄 합치기", JOIN_MODES.map { ReadingSettingsPopup.joinChoice(it) }, sel) { i ->
                 if (Settings.reader.txtJoinWrappedLines != JOIN_MODES[i]) editReader { it.copy(txtJoinWrappedLines = JOIN_MODES[i]) }
                 joinRow?.setSummary(ReadingSettingsPopup.joinLabel(JOIN_MODES[i]))
             }
         }.also(body::addView)
-        body.addView(ctx.note("줄 합치기 '자동'은 한 문장이 여러 줄로 끊겨 저장된 파일만 이어 붙입니다."))
+        rulesRow = ctx.navRow("바꾸기 규칙", Fmt.rulesLabel(r.txtReplaceRules)) { editRules() }.also(body::addView)
 
         body.section("챕터")
-        body.addView(ctx.toggleRow("챕터 자동 인식", "목차 만들기 (1화, 제1장, 프롤로그 …)", r.txtDetectChapters) { v ->
+        detectRow = ctx.toggleRow("챕터 자동 인식", "목차 만들기 (1화, 제1장, 프롤로그 …)", r.txtDetectChapters) { v ->
             editReader { it.copy(txtDetectChapters = v) }
-        })
-        body.addView(ctx.toggleRow("챕터 제목 강조", "굵게 · 크게 · 가운데", r.txtEmphasizeHeadings) { v ->
+            updateChapterUi()
+        }.also(body::addView)
+        // The parser uses the heading look and the rule only while detection is on: hidden otherwise.
+        headingsRow = ctx.toggleRow("챕터 제목 강조", "굵게 · 크게 · 가운데", r.txtEmphasizeHeadings) { v ->
             editReader { it.copy(txtEmphasizeHeadings = v) }
-        })
-        regexRow = ctx.valueRow("챕터 규칙 (정규식)", r.txtChapterRegex.ifBlank { "없음" }) { editRegex() }.also(body::addView)
-
-        body.section("치환 규칙")
-        rulesRow = ctx.navRow("치환 규칙", Fmt.rulesLabel(r.txtReplaceRules)) { editRules() }.also(body::addView)
-        body.addView(ctx.note("광고 문구 · 반복되는 머리말 같은 것을 지우거나 바꿉니다. 규칙은 원본 파일의 한 줄 안에서 적용됩니다."))
+        }.also(body::addView)
+        regexRow = ctx.valueRow("챕터 규칙 (정규식)", regexLabel(r.txtChapterRegex)) { editRegex(Settings.reader.txtChapterRegex) }
+            .oneLineSummary().also(body::addView)
+        updateChapterUi()
         return ctx.pageScroll(body)
     }
 
     override fun onShown() {
-        // "이 책의 TXT 정리 → 모든 TXT 기본값으로 저장" may have changed the defaults meanwhile.
+        // "이 책의 TXT 정리 → 모든 TXT 책에 적용" may have changed the defaults meanwhile.
         val r = Settings.reader
         blankRow?.setSummary(ReadingSettingsPopup.blankLabel(r.txtBlankLines))
         joinRow?.setSummary(ReadingSettingsPopup.joinLabel(r.txtJoinWrappedLines))
-        regexRow?.setSummary(r.txtChapterRegex.ifBlank { "없음" })
+        regexRow?.setSummary(regexLabel(r.txtChapterRegex))
         rulesRow?.setSummary(Fmt.rulesLabel(r.txtReplaceRules))
+        stripRow?.setToggleChecked(r.txtStripIndent)
+        detectRow?.setToggleChecked(r.txtDetectChapters)
+        headingsRow?.setToggleChecked(r.txtEmphasizeHeadings)
+        updateChapterUi()
     }
 
-    private fun editRegex() {
-        val current = Settings.reader.txtChapterRegex
-        ctx.prompt("챕터 규칙 (정규식)", current, "예: ^제\\s*\\d+\\s*화.*") { text ->
+    private fun updateChapterUi() {
+        val on = Settings.reader.txtDetectChapters
+        headingsRow?.setShown(on)
+        regexRow?.setShown(on)
+    }
+
+    /** The rule prompt; a rule that does not compile is shown, then the prompt opens again with the typed text. */
+    private fun editRegex(initial: String) {
+        ctx.prompt("챕터 규칙 (정규식)", initial, "예: ^제\\s*\\d+\\s*화.*") { text ->
             val t = text.trim()
             val err = if (t.isEmpty()) null else runCatching { Regex(t) }.exceptionOrNull()
             if (err != null) {
                 ctx.toast(ErrorText.regex(err))
+                editRegex(text)
                 return@prompt
             }
             if (t != Settings.reader.txtChapterRegex) editReader { it.copy(txtChapterRegex = t) }
-            regexRow?.setSummary(t.ifBlank { "없음" })
+            regexRow?.setSummary(regexLabel(t))
         }
     }
 
     private fun editRules() {
-        RulesDialog.show(activity, "치환 규칙 · 모든 TXT 기본값", Settings.reader.txtReplaceRules) { text ->
+        RulesDialog.show(activity, "바꾸기 규칙 · TXT 기본값", Settings.reader.txtReplaceRules) { text ->
             val t = text.trimEnd()
             if (t != Settings.reader.txtReplaceRules) editReader { it.copy(txtReplaceRules = t) }
             rulesRow?.setSummary(Fmt.rulesLabel(t))
         }
     }
 
-    private companion object {
+    companion object {
+        const val TITLE = "TXT 정리 기본값"
+
+        /** The 챕터 규칙 row's value: the rule itself, or what applies without one. */
+        fun regexLabel(regex: String): String = regex.ifBlank { "기본 규칙만" }
+
         /** The popup's order of the blank-line modes. */
         val BLANK_MODES = listOf(ParseOptions.BLANK_AUTO, ParseOptions.BLANK_REMOVE_ALL, ParseOptions.BLANK_COLLAPSE, ParseOptions.BLANK_KEEP)
-        /** 자동 / 항상 / 끄기, the popup's segment order. */
+        /** 자동 / 항상 / 안 함, the popup's segment order. */
         val JOIN_MODES = listOf(1, 2, 0)
     }
 }

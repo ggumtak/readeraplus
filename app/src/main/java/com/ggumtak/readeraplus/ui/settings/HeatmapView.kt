@@ -12,9 +12,10 @@ import com.ggumtak.readeraplus.ui.kit.sp
 
 /**
  * The 잔디 of "읽기 기록" (T1-6): [HeatmapModel.WEEKS] × 7 cells (13 dp, 3 dp gaps; smaller when the width is short),
- * month labels above and the legend "적게 □ ▦ ▩ ■ 많이" below. It only draws: no animation, no scrolling, and a
- * draw happens only when the data or the selected cell changes. A tap on a drawn cell calls [onDayTap] with its day
- * (the page fills one text line below; no popup) and outlines that cell.
+ * month labels above and the legend "적게 □ ⊡ ▩ ■ 많이" below, in black. Under 15 minutes is an outlined white cell
+ * with a black dot (never a light grey that e-ink can lose). It only draws: no animation, no scrolling, and a draw
+ * happens only when the data or the selected cell changes. A tap on a drawn cell calls [onDayTap] with its day (the
+ * page fills one text line below; no popup) and outlines that cell.
  */
 internal class HeatmapView(context: Context) : View(context) {
     var onDayTap: ((Int) -> Unit)? = null
@@ -32,11 +33,13 @@ internal class HeatmapView(context: Context) : View(context) {
     private val fill = Paint().apply { style = Paint.Style.FILL }
     private val outline = Paint().apply { style = Paint.Style.STROKE; strokeWidth = line; color = OUTLINE }
     private val mark = Paint().apply { style = Paint.Style.STROKE; strokeWidth = context.dpF(2f); color = Ink.BLACK }
-    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ink.GRAY; textSize = context.sp(12f) }
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ink.BLACK; textSize = context.sp(13f) }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Ink.BLACK }
+    private val dotRadius = context.dpF(1.5f)
     private val rect = RectF()
 
     init {
-        contentDescription = "읽기 잔디: 최근 ${HeatmapModel.WEEKS}주"
+        contentDescription = "최근 ${HeatmapModel.WEEKS}주 읽은 날"
     }
 
     fun setGrid(g: HeatGrid) {
@@ -71,7 +74,7 @@ internal class HeatmapView(context: Context) : View(context) {
                 if (i == selected) canvas.drawRect(rect, mark)
             }
         }
-        // Legend under the grid's right edge: 적게 □ ▦ ▩ ■ 많이.
+        // Legend under the grid's right edge, the cells' own shapes: 적게 □ ⊡ ▩ ■ 많이.
         val right = cellLeft(HeatmapModel.WEEKS - 1) + cell
         val top = cellTop(7) - gap + context.dpF(8f)
         val more = "많이"
@@ -93,10 +96,11 @@ internal class HeatmapView(context: Context) : View(context) {
     private fun drawCell(canvas: Canvas, level: Int) {
         fill.color = LEVELS[level]
         canvas.drawRect(rect, fill)
-        if (level == 0) {
+        if (level <= 1) {
             val h = line / 2f
             canvas.drawRect(rect.left + h, rect.top + h, rect.right - h, rect.bottom - h, outline)
         }
+        if (level == 1) canvas.drawCircle(rect.centerX(), rect.centerY(), dotRadius, dot)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -129,8 +133,8 @@ internal class HeatmapView(context: Context) : View(context) {
     }
 
     private companion object {
-        /** No reading (white, outlined), under 15 min, under 60 min, 60 min or more. */
-        val LEVELS = intArrayOf(Ink.WHITE, 0xFFC0C0C0.toInt(), 0xFF707070.toInt(), Ink.BLACK)
+        /** No reading (white, outlined), under 15 min (white, outlined, a black dot), under 60 min, 60 min or more. */
+        val LEVELS = intArrayOf(Ink.WHITE, Ink.WHITE, 0xFF707070.toInt(), Ink.BLACK)
         const val OUTLINE = 0xFF999999.toInt()
     }
 }

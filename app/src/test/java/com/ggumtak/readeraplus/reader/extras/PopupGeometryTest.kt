@@ -55,19 +55,19 @@ class PopupGeometryTest {
 
     @Test
     fun quickOptionsNeverScrollAt1440px() {
-        // 읽기 설정 · 모든 책에 적용 · 닫기 / 글자 크기 / 굵기 / 줄 간격 / 문단 간격 / 글꼴 / 전체 읽기 설정 (2026-10-04).
-        assertEquals(5, PopupGeometry.QUICK_ROWS)
-        assertEquals(56, Compact.ROW_DP)
+        // 전체 읽기 설정 › · 닫기 / 글자 크기 / 굵기 / 줄 간격 / 문단 간격 / 좌우 여백 / 상하 여백 / 글꼴 (2026-10-04).
+        assertEquals(7, PopupGeometry.QUICK_ROWS)
+        assertEquals(48, Compact.ROW_DP)
         assertEquals(48, Compact.BAR_DP)
         assertEquals(48, Compact.STEP_DP)
         assertEquals(48, Compact.LIST_ROW_DP)
         assertEquals(16f, Compact.LABEL_SP, 0f)
         assertEquals(17f, Compact.VALUE_SP, 0f)
-        assertEquals(376, PopupGeometry.QUICK_HEIGHT_DP)
+        assertEquals(384, PopupGeometry.QUICK_HEIGHT_DP)
         // Emulator / Comet: 720×1440 px at 2.0, with and without a status bar (up to 32 dp).
         for (inset in intArrayOf(0, 48, 64)) {
             val place = PopupGeometry.settings(1440, inset, 2f)
-            val whole = Math.round(PopupGeometry.QUICK_HEIGHT_DP * 2f) // 752 px
+            val whole = Math.round(PopupGeometry.QUICK_HEIGHT_DP * 2f) // 768 px
             // The whole popup + the 1 px border on each side.
             assertTrue("inset $inset: popup ${whole + 2} px > ${place.height} px", whole + 2 <= place.height)
         }
@@ -77,18 +77,47 @@ class PopupGeometryTest {
     }
 
     @Test
-    fun quickFieldsCarryOnlyTheFiveQuickSettings() {
+    fun quickFieldsCarryTheSevenQuickSettings() {
         val base = ReaderSettings(marginLeftDp = 30, invert = true, txtBlankLines = 2, lineHeightPct = 150)
         val src = ReaderSettings(fontSizeSp = 23f, fontWeight = 600, lineHeightPct = 190, paragraphSpacingPct = 40,
-            fontId = "x", indentPct = 300, invert = false, txtBlankLines = 0, marginLeftDp = 5)
+            fontId = "x", indentPct = 300, invert = false, txtBlankLines = 0, marginLeftDp = 5, marginRightDp = 5,
+            marginTopDp = 60, marginBottomDp = 60, pageMargins = false)
         val out = QuickFields.onto(base, src)
         assertEquals(23f, out.fontSizeSp, 0f)
         assertEquals(600, out.fontWeight)
         assertEquals(190, out.lineHeightPct)
         assertEquals(40, out.paragraphSpacingPct)
         assertEquals("x", out.fontId)
+        assertEquals(listOf(5, 5, 60, 60), listOf(out.marginLeftDp, out.marginRightDp, out.marginTopDp, out.marginBottomDp))
+        assertFalse(out.pageMargins)
         // Everything else stays the saved settings' (a stale popup copy never overwrites 설정's changes).
-        assertEquals(base.copy(fontSizeSp = 23f, fontWeight = 600, lineHeightPct = 190, paragraphSpacingPct = 40, fontId = "x"), out)
+        assertEquals(300, src.indentPct)
+        assertEquals(base.indentPct, out.indentPct)
+        assertTrue(out.invert)
+        assertEquals(2, out.txtBlankLines)
+        assertEquals(
+            base.copy(fontSizeSp = 23f, fontWeight = 600, lineHeightPct = 190, paragraphSpacingPct = 40, fontId = "x",
+                marginLeftDp = 5, marginRightDp = 5, marginTopDp = 60, marginBottomDp = 60, pageMargins = false),
+            out,
+        )
+    }
+
+    @Test
+    fun aMarginStepTurnsTheMarginsOn() {
+        val off = ReaderSettings(pageMargins = false)
+        val side = QuickFields.withSide(off, -10)
+        assertTrue(side.pageMargins)
+        assertEquals(SideMargin.toDp(-10), side.marginLeftDp)
+        assertEquals(SideMargin.toDp(-10), side.marginRightDp)
+        assertEquals(off.marginTopDp, side.marginTopDp)
+        val vertical = QuickFields.withVertical(off, 6)
+        assertTrue(vertical.pageMargins)
+        assertEquals(VerticalMargin.toDp(6), vertical.marginTopDp)
+        assertEquals(VerticalMargin.toDp(6), vertical.marginBottomDp)
+        assertEquals(off.marginLeftDp, vertical.marginLeftDp)
+        // "0" is the default margin, the same value 읽기 설정 shows.
+        assertEquals(ReaderSettings().marginLeftDp, QuickFields.withSide(off, 0).marginLeftDp)
+        assertEquals(ReaderSettings().marginTopDp, QuickFields.withVertical(off, 0).marginTopDp)
     }
 
     // ------------------------------------------------------------------ drop-down lists
@@ -189,9 +218,9 @@ class PopupGeometryTest {
 
     @Test
     fun widowSummaryFollowsPageBreak() {
-        assertEquals("한 쪽보다 긴 문단에만 적용", StatusUi.widowSummary(PageBreakMode.PARAGRAPH))
-        assertEquals("문단의 첫 줄/마지막 줄이 홀로 남지 않게", StatusUi.widowSummary(PageBreakMode.LINE))
-        assertEquals("여백이 좁아 위 · 아래 정보가 보이지 않습니다. 상하 여백을 늘리세요.", StatusUi.FIT_NOTE)
+        assertEquals("한 페이지보다 긴 문단에만", StatusUi.widowSummary(PageBreakMode.PARAGRAPH))
+        assertEquals("문단 첫 줄 · 끝 줄이 홀로 남지 않게", StatusUi.widowSummary(PageBreakMode.LINE))
+        assertEquals("상하 여백이 좁아 상태 표시줄이 가려집니다. 읽기 설정에서 ‘상하 여백’을 늘리세요.", StatusUi.FIT_NOTE)
         assertEquals("화면 맨 아래 가는 선", StatusUi.PROGRESS_SUMMARY)
     }
 }

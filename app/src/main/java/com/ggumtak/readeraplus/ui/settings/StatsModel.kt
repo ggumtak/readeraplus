@@ -76,14 +76,15 @@ object ReadingStats {
         return if (tenths % 10 == 0L) (tenths / 10).toString() else "${tenths / 10}.${tenths % 10}"
     }
 
-    /** A summary cell's time ("1시간 20분"), or "기록 없음" for a range without reading. */
-    fun time(t: LogTotals): String = if (t.seconds <= 0 && t.pages <= 0) "기록 없음" else ReaderFormat.durationOfSeconds(t.seconds)
+    /** A summary cell's time ("1시간 20분"), "0분" for a range without reading (its second line is then empty). */
+    fun time(t: LogTotals): String = if (t.seconds <= 0 && t.pages <= 0) "0분" else ReaderFormat.durationOfSeconds(t.seconds)
 
     /** A summary cell's second line: "312쪽 · 18.2만 자" ("" without reading). */
     fun amount(t: LogTotals): String = if (t.seconds <= 0 && t.pages <= 0) "" else "${t.pages}쪽 · ${chars(t.chars)}"
 
-    /** "분당 약 720자 (최근 7일)", or why there is no figure yet. */
-    fun speedLine(cpm: Int?): String = if (cpm == null) "최근 7일 기록이 적어 아직 알 수 없습니다" else "분당 약 ${cpm}자 (최근 7일)"
+    /** "분당 약 720자 (최근 7일)", or when the figure shows ([ReadingLog.BOOK_MIN_SECONDS] in the last 7 days). */
+    fun speedLine(cpm: Int?): String =
+        if (cpm == null) "최근 7일에 ${ReadingLog.BOOK_MIN_SECONDS / 60}분 이상 읽으면 보입니다" else "분당 약 ${cpm}자 (최근 7일)"
 
     /** 20260928 → "9월 28일". */
     fun dayLabel(day: Int): String = "${day / 100 % 100}월 ${day % 100}일"
@@ -104,9 +105,9 @@ object ReadingStats {
 
     const val MAX_TITLES = 3
 
-    /** "34%" of a 0..1 progress (a finished book reads "완독"). */
+    /** "34%" of a 0..1 progress (a finished book reads "다 읽음"). */
     fun progress(p: Float, haveRead: Boolean): String =
-        if (haveRead) "완독" else "${Math.round(p.coerceIn(0f, 1f) * 100)}%"
+        if (haveRead) "다 읽음" else "${Math.round(p.coerceIn(0f, 1f) * 100)}%"
 }
 
 /**

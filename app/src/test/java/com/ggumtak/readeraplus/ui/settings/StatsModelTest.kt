@@ -62,7 +62,7 @@ class StatsModelTest {
     @Test
     fun summaryCells() {
         val none = LogTotals.EMPTY
-        assertEquals("기록 없음", ReadingStats.time(none))
+        assertEquals("0분", ReadingStats.time(none))
         assertEquals("", ReadingStats.amount(none))
         val t = LogTotals(seconds = 4800, pages = 312, chars = 182_000, days = 1)
         assertEquals("1시간 20분", ReadingStats.time(t))
@@ -74,13 +74,13 @@ class StatsModelTest {
     @Test
     fun lines() {
         assertEquals("분당 약 720자 (최근 7일)", ReadingStats.speedLine(720))
-        assertEquals("최근 7일 기록이 적어 아직 알 수 없습니다", ReadingStats.speedLine(null))
+        assertEquals("최근 7일에 10분 이상 읽으면 보입니다", ReadingStats.speedLine(null))
         assertEquals("9월 28일", ReadingStats.dayLabel(20260928))
         assertEquals("9월 28일 · 1시간 12분 · 소설A, 소설B", ReadingStats.dayLine(20260928, 4320, listOf("소설A", "소설B")))
         assertEquals("1월 5일 · 3분 · A, B, C 외 2권", ReadingStats.dayLine(20260105, 180, listOf("A", "B", "C", "D", "E")))
         assertEquals("9월 28일 · 기록 없음", ReadingStats.dayLine(20260928, 0, emptyList()))
         assertEquals("34%", ReadingStats.progress(0.344f, haveRead = false))
-        assertEquals("완독", ReadingStats.progress(0.5f, haveRead = true))
+        assertEquals("다 읽음", ReadingStats.progress(0.5f, haveRead = true))
         assertEquals("100%", ReadingStats.progress(1.5f, haveRead = false))
     }
 

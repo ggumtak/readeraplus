@@ -2,8 +2,11 @@ package com.ggumtak.readeraplus.ui.settings
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.StateListDrawable
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -22,6 +25,7 @@ import com.ggumtak.readeraplus.ui.kit.InkToggle
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.icon
+import com.ggumtak.readeraplus.ui.kit.keepAll
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
@@ -91,40 +95,72 @@ internal fun Context.pageBody(): LinearLayout = vertical {
 }
 
 /**
- * Bold section header (UI_SPEC polish 12): spacing only, no line above (the header's own 24 dp top / 8 dp bottom
- * padding separates the groups). [first] is kept for the callers; every section looks the same now.
+ * Starts a section: its bold header (tag "section"), returned so a page can rename it ("받은 파일 (3)") or hide it. A
+ * section after another one in this container gets an 8 dp gap and a full-width black 1 px line above its header, so
+ * every group reads as its own block when scanning a long page; the first one has none (the toolbar's line is right
+ * above it, also after a top note or 정보's header block). This reverses UI_SPEC polish 12 (spacing only) on purpose:
+ * the categories were too hard to tell apart (user, 2026-10-04). The gap and the line are the header's own background,
+ * so hiding the header hides them too. Static views: no extra e-ink update.
  */
-@Suppress("UNUSED_PARAMETER")
-internal fun LinearLayout.section(text: String, first: Boolean = false) {
-    addView(context.sectionHeader(text))
+internal fun LinearLayout.section(text: String): TextView {
+    val after = (0 until childCount).any { getChildAt(it).tag == SECTION_TAG }
+    val header = context.sectionHeader(text).apply { tag = SECTION_TAG }
+    if (after) {
+        val gap = context.dp(8)
+        header.background = LayerDrawable(arrayOf(ColorDrawable(Ink.LINE))).apply {
+            setLayerGravity(0, Gravity.TOP or Gravity.FILL_HORIZONTAL)
+            setLayerHeight(0, 1)
+            setLayerInsetTop(0, gap)
+        }
+        header.setPadding(header.paddingLeft, header.paddingTop + gap + 1, header.paddingRight, header.paddingBottom)
+    }
+    addView(header)
+    return header
 }
 
-/** Grey explanatory text block. */
-internal fun Context.note(text: CharSequence, sizeSp: Float = 14f): TextView = label(text, sizeSp, color = Ink.GRAY).apply {
+private const val SECTION_TAG = "section"
+
+/** Grey explanatory text block (14 sp, wrapped between words). */
+internal fun Context.note(text: CharSequence, sizeSp: Float = 14f): TextView = label(keepAll(text), sizeSp, color = Ink.GRAY).apply {
     setPadding(dp(16), dp(6), dp(16), dp(10))
     setLineSpacing(0f, 1.15f)
 }
 
-/** Row that opens a sub-page (grey chevron on the right). */
-internal fun Context.navRow(title: String, summary: String?, onClick: (View) -> Unit): LinearLayout =
-    row(title, summary, icon(R.drawable.ic_chevron_right, 24, Ink.GRAY), onClick)
+/**
+ * A [note] in black: the one warning a page must not let pass (the status bar hidden by the margins, the double
+ * flash, a file the Wi-Fi page could not take).
+ */
+internal fun Context.warning(text: CharSequence): TextView = note(text).apply { setTextColor(Ink.BLACK) }
 
-/** Row whose summary shows the current value; tapping opens a chooser. */
+/** Row that opens another screen (black chevron on the right). */
+internal fun Context.navRow(title: String, summary: String?, onClick: (View) -> Unit): LinearLayout =
+    row(title, summary, icon(R.drawable.ic_chevron_right, 24, Ink.BLACK), onClick = onClick)
+
+/** Row whose summary shows the current value; tapping opens a chooser here (grey drop-down mark on the right). */
 internal fun Context.valueRow(title: String, value: String, onClick: (View) -> Unit): LinearLayout =
-    row(title, value, icon(R.drawable.ic_arrow_drop_down, 24, Ink.GRAY), onClick)
+    row(title, value, icon(R.drawable.ic_arrow_drop_down, 24, Ink.GRAY), onClick = onClick)
 
 /** Updates the summary line of a row made with [row] (only when the row was created with a summary). */
 internal fun View.setSummary(text: CharSequence) {
-    findViewWithTag<TextView>("summary")?.text = text
+    findViewWithTag<TextView>("summary")?.text = keepAll(text)
+}
+
+/** Keeps a [row]'s summary on one line, cut with "…" (a regular expression, a path). */
+internal fun <T : View> T.oneLineSummary(): T = apply {
+    findViewWithTag<TextView>("summary")?.apply {
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+    }
 }
 
 /**
- * Disables the row and its accessibility controls, with an explanatory summary kept by the caller. A disabled row
- * ignores taps and TalkBack announces it as unavailable ("사용 중지됨"), not merely grey.
+ * Disables the row and its accessibility controls, with the reason in the summary (set by the caller). A disabled
+ * row ignores taps and TalkBack announces it as unavailable ("사용 중지됨"); its title goes light grey, the summary
+ * stays #555 so the reason can be read, and a switch fades.
  */
 internal fun View.setRowEnabled(enabled: Boolean) {
     isEnabled = enabled
-    if (this is TextView) setTextColor(if (!enabled) Ink.DISABLED else if (tag == "summary") Ink.GRAY else Ink.BLACK)
+    if (this is TextView) setTextColor(if (tag == "summary") Ink.GRAY else if (enabled) Ink.BLACK else Ink.DISABLED)
     if (this is InkToggle || this is EinkToggle) alpha = if (enabled) 1f else 0.4f
     if (this is ViewGroup) for (i in 0 until childCount) getChildAt(i).setRowEnabled(enabled)
 }
@@ -151,19 +187,11 @@ internal fun LinearLayout.liveStepperValue(): LinearLayout {
     return this
 }
 
-/** Names the − / + buttons of a `stepperRow` "<title> 줄이기" / "<title> 늘리기" (TalkBack, and the CI finds them so). */
-internal fun LinearLayout.namedStepper(title: String): LinearLayout {
-    val box = getChildAt(childCount - 1) as? ViewGroup
-    box?.getChildAt(0)?.contentDescription = "$title 줄이기"
-    box?.getChildAt(2)?.contentDescription = "$title 늘리기"
-    return this
-}
-
 /** Radio-style row: radio icon on the left, title + optional summary. */
 internal fun Context.radioRow(title: String, summary: String?, checked: Boolean, onClick: (View) -> Unit): LinearLayout {
     val r = horizontal {
         minimumHeight = dp(56)
-        setPadding(dp(12), dp(8), dp(12), dp(8))
+        setPadding(dp(16), dp(8), dp(16), dp(8))
         background = pressableBackground()
         setOnClickListener(onClick)
     }
@@ -174,7 +202,7 @@ internal fun Context.radioRow(title: String, summary: String?, checked: Boolean,
     r.addView(radio)
     val texts = vertical()
     texts.addView(label(title, 17f))
-    if (summary != null) texts.addView(label(summary, 14f, color = Ink.GRAY).apply { tag = "summary"; setPadding(0, dp(3), 0, 0) })
+    if (summary != null) texts.addView(label(keepAll(summary), 14f, color = Ink.GRAY).apply { tag = "summary"; setPadding(0, dp(3), 0, 0) })
     r.addView(texts, lp(0, WRAP_CONTENT, 1f))
     return r
 }
@@ -212,5 +240,10 @@ internal fun Context.buttonBar(vararg buttons: View): LinearLayout = horizontal 
 internal fun Context.infoRow(title: String, value: String): LinearLayout = vertical {
     setPadding(dp(16), dp(8), dp(16), dp(8))
     addView(label(title, 14f, color = Ink.GRAY))
-    addView(label(value, 16f).apply { setPadding(0, dp(2), 0, 0); setTextIsSelectable(false) })
+    addView(label(value, 16f).apply { tag = "value"; setPadding(0, dp(2), 0, 0); setTextIsSelectable(false) })
+}
+
+/** Updates the value of an [infoRow]. */
+internal fun View.setInfoValue(text: CharSequence) {
+    findViewWithTag<TextView>("value")?.text = text
 }

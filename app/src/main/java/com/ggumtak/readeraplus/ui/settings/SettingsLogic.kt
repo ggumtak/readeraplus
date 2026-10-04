@@ -2,10 +2,13 @@ package com.ggumtak.readeraplus.ui.settings
 
 import com.ggumtak.readeraplus.data.AutoBackup
 import com.ggumtak.readeraplus.engine.PageBreakMode
+import com.ggumtak.readeraplus.reader.extras.SleepChoice
+import com.ggumtak.readeraplus.reader.extras.StatusUi
 import com.ggumtak.readeraplus.reader.extras.VoiceChoice
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.reader.LightPolicy
+import com.ggumtak.readeraplus.reader.VolumeMode
 import com.ggumtak.readeraplus.render.DeviceCleanInfo
 import com.ggumtak.readeraplus.render.StatusFit
 import com.ggumtak.readeraplus.settings.AppSettings
@@ -149,7 +152,7 @@ object FolderSets {
         val p = normalize(path)
         if (p.isEmpty() || !p.startsWith("/")) return AddResult(folders, false, "올바른 폴더 경로가 아닙니다")
         folders.firstOrNull { isSameOrInside(p, it) }?.let { cover ->
-            val msg = if (cover == p) "이미 추가된 폴더입니다" else "'${displayName(cover)}' 폴더에 이미 포함되어 있습니다"
+            val msg = if (cover == p) "이미 추가된 폴더입니다" else "‘${displayName(cover)}’ 폴더에 이미 포함되어 있습니다"
             return AddResult(folders, false, msg)
         }
         val merged = folders.filter { isSameOrInside(it, p) }
@@ -202,16 +205,24 @@ object SettingsFormat {
     val SLEEP_OPTIONS: List<Int> = listOf(0, 15, 30, 45, 60, 90)
 
     /**
-     * "수면 타이머" choices as (minutes, chapters) (T1-11): 끔 / 15 / 30 / 45 / 60 / 90분 / 이 화 끝까지 / 2화 끝까지.
-     * Chapters ([AppSettings.ttsSleepChapters]) win over minutes, so a chapter choice stores minutes 0.
+     * "멈춤 예약" choices as (minutes, chapters) (T1-11): 끔, 15 … 90분, then one or two chapters. Chapters
+     * ([AppSettings.ttsSleepChapters]) win over minutes, so a chapter choice stores minutes 0.
      */
     val SLEEP_CHOICES: List<Pair<Int, Int>> = SLEEP_OPTIONS.map { it to 0 } + listOf(0 to 1, 0 to 2)
 
-    /** "끔", "30분", "1시간 30분", "이 화 끝까지", "2화 끝까지". */
-    fun sleepChoice(minutes: Int, chapters: Int): String = when {
-        chapters == 1 -> "이 화 끝까지"
-        chapters >= 2 -> "${chapters}화 끝까지"
-        else -> sleep(minutes)
+    /** The 멈춤 예약 row and chooser: the reader's own wording ([SleepChoice.summary]), one copy. */
+    fun sleepChoice(minutes: Int, chapters: Int): String = SleepChoice.summary(minutes, chapters)
+
+    /**
+     * The timer's part of the 듣기 설정 summary: "30분 뒤 멈춤", "1시간 30분 뒤 멈춤", "이 챕터 끝나면 멈춤", "다음 챕터
+     * 끝나면 멈춤", "챕터 3개 끝나면 멈춤"; null while no timer is set.
+     */
+    fun sleepSummary(minutes: Int, chapters: Int): String? = when {
+        chapters == 1 -> "이 챕터 끝나면 멈춤"
+        chapters == 2 -> "다음 챕터 끝나면 멈춤"
+        chapters >= 3 -> "챕터 ${chapters}개 끝나면 멈춤"
+        minutes > 0 -> "${sleep(minutes)} 뒤 멈춤"
+        else -> null
     }
 
     /** Index of the saved values in [SLEEP_CHOICES]; -1 for values no choice offers (an older build's 10 / 120분). */
@@ -235,8 +246,8 @@ object SettingsFormat {
         "자동 회전" to -1,
         "세로" to 1,
         "가로" to 0,
-        "세로 (뒤집힘)" to 9,
-        "가로 (뒤집힘)" to 8,
+        "세로 (거꾸로)" to 9,
+        "가로 (거꾸로)" to 8,
     )
 
     fun orientation(value: Int): String = ORIENTATIONS.firstOrNull { it.second == value }?.first ?: "자동 회전"
@@ -262,17 +273,21 @@ object SettingsFormat {
         return if (r == 0) "${m}분" else "${m}분 ${r}초"
     }
 
-    /** Reader page e-ink modes (AppSettings.einkMode): label to value; the first one is the default. */
+    /** Reader page e-ink modes (AppSettings.einkMode): the chooser's label to value; the first one is the default. */
     val EINK_MODES: List<Pair<String, Int>> = listOf(
-        "기기 설정 따름 (권장·기본)" to EINK_MODE_SYSTEM,
+        "기기 설정 따름 (기본)" to EINK_MODE_SYSTEM,
         "선명하게 (HD)" to EINK_MODE_HD,
         "잔상 적게 (REGAL)" to EINK_MODE_REGAL,
         "빠르게 (FAST)" to EINK_MODE_FAST,
         "보통 (NORMAL)" to EINK_MODE_NORMAL,
     )
 
-    /** Label of an e-ink mode value (an unknown value reads as the default). */
-    fun einkMode(value: Int): String = EINK_MODES.firstOrNull { it.second == value }?.first ?: EINK_MODES[0].first
+    /** The row's value for an e-ink mode (the chooser's label without "(기본)"; an unknown value reads as the default). */
+    fun einkMode(value: Int): String =
+        (EINK_MODES.firstOrNull { it.second == value } ?: EINK_MODES[0]).first.removeSuffix(DEFAULT_MARK)
+
+    /** What a chooser adds to its default entry (never to a row's value). */
+    const val DEFAULT_MARK = " (기본)"
 
     /** E-ink full refresh cadence: 0 → "끔", n → "n쪽마다". */
     fun refreshEvery(n: Int): String = if (n <= 0) "끔" else "${n}쪽마다"
@@ -288,15 +303,24 @@ object SettingsFormat {
 
     fun pitch(v: Float): String = ReaderFormat.ttsPitch(v)
 
-    /** Live volume-row summary, including precedence of a custom key action. */
-    fun volumeSummary(app: AppSettings): String = when {
-        KeyMap.volumeBound(app) -> "키 지정에서 볼륨 키 동작을 정했습니다"
-        !app.volumeKeysTurn -> "끄면 볼륨 키는 소리 크기를 조절합니다"
-        app.invertVolumeKeys -> "볼륨 위 = 다음, 볼륨 아래 = 이전"
-        else -> "볼륨 아래 = 다음, 볼륨 위 = 이전"
+    /** The "볼륨 키" chooser (P8): each entry's mode, in order; the default first. */
+    val VOLUME_CHOICES: List<Pair<String, VolumeMode>> = listOf(
+        "아래 = 다음 · 위 = 이전 (기본)" to VolumeMode.DOWN_NEXT,
+        "위 = 다음 · 아래 = 이전" to VolumeMode.UP_NEXT,
+        "넘기지 않음 (소리 크기 조절)" to VolumeMode.OFF,
+    )
+
+    /** The "볼륨 키" row's value; while a volume key has an action of its own in 키 지정, the reason (row disabled). */
+    fun volumeValue(app: AppSettings): String {
+        if (KeyMap.volumeBound(app)) return VOLUME_BOUND
+        return when (KeyMap.volumeMode(app)) {
+            VolumeMode.OFF -> "넘기지 않음"
+            VolumeMode.UP_NEXT -> "위 = 다음 · 아래 = 이전"
+            VolumeMode.DOWN_NEXT -> "아래 = 다음 · 위 = 이전"
+        }
     }
 
-    fun sp(v: Float): String = if (v == Math.round(v).toFloat()) "${Math.round(v)}sp" else String.format(Locale.US, "%.1fsp", v)
+    const val VOLUME_BOUND = "키 지정에서 정함"
 
     /** "readeraplus-backup-20260929.json" (local date). */
     fun backupFileName(millis: Long, tz: TimeZone = TimeZone.getDefault()): String {
@@ -304,9 +328,16 @@ object SettingsFormat {
         return "readeraplus-backup-${f.format(Date(millis))}.json"
     }
 
-    fun dateTime(millis: Long, tz: TimeZone = TimeZone.getDefault()): String {
-        val f = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = tz }
-        return f.format(Date(millis))
+    /** "9월 30일 08:12" in [now]'s year, "2025년 9월 30일 08:12" in another (local time). */
+    fun dateTime(millis: Long, tz: TimeZone = TimeZone.getDefault(), now: Long = System.currentTimeMillis()): String =
+        date(millis, tz, now) + " " + SimpleDateFormat("HH:mm", Locale.US).apply { timeZone = tz }.format(Date(millis))
+
+    /** A list's date: "9월 29일" in [now]'s year, "2025년 9월 29일" in another (local time). */
+    fun date(millis: Long, tz: TimeZone = TimeZone.getDefault(), now: Long = System.currentTimeMillis()): String {
+        val year = SimpleDateFormat("yyyy", Locale.US).apply { timeZone = tz }
+        val y = year.format(Date(millis))
+        val day = SimpleDateFormat("M월 d일", Locale.KOREAN).apply { timeZone = tz }.format(Date(millis))
+        return if (y == year.format(Date(now))) day else "${y}년 $day"
     }
 }
 
@@ -320,79 +351,81 @@ object R3Rows {
 
     val READ_MODES: List<ReadMode> = listOf(ReadMode.PAGED, ReadMode.SCROLL)
 
-    fun readMode(m: ReadMode): String = if (m == ReadMode.SCROLL) "스크롤" else "페이지 넘김 (기본)"
+    /** The row's value: "페이지 넘김" / "스크롤". */
+    fun readMode(m: ReadMode): String = m.label
 
-    const val READ_MODE_NOTE =
-        "스크롤에서도 화면 터치 · 볼륨 키 · 페이지 키는 한 화면씩 넘깁니다. 화면 아래에서 잘린 줄이 다음 화면의 첫 줄이 됩니다."
+    /** The chooser: "페이지 넘김 (기본)" / "스크롤 (위아래로 읽기)". */
+    fun readModeChoice(m: ReadMode): String = if (m == ReadMode.SCROLL) "${m.label} (위아래로 읽기)" else m.label + SettingsFormat.DEFAULT_MARK
 
-    val SCROLL_STYLES: List<ScrollStyle> = listOf(ScrollStyle.AUTO, ScrollStyle.SMOOTH, ScrollStyle.STEP)
+    const val READ_MODE_NOTE = "스크롤에서도 터치 · 키는 한 화면씩 넘깁니다."
 
     /**
-     * "자동 (손가락을 따라 이동)" / "손가락을 따라 이동" / "손을 떼면 이동 (e-ink)". AUTO follows the finger on every device
-     * since 2026-10-04 ([com.ggumtak.readeraplus.reader.ScrollWiring.stepMotion]); [eink] no longer changes a label.
+     * The 스크롤 움직임 chooser: follow the finger (AUTO, the default) or move on release (STEP). AUTO follows the finger
+     * on every device since 2026-10-04 ([com.ggumtak.readeraplus.reader.ScrollWiring.stepMotion]), so a stored SMOOTH
+     * (an older build's choice) reads and selects as this entry; stored values are never rewritten.
      */
-    @Suppress("UNUSED_PARAMETER")
-    fun scrollStyle(s: ScrollStyle, eink: Boolean?): String = when (s) {
-        ScrollStyle.AUTO -> "자동 (${ScrollStyle.SMOOTH.label})"
-        ScrollStyle.SMOOTH -> s.label
-        ScrollStyle.STEP -> "${s.label} (e-ink)"
-    }
+    val SCROLL_STYLES: List<ScrollStyle> = listOf(ScrollStyle.AUTO, ScrollStyle.STEP)
 
-    const val SWIPE_TURN = "좌우로 밀어서 페이지 넘김 (오른쪽→왼쪽 = 다음)"
+    /** The row's value: "손가락을 따라" / "손을 떼면 이동". */
+    fun scrollStyle(s: ScrollStyle): String = if (s == ScrollStyle.STEP) "손을 떼면 이동" else "손가락을 따라"
+
+    /** The chooser's entry: the value, the default marked. */
+    fun scrollStyleChoice(s: ScrollStyle): String = if (s == ScrollStyle.STEP) scrollStyle(s) else scrollStyle(s) + SettingsFormat.DEFAULT_MARK
+
+    /** The chooser's checked entry for a stored value (SMOOTH reads as AUTO). */
+    fun scrollStyleIndex(s: ScrollStyle): Int = if (s == ScrollStyle.STEP) 1 else 0
+
+    const val SWIPE_TURN = "왼쪽으로 밀면 다음 페이지"
     const val SWIPE_TURN_SCROLL = "좌우로 밀면 한 화면씩"
-    const val VERTICAL_SWIPE = "위로 밀면 다음 페이지, 아래로 밀면 이전 페이지"
-    const val VERTICAL_SWIPE_SCROLL = "스크롤 모드에서는 쓰지 않음 (위아래로 끌면 스크롤)"
+    const val VERTICAL_SWIPE = "위로 밀면 다음 페이지"
+    const val VERTICAL_SWIPE_SCROLL = "스크롤에서는 쓸 수 없음"
 
-    /** "자동 (이 기기: …)". */
-    fun auto(resolved: String): String = "자동 (이 기기: $resolved)"
+    /** "자동 (흑백 무늬)": what 자동 resolves to on this device. */
+    fun auto(resolved: String): String = "자동 ($resolved)"
 
     // ---- 인용문 색 표시 / 목록 넘기기 / 서재 보기 (NOTES §11, §10.2)
 
     val HL_LOOKS: List<Int> = listOf(HL_LOOK_AUTO, HL_LOOK_COLOR, HL_LOOK_INK)
 
     fun highlightLook(v: Int, eink: Boolean?): String = when (v) {
-        HL_LOOK_COLOR -> "색"
+        HL_LOOK_COLOR -> "색 그대로"
         HL_LOOK_INK -> "흑백 무늬"
-        else -> auto(if (eink == true) "흑백 무늬" else "색")
+        else -> auto(if (eink == true) "흑백 무늬" else "색 그대로")
     }
 
     /** What [AppSettings.highlightLook] draws with on this device (true = the e-ink looks). */
     fun inkLook(v: Int, eink: Boolean?): Boolean = v == HL_LOOK_INK || (v != HL_LOOK_COLOR && eink == true)
 
-    const val HL_LOOK_NOTE = "e-ink 화면에서는 색이 비슷한 회색으로 보여 무늬로 구분합니다 (노랑 = 회색+밑줄, 초록 = 옅은 회색+점선, " +
-        "파랑 = 회색, 빨강 = 진한 회색+굵은 밑줄, 보라 = 테두리, 밑줄 = 밑줄만)"
+    /** Under the six swatches (which show each look as drawn). */
+    const val HL_LOOK_NOTE = "e-ink에서는 색 대신 무늬로 구분합니다."
 
-    /** The 목록 넘기기 chooser: 스크롤 (also what 자동, the stored default, means on every device) or 쪽 단위. */
+    /** The 목록 넘기기 chooser: 스크롤 (also what 자동, the stored default, means on every device) or 한 화면씩. */
     val LIST_PAGINGS: List<Int> = listOf(LIST_PAGING_SCROLL, LIST_PAGING_PAGED)
 
-    /** The row's value and the chooser's items: "스크롤" or "쪽 단위 (한 화면씩)". */
-    fun listPaging(v: Int): String = if (v == LIST_PAGING_PAGED) "쪽 단위 (한 화면씩)" else "스크롤"
+    /** The row's value and the chooser's items: "스크롤" or "한 화면씩". */
+    fun listPaging(v: Int): String = if (v == LIST_PAGING_PAGED) "한 화면씩" else "스크롤"
 
     /** The chooser's checked item for a stored value (자동 reads as 스크롤). */
     fun listPagingIndex(v: Int): Int = if (v == LIST_PAGING_PAGED) 1 else 0
 
-    /** The "서재 보기" chooser (NOTES §10.2). */
+    /** The 서재 "보기" chooser (NOTES §10.2): the view's name and what it shows. */
     fun libraryViewChoice(m: LibraryListMode): String = when (m) {
-        LibraryListMode.LIST -> "전체 — 표지 · 정보 · 버튼"
-        LibraryListMode.COMPACT -> "요약 — 작은 표지와 한 줄 정보"
-        LibraryListMode.GRID -> "썸네일 — 표지 3열"
-        LibraryListMode.COVERS -> "그리드 — 작은 표지 4열"
+        LibraryListMode.LIST -> "${m.label} (표지 · 정보 · 버튼)"
+        LibraryListMode.COMPACT -> "${m.label} (작은 표지 · 한 줄 정보)"
+        LibraryListMode.GRID -> "${m.label} (표지 3열)"
+        LibraryListMode.COVERS -> "${m.label} (작은 표지 4열)"
     }
 
     // ---- 페이지 표시 (scroll SPEC §2.4, anchor §3.3 / §4.4)
 
-    const val MARGIN_NOTE = "0이 기본 여백입니다. −로 좁히고 +로 넓힙니다. 위 · 아래 정보와 진행 막대는 이 여백 안에 표시됩니다."
+    const val MARGIN_NOTE = "0 = 기본 여백. 상태 표시줄은 상하 여백 안에 표시됩니다."
 
     val PAGE_BREAKS: List<PageBreakMode> = listOf(PageBreakMode.LINE, PageBreakMode.PARAGRAPH)
 
     fun pageBreak(m: PageBreakMode): String = if (m == PageBreakMode.PARAGRAPH) "문단 단위" else "줄 단위"
 
     fun pageBreakChoice(m: PageBreakMode): String =
-        if (m == PageBreakMode.PARAGRAPH) {
-            "문단 단위 — 한 쪽에 들어가는 문단은 나누지 않습니다. 쪽 아래가 비기도 합니다."
-        } else {
-            "줄 단위 (기본) — 쪽을 끝까지 채웁니다. 문단이 다음 쪽으로 이어질 수 있습니다."
-        }
+        if (m == PageBreakMode.PARAGRAPH) "문단 단위 (페이지 아래가 빌 수 있음)" else pageBreak(m) + SettingsFormat.DEFAULT_MARK
 
     // ---- 화면 색 (읽기 설정 → 스타일; 웹소설 = 마루뷰어, 2026-10-04)
 
@@ -400,32 +433,32 @@ object R3Rows {
 
     /** The "화면 색" chooser: the theme's name and what it looks like. */
     fun pageThemeChoice(t: PageTheme): String = when (t) {
-        PageTheme.PAPER -> "${t.label} (기본)"
-        PageTheme.MARU -> "${t.label} — 어두운 회색 바탕 · 밝은 글자 · 그림자"
+        PageTheme.PAPER -> t.label + SettingsFormat.DEFAULT_MARK
+        PageTheme.MARU -> "${t.label} (어두운 회색 바탕)"
     }
-
-    const val PAGE_THEME_NOTE = "흑백 반전(넘김·화면 설정)을 켜 두면 화면 색과 상관없이 검은 바탕에 흰 글자로 보입니다."
 
     // ---- 상태 표시줄 (UI_SPEC §5.5, anchor §2.7)
 
-    const val STATUS_NOTE = "위 · 아래 줄의 왼쪽 · 가운데 · 오른쪽에 보일 정보를 고르세요. 한 줄이 모두 '없음'이면 그 줄은 나타나지 않습니다."
-    const val PROGRESS_SUMMARY = "화면 맨 아래에 읽은 위치를 가는 선과 점으로 표시"
-    const val FIT_NOTE = "여백이 좁아 위 · 아래 정보가 보이지 않습니다. 상하 여백을 늘리세요."
+    /** At the end of 상태 표시줄 (화면·밝기). */
+    const val STATUS_NOTE = "모두 ‘없음’인 줄은 숨깁니다."
+    /** 진행 막대's summary: the quick status panel's wording, one copy. */
+    const val PROGRESS_SUMMARY = StatusUi.PROGRESS_SUMMARY
+    /** The warning while a band has no room in its margin: the quick status panel's wording, one copy. */
+    const val FIT_NOTE = StatusUi.FIT_NOTE
 
     /** Margin used for the bands while "페이지 여백" is off (anchor §2.7). */
     const val NO_MARGIN_DP = 4
 
-    /** "위 · 왼쪽" … "아래 · 오른쪽" ([band] 0 = top, [pos] 0..2 = left, centre, right). */
-    fun slotTitle(band: Int, pos: Int): String =
-        (if (band == 0) "위" else "아래") + " · " + when (pos) { 0 -> "왼쪽"; 1 -> "가운데"; else -> "오른쪽" }
+    /** "위 왼쪽" … "아래 오른쪽" ([band] 0 = top, [pos] 0..2 = left, centre, right), as the quick status panel says. */
+    fun slotTitle(band: Int, pos: Int): String = "${StatusUi.bandWord(band)} ${StatusUi.posWord(pos)}"
 
-    /** A slot chooser entry: "쪽 번호  (3 / 167)", or the bare label for items without an example. */
-    fun slotChoice(item: StatusItem): String = item.label + (item.example?.let { "  ($it)" } ?: "")
+    /** A slot chooser entry: "쪽 번호 (12 / 3259)", or the bare label for items without an example. */
+    fun slotChoice(item: StatusItem): String = item.label + (item.example?.let { " ($it)" } ?: "")
 
-    /** "상태 표시 글자 크기" matters only while a band shows text. */
+    /** "상태 글자 크기" matters only while a band shows text. */
     fun hasStatusText(r: ReaderSettings): Boolean = r.hasHeader || r.hasFooterText
 
-    /** False when a band with items has no room in its margin (anchor §2.7: the grey note shows; nothing is disabled). */
+    /** False when a band with items has no room in its margin (anchor §2.7: the warning shows; nothing is disabled). */
     fun statusFits(r: ReaderSettings): Boolean {
         val top = if (r.pageMargins) r.marginTopDp else NO_MARGIN_DP
         val bottom = if (r.pageMargins) r.marginBottomDp else NO_MARGIN_DP
@@ -451,75 +484,90 @@ object R3Rows {
      */
     fun brightnessDevice(on: Boolean, restore: Boolean, canWrite: Boolean, none: Boolean, origAuto: Boolean = false): String = when {
         none -> "이 기기는 앱이 전면광을 바꿀 수 없습니다"
-        on && !canWrite -> "'시스템 설정 수정' 권한이 필요합니다 · 눌러서 허용"
+        on && !canWrite -> "‘시스템 설정 수정’ 권한이 필요합니다 · 눌러서 허용"
         !on -> "전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다"
         restore -> "기기 전체 밝기를 바꿉니다 · 리더를 나가면 원래대로"
         origAuto -> LightPolicy.DEVICE_ON_KEEP_AUTO
         else -> "기기 전체 밝기를 바꿉니다 · 나가도 그대로 유지"
     }
 
-    const val BRIGHTNESS_RESTORE = "켜 두면 다른 앱과 서재는 원래 밝기를 씁니다. 끄면 리더에서 바꾼 밝기가 기기 밝기로 남습니다."
-    const val BRIGHTNESS_RESTORE_OFF = "'기기 밝기 직접 조절'을 켜면 쓸 수 있습니다"
-    const val VERDICT_RESET = "다음에 밝기를 조절할 때 어떤 방식이 되는지 다시 묻습니다"
+    /** "나갈 때 원래 밝기로" (shown only while 기기 밝기 직접 조절 is on). */
+    const val BRIGHTNESS_RESTORE = "끄면 바꾼 밝기가 그대로 남습니다"
+    const val VERDICT_RESET = "다음에 밝기를 바꿀 때 묻습니다"
     const val LIGHT_SETTINGS = "밝기 · 색온도를 기기 설정에서 조절"
 
-    /** brightness.md §5.3, verbatim. */
+    /** brightness.md §5.3 (합니다체, ‘’ quotes). */
     const val DEVICE_DIALOG = "이 기기의 전면광은 앱 화면 밝기를 따르지 않을 수 있습니다.\n" +
-        "'시스템 설정 수정'을 허용하면 리더가 기기 밝기 설정을 직접 바꿉니다.\n\n" +
+        "‘시스템 설정 수정’을 허용하면 리더가 기기 밝기 설정을 직접 바꿉니다.\n\n" +
         "· 기기 전체 밝기가 바뀝니다. 다른 앱에서도 같은 밝기가 보일 수 있습니다.\n" +
-        "· 리더를 나가면 원래 밝기로 되돌립니다. (설정에서 바꿀 수 있어요)\n" +
+        "· 리더를 나가면 원래 밝기로 되돌립니다. 설정에서 바꿀 수 있습니다.\n" +
         "· 다음 화면에서 ReaderaPlus를 찾아 허용을 켠 뒤 돌아오세요."
 
     const val ADB_GRANT = "adb shell appops set com.ggumtak.readeraplus WRITE_SETTINGS allow"
 
     /** brightness.md §5.5. */
-    const val NO_PERMISSION_SCREEN = "이 기기에는 '시스템 설정 수정' 화면이 없습니다. PC에 연결해 다음 명령으로 허용할 수 있습니다.\n$ADB_GRANT"
+    const val NO_PERMISSION_SCREEN = "이 기기에는 ‘시스템 설정 수정’ 화면이 없습니다. PC에 연결해 다음 명령으로 허용할 수 있습니다.\n$ADB_GRANT"
 
     // ---- 자동 백업 (scroll SPEC §3.8, NOTES §11)
 
-    /** The toggle's summary; [lastAt] 0 = nothing written yet. */
-    fun autoBackupSummary(fullAccess: Boolean, location: String, lastAt: Long, tz: TimeZone = TimeZone.getDefault()): String =
+    /** The "매일 자동 백업" summary: where, and when it last wrote ([lastAt] 0 = nothing written yet). */
+    fun autoBackupSummary(
+        fullAccess: Boolean,
+        location: String,
+        lastAt: Long,
+        tz: TimeZone = TimeZone.getDefault(),
+        now: Long = System.currentTimeMillis(),
+    ): String =
         if (fullAccess) {
-            "앱을 지워도 남는 곳에 저장 · $location" + if (lastAt > 0) " · 마지막: ${SettingsFormat.dateTime(lastAt, tz)}" else ""
+            location + if (lastAt > 0) " · 마지막 ${SettingsFormat.dateTime(lastAt, tz, now)}" else ""
         } else {
-            "모든 파일 접근 권한이 없어 ${location}에 저장합니다. 다시 설치한 뒤에는 권한을 허용해야 자동으로 찾습니다."
+            "$location · 다시 설치하면 모든 파일 접근을 허용해야 찾습니다"
         }
 
-    /** The status line after "지금 자동 백업하기". */
+    /** The status line after "지금 자동 백업". */
     fun autoBackupOutcome(o: AutoBackup.Outcome, location: String): String = when (o) {
         AutoBackup.Outcome.WROTE -> "자동 백업을 저장했습니다 · $location"
         AutoBackup.Outcome.UNCHANGED -> "지난 자동 백업과 같아 새로 저장하지 않았습니다"
         AutoBackup.Outcome.NOT_DUE -> "오늘 이미 자동 백업했습니다"
         AutoBackup.Outcome.DISABLED -> "자동 백업이 꺼져 있습니다"
         AutoBackup.Outcome.NO_LOCATION -> "저장할 곳($location)을 쓸 수 없습니다"
-        AutoBackup.Outcome.BUSY -> "책을 읽는 중이라 저장하지 않았습니다. 잠시 뒤 다시 해 보세요"
+        AutoBackup.Outcome.BUSY -> "지금은 저장할 수 없습니다. 잠시 뒤 다시 해 보세요"
         AutoBackup.Outcome.SKIPPED_EMPTY -> "저장할 읽기 기록이 없습니다"
-        AutoBackup.Outcome.FAILED -> "자동 백업 실패"
+        AutoBackup.Outcome.FAILED -> "자동 백업을 저장하지 못했습니다"
     }
 
-    /** One restore choice: "2026-09-30 08:12 · 책 12권 (읽던 책 3권) · 북마크 4개 · 인용문 5개 · 자동". */
-    fun candidate(createdAt: Long, s: AutoBackup.Summary, auto: Boolean, tz: TimeZone = TimeZone.getDefault()): String =
-        "${SettingsFormat.dateTime(createdAt, tz)} · 책 ${s.books}권 (읽던 책 ${s.read}권) · 북마크 ${s.bookmarks}개 · " +
-            "인용문 ${s.quotes}개 · " + if (auto) "자동" else "직접 내보냄"
+    /**
+     * One restore choice, two lines: "9월 30일 08:12 · 자동" (or "수동", a file made with 백업 파일 만들기) and "책 12권 ·
+     * 북마크 4개 · 인용문 5개". The library's restore offer lists the same text.
+     */
+    fun candidate(
+        createdAt: Long,
+        s: AutoBackup.Summary,
+        auto: Boolean,
+        tz: TimeZone = TimeZone.getDefault(),
+        now: Long = System.currentTimeMillis(),
+    ): String =
+        "${SettingsFormat.dateTime(createdAt, tz, now)} · ${if (auto) "자동" else "수동"}\n" +
+            "책 ${s.books}권 · 북마크 ${s.bookmarks}개 · 인용문 ${s.quotes}개"
 
     /** "자동 백업 파일 지우기" confirm; [others] = this install may delete other installs' files too. */
     fun deleteAutoFiles(n: Int, others: Boolean): String =
         if (others) {
             "자동 백업 파일 ${n}개를 지울까요? 이전 설치의 파일도 함께 지웁니다."
         } else {
-            "이 설치에서 만든 자동 백업 파일 ${n}개를 지울까요? 이전 설치의 파일은 '모든 파일 접근'을 허용해야 지울 수 있습니다."
+            "이 설치에서 만든 자동 백업 파일 ${n}개를 지울까요? 이전 설치의 파일은 ‘모든 파일 접근’을 허용해야 지울 수 있습니다."
         }
 
-    const val BACKUP_PRIVACY = "백업에는 책 제목 · 경로 · 읽은 기록 · 북마크 · 인용문 · 메모 · 리뷰 · 단어장이 들어 있습니다. " +
-        "공용 저장소에 있으므로 USB로 연결한 PC나 '모든 파일 접근' 권한이 있는 앱(Android 10 이하에서는 저장소 권한이 있는 앱)이 " +
-        "읽을 수 있고, 다운로드 폴더를 동기화하도록 설정한 앱이 있으면 그 앱이 올릴 수 있습니다. 이 앱은 인터넷으로 보내지 않습니다."
+    const val BACKUP_PRIVACY = "백업에는 책 제목 · 읽은 기록 · 노트 · 단어장이 들어 있습니다. " +
+        "다운로드 폴더에 있어 PC나 다른 앱이 읽을 수 있습니다."
 
-    const val BACKUP_MERGE = "다른 기기에서 만든 백업을 복원하면 두 기기의 인용문·메모·북마크·단어장이 합쳐지고, 읽던 위치는 더 최근 것이 " +
-        "남습니다. 지워지는 것은 없습니다. 이 기기에 없는 책의 노트는 휴지통에 '(파일 없음)'으로 보관됩니다."
+    /** Under 복원: what a restore merges, and the book files a backup does not hold. */
+    const val BACKUP_MERGE = "복원하면 노트 · 북마크 · 단어장은 합쳐지고, 읽던 위치는 더 최근 것이 남습니다. " +
+        "책 파일은 백업에 없으니 새 기기에서는 책을 옮기고 책 스캔을 한 뒤 복원하세요."
 
     // ---- 단어장 (NOTES §11)
 
-    const val RECORD_LOOKUPS = "선택한 글자를 사전·번역·웹 검색으로 찾으면 단어장에 문장과 함께 남깁니다. 기기 안에만 저장됩니다"
+    const val RECORD_LOOKUPS = "찾아본 단어를 문장과 함께 단어장에 남깁니다"
 
     fun clearLookups(n: Int): String = "찾아본 단어 ${n}개를 모두 지울까요?"
 }
@@ -528,14 +576,16 @@ object R3Rows {
  * "설정 초기화" (MainPage, K12): back to the defaults except what took the user work to set up or is a privacy or
  * device choice. Reader settings go to [ReaderSettings] defaults (40/40/40/40 margins, 줄 단위, the default status
  * slots) but keep the TXT cleanup defaults; app settings keep the scan folders, the assigned keys, the library sort
- * and view, 목록 넘기기, 자동 백업, 찾아본 단어 기록 and 기기 밝기 직접 조절.
+ * and view, 목록 넘기기, 자동 백업, 찾아본 단어 기록, 기기 밝기 직접 조절, the web search (it may be a typed address)
+ * and the voice. [MESSAGE] names every one of them.
  */
 object SettingsReset {
-    const val MESSAGE = "글꼴 · 글자 크기 · 간격 · 여백과 넘김 · 화면 설정을 기본값으로 되돌릴까요?\n" +
-        "TXT 정리 설정 · 스캔 폴더 · 지정한 키 · 서재 정렬과 보기 · 목록 넘기기 · 자동 백업 · 찾아본 단어 기록 · " +
-        "기기 밝기 직접 조절은 그대로 둡니다."
+    const val MESSAGE = "글자 · 넘기기 · 화면 · 밝기 · e-ink · 듣기 설정을 초기화할까요?\n" +
+        "TXT 정리 설정 · 스캔 폴더 · 지정한 키 · 정렬과 보기 · 목록 넘기기 · 자동 백업 · 찾아본 단어 기록 · " +
+        "기기 밝기 직접 조절 · 웹 검색 · 목소리는 그대로 둡니다."
 
-    const val SUMMARY = "읽기 · 넘김 · 화면 설정을 기본값으로 (TXT 정리 설정 · 스캔 폴더 · 키 지정 · 서재 · 백업 · 단어장 · 기기 밝기 설정은 유지)"
+    /** The 설정 초기화 row's summary (the exceptions are in [MESSAGE]). */
+    const val SUMMARY = "글자 · 넘기기 · 화면 · 듣기 설정을 기본값으로"
 
     fun app(old: AppSettings): AppSettings = AppSettings().copy(
         scanFolders = old.scanFolders,
@@ -549,6 +599,8 @@ object SettingsReset {
         autoBackup = old.autoBackup,
         recordLookups = old.recordLookups,
         brightnessDevice = old.brightnessDevice,
+        webSearchUrl = old.webSearchUrl,
+        ttsVoice = old.ttsVoice,
     )
 
     fun reader(old: ReaderSettings): ReaderSettings = ReaderSettings().copy(
@@ -562,15 +614,18 @@ object SettingsReset {
     )
 }
 
-/** The e-ink rows of "넘김·화면 설정" (T1-3): choices, labels and the device readout. */
+/** The rows of "e-ink 화면" (T1-3): choices, labels, the main list's summary and the device readout. */
 object EinkChoices {
-    /** "새로고침 방식" ([AppSettings.einkRefreshMethod]): label to value, in the chooser's order. */
+    /** "새로고침 방식" ([AppSettings.einkRefreshMethod]): the chooser's label to value, in its order. */
     val METHODS: List<Pair<String, Int>> = listOf(
-        "자동 (기본)" to EINK_REFRESH_AUTO,
-        "기기 GC16" to EINK_REFRESH_GC16,
+        "자동" + SettingsFormat.DEFAULT_MARK to EINK_REFRESH_AUTO,
+        "기기 새로고침 (GC16)" to EINK_REFRESH_GC16,
         "기기 잔상 제거 (CLEAN)" to EINK_REFRESH_CLEAN,
         "검은 화면 깜빡임" to EINK_REFRESH_FLASH,
     )
+
+    /** Under the 고급 group's 새로고침 방식 and 깜빡임 길이. */
+    const val METHOD_NOTE = "자동: 기기 새로고침, 안 되면 검은 화면 깜빡임."
 
     /** True for the Bigme xrz methods, offered only where the firmware has the global refresh (`Eink.hasXrzRefresh`). */
     fun isDeviceMethod(method: Int): Boolean = method == EINK_REFRESH_GC16 || method == EINK_REFRESH_CLEAN
@@ -578,8 +633,8 @@ object EinkChoices {
     /** The methods this device can offer. */
     fun methods(hasXrz: Boolean): List<Pair<String, Int>> = METHODS.filter { hasXrz || !isDeviceMethod(it.second) }
 
-    /** Label of a stored method (an unknown value reads as 자동). */
-    fun method(value: Int): String = METHODS.firstOrNull { it.second == value }?.first ?: METHODS[0].first
+    /** The row's value for a stored method (an unknown value reads as 자동; no "(기본)" on a value). */
+    fun method(value: Int): String = (METHODS.firstOrNull { it.second == value } ?: METHODS[0]).first.removeSuffix(SettingsFormat.DEFAULT_MARK)
 
     /** The method [다른 방식 시험] tries after [current]: the next one this device offers, wrapping around. */
     fun next(current: Int, hasXrz: Boolean): Int {
@@ -591,20 +646,37 @@ object EinkChoices {
     /** "깜빡임 길이" ([AppSettings.einkFlashMs]). */
     val FLASH_MS: List<Int> = listOf(100, 200, 350)
 
-    fun flash(ms: Int): String = "${ms}ms" + if (ms == AppSettings().einkFlashMs) " (기본)" else ""
+    /** 100 → "0.1초 (기본)", 350 → "0.35초" (the default marked; seconds, as every time in the app). */
+    fun flash(ms: Int): String {
+        val sec = if (ms % 100 == 0) String.format(Locale.US, "%.1f", ms / 1000f) else String.format(Locale.US, "%.2f", ms / 1000f)
+        return "${sec}초" + if (ms == AppSettings().einkFlashMs) SettingsFormat.DEFAULT_MARK else ""
+    }
 
     /**
      * The cadence row of a dark page ([AppSettings.einkRefreshEveryNight]): 흑백 반전, and the 마루뷰어 화면 색 since
-     * 2026-10-04 (`PagePalette.dark`); it was "밤 모드(반전)에서".
+     * 2026-10-04 (`PagePalette.dark`). The row's title fits one line; the chooser says which pages are dark.
      */
-    const val NIGHT_TITLE = "어두운 화면(흑백 반전 · 마루뷰어)에서"
+    const val NIGHT_TITLE = "어두운 화면에서"
+    const val NIGHT_CHOOSER_TITLE = "어두운 화면(흑백 반전·마루뷰어)에서"
 
-    /** [NIGHT_TITLE]'s choices: -1 = same as by day. */
+    /** [NIGHT_TITLE]'s choices: -1 = same as on light pages. */
     val NIGHT: List<Int> = listOf(-1, 3, 5, 10, 20)
 
-    fun night(value: Int): String = if (value < 0) "낮과 같게" else SettingsFormat.refreshEvery(value)
+    fun night(value: Int): String = if (value < 0) "밝은 화면과 같게" else SettingsFormat.refreshEvery(value)
 
-    /** "기기 자체 잔상 제거: 켜짐 · 10쪽마다" / "…: 켜짐" / "…: 꺼짐"; null when the device has no such setting. */
+    /**
+     * The main list's e-ink row: "10쪽마다 새로고침" or "새로고침 끔", then the dark pages' own cadence when it differs
+     * ("10쪽마다 새로고침 · 어두운 화면 5쪽마다", "… · 어두운 화면 끔").
+     */
+    fun mainSummary(app: AppSettings): String {
+        val day = app.einkRefreshEvery
+        val head = if (day > 0) "${day}쪽마다 새로고침" else "새로고침 끔"
+        val night = app.einkRefreshEveryNight
+        if (night < 0 || night == day.coerceAtLeast(0)) return head
+        return head + if (night > 0) " · 어두운 화면 ${night}쪽마다" else " · 어두운 화면 끔"
+    }
+
+    /** "기기의 잔상 제거: 켜짐 · 10쪽마다" / "…: 켜짐" / "…: 꺼짐"; null when the device has no such setting. */
     fun deviceClean(info: DeviceCleanInfo?): String? {
         info ?: return null
         val state = when {
@@ -612,7 +684,7 @@ object EinkChoices {
             info.everyPages > 0 -> "켜짐 · ${info.everyPages}쪽마다"
             else -> "켜짐"
         }
-        return "기기 자체 잔상 제거: $state"
+        return "기기의 잔상 제거: $state"
     }
 
     const val DOUBLE_FLASH = "기기와 앱이 모두 잔상을 지우면 두 번 깜빡입니다. 한쪽만 켜세요."
@@ -634,7 +706,7 @@ object EinkChoices {
             "e-ink 제어: " + (vendor ?: "없음 (검은 화면을 잠깐 띄워 잔상을 지웁니다)"),
             "기기 새로고침 (GC16 · CLEAN): " + if (hasXrz) "사용 가능" else "없음",
             "e-ink 화면 모드 바꾸기: " + if (viewMode) "가능" else "안 됨",
-            deviceClean(clean) ?: "기기 자체 잔상 제거: 확인할 수 없음",
+            deviceClean(clean) ?: "기기의 잔상 제거: 확인할 수 없음",
             "화면: $widthPx × $heightPx px · $dpi dpi",
         ).joinToString("\n")
 
@@ -644,8 +716,9 @@ object EinkChoices {
 }
 
 /**
- * The "목소리" chooser of the TTS page (A13): Korean voices first, then the other languages by name, each numbered
- * within its language: "한국어 · 목소리 2 (고음질, 오프라인)". The same wording as the reader's own voice chooser.
+ * The "목소리" chooser of 듣기 설정 (A13): the Korean voices and the saved voice's language, Korean first, each
+ * numbered within its language: "한국어 · 목소리 2 (고음질, 오프라인)"; every language only when the engine has no
+ * Korean voice. The same choice and wording as the reader's own voice chooser ([VoiceChoice]).
  */
 object TtsVoices {
     /** One engine voice: [lang] = ISO 639 code, [language] = its name in Korean ("한국어"). */
@@ -658,11 +731,13 @@ object TtsVoices {
         val notInstalled: Boolean,
     )
 
-    /** "기본 음성": [AppSettings.ttsVoice] "" (the engine's default voice for Korean). */
-    const val DEFAULT = "기본 음성"
+    /** "기본 목소리": [AppSettings.ttsVoice] "" (the engine's default voice for Korean). */
+    const val DEFAULT = "기본 목소리"
 
-    fun list(voices: List<Info>): List<Pair<Info, String>> {
-        val sorted = voices.sortedWith(
+    /** [keepLang]: the saved voice's language (ISO 639), listed beside Korean so the saved choice stays visible. */
+    fun list(voices: List<Info>, keepLang: String? = null): List<Pair<Info, String>> {
+        val pick = if (voices.none { it.lang == "ko" }) voices else voices.filter { it.lang == "ko" || it.lang == keepLang }
+        val sorted = pick.sortedWith(
             compareBy<Info>({ if (it.lang == "ko") 0 else 1 }, { it.language }, { it.lang }, { it.name }),
         )
         val counts = HashMap<String, Int>()
@@ -681,7 +756,7 @@ object TtsVoices {
     fun quality(q: Int): String = VoiceChoice.quality(q)
 }
 
-/** Web search URL templates offered in "사전 · 번역 · 웹 검색". `%s` = URL-encoded query. */
+/** Web search URL templates offered in "사전·번역·검색". `%s` = URL-encoded query. */
 object WebEngines {
     class Engine(val name: String, val url: String)
 
@@ -697,7 +772,10 @@ object WebEngines {
     /** Index of the preset with this template, or -1 (custom). */
     fun indexOf(url: String): Int = PRESETS.indexOfFirst { it.url == url.trim() }
 
-    fun nameOf(url: String): String = PRESETS.getOrNull(indexOf(url))?.name ?: "사용자 지정"
+    fun nameOf(url: String): String = PRESETS.getOrNull(indexOf(url))?.name ?: CUSTOM
+
+    /** A typed address (the radio row and the main list's "웹 검색: 직접 입력"). */
+    const val CUSTOM = "직접 입력"
 
     /**
      * Cleans user input: trims, adds "https://" when no scheme is given. Returns null when the template has no

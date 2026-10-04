@@ -20,16 +20,22 @@ import java.util.Locale
 import android.provider.Settings as SystemSettings
 
 /**
- * "Text to speech (TTS)": rate, pitch, the voice (A13), a spoken preview, "읽는 문장 표시", the sleep timer (minutes or
- * episodes, T1-11), engine settings and the installed engines. The page's own [TextToSpeech] exists only while the
- * page is open, and only once the voice or the preview needs it (or to name a chosen voice); it is released when the
- * page closes and when the activity comes back from the system TTS settings.
+ * "듣기 설정": 음성 (the voice (A13), rate, pitch and a spoken preview), 읽는 동안 ("읽는 문장 표시" and 멈춤 예약 by
+ * minutes or chapters, T1-11) and 음성 엔진 (the system's engine settings, named after the default engine). The page's
+ * own [TextToSpeech] exists only while the page is open, and only once the voice or the preview needs it (or to name a
+ * chosen voice); it is released when the page closes and when the activity comes back from the system TTS settings.
+ * The line under the preview shows failures only, and goes at the next tap.
  */
-internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_TTS, "Text to speech (TTS)") {
+internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_TTS, "듣기 설정") {
     private var sleepRow: View? = null
     private var voiceRow: View? = null
+    private var engineRow: View? = null
     private lateinit var statusText: TextView
-    private lateinit var enginesText: TextView
+    private lateinit var engineHint: TextView
+    /** From the last engine list: no engine installed (null until read). */
+    private var noEngine: Boolean? = null
+    /** The page's engine has no Korean voice (learned once it is up). */
+    private var noKorean = false
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     /** Work waiting for the engine's onInit. */
@@ -41,38 +47,37 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
     override fun build(): View {
         val app = Settings.app
         val body = ctx.pageBody()
-        body.section("음성", first = true)
+        body.section("음성")
+        voiceRow = ctx.valueRow("목소리", if (app.ttsVoice.isEmpty()) TtsVoices.DEFAULT else "…") { chooseVoice() }.also(body::addView)
         body.addView(ctx.stepperRow("속도", app.ttsRate, 0.5f, 3.0f, 0.1f, { SettingsFormat.rate(it) }) { v ->
             editApp { it.copy(ttsRate = v) }
-        })
+        }.liveStepperValue())
         body.addView(ctx.stepperRow("음높이", app.ttsPitch, 0.5f, 2.0f, 0.1f, { SettingsFormat.pitch(it) }) { v ->
             editApp { it.copy(ttsPitch = v) }
-        })
-        val voiceName = if (app.ttsVoice.isEmpty()) TtsVoices.DEFAULT else "고른 목소리"
-        voiceRow = ctx.valueRow("목소리", voiceName) { chooseVoice() }.also(body::addView)
-        body.addView(ctx.row("미리 듣기", "지금 고른 속도 · 음높이 · 목소리로 짧은 문장을 읽습니다") { preview() })
+        }.liveStepperValue())
+        body.addView(ctx.row("미리 듣기", null) { preview() })
         statusText = ctx.note("").apply { visibility = View.GONE }.also(body::addView)
-        val highlightNote = "읽고 있는 문장에 밑줄을 긋습니다. 끄면 문장이 바뀔 때 화면을 다시 그리지 않습니다 (e-ink 절약)"
-        body.addView(ctx.toggleRow("읽는 문장 표시", highlightNote, app.ttsHighlight) { v -> editApp { it.copy(ttsHighlight = v) } })
         if (app.ttsVoice.isNotEmpty()) nameVoice()
 
-        body.section("수면 타이머")
-        sleepRow = ctx.valueRow("수면 타이머", SettingsFormat.sleepChoice(app.ttsSleepMinutes, app.ttsSleepChapters)) {
+        body.section("읽는 동안")
+        body.addView(ctx.toggleRow("읽는 문장 표시", "읽는 문장에 밑줄 · 끄면 화면 갱신이 줄어듭니다", app.ttsHighlight) { v ->
+            editApp { it.copy(ttsHighlight = v) }
+        })
+        sleepRow = ctx.valueRow("멈춤 예약", SettingsFormat.sleepChoice(app.ttsSleepMinutes, app.ttsSleepChapters)) {
             val opts = SettingsFormat.SLEEP_CHOICES
             val cur = Settings.app
             val sel = SettingsFormat.sleepIndex(cur.ttsSleepMinutes, cur.ttsSleepChapters)
-            ctx.chooser("수면 타이머", opts.map { (m, c) -> SettingsFormat.sleepChoice(m, c) }, sel) { i ->
+            ctx.chooser("멈춤 예약", opts.map { (m, c) -> SettingsFormat.sleepChoice(m, c) }, sel) { i ->
                 val (m, c) = opts[i]
                 editApp { it.copy(ttsSleepMinutes = m, ttsSleepChapters = c) }
                 sleepRow?.setSummary(SettingsFormat.sleepChoice(m, c))
             }
         }.also(body::addView)
-        body.addView(ctx.note("고른 시간이 지나거나 고른 화가 끝나면 읽기를 멈춥니다. 화면을 꺼도 계속 읽고, 알림에서 멈추거나 다시 재생할 수 있습니다."))
+        body.addView(ctx.note("화면을 꺼도 계속 읽고, 알림에서 멈출 수 있습니다."))
 
-        body.section("TTS 엔진")
-        body.addView(ctx.row("TTS 엔진 설정 열기", "기본 엔진 · 한국어 음성 데이터 설치 (시스템 설정)") { openEngineSettings() })
-        enginesText = ctx.note("설치된 엔진 확인 중…").also(body::addView)
-        body.addView(ctx.note("한국어 음성이 없다면 'Google 음성 인식 및 음성 합성' 또는 삼성 TTS 같은 엔진을 설치한 뒤 한국어 음성 데이터를 받으세요."))
+        body.section("음성 엔진")
+        engineRow = ctx.navRow("음성 엔진 설정", "…") { openEngineSettings() }.also(body::addView)
+        engineHint = ctx.note("한국어 음성이 없으면 음성 엔진 설정에서 받으세요.").apply { visibility = View.GONE }.also(body::addView)
         loadEngines()
         return ctx.pageScroll(body)
     }
@@ -82,32 +87,40 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
         // instance (it stays bound to the old engine) and list the engines again.
         if (tts != null) {
             releaseTts()
+            noKorean = false
             if (Settings.app.ttsVoice.isNotEmpty()) nameVoice()
         }
-        if (::enginesText.isInitialized) loadEngines()
+        if (::engineHint.isInitialized) loadEngines()
     }
 
+    /** The default engine's name on the 음성 엔진 설정 row (a package query on IO). */
     private fun loadEngines() {
         val gen = ++enginesGen
         activity.scope.launch {
-            val text = withContext(Dispatchers.IO) {
+            val name = withContext(Dispatchers.IO) {
                 runCatching {
                     val pm = activity.packageManager
                     @Suppress("DEPRECATION")
                     val services = pm.queryIntentServices(Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE), PackageManager.GET_META_DATA)
                     val def = runCatching { SystemSettings.Secure.getString(activity.contentResolver, SystemSettings.Secure.TTS_DEFAULT_SYNTH) }.getOrNull()
-                    if (services.isEmpty()) {
-                        "설치된 TTS 엔진이 없습니다."
-                    } else {
-                        "설치된 엔진:\n" + services.joinToString("\n") { ri ->
-                            val name = ri.loadLabel(pm)?.toString() ?: ri.serviceInfo.packageName
-                            "· $name" + if (ri.serviceInfo.packageName == def) " (기본)" else ""
-                        }
-                    }
-                }.getOrDefault("엔진 목록을 읽지 못했습니다.")
+                    val ri = services.firstOrNull { it.serviceInfo.packageName == def } ?: services.firstOrNull()
+                    ri?.let { it.loadLabel(pm)?.toString() ?: it.serviceInfo.packageName } ?: ""
+                }.getOrNull()
             }
-            if (gen == enginesGen && enginesText.text != text) enginesText.text = text
+            if (gen != enginesGen) return@launch
+            noEngine = name?.isEmpty()
+            engineRow?.setSummary(when {
+                name == null -> "확인하지 못했습니다"
+                name.isEmpty() -> "설치된 음성 엔진 없음"
+                else -> name
+            })
+            updateEngineHint()
         }
+    }
+
+    /** "한국어 음성이 없으면 …": only while there is no engine, or the engine has no Korean voice. */
+    private fun updateEngineHint() {
+        engineHint.setShown(noEngine == true || noKorean)
     }
 
     private fun openEngineSettings() {
@@ -123,13 +136,18 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
                 // try the next one
             }
         }
-        ctx.toast("TTS 설정 화면을 열 수 없습니다")
+        ctx.toast("음성 엔진 설정을 열 수 없습니다")
     }
 
     private fun preview() {
-        statusText.visibility = View.VISIBLE
-        if (!ttsReady) statusText.text = "음성 엔진 준비 중…"
+        showStatus(null)
         withEngine { speak(it) }
+    }
+
+    /** The failure line under 미리 듣기; null hides it. */
+    private fun showStatus(text: String?) {
+        if (text != null) statusText.text = text
+        statusText.setShown(text != null)
     }
 
     /** Runs [f] with the page's engine, creating it first (onInit arrives later; [f] waits for it). */
@@ -153,12 +171,13 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
         if (gen != ttsGen || t == null) return
         if (status == TextToSpeech.SUCCESS) {
             ttsReady = true
+            noKorean = runCatching { t.voices?.none { it.locale.language.lowercase(Locale.ROOT) == "ko" } }.getOrNull() == true
+            updateEngineHint()
             val work = pending.toList()
             pending.clear()
             for (f in work) f(t)
         } else {
-            statusText.visibility = View.VISIBLE
-            statusText.text = "TTS 엔진을 시작할 수 없습니다. 엔진 설정을 확인하세요."
+            showStatus(if (noEngine == true) "설치된 음성 엔진이 없습니다" else "음성 엔진을 시작할 수 없습니다")
             releaseTts()
         }
     }
@@ -178,13 +197,12 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
         t.setSpeechRate(app.ttsRate)
         t.setPitch(app.ttsPitch)
         val r = t.speak(SAMPLE, TextToSpeech.QUEUE_FLUSH, null, "settings-preview")
-        statusText.visibility = View.VISIBLE
-        statusText.text = when {
-            r != TextToSpeech.SUCCESS -> "읽기를 시작하지 못했습니다."
-            lang == TextToSpeech.LANG_MISSING_DATA -> "한국어 음성 데이터가 설치되지 않았습니다. 엔진 설정에서 받으세요."
-            lang == TextToSpeech.LANG_NOT_SUPPORTED -> "이 엔진은 한국어를 지원하지 않습니다."
-            else -> "읽는 중: 속도 ${SettingsFormat.rate(app.ttsRate)} · 음높이 ${SettingsFormat.pitch(app.ttsPitch)}"
-        }
+        showStatus(when {
+            r != TextToSpeech.SUCCESS -> "읽기를 시작하지 못했습니다"
+            lang == TextToSpeech.LANG_MISSING_DATA -> "한국어 음성이 없습니다. 음성 엔진 설정에서 받으세요."
+            lang == TextToSpeech.LANG_NOT_SUPPORTED -> "이 음성 엔진은 한국어를 읽지 못합니다."
+            else -> null
+        })
     }
 
     // ---------------------------------------------------------------- voice (A13)
@@ -195,7 +213,7 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
         return runCatching { t.voices?.firstOrNull { it.name == name } }.getOrNull()
     }
 
-    /** The engine's voices as the chooser lists them: Korean first, readable names ([TtsVoices]). */
+    /** The engine's voices as the chooser lists them ([TtsVoices]): Korean and the saved voice's language. */
     private fun voiceChoices(t: TextToSpeech): List<Pair<Voice, String>> {
         val voices: List<Voice> = runCatching { t.voices?.toList() }.getOrNull().orEmpty()
         val infos = voices.map { v ->
@@ -208,8 +226,10 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
                 notInstalled = v.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true,
             )
         }
+        val saved = Settings.app.ttsVoice
+        val keep = infos.firstOrNull { it.name == saved }?.lang
         val byName = voices.associateBy { it.name }
-        return TtsVoices.list(infos).mapNotNull { (info, label) -> byName[info.name]?.let { it to label } }
+        return TtsVoices.list(infos, keep).mapNotNull { (info, label) -> byName[info.name]?.let { it to label } }
     }
 
     /** Shows the saved voice's readable name on its row (needs the engine's voice list). */
@@ -218,27 +238,22 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
             val name = Settings.app.ttsVoice
             val label = when {
                 name.isEmpty() -> TtsVoices.DEFAULT
-                else -> voiceChoices(t).firstOrNull { it.first.name == name }?.second ?: "이 엔진에 없는 목소리 (기본 음성으로 읽음)"
+                else -> voiceChoices(t).firstOrNull { it.first.name == name }?.second ?: "없는 목소리 · 기본 목소리로 읽음"
             }
             voiceRow?.setSummary(label)
         }
     }
 
-    /** "목소리": 기본 음성 + the engine's voices; a choice is saved and read aloud at once. */
+    /** "목소리": 기본 목소리 + the engine's voices; a choice is saved and read aloud at once. */
     private fun chooseVoice() {
-        if (!ttsReady) {
-            statusText.visibility = View.VISIBLE
-            statusText.text = "목소리 목록을 불러오는 중…"
-        }
+        showStatus(null)
         withEngine { t ->
             if (activity.isFinishing || activity.isDestroyed) return@withEngine
             val voices = voiceChoices(t)
             if (voices.isEmpty()) {
-                statusText.visibility = View.VISIBLE
-                statusText.text = "이 엔진에는 고를 수 있는 목소리가 없습니다."
+                showStatus("이 음성 엔진에는 고를 수 있는 목소리가 없습니다")
                 return@withEngine
             }
-            statusText.visibility = View.GONE
             val current = Settings.app.ttsVoice
             val sel = if (current.isEmpty()) 0 else voices.indexOfFirst { it.first.name == current }.let { if (it < 0) -1 else it + 1 }
             ctx.chooser("목소리", listOf(TtsVoices.DEFAULT) + voices.map { it.second }, sel) { i ->

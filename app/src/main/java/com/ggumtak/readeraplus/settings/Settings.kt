@@ -294,8 +294,9 @@ object Settings {
         map.entries.sortedBy { it.key }.joinToString(",") { "${it.key}:${it.value.name}" }
 
     /**
-     * Inverse of [encodeKeyBindings]. Tolerant: blank → empty; entries with a bad key code or an unknown action name
-     * are skipped (a newer build's action read by an older one); for a repeated key code the last entry wins.
+     * Inverse of [encodeKeyBindings]. Tolerant: blank → empty; entries with a bad key code (not a number, negative) or
+     * an unknown action name are skipped (a newer build's action read by an older one); for a repeated key code the
+     * last entry wins. Key code 0 (KEYCODE_UNKNOWN: every key without a code of its own) is a real binding.
      */
     fun decodeKeyBindings(text: String?): Map<Int, TapAction> {
         if (text.isNullOrBlank()) return emptyMap()
@@ -304,7 +305,7 @@ object Settings {
             val colon = part.indexOf(':')
             if (colon <= 0) continue
             val code = part.substring(0, colon).trim().toIntOrNull() ?: continue
-            if (code <= 0) continue
+            if (code < 0) continue
             val name = part.substring(colon + 1).trim()
             val action = TapAction.entries.firstOrNull { it.name == name } ?: continue
             out[code] = action
