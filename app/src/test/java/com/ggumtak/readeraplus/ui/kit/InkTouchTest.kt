@@ -102,6 +102,6 @@ class InkTouchTest {
         assertEquals(-1, g.up(140f, -200f)) // the first axis wins here too: right, then far up, is the page before
     }
 
- @Test fun fittedRowsAndPagingChoices() { assertEquals(4 to 298,PageFit.fit(1192,298));assertEquals(1 to 100,PageFit.fit(100,149));for(e in listOf(null,false,true)) { assertEquals(e==true,ListPaging.paged(0,e));assertTrue(ListPaging.paged(1,e));assertFalse(ListPaging.paged(2,e)) } }
+ @Test fun fittedRowsAndPagingChoices() { assertEquals(4 to 298,PageFit.fit(1192,298));assertEquals(1 to 100,PageFit.fit(100,149));assertFalse(ListPaging.paged(0));assertTrue(ListPaging.paged(1));assertFalse(ListPaging.paged(2)) }
 
 }

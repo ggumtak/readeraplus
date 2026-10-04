@@ -31,7 +31,6 @@ import com.ggumtak.readeraplus.reader.extras.QuotePalette
 import com.ggumtak.readeraplus.reader.extras.QuoteSwatch
 import com.ggumtak.readeraplus.reader.extras.TextActions
 import com.ggumtak.readeraplus.reader.extras.multilinePrompt
-import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.QuoteLook
 import com.ggumtak.readeraplus.render.QuoteStyles
 import com.ggumtak.readeraplus.settings.Settings
@@ -377,7 +376,7 @@ internal class NotesMenus(private val a: NotesActivity) {
         val bar = InkPagerBar(a)
         root.addView(bar)
         val pager = ListPager(list, bar)
-        val paged = ListPaging.paged(Settings.app.listPaging, DeviceClass.cached(a))
+        val paged = ListPaging.paged(Settings.app.listPaging)
         list.paged = paged
         if (paged) list.pager = pager else bar.visibility = View.GONE
         filter.addTextChangedListener(object : TextWatcher {

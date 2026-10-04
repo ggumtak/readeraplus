@@ -96,12 +96,11 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
                 listModeRow?.setSummary(all[i].label)
             }
         }.also(body::addView)
-        listPagingRow = ctx.valueRow("목록 넘기기", R3Rows.listPagingSummary(app.listPaging, DeviceClass.cached(ctx))) {
+        listPagingRow = ctx.valueRow("목록 넘기기", R3Rows.listPaging(app.listPaging)) {
             val opts = R3Rows.LIST_PAGINGS
-            val eink = DeviceClass.cached(ctx)
-            ctx.chooser("목록 넘기기", opts.map { R3Rows.listPaging(it, eink) }, opts.indexOf(Settings.app.listPaging)) { i ->
+            ctx.chooser("목록 넘기기", opts.map { R3Rows.listPaging(it) }, R3Rows.listPagingIndex(Settings.app.listPaging)) { i ->
                 editApp { it.copy(listPaging = opts[i]) }
-                listPagingRow?.setSummary(R3Rows.listPagingSummary(opts[i], eink))
+                listPagingRow?.setSummary(R3Rows.listPaging(opts[i]))
             }
         }.also(body::addView)
 
@@ -347,7 +346,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         lookupRow?.setSummary("웹 검색: ${WebEngines.nameOf(app.webSearchUrl)}")
         sortRow?.setSummary(app.librarySort.label)
         listModeRow?.setSummary(app.libraryListMode.label)
-        listPagingRow?.setSummary(R3Rows.listPagingSummary(app.listPaging, DeviceClass.cached(ctx)))
+        listPagingRow?.setSummary(R3Rows.listPaging(app.listPaging))
         refreshLight()
         orientationRow?.setSummary(SettingsFormat.orientation(app.orientationLock))
         val fontId = Settings.reader.fontId

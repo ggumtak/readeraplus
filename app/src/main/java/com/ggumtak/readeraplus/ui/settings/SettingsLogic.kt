@@ -21,7 +21,6 @@ import com.ggumtak.readeraplus.settings.EINK_REFRESH_GC16
 import com.ggumtak.readeraplus.settings.HL_LOOK_AUTO
 import com.ggumtak.readeraplus.settings.HL_LOOK_COLOR
 import com.ggumtak.readeraplus.settings.HL_LOOK_INK
-import com.ggumtak.readeraplus.settings.LIST_PAGING_AUTO
 import com.ggumtak.readeraplus.settings.LIST_PAGING_PAGED
 import com.ggumtak.readeraplus.settings.LIST_PAGING_SCROLL
 import com.ggumtak.readeraplus.settings.LibraryListMode
@@ -363,17 +362,14 @@ object R3Rows {
     const val HL_LOOK_NOTE = "e-ink 화면에서는 색이 비슷한 회색으로 보여 무늬로 구분합니다 (노랑 = 회색+밑줄, 초록 = 옅은 회색+점선, " +
         "파랑 = 회색, 빨강 = 진한 회색+굵은 밑줄, 보라 = 테두리, 밑줄 = 밑줄만)"
 
-    val LIST_PAGINGS: List<Int> = listOf(LIST_PAGING_AUTO, LIST_PAGING_PAGED, LIST_PAGING_SCROLL)
+    /** The 목록 넘기기 chooser: 스크롤 (also what 자동, the stored default, means on every device) or 쪽 단위. */
+    val LIST_PAGINGS: List<Int> = listOf(LIST_PAGING_SCROLL, LIST_PAGING_PAGED)
 
-    fun listPaging(v: Int, eink: Boolean?): String = when (v) {
-        LIST_PAGING_PAGED -> "쪽 단위"
-        LIST_PAGING_SCROLL -> "스크롤"
-        else -> auto(if (eink == true) "쪽 단위" else "스크롤")
-    }
+    /** The row's value and the chooser's items: "스크롤" or "쪽 단위 (한 화면씩)". */
+    fun listPaging(v: Int): String = if (v == LIST_PAGING_PAGED) "쪽 단위 (한 화면씩)" else "스크롤"
 
-    const val LIST_PAGING_NOTE = "서재와 독서 노트를 한 화면씩 넘깁니다 (e-ink 권장)"
-
-    fun listPagingSummary(v: Int, eink: Boolean?): String = "${listPaging(v, eink)} · $LIST_PAGING_NOTE"
+    /** The chooser's checked item for a stored value (자동 reads as 스크롤). */
+    fun listPagingIndex(v: Int): Int = if (v == LIST_PAGING_PAGED) 1 else 0
 
     /** The "서재 보기" chooser (NOTES §10.2). */
     fun libraryViewChoice(m: LibraryListMode): String = when (m) {

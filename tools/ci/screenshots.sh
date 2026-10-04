@@ -908,7 +908,7 @@ library_views() { # 43 썸네일, 44 그리드, then 전체 again
   shot 44_library_grid 2
   set_list_mode "전체"
 }
-library_paged() { # 45/46 + CHECK 46: 목록 넘기기 → 쪽 단위, the next page by a swipe; then 자동 again
+library_paged() { # 45/46 + CHECK 46: 목록 넘기기 → 쪽 단위, the next page by a swipe; then 스크롤 (the default) again
   open_settings || return 1
   pick_setting "목록 넘기기" "쪽 단위" || return 1
   restart_library
@@ -917,7 +917,7 @@ library_paged() { # 45/46 + CHECK 46: 목록 넘기기 → 쪽 단위, the next 
   adb shell input swipe 360 1000 360 600 300
   shot 46_library_page2 2
   dump; if has "2 / " contains; then check 46 0 "pager '2 / N' after a swipe"; else check 46 1 "no '2 / N' after a swipe"; fi
-  open_settings && pick_setting "목록 넘기기" "자동"
+  open_settings && pick_setting "목록 넘기기" "스크롤"
 }
 library_multiselect() { # 46c: a long-press on a book starts multi-select ("1권 선택" and the batch actions, T1-13)
   restart_library
@@ -1078,8 +1078,8 @@ notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select
   dump; if has "다시 찾기"; then check 89 0 "word row with 다시 찾기"; else check 89 1 "no word row (or the empty state, no browser)"; fi
 }
 notes_paged() { # 89p: 목록 넘기기 → 쪽 단위, a tap on the first row's day header still opens the book (a paged list
-  # keeps every touch for paging, the row takes its own: the header takes none, so the tap is the row's); then 자동
-  # again. On purpose the header, not the note text 87 taps: both ways to the row are covered.
+  # keeps every touch for paging, the row takes its own: the header takes none, so the tap is the row's); then 스크롤
+  # (the default) again. On purpose the header, not the note text 87 taps: both ways to the row are covered.
   open_settings || return 1
   pick_setting "목록 넘기기" "쪽 단위" || return 1
   restart_library
@@ -1088,7 +1088,7 @@ notes_paged() { # 89p: 목록 넘기기 → 쪽 단위, a tap on the first row's
   sleep 3
   tap_label "인용문" || return 1
   sleep 2
-  dump; if ! has "모든 색" contains; then check 89p 1 "paged hub: no 인용문 tab"; open_settings && pick_setting "목록 넘기기" "자동"; return 1; fi
+  dump; if ! has "모든 색" contains; then check 89p 1 "paged hub: no 인용문 tab"; open_settings && pick_setting "목록 넘기기" "스크롤"; return 1; fi
   local xy where="the first row's day header"
   xy=$(hub_xy day)
   [ -n "$xy" ] || { where="the first note's text (no day header on screen)"; xy=$(first_row_xy); }
@@ -1097,7 +1097,7 @@ notes_paged() { # 89p: 목록 넘기기 → 쪽 단위, a tap on the first row's
   dump; if ! has "모든 색" contains; then check 89p 0 "paged hub: a tap on $where opens the book"
   else check 89p 1 "paged hub: a tap on $where left the hub on screen"; fi
   back; sleep 2
-  open_settings && pick_setting "목록 넘기기" "자동"
+  open_settings && pick_setting "목록 넘기기" "스크롤"
 }
 notes_ink() { # 90: 인용문 색 표시 → 흑백 무늬 on the quotes; then 자동 again
   local i

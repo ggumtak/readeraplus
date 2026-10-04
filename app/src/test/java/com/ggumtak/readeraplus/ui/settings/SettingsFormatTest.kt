@@ -139,23 +139,24 @@ class SettingsFormatTest {
         assertEquals("자동 (이 기기: 흑백 무늬)", R3Rows.highlightLook(HL_LOOK_AUTO, true))
         assertEquals("자동 (이 기기: 색)", R3Rows.highlightLook(HL_LOOK_AUTO, false))
         assertEquals("자동 (이 기기: 색)", R3Rows.highlightLook(HL_LOOK_AUTO, null))
-        assertEquals("자동 (이 기기: 쪽 단위)", R3Rows.listPaging(LIST_PAGING_AUTO, true))
-        assertEquals("자동 (이 기기: 스크롤)", R3Rows.listPaging(LIST_PAGING_AUTO, false))
-        assertEquals("자동 (이 기기: 스크롤)", R3Rows.listPaging(LIST_PAGING_AUTO, null))
+        // 목록 넘기기 has no device-dependent 자동 since 2026-10-04: the stored default scrolls everywhere.
+        assertEquals("스크롤", R3Rows.listPaging(LIST_PAGING_AUTO))
+        assertEquals(0, R3Rows.listPagingIndex(LIST_PAGING_AUTO))
+        assertEquals(0, R3Rows.listPagingIndex(LIST_PAGING_SCROLL))
+        assertEquals(1, R3Rows.listPagingIndex(LIST_PAGING_PAGED))
         // Scroll mode follows the finger on every device unless "손을 떼면 이동" is chosen (2026-10-04).
         for (eink in listOf(true, false, null)) assertEquals("자동 (손가락을 따라 이동)", R3Rows.scrollStyle(ScrollStyle.AUTO, eink))
         // Fixed choices don't depend on the device.
         for (eink in listOf(true, false, null)) {
             assertEquals(listOf("색", "흑백 무늬"), R3Rows.HL_LOOKS.drop(1).map { R3Rows.highlightLook(it, eink) })
-            assertEquals(listOf("쪽 단위", "스크롤"), R3Rows.LIST_PAGINGS.drop(1).map { R3Rows.listPaging(it, eink) })
             assertEquals(
                 listOf("손가락을 따라 이동", "손을 떼면 이동 (e-ink)"),
                 R3Rows.SCROLL_STYLES.drop(1).map { R3Rows.scrollStyle(it, eink) },
             )
         }
         assertEquals(listOf(HL_LOOK_AUTO, HL_LOOK_COLOR, HL_LOOK_INK), R3Rows.HL_LOOKS)
-        assertEquals(listOf(LIST_PAGING_AUTO, LIST_PAGING_PAGED, LIST_PAGING_SCROLL), R3Rows.LIST_PAGINGS)
-        assertEquals("자동 (이 기기: 쪽 단위) · 서재와 독서 노트를 한 화면씩 넘깁니다 (e-ink 권장)", R3Rows.listPagingSummary(LIST_PAGING_AUTO, true))
+        assertEquals(listOf(LIST_PAGING_SCROLL, LIST_PAGING_PAGED), R3Rows.LIST_PAGINGS)
+        assertEquals(listOf("스크롤", "쪽 단위 (한 화면씩)"), R3Rows.LIST_PAGINGS.map { R3Rows.listPaging(it) })
     }
 
     @Test

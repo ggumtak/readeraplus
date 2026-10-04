@@ -430,7 +430,7 @@ class NotesActivity : Activity() {
         pager.onPaged = { first, last -> prefetch(first, last) }
         // Far jumps fetch first, then move (N §9.7 [Δ]): the label opens our own number pad.
         bar.label.setOnClickListener { openPageNumPad() }
-        paged = ListPaging.paged(Settings.app.listPaging, DeviceClass.cached(this))
+        paged = ListPaging.paged(Settings.app.listPaging)
         list.paged = paged
         if (paged) list.pager = pager else bar.visibility = View.GONE
         updateChrome()

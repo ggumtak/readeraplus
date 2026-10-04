@@ -176,7 +176,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     // ---- paging, device class, notes counts
     /** E-ink screen (stamped device class): card buttons without a pressed state. Read once at creation. */
     private var eink = false
-    /** The lists page (ListPager) instead of scrolling: `ListPaging.paged(listPaging, DeviceClass.cached)`. */
+    /** The lists page (ListPager) instead of scrolling: 목록 넘기기 = 쪽 단위 (`ListPaging.paged`). */
     private var paged = false
     private lateinit var pagerBar: InkPagerBar
     private lateinit var listPager: ListPager
@@ -370,7 +370,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         listMode = app.libraryListMode
         sort = app.librarySort
         showModeButton() // a restored backup may have changed the view
-        applyPaging(ListPaging.paged(app.listPaging, DeviceClass.cached(this)))
+        applyPaging(ListPaging.paged(app.listPaging))
         val access = hasStorageAccess()
         val newlyGranted = access && !hasAccess
         hasAccess = access
@@ -1186,8 +1186,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     // ============================================================================================ paging and views
 
     /**
-     * Paged (e-ink, or 목록 넘기기 = 쪽 단위) or scrolling lists, decided per visit (a probe that changes the device
-     * class switches at the next onResume). Paged: no fast scroller (C2), a drag is one page, the pager bar shows.
+     * Paged (목록 넘기기 = 쪽 단위) or scrolling lists (자동 and 스크롤, every device: since 2026-10-04 an e-ink library
+     * also follows the finger and flings), decided per visit. Paged: no fast scroller (C2), a drag is one page, the pager
+     * bar shows.
      */
     private fun applyPaging(on: Boolean) {
         if (on == paged) return
@@ -1682,6 +1683,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             return
         }
         val h = v.height - v.paddingTop - v.paddingBottom
+        // A running fling stops first, so the key moves exactly one screen from where the list is.
+        v.smoothScrollBy(0, 0)
         v.scrollListBy(dir * (h - dp(24)).coerceAtLeast(dp(48)))
     }
 

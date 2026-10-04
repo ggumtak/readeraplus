@@ -120,7 +120,11 @@ object PageFit {
         return rows to h/rows
     }
 }
-object ListPaging { fun paged(setting: Int,eink: Boolean?): Boolean = setting==1 || (setting==0 && eink==true) }
+/**
+ * 목록 넘기기: only 쪽 단위 (1) pages the library and the notes hub; 자동 (0, the default) and 스크롤 (2) scroll on
+ * every device, e-ink included: the lists follow the finger and fling like the contents lists (user, 2026-10-04).
+ */
+object ListPaging { fun paged(setting: Int): Boolean = setting==1 }
 
 /** Immediate list jumps: setSelection only, never smoothScroll or a fling. Main thread. */
 class ListPager(val list: AbsListView,val bar: InkPagerBar,private val cols: Int=1) {
