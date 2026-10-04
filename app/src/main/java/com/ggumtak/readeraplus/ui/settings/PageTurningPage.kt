@@ -52,6 +52,8 @@ import kotlinx.coroutines.withContext
  */
 internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_PAGE_TURNING, "넘김·화면 설정") {
     private val modeRows = LinkedHashMap<TapZoneMode, View>()
+    /** The reading settings the rows show (changes made elsewhere rebuild the page in [onShown]). */
+    private var seenReader: ReaderSettings? = null
     private lateinit var preview: TapZoneView
     private lateinit var customTools: LinearLayout
     private lateinit var customNote: TextView
@@ -82,6 +84,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     private var hasXrz: Boolean? = null
 
     override fun build(): View {
+        seenReader = Settings.reader
         val app = Settings.app
         val body = ctx.pageBody()
 
@@ -212,6 +215,12 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     }
 
     override fun onShown() {
+        // 읽기 설정 (through "여백 · 페이지 나눔") may have changed the margins, or reset 흑백 반전 and the bands' rows.
+        if (Settings.reader != seenReader) {
+            activity.rebuildTop()
+            return
+        }
+        updateStatusUi()
         updateVolumeUi()
         updateReadModeUi()
         // Corner switches live on the main page; reflect them when coming back here.
@@ -248,6 +257,12 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         }
     }
 
+    /** Saves a reading setting changed on this page; [onShown] then knows the rows already show it. */
+    private inline fun editOwn(f: (ReaderSettings) -> ReaderSettings) {
+        editReader(f)
+        seenReader = Settings.reader
+    }
+
     // ---------------------------------------------------------------- screen
 
     /**
@@ -256,7 +271,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
      */
     private fun addScreen(body: LinearLayout) {
         body.section("화면")
-        body.addView(ctx.toggleRow("흑백 반전", "검은 바탕에 흰 글씨", Settings.reader.invert) { v -> editReader { it.copy(invert = v) } })
+        body.addView(ctx.toggleRow("흑백 반전", "검은 바탕에 흰 글씨", Settings.reader.invert) { v -> editOwn { it.copy(invert = v) } })
         body.addView(ctx.navRow("여백 · 페이지 나눔", "읽기 설정의 '페이지'에 있습니다") { activity.push(SettingsActivity.PAGE_READING) })
     }
 
@@ -272,18 +287,18 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
             slotRows[k] = ctx.valueRow(title, r.slot(band, pos).label) {
                 val all = StatusItem.entries
                 ctx.chooser(title, all.map { R3Rows.slotChoice(it) }, all.indexOf(Settings.reader.slot(band, pos))) { i ->
-                    if (Settings.reader.slot(band, pos) != all[i]) editReader { it.withSlot(band, pos, all[i]) }
+                    if (Settings.reader.slot(band, pos) != all[i]) editOwn { it.withSlot(band, pos, all[i]) }
                     slotRows[k]?.setSummary(all[i].label)
                     updateStatusUi()
                 }
             }.also(body::addView)
         }
         body.addView(ctx.toggleRow("진행 막대", R3Rows.PROGRESS_SUMMARY, r.progressBar) { v ->
-            editReader { it.copy(progressBar = v) }
+            editOwn { it.copy(progressBar = v) }
             updateStatusUi()
         })
         statusSizeRow = ctx.stepperRow("상태 표시 글자 크기", r.statusFontSizeSp, 8f, 16f, 0.5f, { SettingsFormat.sp(it) }) { v ->
-            editReader { it.copy(statusFontSizeSp = v) }
+            editOwn { it.copy(statusFontSizeSp = v) }
             updateStatusUi()
         }.liveStepperValue().also(body::addView)
         fitNote = ctx.note(R3Rows.FIT_NOTE).also(body::addView)

@@ -108,7 +108,7 @@ internal class ListEntry(
 
 /**
  * Compact drop-down list for the settings popup: 48 dp rows, 16 sp text, [widthPx] wide (≤ the popup), at most
- * [maxHeightFraction] of the screen tall (scrolls; 0.8 for the status slot chooser), its right edge [rightInsetPx] inside [anchor]'s, under the anchor (or above it
+ * [maxHeightFraction] of the screen tall (scrolls; e.g. 0.8 for long lists), its right edge [rightInsetPx] inside [anchor]'s, under the anchor (or above it
  * when there is no room below). The checked row is scrolled into view. Tracked for [ReaderPanels.dismissAll].
  * Returns null when it cannot be shown.
  */

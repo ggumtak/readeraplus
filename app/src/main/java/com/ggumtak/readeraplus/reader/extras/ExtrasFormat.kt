@@ -364,7 +364,7 @@ internal object PopupGeometry {
     const val SIDE_GAP_DP = 16
     const val MAX_WIDTH_DP = 400
     const val HEIGHT_FRACTION = 0.56f
-    /** Drop-down lists of the popup that have many entries (the status slot chooser: 12 rows × 40 dp). */
+    /** Drop-down lists with many entries may take this much of the screen (e.g. 12 rows × 48 dp). */
     const val TALL_LIST_FRACTION = 0.8f
     /** Gap between the status-bar inset and the popup's top edge (dp). */
     const val TOP_GAP_DP = 8
@@ -427,8 +427,8 @@ internal object PopupGeometry {
 }
 
 /**
- * The popup's "상태 표시" block (U §5.5, A §2.7): slot wording, which rows show, and the fit note. A status change only
- * repaints the page (the bands live in the margins), so none of this touches the layout.
+ * "상태 표시" wording (U §5.5, A §2.7): slot wording, which rows show, the fit note and 외톨이 줄 방지's summary (읽기
+ * 설정). A status change only repaints the page (the bands live in the margins), so none of this touches the layout.
  */
 internal object StatusUi {
     const val FIT_NOTE = "여백이 좁아 위 · 아래 정보가 보이지 않습니다. 상하 여백을 늘리세요."
@@ -504,7 +504,7 @@ internal object StyleChoice {
 }
 
 /**
- * The TXT options of the reading-settings popup (T1-9): what it shows are the book's effective values
+ * The TXT options of one book (T1-9, 설정 → 이 책의 TXT 정리): what it shows are the book's effective values
  * (`Settings.reader.withTxt(override)`); what it stores is the override those values need. Pure, unit-tested.
  */
 internal object TxtEdits {

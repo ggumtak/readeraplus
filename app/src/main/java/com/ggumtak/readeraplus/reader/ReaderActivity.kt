@@ -219,6 +219,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         private set
     /** This book's own TXT options (T1-9; read in the open path's IO block), or null. */
     private var bookOverride: TxtOverride? = null
+    /** A new encoding from 설정 is being saved and the activity re-created ([takeSettingsEdits]): no re-parse till then. */
+    private var recreatePending = false
     /**
      * The effective settings the session has, or is being re-opened with: `Settings.reader.withTxt(bookOverride)` as
      * last applied. onResume and the settings listener compare against it, so a change is applied once (no relayout
@@ -1140,6 +1142,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 }
                 bookRef = b
                 bookOverride = opened.override
+                // What 설정 changed for this book is in what the open just read (its writes are made at once): edits
+                // nobody took (the reader was re-created meanwhile) must not be applied over newer ones later.
+                OpenBook.take(b.id)
                 readerTarget = eff
                 chrome.setTitle(b.title)
                 val s = BookSession(this@ReaderActivity, b, d, eff)
@@ -2604,6 +2609,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // A key, tap or remote turn is no drag: flags left by a STEP release that hit the book's edge (no settle) must
         // not make this step's settle count as a gesture. A finger still dragging (or its step waiting) keeps them.
         scroll?.let { sc ->
+            // A key during a fling stops the text where it is first (that settle ends the gesture), then turns from
+            // there; a turn never lands in the backlog behind a fling's empty-section walk.
+            if (sc.flinging) sc.stopMotion()
             if (!sc.userMoving()) {
                 scrollGesture = false
                 scrollCloseAtSettle = false
@@ -3067,6 +3075,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      * result (right away when nothing had to be re-parsed).
      */
     private fun applyToSession(global: ReaderSettings, onApplied: (() -> Unit)? = null) {
+        // The book is about to be re-opened with a new encoding: a re-parse with the old one would be thrown away.
+        if (recreatePending) return
         applyReaderColors(global)
         applyCadence(global.invert)
         val s = session
@@ -4036,14 +4046,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      * like the library's "인코딩 변경". True when it re-opens.
      */
     private fun takeSettingsEdits(): Boolean {
+        if (recreatePending) return true
         val b = bookRef ?: return false
         val e = OpenBook.take(b.id) ?: return false
         if (e.overrideChanged) bookOverride = e.override
-        val enc = e.encoding?.trim()
-        if (enc == null || enc == b.encoding.trim()) return false
         val id = b.id
         val o = bookOverride
         val overrideChanged = e.overrideChanged
+        val enc = e.encoding?.trim()
+        if (enc == null || enc == b.encoding.trim()) {
+            // 설정 saved it already; again here, so it holds even when that write was cut short.
+            if (overrideChanged) ReaderIo.launch { BookPrefs.setTxtOverride(id, o) }
+            return false
+        }
+        recreatePending = true
         scope.launch {
             // 설정 saved both already; written again here, in this order, so the re-open reads them whatever its own
             // writes are still doing.
@@ -4130,15 +4146,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         bookOverride = v
         ReaderIo.launch { BookPrefs.setTxtOverride(b.id, v) }
         applyToSession(Settings.reader, onApplied)
-    }
-
-    override fun saveTxtAsDefaults() {
-        val b = bookRef ?: return
-        // The effective options become the defaults: this book reads the same, so nothing is re-parsed.
-        val global = Settings.reader.withTxt(bookOverride)
-        bookOverride = null
-        ReaderIo.launch { BookPrefs.setTxtOverride(b.id, null) }
-        if (global != Settings.reader) Settings.saveReader(global)
     }
 
     // ================================================================== end panel (T1-2)

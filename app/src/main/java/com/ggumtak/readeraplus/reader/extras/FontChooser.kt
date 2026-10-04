@@ -108,10 +108,16 @@ internal object FontChooser {
         CompactList.show(activity, anchor, rows, widthPx, rightInsetPx)
     }
 
-    /** 글꼴 관리: our own settings page, through the reader when it is one (its device light treats it as ours, U §4.2). */
+    /**
+     * 글꼴 관리: our own settings page, through the reader when it is one (its device light treats it as ours, U §4.2);
+     * inside 설정 (읽기 설정 → 글꼴) a page pushed on the same stack, which keeps the reader's book ([OpenBook]).
+     */
     private fun openFonts(activity: Activity) {
-        (activity as? ReaderActivity)?.openAppSettings(SettingsActivity.PAGE_FONTS)
-            ?: SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS)
+        when (activity) {
+            is ReaderActivity -> activity.openAppSettings(SettingsActivity.PAGE_FONTS)
+            is SettingsActivity -> activity.push(SettingsActivity.PAGE_FONTS)
+            else -> SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS)
+        }
     }
 
     private fun showDialog(activity: Activity, entries: List<Pair<FontInfo, Typeface?>>, currentId: String, onPick: (String) -> Unit) {

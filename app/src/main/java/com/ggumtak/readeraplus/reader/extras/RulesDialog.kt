@@ -50,8 +50,8 @@ import com.ggumtak.readeraplus.ui.kit.vertical
  * "비우면 지웁니다", a "정규식" switch that is off by default, "시험해 보기"), a long press offers 위로 / 아래로 / 삭제,
  * and the bottom row has [+ 규칙 추가] [정리 규칙 팩…] [텍스트로 편집]. The cleanup packs are all off until added.
  *
- * Owner: EXTRAS_TOOLS. Users: the reading-settings popup (this book's rules, through TxtOverrideHost) and SETTINGS'
- * "TXT 기본 정리 설정" page (the global rules). Main thread only.
+ * Owner: EXTRAS_TOOLS. Users: SETTINGS' "이 책의 TXT 정리" (this book's rules) and "TXT 기본 정리 설정" (the global
+ * rules) pages. Main thread only.
  */
 object RulesDialog {
     /**

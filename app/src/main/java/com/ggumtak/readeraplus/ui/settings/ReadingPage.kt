@@ -27,6 +27,9 @@ import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.stepperRow
 import com.ggumtak.readeraplus.ui.kit.toast
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * "읽기 설정": every reading setting of the page in one place (the quick options' "전체 읽기 설정" opens it). 스타일
@@ -57,7 +60,13 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         userRow = ctx.valueRow(StyleChoice.USER_LABEL, userLabel(r)) { userStylesMenu() }.also(body::addView)
 
         body.section("글자")
-        body.addView(ctx.valueRow("글꼴", fontName(r.fontId)) { v -> chooseFont(v) })
+        // The font's name is read off the main thread (a user font is a file read in a cold process).
+        val fontRow = ctx.valueRow("글꼴", "…") { v -> chooseFont(v) }.also(body::addView)
+        val fontId = r.fontId
+        activity.scope.launch {
+            val name = withContext(Dispatchers.IO) { fontName(fontId) }
+            fontRow.setSummary(name)
+        }
         body.addView(stepper("글자 크기", r.fontSizeSp, ReaderSettings.MIN_FONT_SP, ReaderSettings.MAX_FONT_SP, 0.5f, Fmt::number) { v ->
             edit { it.copy(fontSizeSp = v) }
         })
@@ -96,7 +105,7 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         addPage(body, r)
         addFiles(body, r)
 
-        body.section("넘김 · 화면")
+        body.section("넘김·화면")
         body.addView(ctx.navRow("넘김·화면 설정", "넘기는 방식 · 화면 터치 · 볼륨 키 · 흑백 반전 · 상태 표시 · e-ink") {
             activity.push(SettingsActivity.PAGE_PAGE_TURNING)
         })
@@ -295,10 +304,7 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     private fun fontName(id: String): String = runCatching { FontManager.font(id)?.name }.getOrNull() ?: id
 
     private fun reset() {
-        ctx.confirm("기본값 복원", "글꼴 · 간격 · 여백 · 상태 표시를 기본값으로 되돌릴까요? TXT 정리 설정은 그대로입니다.", "복원") {
-            // TXT options stay: resetting them would re-parse every TXT book on its next open.
-            applyStyle { TxtEdits.withTxtFrom(ReaderSettings(), it) }
-        }
+        ctx.confirm("기본값 복원", RESET_MESSAGE, "복원") { applyStyle { ReadingDefaults.reset(it) } }
     }
 
     // ---------------------------------------------------------------- helpers
@@ -319,8 +325,29 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     companion object {
         const val SCOPE_NOTE = "여기의 설정은 모든 책에 적용됩니다. TXT 정리 설정만 책마다 따로 정할 수 있습니다. 읽던 책으로 돌아가면 바뀐 설정으로 한 번 다시 배치합니다."
         const val CUSTOM_STYLE = "직접 설정"
-        const val RESET_SUMMARY = "글꼴 · 간격 · 여백 · 상태 표시 (TXT 정리 설정은 그대로)"
+        const val RESET_SUMMARY = "이 페이지의 글자 · 문단 · 페이지 설정 (TXT 정리 · 흑백 반전 · 상태 표시는 그대로)"
+        const val RESET_MESSAGE = "이 페이지의 스타일 · 글자 · 문단 · 페이지 · EPUB 설정을 기본값으로 되돌릴까요? " +
+            "TXT 정리 설정, 흑백 반전과 상태 표시(넘김·화면 설정)는 그대로입니다."
         private val ALIGNS = listOf(Align.LEFT, Align.JUSTIFY)
         private val BREAKS = listOf(LineBreakMode.WORD, LineBreakMode.CHAR)
     }
+}
+
+/** 읽기 설정's 기본값 복원. Pure, unit-tested. */
+internal object ReadingDefaults {
+    /**
+     * [s] with this page's settings back to the defaults. Kept: the TXT options (resetting them would re-parse every
+     * TXT book on its next open), and what lives on 넘김·화면 설정 (흑백 반전, the status slots, 진행 막대, 상태 글자 크기).
+     */
+    fun reset(s: ReaderSettings): ReaderSettings = TxtEdits.withTxtFrom(ReaderSettings(), s).copy(
+        invert = s.invert,
+        headerLeft = s.headerLeft,
+        headerCenter = s.headerCenter,
+        headerRight = s.headerRight,
+        footerLeft = s.footerLeft,
+        footerCenter = s.footerCenter,
+        footerRight = s.footerRight,
+        progressBar = s.progressBar,
+        statusFontSizeSp = s.statusFontSizeSp,
+    )
 }

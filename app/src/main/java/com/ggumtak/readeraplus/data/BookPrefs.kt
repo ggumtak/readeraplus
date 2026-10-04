@@ -91,8 +91,7 @@ data class FinishedBook(val bookId: Long, val finishedAt: Long)
  * book, created on the first write and deleted with the book (`Library.deleteBookRows`) and exported by the backup
  * (keyed by path, like bookmarks). A row that no longer holds anything is dropped.
  *
- * Owner: DATA. Users: READER_A (open path, end panel), EXTRAS_TOOLS (popup through TxtOverrideHost), SETTINGS
- * (statistics). Every function is blocking (Dispatchers.IO), thread-safe and never throws for a missing row.
+ * Owner: DATA. Users: READER_A (open path, end panel, TxtOverrideHost), SETTINGS (이 책의 TXT 정리, statistics). Every function is blocking (Dispatchers.IO), thread-safe and never throws for a missing row.
  * [txtOverride] runs on the open path: one primary-key read on the connection `Library` already has open.
  *
  * Writes (SQLite 3.18 has no UPSERT): `UPDATE` the column and, when no row changed, `INSERT` a row for a book that

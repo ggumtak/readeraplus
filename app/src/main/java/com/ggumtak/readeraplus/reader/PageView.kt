@@ -46,6 +46,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     var scroll: ScrollInput? = null
     interface ScrollInput {
         val live: Boolean
+        /** A drag starts at the platform touch slop (else at the wider tap slop: e-ink taps are often a little sloppy). */
+        val fineDrag: Boolean get() = live
         /** Apply a pending device/style choice only at the beginning of a new gesture. */
         fun onDown() {}
         /** A drag started: the finger is down until [release] / [cancelDrag] (also in STEP, where nothing moves). */
@@ -383,7 +385,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                 val x = ev.getX(index); val y = ev.getY(index)
                 val dx = x - downX; val dy = y - downY
                 maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
-                val slop = if (input.live) touchSlop else tapSlop
+                val slop = if (input.fineDrag) touchSlop else tapSlop
                 if (!moved && maxDist > slop) {
                     moved = true
                     removeCallbacks(longPress)

@@ -13,6 +13,7 @@ import com.ggumtak.readeraplus.reader.extras.Fmt
 import com.ggumtak.readeraplus.reader.extras.ReadingSettingsPopup
 import com.ggumtak.readeraplus.reader.extras.RulesDialog
 import com.ggumtak.readeraplus.reader.extras.TxtEdits
+import com.ggumtak.readeraplus.reader.ReaderIo
 import com.ggumtak.readeraplus.reader.withTxt
 import com.ggumtak.readeraplus.render.Covers
 import com.ggumtak.readeraplus.settings.ReaderSettings
@@ -25,6 +26,7 @@ import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -39,8 +41,10 @@ import kotlinx.coroutines.withContext
 internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_BOOK_TXT, TITLE) {
     /** Set when the page is created (SettingsActivity only creates it for a TXT book). */
     private val book: OpenBook.Info = checkNotNull(OpenBook.info)
+    /** The book's own TXT options as this page last set them (starts as the reader's). */
+    private var override: TxtOverride? = book.override
     /** The effective TXT options the rows show (only its TXT fields count). */
-    private var txt: ReaderSettings = Settings.reader.withTxt(book.override)
+    private var txt: ReaderSettings = Settings.reader.withTxt(override)
     /** The last BookPrefs write: each waits for the one before it, so the last change is the one stored. */
     private var saveJob: Job? = null
     /** "모든 TXT 기본값으로 저장" and "이 책 설정 지우기 (기본값 사용)". */
@@ -127,18 +131,21 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     }
 
     private fun setOverride(o: TxtOverride?) {
-        OpenBook.overrideEdited(book.id, o)
+        override = o?.takeUnless { it.isEmpty }
+        OpenBook.overrideEdited(book.id, override)
         val id = book.id
+        val v = override
         val before = saveJob
-        saveJob = activity.scope.launch {
+        // Process scope: the write outlives this page (Back, rotation); each waits for the one before it.
+        saveJob = ReaderIo.launch {
             before?.join()
-            withContext(Dispatchers.IO) { runCatching { BookPrefs.setTxtOverride(id, o) } }
+            BookPrefs.setTxtOverride(id, v)
         }
         refreshActions()
     }
 
     /** Whether the book has TXT options of its own. */
-    private fun hasOwn(): Boolean = book.override != null
+    private fun hasOwn(): Boolean = override != null
 
     /** "모든 TXT 기본값으로 저장" / "이 책 설정 지우기": gray titles while the book has no TXT options of its own. */
     private fun refreshActions() {
@@ -164,7 +171,7 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
             "이 책의 TXT 정리 설정을 모든 TXT 파일의 기본값으로 저장할까요? 다른 TXT 책은 다음에 열 때 새 설정으로 다시 정리됩니다.",
             "저장",
         ) {
-            val global = Settings.reader.withTxt(book.override)
+            val global = Settings.reader.withTxt(override)
             if (global != Settings.reader) Settings.saveReader(global)
             setOverride(null)
             txt = Settings.reader
@@ -185,23 +192,24 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         }
     }
 
-    /** Saves the encoding in the library (the thumbnail, a rendering of the first page, is redrawn); the reader re-opens. */
+    /**
+     * Saves the encoding in the library (the thumbnail, a rendering of the first page, is redrawn); the reader
+     * re-opens the book when it is back. The reader is told at once (it saves the encoding again before re-opening),
+     * so a quick Back never leaves it reading with the old one.
+     */
     private fun changeEncoding(enc: String, onSaved: () -> Unit) {
         if (enc == book.encoding.trim()) return
         val id = book.id
         val app = activity.applicationContext
+        OpenBook.encodingEdited(id, enc)
+        onSaved()
         activity.scope.launch {
-            val ok = withContext(Dispatchers.IO) {
+            val ok = withContext(NonCancellable + Dispatchers.IO) {
                 runCatching { Library.setEncoding(id, enc) }.isSuccess.also { saved ->
                     if (saved) runCatching { Covers.invalidate(app, id) }
                 }
             }
-            if (!ok) {
-                ctx.toast("인코딩을 저장하지 못했습니다")
-                return@launch
-            }
-            OpenBook.encodingEdited(id, enc)
-            onSaved()
+            if (!ok && !activity.isDestroyed) ctx.toast("인코딩을 저장하지 못했습니다")
         }
     }
 

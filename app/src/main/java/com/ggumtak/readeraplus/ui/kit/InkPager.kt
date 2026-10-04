@@ -141,7 +141,7 @@ class InkPagerBar(context: Context) : LinearLayout(context) {
  *
  * The pager owns the list's OnTouchListener (paged) and OnScrollListener: use [onMoved] to follow the visible rows.
  */
-class InkPager internal constructor(val list: ListView, private val bar: InkPagerBar, scrolls: Boolean = false) : PageTarget {
+class InkPager internal constructor(val list: ListView, private val bar: InkPagerBar, private val scrolls: Boolean = false) : PageTarget {
     /** Runs after every layout of the list (a page jump, a data change): the visible rows may be different. */
     var onMoved: (() -> Unit)? = null
 
@@ -188,6 +188,7 @@ class InkPager internal constructor(val list: ListView, private val bar: InkPage
         val n = count
         if (n == 0 || list.childCount == 0 || dir == 0) return false
         if (if (dir > 0) atEnd() else atStart()) return false
+        stopFling()
         val first = list.firstVisiblePosition
         val step = PagerMath.step(list.childCount)
         val target = PagerMath.target(first, dir, step, n)
@@ -203,8 +204,14 @@ class InkPager internal constructor(val list: ListView, private val bar: InkPage
     /** Shows row [index] as row [rowFromTop] (0 = top; the TOC's [지금] uses 3), e.g. after a filter or a jump. */
     fun showRow(index: Int, rowFromTop: Int = 0) {
         if (count == 0) return
+        stopFling()
         list.setSelection(PagerMath.firstFor(index.coerceIn(0, count - 1), rowFromTop))
         update()
+    }
+
+    /** A scrolling list's running fling stops first: a page jump lands where it says (setSelection keeps a fling). */
+    private fun stopFling() {
+        if (scrolls) list.smoothScrollBy(0, 0)
     }
 
     /** Re-reads the list's position into the indicator (the pager does this itself after every layout). */

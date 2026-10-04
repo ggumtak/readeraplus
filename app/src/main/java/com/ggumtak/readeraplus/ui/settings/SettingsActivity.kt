@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.view.KeyEvent
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.FrameLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.format.BookFormat
@@ -114,8 +115,11 @@ class SettingsActivity : Activity() {
         root.addView(content, lp(MATCH_PARENT, 0, 1f))
         setContentView(root)
 
-        val ids = savedInstanceState?.getStringArrayList(STATE_STACK)?.takeIf { it.isNotEmpty() }
-            ?: listOf(intent?.getStringExtra(EXTRA_PAGE) ?: PAGE_MAIN)
+        val ids = (savedInstanceState?.getStringArrayList(STATE_STACK)?.takeIf { it.isNotEmpty() }
+            ?: listOf(intent?.getStringExtra(EXTRA_PAGE) ?: PAGE_MAIN))
+            // 이 책의 TXT 정리 needs the reader's book: restored without it (the process was killed), it is left out.
+            .filter { it != PAGE_BOOK_TXT || OpenBook.info?.format == BookFormat.TXT }
+            .ifEmpty { listOf(PAGE_READING) }
         for (id in ids) stack += createPage(id)
         showTop()
     }
@@ -155,10 +159,16 @@ class SettingsActivity : Activity() {
         showTop()
     }
 
-    /** Rebuilds the current page's view from scratch (after bulk changes such as a settings reset). */
+    /**
+     * Rebuilds the current page's view from scratch (after bulk changes such as a settings reset, or values changed on
+     * another page), at the same scroll position.
+     */
     internal fun rebuildTop() {
-        stack.lastOrNull()?.view = null
+        val page = stack.lastOrNull() ?: return
+        val y = (page.view as? ScrollView)?.scrollY ?: 0
+        page.view = null
         showTop()
+        (page.view as? ScrollView)?.let { sv -> if (y > 0) sv.post { sv.scrollTo(0, y) } }
     }
 
     private fun showTop() {
