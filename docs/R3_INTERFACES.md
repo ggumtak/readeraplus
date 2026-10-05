@@ -757,9 +757,8 @@ const val PAD_DP = StatusBands.PAD_DP           // 2
 const val LANE_DP = StatusBands.LANE_DP         // ReaderSettings.PROGRESS_LANE_DP
 const val EDGE_DP = StatusBands.EDGE_DP         // 4
 fun edgePx(density: Float): Int
-fun lanePx(density: Float): Int
-fun laneBottomPx(viewH: Int, density: Float): Int
-fun laneTopPx(density: Float): Int
+fun laneTopPx(density: Float): Int              // the return chip sits above it (2026-10-05: lanePx and laneBottomPx
+                                                // went with ReadEra's 탐색줄, which ProgressMath places from the bottom)
 fun glyphPx(s: ReaderSettings, density: Float): Int
 fun headerBandPx(s: ReaderSettings, density: Float): Int
 fun footerBandPx(s: ReaderSettings, density: Float): Int
@@ -785,14 +784,21 @@ object VerticalMargin { EDGE_DP = 40; TOP_ZERO_DP = 18; BOTTOM_ZERO_DP = 22; MAX
 ### `render/ProgressMath.kt` — E2
 
 ```kotlin
+// 2026-10-05: ReadEra's 탐색줄 on the user's S25 screenshots (S25 / Comet px): a 2 / 1 px line between two end dots
+// and the position dot, all 14 / 9 px, outer edges 7 dp from the page view's sides, centred 8 dp above its bottom
+// (line rows 2315–2316 / 1423, dots 2309–2322 / 1419–1427); colours PagePalette.progressLine / progressDot
+// (inkProgressLine / inkProgressDot on e-ink). Replaces yc, rDot, rCap, x0, x1 and the lane-based track.
 internal object ProgressMath
-fun yc(viewH: Int, lane: Float): Int = viewH - Math.round(lane / 2f)
-fun rDot(lane: Float, density: Float): Float = minOf(Math.round(3f * density).toFloat(), (lane / 2f - 1f).coerceAtLeast(0f))
-fun rCap(lane: Float, density: Float): Float = minOf(Math.round(1.5f * density).toFloat(), rDot(lane, density) / 2f)
-fun x0(viewW: Int, density: Float): Int = minOf(Math.round(12f * density), viewW / 2)
-fun x1(viewW: Int, density: Float): Int = viewW - x0(viewW, density)
-fun trackPx(viewW: Int, lane: Float, density: Float): Int =
-fun dotX(f: Float, viewW: Int, lane: Float, density: Float): Float =
+const val LINE_DP = 2f / 3f; const val DOT_DP = 14f / 3f; const val SIDE_DP = 7; const val CENTRE_DP = 8
+fun lineH(density: Float): Int                              // max(1, round(LINE_DP · density))
+fun dotD(density: Float): Int                               // nearest DOT_DP · density with lineH's parity
+fun lineTop(viewH: Int, density: Float): Int                // viewH − round(CENTRE_DP · density + lineH / 2)
+fun dotTop(viewH: Int, density: Float): Int
+fun centreY(viewH: Int, density: Float): Float
+fun sidePx(density: Float): Int
+fun trackPx(viewW: Int, density: Float): Int                // viewW − 2 · sidePx − dotD (StatusModel's dot pixels)
+fun dotLeft(f: Float, viewW: Int, density: Float): Int      // sidePx + round(f · trackPx)
+fun dotX(f: Float, viewW: Int, density: Float): Float       // dotLeft + dotD / 2
 ```
 
 

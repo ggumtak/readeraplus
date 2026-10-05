@@ -1,5 +1,21 @@
 # PLAN.md — wave 2 build plan: R3 = scroll + UI + NOTES + user addendum U1–U6
 
+> **사용자 변경 지시 (2026-10-05): 탐색줄(진행 선)은 ReadEra처럼 은은하게.**
+> "그리고 밑에 언더 바 있잖아 탐색줄? 이것처럼 은은하게 나오게 바꿔줘 대놓고 빡!! 하고 보이는 게 아니라 있었구나 하면서 볼
+> 정도로 사진을 최대한 카피해". 사용자가 보낸 ReadEra 사진(같은 S25, 흰 바탕 · 검은 바탕)을 픽셀로 따른다(`ProgressMath`):
+> `max(1, round(0.67 dp))` 선(S25 2 px, 코멧 1 px)과 양 끝 · 현재 위치의 점 세 개가 모두 같은 크기 · 같은 색(S25 14 px,
+> 코멧 9 px: 4.67 dp에 가장 가깝고 선과 가운데가 맞는 크기), 끝 점 바깥 끝은 페이지 뷰 양옆에서 7 dp(본문 칸이 아니라 화면
+> 폭), 가운데는 아래 끝에서 8 dp 위(S25 선 2315–2316 행 · 점 2309–2322 행 · x 21–34 / 1045–1058, 코멧 선 1423 행 · 점
+> 1419–1427 행 · x 14–22 / 697–705). 선은 두 끝 점의 가운데 사이, 점이 그 위에 온다. 색은 상태 색이 아니라 바탕을 조금 바꾼
+> 회색(`PagePalette.progressLine` / `progressDot`, 팔레트마다 한 번 계산): 밝은 바탕은 검정 쪽으로 46 · 75/255(18 · 29.4 %),
+> 어두운 바탕은 흰색 쪽으로 31 · 50/255(12.2 · 19.6 %). 흰 바탕 #D1D1D1 · #B4B4B4, 검은 바탕 #1F1F1F · #323232로 사진과
+> 같고, 마루뷰어는 #4B4B4B · #5A5A5A(금색 아님). e-ink(`DeviceClass` e-ink)는 16단계 회색에 맞추고 선은 바탕과, 점은 선과
+> 한 단계 이상 떨어지게 한다(`inkProgressLine` / `inkProgressDot`: 흰 바탕 #CCCCCC · #BBBBBB, 흑백 반전 #222222 · #333333,
+> 마루뷰어 #444444 · #555555). 상태 줄 글자 색, 아래 띠(끝 4 + 진행 막대 12 + 2 dp = 18 dp), 본문 자리는 그대로이고, 점은
+> 진행 막대 띠 안(코멧에서 아래 끝 위 12 px)에 있어 돌아가기 칩은 그대로 그 띠 위다. 이 지시로 UI_SPEC §5.4의 `drawProgress`
+> 표(1 px 선, 끝 캡, 6 dp 점, 상태 색)와 아래 지시의 "진행 점은 2302"를 대체한다. CI 13w(흰 바탕 · 마루뷰어 · 흑백 반전의 선
+> · 끝 점 색과 자리), 점검표 §11f.
+>
 > **사용자 변경 지시 (2026-10-05): 위·아래 여백은 상태 표시줄을 뺀 본문 영역 기준.**
 > "아니지 위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지". 위 상태 줄 · 아래 상태 줄 · 진행 막대는 화면 끝에
 > 자기 띠를 갖고(`StatusBands`, 설정만으로 정한 정수 dp: 위 띠 = 끝 4 dp + 글자 상자 + 2 dp, 11 sp에서 22 dp; 아래 띠 =
@@ -12,7 +28,7 @@
 > 단계는 두 쪽을 2 dp씩 옮기고, 기본값 선을 벗어난 값도 튀지 않는다: `VerticalMargin.step`). 아래 글자를 켜면 아래 띠가
 > 18 dp 커지는 만큼 본문이 짧아진다(코멧 36 px). S25 전체 화면은 사용자가 보낸 업데이트 전 화면을 따랐다("S25 전체 화면도
 > 지금 자리 유지해줘 걍 최대한 이거랑 여백 넓이랑 그리고 여백 알고리즘을 따라해봐"): 카메라 띠(87 px)를 시스템 막대처럼
-> 빼고 그 아래에 위 띠를 잡아 두며, 본문은 207..2220, 진행 점은 2302로 그 화면과 같다. 위 상태 줄도 그 화면의 방식대로 카메라
+> 빼고 그 아래에 위 띠를 잡아 두며, 본문은 207..2220, 진행 점은 2302로 그 화면과 같다(진행 선은 위 지시로 ReadEra 자리). 위 상태 줄도 그 화면의 방식대로 카메라
 > 띠와 본문 사이 가운데(글꼴 상자 기준, `StatusFit.headerBaseline`)에 그려 글자가 147–181 px로 그 화면과 같은 줄에 온다. 카메라
 > 띠가 없는 화면(코멧, 막대가 보이는 S25)의 위 줄은 마루뷰어처럼 위 끝 4 dp 아래 그대로다. 책갈피 리본도 그 화면처럼 카메라
 > 띠 아래(87 px)에서 내려온다. 글자 크기는 고른 그대로이고, 글자 잉크가 띠의 글자 상자보다 클 때(큰 시스템 글꼴 배율)만 한
@@ -1162,7 +1178,7 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 1 | `01_library` | as today | cards with 20 px padding, light separators, thin fast-scroll thumb (scroll mode on the emulator) | U, N |
 | 2 | `41_library_more` + CHECK 41, 41b | `tap_label "책 메뉴"`; dump; then a 6 px roll `input swipe X Y X+2 Y+6 150` on the same ⋮ | menu open ("책 정보" found) and the first title's bounds unchanged, in both cases | N (H2) |
 | 3 | `02_drawer` | as today | 독서 노트 · 단어장 rows between 다 읽은 책 and 컬렉션 (the drawer's second group since a3b8826, on screen without scrolling; no counts yet) | N |
-| 4 | `10_txt_page1` | as today | **no footer text**; progress line and dot on row 1415 (lane 1408..1432, 4 dp above the bottom edge), x 24..696, dot at the start; header band 0..44 with MaruViewer's line (배터리 아이콘 · 시계, 책 제목, 쪽 번호; glyph box 8..40); text box 40..680 × 80..1360 (2026-10-05: the 18 dp top and 22 dp bottom margins count from the 22 dp header band and the 18 dp progress line's band) | U, A |
+| 4 | `10_txt_page1` | as today | **no footer text**; progress line on row 1423 between end dots x 14–22 and 697–705 (rows 1419–1427; 2026-10-05, ReadEra's 탐색줄 in faint greys: was row 1415, x 24..696), dot at the start; header band 0..44 with MaruViewer's line (배터리 아이콘 · 시계, 책 제목, 쪽 번호; glyph box 8..40); text box 40..680 × 80..1360 (2026-10-05: the 18 dp top and 22 dp bottom margins count from the 22 dp header band and the 18 dp progress line's band) | U, A |
 | 5 | `11_txt_page2`, `12_txt_tap_right` (+ `rawshot 12b`) | as today | — | — |
 | 6 | `13_txt_chrome` (+ rawshot) | as today | back · 🔖 🔊 🔍 ☰ ⚙ ⋮; one-line title at x = 40; brightness row with ⌄, no grey square; "3 / 167" centred at x = 360 ± 2, bold, not underlined; ⟳ + outline pin; ⏮ seek ⏭; no strip | U |
 | 7 | `13b_pin` | `tap_label "이 페이지 고정"` | filled pin; strip "(pin) 3쪽" · "지우기" (79cd1a5: "N쪽", "N쪽으로"); `raw_equal 13 13b 360 1100` EQUAL | U |

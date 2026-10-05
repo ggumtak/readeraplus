@@ -147,8 +147,8 @@ class StatusFitTest {
         assertEquals(1404f, withLane + f.descent, 0.001f)
         assertTrue(withLane + f.inkTop >= 1404f - glyph)
         assertEquals(1440f - StatusFit.footerBandPx(footer, comet) + StatusFit.PAD_DP * comet, 1404f - glyph, 0f)
-        // The dot sits at the lane's top, below the footer's glyphs.
-        assertTrue(withLane + f.descent <= ProgressMath.yc(1432, 24f, comet) - ProgressMath.rDot(24f, comet))
+        // The progress line's dots sit low in the lane, well below the footer's glyphs (rows 1419..1427).
+        assertTrue(withLane + f.descent + StatusFit.PAD_DP * comet <= ProgressMath.dotTop(1440, comet))
         // Without the line: on the edge gap, 4 dp above the bottom edge, inside a 22 dp band.
         val noLane = StatusFit.footerBaseline(1440f, false, f.descent, f.inkTop, f.inkBottom, glyph, comet)
         assertEquals(1432f, noLane + f.descent, 0.001f)
@@ -159,23 +159,23 @@ class StatusFitTest {
     fun theLaneIsAlwaysWholeAboveTheEdgeGap() {
         assertEquals(8, StatusFit.edgePx(comet))
         assertEquals(12, StatusFit.edgePx(s25))
-        assertEquals(24, StatusFit.lanePx(comet))
-        assertEquals(36, StatusFit.lanePx(s25))
         assertEquals(32, StatusFit.laneTopPx(comet))
         assertEquals(48, StatusFit.laneTopPx(s25))
-        assertEquals(1432, StatusFit.laneBottomPx(1440, comet))
-        assertEquals(2328, StatusFit.laneBottomPx(2340, s25))
-        // S25 fullscreen: the dot's row is 2302, where the user's screenshot has it (rows 2293–2311); the Comet's 1415.
-        assertEquals(2302, ProgressMath.yc(StatusFit.laneBottomPx(2340, s25), StatusFit.lanePx(s25).toFloat(), s25))
-        assertEquals(1415, ProgressMath.yc(StatusFit.laneBottomPx(1440, comet), StatusFit.lanePx(comet).toFloat(), comet))
+        // S25 fullscreen: ReadEra's 탐색줄 as on the user's screenshot (2026-10-05): line rows 2315–2316, dots 2309–2322
+        // (8 dp up; until then the dot sat at the lane's top, row 2302). The Comet's line row 1423, dots 1419..1427.
+        assertEquals(2315, ProgressMath.lineTop(2340, s25))
+        assertEquals(2309, ProgressMath.dotTop(2340, s25))
+        assertEquals(1423, ProgressMath.lineTop(1440, comet))
+        assertEquals(1419, ProgressMath.dotTop(1440, comet))
         // The progress line's band (18 dp) is edge + lane + 2 dp of paper: at bottom margin 0 the text box ends 2 dp
-        // above the lane, and the dot (at the lane's top) stays clear of the text (Comet rows 1409..1421 under 1404).
+        // above the lane, and the dots stay clear of the text and of the edge gap (Comet rows 1419..1427, the box
+        // ending at 1404, the bezel's rows from 1432).
         for ((density, viewH) in listOf(comet to 1440, s25 to 2340)) {
             val band = StatusFit.footerBandPx(d, density)
             assertEquals(StatusFit.laneTopPx(density) + StatusFit.px(StatusFit.PAD_DP, density), band)
-            val lane = StatusFit.lanePx(density).toFloat()
-            val dotTop = ProgressMath.yc(StatusFit.laneBottomPx(viewH, density), lane, density) - ProgressMath.rDot(lane, density)
+            val dotTop = ProgressMath.dotTop(viewH, density)
             assertTrue(dotTop >= viewH - band + StatusFit.px(StatusFit.PAD_DP, density))
+            assertTrue(dotTop + ProgressMath.dotD(density) <= viewH - StatusFit.edgePx(density))
         }
     }
 }

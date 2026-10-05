@@ -13,7 +13,7 @@ import com.ggumtak.readeraplus.settings.StatusBands
  * [fitTextPx]): the header's glyph box [EDGE_DP] below the page view's top, or, below a display cutout's band (the
  * S25's camera hole in fullscreen), centred between that band and the text box as on the user's screenshot of the
  * installed build ([headerBaseline]); the footer's just above the progress lane or the bottom edge gap
- * ([footerBaseline]); the progress line at the bottom of the lane ([laneBottomPx]).
+ * ([footerBaseline]); the progress line and its dots low in the lane, as ReadEra draws them ([ProgressMath]).
  */
 internal object StatusFit {
     /** Paper kept between the status glyphs and the margin or the progress lane. */
@@ -40,13 +40,10 @@ internal object StatusFit {
     /** [EDGE_DP] in whole px. */
     fun edgePx(density: Float): Int = px(EDGE_DP, density)
 
-    /** The progress lane: [LANE_DP] in whole px, always (it no longer shrinks in a small margin). */
-    fun lanePx(density: Float): Int = px(LANE_DP, density)
-
-    /** Bottom of the progress lane in a page view [viewH] tall: the [EDGE_DP] gap above the view's bottom. */
-    fun laneBottomPx(viewH: Int, density: Float): Int = viewH - edgePx(density)
-
-    /** Top of the progress lane above the page view's bottom ([EDGE_DP] + [LANE_DP]): the return chip sits above it. */
+    /**
+     * Top of the progress lane above the page view's bottom ([EDGE_DP] + [LANE_DP]), above the progress line's dots
+     * ([ProgressMath.dotTop]): the return chip sits above it.
+     */
     fun laneTopPx(density: Float): Int = px(EDGE_DP + LANE_DP, density)
 
     /** The status glyph box of [s] in whole px ([StatusBands.glyphDp]). */

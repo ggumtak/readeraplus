@@ -31,7 +31,8 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * Draws a laid-out page. The page's content box is placed at (contentLeft, contentTop) in canvas coordinates.
  * Colours come from the settings' [PagePalette]: black text on white, white on black when settings.invert (pictures
- * then drawn inverted too), or a theme's own (마루뷰어: light text with a short shadow on dark grey, gold status lines).
+ * then drawn inverted too), or a theme's own (마루뷰어: light text with a short shadow on dark grey, gold status lines);
+ * the progress line in its own faint greys ([PagePalette.progressLine], whole e-ink levels on e-ink).
  *
  * Glyph positions come exclusively from [LineGeometry.charPositions]; text is drawn in segments split at
  * style changes and justification points, so selection/search/TTS geometry and drawing always agree.
@@ -69,9 +70,11 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val statusInkBottom: Float
     /** Vertical middle of the status digits relative to the baseline (negative = above it): the battery icon's centre. */
     private val digitMiddle: Float
-    /** The bands' glyph box ([StatusBands.glyphDp]) and the progress lane, in px. */
+    /** The bands' glyph box ([StatusBands.glyphDp]) in px. */
     private val statusGlyphPx = StatusFit.glyphPx(settings, density).toFloat()
-    private val lanePx = StatusFit.lanePx(density).toFloat()
+    /** The progress line's height and its dots' radius ([ProgressMath]), in px. */
+    private val progressLineH = ProgressMath.lineH(density).toFloat()
+    private val progressDotR = ProgressMath.dotD(density) / 2f
     private val bandCache = arrayOf(StatusDrawCache(), StatusDrawCache())
     private val slotGeometry = FloatArray(12)
     private val slotNatural = FloatArray(3)
@@ -101,7 +104,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         style = Paint.Style.STROKE
         strokeWidth = onePx
     }
-    /** The status lines' battery icon and progress line, in the palette's status colour. */
+    /** The status lines' battery icon, in the palette's status colour. */
     private val statusLine = Paint().apply { style = Paint.Style.FILL }
     private val statusOutline = Paint().apply {
         style = Paint.Style.STROKE
@@ -112,7 +115,9 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         style = Paint.Style.STROKE
         strokeWidth = BatteryMath.firstStroke(density)
     }
-    private val statusDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    /** ReadEra's 탐색줄: a faint line and three slightly darker dots (or lighter, on a dark page). */
+    private val progressLine = Paint().apply { style = Paint.Style.FILL }
+    private val progressDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     /** Pictures; in night mode through the shared inverting filter (T1-3f): no white box glaring on a black page. */
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG).apply {
         if (palette.invertImages) colorFilter = nightImageFilter
@@ -168,7 +173,10 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         statusLine.color = palette.status
         statusOutline.color = palette.status
         statusOutlineFirst.color = palette.status
-        statusDot.color = palette.status
+        // On e-ink, greys on the panel's own levels (known e-ink only: a phone keeps the screenshot's greys).
+        val eink = DeviceClass.cached(context) == true
+        progressLine.color = if (eink) palette.inkProgressLine else palette.progressLine
+        progressDot.color = if (eink) palette.inkProgressDot else palette.progressDot
     }
 
     /** Draws page [pageIndex] of [layout] (background, status lines, highlights, text, images, ribbon). */
@@ -341,7 +349,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         }
         if (!st.footer.isEmpty) drawBand(canvas, st, st.footer, left, cw, StatusFit.footerBaseline(viewHeight.toFloat(),
             st.lane, statusDescent, statusInkTop, statusInkBottom, statusGlyphPx, density), 1, ts, 0f, 0f)
-        if (st.lane) drawProgress(canvas, st.progress, viewWidth, StatusFit.laneBottomPx(viewHeight, density), lanePx)
+        if (st.lane) drawProgress(canvas, st.progress, viewWidth, viewHeight)
     }
 
     private fun slot(b: StatusBand, i: Int): StatusSlot = when (i) { 0 -> b.left; 1 -> b.center; else -> b.right }
@@ -431,17 +439,20 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         if (fillR > inL && bodyBottom - inset > bodyTop + inset) canvas.drawRect(inL, bodyTop + inset, fillR, bodyBottom - inset, statusLine)
     }
 
-    private fun drawProgress(canvas: Canvas, fraction: Float, viewW: Int, viewH: Int, lane: Float) {
-        val y = ProgressMath.yc(viewH, lane, density).toFloat()
-        val x0 = ProgressMath.x0(viewW, density).toFloat()
-        val x1 = ProgressMath.x1(viewW, density).toFloat()
-        val r = ProgressMath.rCap(lane, density)
-        canvas.drawRect(x0, y, x1, y + 1f, statusLine)
-        canvas.drawCircle(x0, y + 0.5f, r, statusDot)
-        canvas.drawCircle(x1, y + 0.5f, r, statusDot)
+    /**
+     * The progress line across the page view [viewW] × [viewH] ([ProgressMath]): the line from one end dot's centre to
+     * the other's, then the end dots and, at [fraction] (none while it is unknown, < 0), the position dot over it.
+     */
+    private fun drawProgress(canvas: Canvas, fraction: Float, viewW: Int, viewH: Int) {
+        val top = ProgressMath.lineTop(viewH, density).toFloat()
+        val y = ProgressMath.centreY(viewH, density)
+        val x0 = ProgressMath.dotX(0f, viewW, density)
+        val x1 = ProgressMath.dotX(1f, viewW, density)
+        canvas.drawRect(x0, top, x1, top + progressLineH, progressLine)
+        canvas.drawCircle(x0, y, progressDotR, progressDot)
+        canvas.drawCircle(x1, y, progressDotR, progressDot)
         if (fraction >= 0f && fraction.isFinite())
-            canvas.drawCircle(ProgressMath.dotX(fraction, viewW, lane, density), y + 0.5f,
-                ProgressMath.rDot(lane, density), statusDot)
+            canvas.drawCircle(ProgressMath.dotX(fraction, viewW, density), y, progressDotR, progressDot)
     }
 
     // ---------------------------------------------------------------------------------------------

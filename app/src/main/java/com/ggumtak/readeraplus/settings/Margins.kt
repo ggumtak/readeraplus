@@ -49,7 +49,7 @@ object StatusBands {
     const val EDGE_DP = 4
     /** Paper between the status glyphs and the margin or the progress lane next to them. */
     const val PAD_DP = 2
-    /** The progress line's lane. */
+    /** The progress line's lane: its line and dots sit low in it, ReadEra's 8 dp above the edge (`ProgressMath`). */
     const val LANE_DP = ReaderSettings.PROGRESS_LANE_DP
     /**
      * Glyph box per sp of status text: the ink of the status glyphs (a parenthesis ≈ 1.05 em, Hangul ≈ 0.9 em on the
@@ -72,8 +72,8 @@ object StatusBands {
 
     /**
      * The footer's band from the bottom edge: [EDGE_DP], the lane and [PAD_DP] above it while the progress line is on
-     * (the text never touches the dot at the lane's top), and with footer items the glyph box and [PAD_DP]; 0 with
-     * neither. 18 dp by default (the progress line alone).
+     * (the text never comes near its dots), and with footer items the glyph box and [PAD_DP]; 0 with neither. 18 dp by
+     * default (the progress line alone).
      */
     fun footerDp(s: ReaderSettings): Int {
         val lane = if (s.progressBar) LANE_DP + PAD_DP else 0

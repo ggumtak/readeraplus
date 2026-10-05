@@ -3046,12 +3046,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         inp.tocCount = shown.size
     }
 
-    /** Pixels the progress dot travels (ProgressMath over the progress line's own lane); 0 without the line. */
+    /** Pixels the progress dot travels across the page view (ProgressMath); 0 without the line. */
     private fun statusTrackPx(s: BookSession): Int {
         if (!s.settings.progressBar) return 0
         val g = s.generation?.geometry ?: return 0
-        val density = resources.displayMetrics.density
-        return ProgressMath.trackPx(g.viewWidth, StatusFit.lanePx(density).toFloat(), density)
+        return ProgressMath.trackPx(g.viewWidth, resources.displayMetrics.density)
     }
 
     override fun statusSample(item: StatusItem): String? {

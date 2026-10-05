@@ -5,14 +5,15 @@ import com.ggumtak.readeraplus.settings.ReaderSettings
 
 /**
  * The page's colours for [ReaderSettings.pageTheme] and [ReaderSettings.invert] (pure, unit-tested; three shared
- * instances, so asking for one allocates nothing). [PageRenderer] paints with it (page, text, status lines, the text
- * shadow, highlight greys); the reader takes the window and blank-page colour, the selection handles and the e-ink
- * cadence from it. 흑백 반전 wins over the theme: [NIGHT] is the look of T1-3 (white on black, pictures inverted).
+ * instances, so asking for one allocates nothing). [PageRenderer] paints with it (page, text, status lines, the progress
+ * line, the text shadow, highlight greys); the reader takes the window and blank-page colour, the selection handles and
+ * the e-ink cadence from it. 흑백 반전 wins over the theme: [NIGHT] is the look of T1-3 (white on black, pictures
+ * inverted).
  */
 internal class PagePalette private constructor(
     val background: Int,
     val text: Int,
-    /** Status lines: their texts, the battery icon and the progress line. */
+    /** Status lines: their texts and the battery icon (the progress line has its own greys: [progressLine]). */
     val status: Int,
     /** Text shadow toward the lower right, in dp; a [shadowSigmaDp] of 0 is no shadow. */
     val shadowDxDp: Float,
@@ -29,6 +30,28 @@ internal class PagePalette private constructor(
     val invertImages: Boolean,
 ) {
     val hasShadow: Boolean get() = shadowSigmaDp > 0f && (shadowColor ushr 24) != 0
+
+    /** A light page by its background's luma: the progress line darkens it, on a dark page it lightens it. */
+    private val lightPage = luma(background) >= 128
+
+    /**
+     * The progress line and its dots ([ProgressMath]), copied from ReadEra's 탐색줄 on the user's S25 screenshots
+     * (2026-10-05: "대놓고 빡!! 하고 보이는 게 아니라 있었구나 하면서 볼 정도로"): the page moved toward black on a light
+     * page, toward white on a dark one, by [LIGHT_LINE] and [LIGHT_DOT] or [DARK_LINE] and [DARK_DOT] levels of 255. That
+     * is the screenshots exactly: #D1D1D1 / #B4B4B4 on white, #1F1F1F / #323232 on black; on MARU's #323232 it gives
+     * #4B4B4B / #5A5A5A. Never the status colour (MARU's gold), so the line is found, not seen first. Fixed per palette:
+     * drawing allocates nothing.
+     */
+    val progressLine: Int = toward(background, lightPage, if (lightPage) LIGHT_LINE else DARK_LINE)
+    val progressDot: Int = toward(background, lightPage, if (lightPage) LIGHT_DOT else DARK_DOT)
+
+    /**
+     * [progressLine] and [progressDot] on e-ink: their greys on the panel's 16 levels ([inkGrey]), the line at least one
+     * level from the page and the dots one past the line, so neither vanishes nor dithers. 흰 바탕 #CCCCCC / #BBBBBB,
+     * 흑백 반전 #222222 / #333333, MARU #444444 / #555555 (its page shows as #333333).
+     */
+    val inkProgressLine: Int = rgb(inkGrey(luma(progressLine), luma(background), lightPage))
+    val inkProgressDot: Int = rgb(inkGrey(luma(progressDot), luma(inkProgressLine), lightPage))
 
     /** Paint.setShadowLayer's radius in px for this page's blur at [density]; 0 (no shadow) without one. */
     fun shadowRadiusPx(density: Float): Float = if (hasShadow) radiusForSigma(shadowSigmaDp * density) else 0f
@@ -51,6 +74,42 @@ internal class PagePalette private constructor(
 
     companion object {
         private const val OPAQUE = 0xFF000000.toInt()
+
+        /** The progress line's and its dots' share of the way to black on a light page (of 255: 18 % and 29.4 %). */
+        private const val LIGHT_LINE = 46
+        private const val LIGHT_DOT = 75
+        /** The same toward white on a dark page (12.2 % and 19.6 %). */
+        private const val DARK_LINE = 31
+        private const val DARK_DOT = 50
+        /** One of an e-ink panel's 16 grey levels (0x00, 0x11 … 0xFF). */
+        private const val INK_STEP = 17
+
+        /** [c] moved [levels] of 255 of the way to black ([darker]) or to white, per channel. */
+        private fun toward(c: Int, darker: Boolean, levels: Int): Int {
+            fun ch(v: Int): Int {
+                val target = if (darker) 0 else 255
+                return v + Math.round((target - v) * levels / 255f)
+            }
+            return OPAQUE or (ch(c shr 16 and 0xFF) shl 16) or (ch(c shr 8 and 0xFF) shl 8) or ch(c and 0xFF)
+        }
+
+        /** The grey an e-ink panel shows for [c] (0..255): its luma. */
+        private fun luma(c: Int): Int =
+            ((c shr 16 and 0xFF) * 299 + (c shr 8 and 0xFF) * 587 + (c and 0xFF) * 114 + 500) / 1000
+
+        private fun rgb(v: Int): Int = OPAQUE or (v shl 16) or (v shl 8) or v
+
+        /**
+         * Grey [v] (0..255) on an e-ink panel's 16 levels: the nearest, then moved on until it is at least one level
+         * past [from]'s, darker ([darker]) or lighter. What the panel would round it to anyway, but chosen here, so a
+         * line meant to be faint never rounds into the page (or the dots into the line).
+         */
+        fun inkGrey(v: Int, from: Int, darker: Boolean): Int {
+            val level = (v.coerceIn(0, 255) + INK_STEP / 2) / INK_STEP * INK_STEP
+            val base = (from.coerceIn(0, 255) + INK_STEP / 2) / INK_STEP * INK_STEP
+            return if (darker) minOf(level, base - INK_STEP).coerceAtLeast(0)
+            else maxOf(level, base + INK_STEP).coerceAtMost(255)
+        }
 
         /** Black on white (the default). */
         val PAPER = PagePalette(

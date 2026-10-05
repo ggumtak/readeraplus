@@ -119,6 +119,49 @@ class PagePaletteTest {
         assertTrue(contrast(m.text, m.grey(0xAA)) >= 3.0)
     }
 
+    @Test
+    fun progressLineIsReadErasFaintGreys() {
+        // The user's ReadEra screenshots (S25, 2026-10-05): line #D1D1D1 and dots #B4B4B4 on white, #1F1F1F and
+        // #323232 on black. Not the status colour: on the MaruViewer page no gold, the same rule toward white.
+        assertEquals(rgb(0xD1), PagePalette.PAPER.progressLine)
+        assertEquals(rgb(0xB4), PagePalette.PAPER.progressDot)
+        assertEquals(rgb(0x1F), PagePalette.NIGHT.progressLine)
+        assertEquals(rgb(0x32), PagePalette.NIGHT.progressDot)
+        assertEquals(rgb(0x4B), PagePalette.MARU.progressLine)
+        assertEquals(rgb(0x5A), PagePalette.MARU.progressDot)
+        // 흑백 반전 over the MaruViewer theme is the black page's.
+        assertSame(PagePalette.NIGHT, PagePalette.of(PageTheme.MARU, true))
+        for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT, PagePalette.MARU)) {
+            // Faint: far closer to the page than the text is; the dots a little stronger than the line.
+            assertTrue(contrast(p.progressLine, p.background) < 1.6)
+            assertTrue(contrast(p.progressDot, p.background) > contrast(p.progressLine, p.background))
+            assertTrue(contrast(p.progressDot, p.background) < 2.2)
+            assertTrue(contrast(p.text, p.background) > 4 * contrast(p.progressDot, p.background))
+        }
+    }
+
+    @Test
+    fun progressLineOnEinkIsWholePanelLevels() {
+        // The Comet's 16 greys: 흰 바탕 #CCCCCC line, #BBBBBB dots; 흑백 반전 #222222 / #333333; MaruViewer's page (shown
+        // as #333333) #444444 / #555555. Each a level of its own: the line off the page, the dots off the line.
+        assertEquals(rgb(0xCC), PagePalette.PAPER.inkProgressLine)
+        assertEquals(rgb(0xBB), PagePalette.PAPER.inkProgressDot)
+        assertEquals(rgb(0x22), PagePalette.NIGHT.inkProgressLine)
+        assertEquals(rgb(0x33), PagePalette.NIGHT.inkProgressDot)
+        assertEquals(rgb(0x44), PagePalette.MARU.inkProgressLine)
+        assertEquals(rgb(0x55), PagePalette.MARU.inkProgressDot)
+        // A grey that would round into the page (or the line) moves on one level, the page's way.
+        assertEquals(0xEE, PagePalette.inkGrey(250, 255, darker = true))
+        assertEquals(0xCC, PagePalette.inkGrey(209, 255, darker = true))
+        assertEquals(0x11, PagePalette.inkGrey(5, 0, darker = false))
+        assertEquals(0x33, PagePalette.inkGrey(50, 0x22, darker = false))
+        assertEquals(0x44, PagePalette.inkGrey(52, 0x33, darker = false))
+        // At the ends of the scale it stays on the panel.
+        assertEquals(0, PagePalette.inkGrey(3, 0, darker = true))
+        assertEquals(255, PagePalette.inkGrey(250, 255, darker = false))
+        for (v in 0..255) assertEquals("$v", 0, PagePalette.inkGrey(v, 255, darker = true) % 17)
+    }
+
     private fun contrast(a: Int, b: Int): Double {
         val la = luminance(a)
         val lb = luminance(b)

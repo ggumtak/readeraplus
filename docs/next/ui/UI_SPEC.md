@@ -1152,7 +1152,7 @@ internal object StatusText {
 - **Highlights:** allocate the `ArrayList` **lazily**, only when a highlight overlaps the page; otherwise `emptyList()`.
 - **Result:** `val changed = status.update(settings, inputs, trackPx)`, then
   `PageDecor(hl, bookmarked, status.decor, status.decor.version)`.
-  `trackPx = viewW − 2·round(12dp) − 2·round(rCap + rDot)` (§5.4).
+  `trackPx = viewW − 2·round(12dp) − 2·round(rCap + rDot)` (§5.4; **[2026-10-05]** `viewW − 2·round(7dp) − dot`, below).
 - **`sameDecor(a, b)`:** today's highlight and bookmark comparison, plus `a.statusVersion == b.statusVersion`.
 - **Episodes:** `scheduleEpisodes()` when `settings.shows(StatusItem.EPISODE)`, in `afterOpen`, `reopenDocument` and
   `episodeLabel`.
@@ -1215,6 +1215,13 @@ internal fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Floa
   `ellipsizedHeader`. So `TextUtils.ellipsize` runs only when the title or its width changes (about once per chapter).
 - **Worked example:** 40 dp side margins → `w = 280dp`, gap 11 dp. Left `123 / 3614` (55 dp), centre = chapter title,
   right `14:05` (28 dp). The title gets `280 − 2·(55 + 11) = 148 dp`.
+
+> **[2026-10-05, user] ReadEra's 탐색줄 replaces the table below** ("대놓고 빡!! 하고 보이는 게 아니라 있었구나 하면서
+> 볼 정도로 사진을 최대한 카피해"): a `max(1, round(0.67dp))` line (S25 2 px, Comet 1 px) between two end dots and the
+> position dot, all one size (`ProgressMath.dotD`: S25 14 px, Comet 9 px), outer edges 7 dp from the view's sides,
+> centred 8 dp above its bottom (S25 line rows 2315–2316, dots 2309–2322; Comet 1423 and 1419–1427), in faint greys of
+> the page (`PagePalette.progressLine` / `progressDot`: #D1D1D1 / #B4B4B4 on white, #1F1F1F / #323232 on black, whole
+> e-ink levels on e-ink), never the status colour. The lane and the bands keep their heights. PLAN note at the top.
 
 **`drawProgress`** (`ProgressMath` pure; px at density 2 in brackets). Black on white only (inverted: white on
 black). Order: track, caps, dot.

@@ -639,7 +639,7 @@ chrome_pin() { # 13 (+rawshot), 13b–13h, then rawshot 10a_pre and the bars ope
   show_chrome # the bars open again for 14_reading_settings
 }
 
-# ------------------------------------------------------------------ reader steps: bars in the page colours (13t–13v)
+# ------------------------------------------------------------------ reader steps: bars in the page colours (13t–13w)
 # User feedback 2026-10-05 (PLAN): the bars take the reading theme's colours (흰 바탕, 마루뷰어, 흑백 반전), meet the page
 # with a short shadow (a 1 px line on black), the history row sits on the page colour right above the bottom panel in
 # three fixed columns, and the bars fade in and out unless the system's animations are off. The emulator is a phone:
@@ -725,6 +725,21 @@ chrome_look() { # 13t <tag> <page> <surface> shadow|<edge> (#RRGGBB): the bars i
   raw_check "13t_${t}_hide" "13t_${t}_closed" "13t_${t}_closed2" $((y0 + 48)) "$y1"
   no_relayout "13t_${t}_norelayout" "13t_${t}_a" "13t_${t}_b"
 }
+progress_look() { # 13w <tag> <page> <line> <dots> (#RRGGBB): ReadEra's 탐색줄 (2026-10-05) on 13t's closed page. At
+  # density 2: a 1 px line on row bot − 17 between 9 px end dots (rows bot − 21 … bot − 13, x 14–22 and 697–705), in the
+  # page's faint greys, never the status colour. Checks the left end dot's middle (18, bot − 17), the line at x 40 or
+  # 680 (the position dot covers at most one of them), and paper right above and below the dots (rows bot − 22 and
+  # bot − 12). The line before (row bot − 25 in the status colour, end caps at x 24 and 696) fails the first two.
+  local t=$1 pg=$2 ln=$3 dt=$4 raw="13t_${1}_closed" bot a b ok=1
+  read -r _ bot <<<"$(pv_rows)"
+  near_check "13w_${t}_dot" "$(raw_pixel "$raw" 18 $((bot - 17)))" "$dt" "the left end dot at (18, $((bot - 17)))"
+  a=$(raw_pixel "$raw" 40 $((bot - 17))); b=$(raw_pixel "$raw" 680 $((bot - 17)))
+  [ "$(python3 tools/ci/raw_equal.py near "$a" "$ln" 2)" = PASS ] && ok=0
+  [ "$(python3 tools/ci/raw_equal.py near "$b" "$ln" 2)" = PASS ] && ok=0
+  check "13w_${t}_line" $ok "the line on row $((bot - 17)) is $ln: $a at x 40, $b at x 680"
+  near_check "13w_${t}_above" "$(raw_pixel "$raw" 18 $((bot - 22)))" "$pg" "the paper above the end dot (18, $((bot - 22)))"
+  near_check "13w_${t}_below" "$(raw_pixel "$raw" 18 $((bot - 12)))" "$pg" "the paper below the end dot (18, $((bot - 12)))"
+}
 chrome_lines() { adb logcat -d -s RAPerf:D "*:S" 2>/dev/null | grep -c "chrome $1"; } # RAPerf "chrome <what>" lines
 motion_check() { # 13v: the bars follow the system's animation scale. At 1 they fade in and out (RAPerf "chrome show
   # fade"), end where the instant ones do, and leave no trace on the page; at 0 (this run's default, like 접근성
@@ -758,14 +773,17 @@ motion_check() { # 13v: the bars follow the system's animation scale. At 1 they 
 chrome_looks_run() {
   history_row paper "#FFFFFF"
   chrome_look paper "#FFFFFF" "#F5F5F5" shadow
+  progress_look paper "#FFFFFF" "#D1D1D1" "#B4B4B4"
   LOOK_SET=1
   set_page_look 마루뷰어 off || return 1
   chrome_look maru "#323232" "#3C3C3C" shadow
+  progress_look maru "#323232" "#4B4B4B" "#5A5A5A"
   history_row maru "#323232"
   set_page_look 마루뷰어 on || return 1
   chrome_look invert "#000000" "#1A1A1A" "#333333"
+  progress_look invert "#000000" "#1F1F1F" "#323232"
 }
-chrome_looks() { # 13t–13v, then as 13 left it: 흰 바탕, 흑백 반전 off, the animation scale at 0, the same page with the
+chrome_looks() { # 13t–13w, then as 13 left it: 흰 바탕, 흑백 반전 off, the animation scale at 0, the same page with the
   # bars open, and 10a_pre taken again (bars closed) for 10b
   local rc
   LOOK_SET=0
@@ -1599,7 +1617,7 @@ shot 10_txt_page1 4
 adb shell input keyevent KEYCODE_VOLUME_DOWN; shot 11_txt_page2 2
 adb shell input tap 600 900; shot 12_txt_tap_right 2; rawshot 12b
 step 13_chrome_pin chrome_pin
-# 13t–13v visit 설정 three times and take some 30 shots: more time than the 300 s default
+# 13t–13w visit 설정 three times and take some 30 shots: more time than the 300 s default
 STEP_TIMEOUT=600 step 13t_chrome_looks chrome_looks
 # 13v turns the animator scale to 1 for its fades: a step cut off by its timeout must not leave them on for the rest
 adb shell settings put global animator_duration_scale 0
