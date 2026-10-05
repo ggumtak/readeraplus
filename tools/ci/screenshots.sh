@@ -1017,7 +1017,8 @@ scroll_on() { # 60: the sample EPUB switched to 스크롤 by 넘기는 방식, t
   dump && log "60: 넘기는 방식 reads '$(row_value "넘기는 방식")'"
   leave_settings || return 1
   shot 60_scroll_on 2; perf_mark 60b
-  # Scroll mode logs no `RAPerf show` line yet: position checks 60/66/68/69 are logged for the eye, not CHECKed.
+  # Scroll settles log `RAPerf show` lines too, but the swipe-driven positions depend on the emulator's touch timing:
+  # the position checks 60/66/68/69 stay logged for the eye, not CHECKed.
   log "60: first_is 60a 60b: $(python3 tools/ci/perf_log.py first_is 60a 60b) (log only)"
 }
 scroll_moves() { # 61–66 in the scroll mode set by 60
@@ -1075,17 +1076,21 @@ scroll_release() { # 67: 스크롤 움직임 (넘기기·터치·키, shown in S
   open_turning_page || return 1
   pick_setting "스크롤 움직임" "손을 떼면 이동" || return 1
   fresh_reader sample.epub application/epub+zip
-  adb shell input swipe 360 1000 360 700 1500
+  # ≈ 750 px/s: well over the step threshold (2 × the minimum fling velocity, 200 px/s at density 2), so the release
+  # always steps one screen; 1500 ms (200 px/s) sat on the threshold and landed on a page start only some runs.
+  adb shell input swipe 360 1000 360 700 400
   shot 67_step_release 2; perf_mark 67
 }
 scroll_round_trip() { # 68: ⋮ → 페이지로 보기 (the page holds the old top line); 69: ⋮ → 스크롤로 보기 (the same top line)
   on_top ReaderActivity || { log "68: 67 left no book open, reopening it"; fresh_reader sample.epub application/epub+zip; }
   reader_more "페이지로 보기" || return 1
   hide_chrome; shot 68_back_to_paged 1; perf_mark 68
-  log "68: first_is 67 68: $(python3 tools/ci/perf_log.py first_is 67 68) (log only)"
+  # Scroll → paged lays nothing out: it shows the fixed page holding the old top line, kept as the anchor (scroll SPEC
+  # §1.15, 868: "contains", not "starts with"); the page starts there only when that line is a page start.
+  log "68: holds 67 68: $(python3 tools/ci/perf_log.py holds 67 68) (log only)"
   reader_more "스크롤로 보기" || return 1
   hide_chrome; shot 69_scroll_again 1; perf_mark 69
-  log "69: same_start 68 69: $(python3 tools/ci/perf_log.py same_start 68 69) (log only)"
+  log "69: same_start 67 69: $(python3 tools/ci/perf_log.py same_start 67 69) (log only)" # the same top line as 67
 }
 scroll_off() { # 69b: 스크롤 움직임 → the default (the row shows only in SCROLL), then ⋮ → 페이지로 보기; logged only
   open_turning_page && pick_setting "스크롤 움직임" "손가락을 따라" # the item reads "손가락을 따라 (기본)" (68aa271; contains)

@@ -10,6 +10,9 @@ Usage (prints "PASS <reason>" or "FAIL <reason>"; never exits non-zero, the CI r
                                 (o:, same section) at the anchor a: of the last show line at mark A
   perf_log.py no_relayout A B   no `show RELAYOUT` line lies between marks A and B (FAIL when B has no show line)
   perf_log.py same_start A B    the last show lines at A and at B start at the same s:/o:
+  perf_log.py holds A B         every show line after mark A, up to mark B (at least one), shows the page that holds the
+                                anchor of the last show line at A (same section, o: at or before it) and keeps that
+                                anchor (a:): a scroll → paged switch shows the fixed page around the old top line
   perf_log.py last A            prints the last show line at mark A ("KIND s:S o:O a:A g:G")
   perf_log.py pv_bounds FILE    "top bottom" of the PageView in screen rows, from `dumpsys activity top` saved in FILE
 The marks are read from $SHOTS_DIR (default "shots").
@@ -91,6 +94,21 @@ def no_relayout(a_lines, b_lines):
     return "PASS", f"no RELAYOUT ({len(new)} show lines between the marks)"
 
 
+def holds(a_lines, b_lines):
+    at_a = shows(a_lines)
+    if not at_a:
+        return "FAIL", "no show line at the first mark"
+    anchor = at_a[-1]
+    new = shows(after(a_lines, b_lines))
+    if not new:
+        return "FAIL", "no show line between the marks"
+    bad = [s for s in new
+           if s.section != anchor.section or s.start > anchor.anchor or s.anchor != anchor.anchor]
+    got = bad[0] if bad else new[-1]
+    return ("FAIL" if bad else "PASS"), (f"page s:{got.section} o:{got.start} a:{got.anchor} ({got.kind}, {len(new)} "
+                                         f"show lines) holds anchor s:{anchor.section} a:{anchor.anchor}")
+
+
 def same_start(a_lines, b_lines):
     a, b = shows(a_lines), shows(b_lines)
     if not a or not b:
@@ -133,7 +151,7 @@ def read(mark):
 
 def main(argv):
     if len(argv) < 2:
-        print("FAIL usage: perf_log.py first_is|no_relayout|same_start A B | last A | pv_bounds FILE")
+        print("FAIL usage: perf_log.py first_is|holds|no_relayout|same_start A B | last A | pv_bounds FILE")
         return
     cmd = argv[0]
     if cmd == "pv_bounds":
@@ -150,7 +168,7 @@ def main(argv):
         s = shows(lines or [])
         print(describe(s[-1]) if s else "none")
         return
-    checks = {"first_is": first_is, "no_relayout": no_relayout, "same_start": same_start}
+    checks = {"first_is": first_is, "holds": holds, "no_relayout": no_relayout, "same_start": same_start}
     if cmd not in checks or len(argv) < 3:
         print(f"FAIL unknown check {cmd!r}")
         return

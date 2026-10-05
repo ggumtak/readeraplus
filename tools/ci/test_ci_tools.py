@@ -131,6 +131,26 @@ class NoRelayoutTest(unittest.TestCase):
         self.assertEqual(perf_log.no_relayout(a, a + [line(2, "RELAYOUT", 0, 0, 0)])[0], "FAIL")
 
 
+class HoldsTest(unittest.TestCase):
+    # CI 68: scroll → paged shows the fixed page around the old top line (scroll SPEC §1.15) and keeps it as the anchor.
+    def test_the_page_around_the_anchor(self):
+        a = [line(1, "TURN", 4, 27, 27)]
+        self.assertEqual(perf_log.holds(a, a + [line(2, "RELAYOUT", 4, 0, 27)])[0], "PASS")
+        self.assertEqual(perf_log.holds(a, a + [line(2, "RELAYOUT", 4, 27, 27)])[0], "PASS")
+        a = [line(1, "TURN", 4, 113, 113)]
+        self.assertEqual(perf_log.holds(a, a + [line(2, "RELAYOUT", 4, 63, 113)])[0], "PASS")
+
+    def test_a_page_past_the_anchor_another_section_or_a_moved_anchor_fails(self):
+        a = [line(1, "TURN", 4, 27, 27)]
+        self.assertEqual(perf_log.holds(a, a + [line(2, "RELAYOUT", 4, 40, 27)])[0], "FAIL")
+        self.assertEqual(perf_log.holds(a, a + [line(2, "RELAYOUT", 3, 0, 27)])[0], "FAIL")
+        result, reason = perf_log.holds(a, a + [line(2, "RELAYOUT", 4, 0, 0)])
+        self.assertEqual(result, "FAIL")
+        self.assertIn("holds anchor s:4 a:27", reason)
+        self.assertEqual(perf_log.holds(a, list(a))[0], "FAIL")
+        self.assertEqual(perf_log.holds([], a)[0], "FAIL")
+
+
 class SameStartTest(unittest.TestCase):
     def test_same_and_different(self):
         a = [line(1, "TURN", 1, 300, 300)]
