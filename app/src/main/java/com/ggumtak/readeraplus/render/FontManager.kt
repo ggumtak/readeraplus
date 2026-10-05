@@ -1,7 +1,10 @@
 package com.ggumtak.readeraplus.render
 
+import android.annotation.TargetApi
 import android.content.Context
 import android.graphics.Typeface
+import android.graphics.fonts.Font
+import android.graphics.fonts.FontFamily
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -204,6 +207,7 @@ object FontManager {
         val dir = File(ctx.filesDir, USER_DIR)
         if (!isDirectChild(uf.file, dir)) return
         if (!uf.file.delete() && uf.file.exists()) Log.w(TAG, "could not delete ${uf.file}")
+        FontRepairs.forget(ctx, uf.file.path)
         synchronized(lock) { dropTypefaces(id) }
         scanGate.invalidate()
     }
@@ -251,16 +255,71 @@ object FontManager {
         }
     }
 
-    private fun buildFile(ctx: Context, info: FontInfo, path: String, w: Int): Typeface? = try {
-        val b = if (info.source == FontSource.BUNDLED) Typeface.Builder(ctx.assets, path) else Typeface.Builder(File(path))
+    /**
+     * One font file as a typeface with the system fallback chain behind it ([FontMath.systemFallback]: serif faces fall
+     * back to the system serif). A file that maps characters to blank glyphs loads from its repaired copy
+     * ([FontRepairs]), so the fallback draws those too. Measuring and drawing share the typeface, so they agree.
+     */
+    private fun buildFile(ctx: Context, info: FontInfo, path: String, w: Int): Typeface? {
+        val fixed = try {
+            FontRepairs.fileFor(ctx, info.source, path)
+        } catch (t: Throwable) {
+            Log.w(TAG, "font check failed: $path", t)
+            null
+        }
+        val fallback = FontMath.systemFallback(info.serif)
+        // A repaired copy that doesn't load (damaged since) leaves the original file, blanks and all.
+        if (fixed != null) buildFace(ctx, info, path, fixed, w, fallback)?.let { return it }
+        return buildFace(ctx, info, path, null, w, fallback)
+    }
+
+    private fun buildFace(ctx: Context, info: FontInfo, path: String, fixed: File?, w: Int, fallback: String): Typeface? = try {
+        if (Build.VERSION.SDK_INT >= 29) buildWithFallback(ctx, info, path, fixed, w, fallback) else buildLegacy(ctx, info, path, fixed, w, fallback)
+    } catch (t: Throwable) {
+        Log.w(TAG, "typeface build failed: ${fixed ?: path}", t)
+        null
+    }
+
+    /** API 29+: what `Typeface.Builder` builds, with [fallback] named explicitly. Throws when the file can't load. */
+    @TargetApi(29)
+    private fun buildWithFallback(ctx: Context, info: FontInfo, path: String, fixed: File?, w: Int, fallback: String): Typeface {
+        val b = when {
+            fixed != null -> Font.Builder(fixed)
+            info.source == FontSource.BUNDLED -> Font.Builder(ctx.assets, path)
+            else -> Font.Builder(File(path))
+        }
         if (info.variable) {
             b.setFontVariationSettings("'wght' $w")
             b.setWeight(w)
         }
-        b.build()
-    } catch (t: Throwable) {
-        Log.w(TAG, "typeface build failed: $path", t)
-        null
+        val font = b.build()
+        return Typeface.CustomFallbackBuilder(FontFamily.Builder(font).build())
+            .setStyle(font.style)
+            .setSystemFallback(fallback)
+            .build()
+    }
+
+    /**
+     * API 26–28: `Typeface.Builder`. Its build() answers null for a file that can't load, but with a fallback name it
+     * answers that system face instead, so the serif chain is asked for only once the file has loaded (API 28 puts the
+     * named chain behind the face; 26–27 may keep the default one).
+     */
+    private fun buildLegacy(ctx: Context, info: FontInfo, path: String, fixed: File?, w: Int, fallback: String): Typeface? {
+        fun builder(): Typeface.Builder {
+            val b = when {
+                fixed != null -> Typeface.Builder(fixed)
+                info.source == FontSource.BUNDLED -> Typeface.Builder(ctx.assets, path)
+                else -> Typeface.Builder(File(path))
+            }
+            if (info.variable) {
+                b.setFontVariationSettings("'wght' $w")
+                b.setWeight(w)
+            }
+            return b
+        }
+        val plain = builder().build() ?: return null
+        if (fallback == FontMath.SANS_FALLBACK) return plain
+        return builder().setFallback(fallback).build() ?: plain
     }
 
     private fun systemTypeface(serif: Boolean, w: Int, italic: Boolean): Typeface {

@@ -846,3 +846,40 @@ S25 분할 화면에서 ReadEra와 나란히: "하단에 … 바가 훨씬 위�
 - 리뷰 수정(문서 · 주석만): e-ink 본문 그림자 설명(위 e-ink 줄 · PLAN · 점검표 11i-9 코멧 칸), 절댓값 맞춤 결과, 2026-10-04 절의 옛
   dx · 농도 표시, `PagePalette.MARU` KDoc에 같은 숫자.
 - 검사: `tools/typecheck.sh` 0, `tools/unittest.sh` OK (1707 tests), CI Python 50개 OK, `bash -n` 통과.
+
+## 한자 빈칸: 나눔명조 TTF · 빈 글리프는 시스템 글꼴로 (2026-10-05, 사용자 지적)
+사용자: "내 거랑 마루뷰어랑 비교한 건데 한자를 아예 못 불러들여오는데..."(S25 두 장, 같은 죄와 벌 EPUB: 마루뷰어 "성(聖)과 속(俗)",
+우리 "성(   )과 속(   )"), "쓰고 있는 글꼴 나눔명조고 둘 다 똑같은 글꼴인데 하나만 안 돼".
+- 원인(확인): `assets/fonts/NanumMyeongjo.otf` · `NanumMyeongjoBold.otf`(네이버 OTF 3.011)는 KS X 1001 한자 4,888자를 모두 cmap에
+  두고 모양 없는 CFF 글리프(`endchar`만, 폭 0.95 em)에 맡긴다(聖 → cid05487, 俗 → cid05537). 、 。 · 강희 부수 · ⓫–⓴도 빈
+  글리프(、 。는 폭 0). Minikin은 cmap에 있는 글자를 첫 글꼴에서 그리므로 시스템 글꼴로 넘어가지 않았고, 측정과 그리기는 같은
+  페인트라 빈칸 폭만 남았다. 마루뷰어의 나눔명조는 같은 디자인의 TTF로 한자가 cmap에 없어 시스템 글꼴(고딕풍)이 그린다.
+  EPUB 파이프라인(글꼴 · @font-face · 숨김 · ruby · 문자 거르기)은 원인이 아니다.
+- 나눔명조: 네이버 TTF 3.011(`NanumMyeongjo.ttf` 3,839,464 B sha256 a21faae8…, `NanumMyeongjoBold.ttf` 4,183,592 B cb47c5d0…;
+  Debian fonts-nanum 20200506-1 · npm @kfonts/nanum-myeongjo 0.2.0과 같은 바이트, OFL, 수정 없음)로 바꾸고 OTF는 뺐다
+  (`FontCatalog`, `FONTS.txt`). APK +4.5 MB. 글자 폭은 같다(가 0.95, 공백 0.30, A 0.727 em). 줄 상자는 ascent/descent 0.92/0.23
+  (전에는 0.80/0.30)이라 기본 줄 간격에서 글자가 ≈ 0.04 em 내려간다. 새 파일에도 빈 글리프는 U+3164(채움 문자, 정상)뿐.
+- 대체 글꼴 명시(`FontManager.buildFile`, `FontMath.systemFallback`): 명조 · 바탕 글꼴은 시스템 "serif" 체인(Noto Serif CJK가
+  있으면 명조풍 한자, 없으면 기본 체인), 고딕은 "sans-serif". API 29+ `Typeface.CustomFallbackBuilder(...).setSystemFallback`,
+  26–28은 파일이 열린 것을 확인한 뒤 `Typeface.Builder.setFallback`(실패하면 지금처럼 null → 기본 글꼴). 글꼴(파일 · 굵기 · 기울임)마다
+  한 번 만들어 캐시한다.
+- 빈 글리프 고치기(`HollowGlyphs`, `FontRepairs`): 글꼴 파일을 처음 쓸 때 첫 face의 cmap과 윤곽(TrueType 빈 `glyf`/윤곽 없는
+  머리, CFF `[폭] endchar`)을 한 번 살핀다. 잉크가 있어야 할 글자가 빈 글리프에 매여 있으면 그 글자만 뺀 cmap((3,10) 형식 12,
+  들어가면 (3,1) 형식 4, (0,5) 이체자 표는 그대로)을 붙인 사본을 cacheDir/fonts-fixed에 만들어 그 사본을 연다. 띄어쓰기 · 제어 ·
+  서식 · 결합 기호 · 채움 문자 · 빈 점자 · 사용자 영역, 기본 GSUB 기능이 바꾸는 글리프(자모 조합 · 합자 입력)는 그대로, 색 ·
+  비트맵 글꼴과 CFF2, 겹치는 cmap · 작업 한도를 넘는 GSUB 같은 깨진 표가 있는 글꼴은 손대지 않는다. 판정은 파일(애셋: 설치, 사용자 글꼴: 크기 · 수정 시각)과 규칙 판(`FontRepairs.VERSION`)
+  이름으로 남아(고칠 것 없으면 빈 `.ok`) 다음 실행은 stat 한두 번이다. 대상: 마루 부리 6,806 · SUIT 8,504 · 바른바탕 8,822 음절(KS X
+  1001 밖: 똠 · 됬 · 햏 · 갅 …), 나눔바른고딕 ‐ ∥, 이롭게 바탕 €, 같은 함정의 사용자 글꼴(네이버 OTF 나눔명조를 직접 넣은 경우도).
+  배포하는 애셋은 그대로이고 사본은 기기 밖으로 나가지 않는다(`FONTS.txt`에 적음). JVM에서 한 번 살피는 데 4–36 ms.
+- 쪽 수: 빈 글자의 폭이 시스템 글꼴 폭으로, 명조 글꼴의 대체 글꼴 폭이 serif 쪽으로 바뀌므로 `LayoutKeys.ALGO_VERSION` 2.
+  업데이트 뒤 책마다 쪽 수를 한 번 다시 센다(나눔명조는 애셋 경로가 바뀌어 어차피 키가 바뀐다). TXT 색인 · EPUB 분할은 글꼴과
+  무관해 그대로. 생성 표지는 정한 대로(`CoverKeys`) 글꼴이 판본에 없어 이미 만든 표지는 캐시 비우기까지 그대로다.
+- 테스트: `HollowGlyphsTest`(합성 TrueType · CFF · TTC · GSUB · 색 글꼴, cmap 다시 쓰기, 형식 4가 넘칠 때, 이체자 표, 체크섬, APK 안
+  위치에서 읽기; 번들 글꼴: 나눔명조 TTF에 한자 없음, 모든 번들 글꼴에 빈 한자 · 、 。 없음, 글꼴별 빈 글자 수와 고친 뒤 0, 명조는
+  serif 체인), CI Python `ink` · 글리프 샘플 테스트. 옛 OTF로 따로 돌려 빈 한자 4,888자를 찾고 고친 사본은 0(fontTools로도 확인).
+- CI 99(PLAN §5.3 45b): glyphs-hanja.txt · .epub(나눔명조), 학교안심 바른바탕으로 같은 EPUB과 glyphs-hangul.txt, 첫 쪽 윗부분
+  (`top_rows`)에 잉크(`raw_equal.py ink` 2000 px 이상, 폭 300 px 이상). U1 묶음 뒤, 복원 전에 돈다. 점검표 §11j, PLAN 맨 위 지시.
+- 이 작업에 없는 것: 사용자가 같은 말에서 함께 요청한 위 상태 줄 글꼴 · 색과 글자 그림자 맞추기는 다른 작업이다. 코멧 롬에 CJK
+  글꼴이 없으면 한자가 □로 나온다(점검표 11j-2에서 확인, 그때 한자 대체 글꼴을 앱에 넣는다).
+- 검사: `tools/typecheck.sh` 0, `tools/unittest.sh` OK (1726 tests; 첫 전체 실행에서 PageImagesTest 할당 측정이 한 번 흔들려 다시
+  돌려 통과), CI Python 52개 OK, `bash -n` 통과.

@@ -1643,6 +1643,45 @@ page_thumbs() { # guarded: before W2 lands the ⋮ has no 페이지 미리보기
   back
 }
 
+# ------------------------------------------------------------------ 99 glyph fallback (2026-10-05, 한자 빈칸)
+
+ink_check() { # ink_check <n> <raw> <Y0> <Y1> <what>: those rows hold drawn text (raw_equal.py ink: 2000+ px off the
+  # paper in a box 300+ px wide), not only paper as a line of blank glyphs leaves them (聖 / 俗 in the old 나눔명조 OTF)
+  local r; r=$(python3 tools/ci/raw_equal.py ink "shots/$2.raw" "$3" "$4" 2000 300)
+  [ "${r%% *}" = INK ]; check "$1" $? "$5: ${r:-error} rows $3..$4"
+}
+pick_font() { # pick_font "name": the quick options' (⚙) 글꼴 over the open book → that font in its drop-down list
+  open_popup || return 1
+  tap_label "글꼴" || { close_popup; return 1; }
+  sleep 2
+  if ! tap_label "$1"; then { scroll_find "$1" && tap_xy "$XY"; } || { close_popup; return 1; }; fi
+  sleep 3
+  close_popup
+}
+glyph_fallback() { # 99: characters a font maps to blank glyphs are drawn by the system font. The glyph samples
+  # (make_samples.py) open with paragraphs made only of them, so the top rows of the first page (top_rows) hold ink only
+  # if they are drawn: KS X 1001 Hanja in 나눔명조 (the default: the TTF leaves Hanja to the system font) as TXT and EPUB
+  # (99a, 99b), then in 학교안심 바른바탕 (a bundled serif without Hanja, 99c) and its blank syllables outside KS X 1001
+  # (똠 됬 햏 …, drawn through the repaired copy, 99d). Back to 나눔명조 at the end. Runs after U1: the samples it opens
+  # join the library, which the U1 steps scroll.
+  adb push samples/glyphs-hanja.txt samples/glyphs-hanja.epub samples/glyphs-hangul.txt /sdcard/Download/ >/dev/null
+  local y0 y1
+  fresh_reader glyphs-hanja.txt text/plain
+  read -r y0 y1 <<<"$(top_rows)"
+  shot 99a_hanja_txt 0; rawshot 99a
+  ink_check 99a 99a "$y0" "$y1" "나눔명조, Hanja-only TXT"
+  fresh_reader glyphs-hanja.epub application/epub+zip
+  shot 99b_hanja_epub 0; rawshot 99b
+  ink_check 99b 99b "$y0" "$y1" "나눔명조, Hanja-only EPUB"
+  pick_font "학교안심 바른바탕" || return 1
+  shot 99c_hanja_epub_bareon 0; rawshot 99c
+  ink_check 99c 99c "$y0" "$y1" "학교안심 바른바탕, Hanja-only EPUB"
+  fresh_reader glyphs-hangul.txt text/plain
+  shot 99d_hangul_bareon 0; rawshot 99d
+  ink_check 99d 99d "$y0" "$y1" "학교안심 바른바탕, syllables outside KS X 1001 (TXT)"
+  pick_font "나눔명조"
+}
+
 # ------------------------------------------------------------------ U1 helpers (R §7)
 
 top_is() { # top_is <Activity> <step>: the resumed activity, from dumpsys
@@ -1881,6 +1920,9 @@ back; sleep 2; top_is LibraryActivity 78_closed
 adb shell input keyevent KEYCODE_HOME; sleep 1; adb shell am force-stop $PKG
 adb shell am start -W -f 0x10100000 $launcher_intent | tee -a shots/steps.txt
 sleep 5; shot 78_closed_then_recents 0; top_is LibraryActivity 78_closed_then_recents
+
+log "glyph fallback: Hanja and blank syllables drawn by the system font (2026-10-05)"
+step 99_glyph_fallback glyph_fallback
 
 log "restore offer (S §3.9), last: pm clear wipes everything"
 STEPS_UNTIL=$((${STEPS_UNTIL:-3000} + 600)) step 95_98_restore restore_offer

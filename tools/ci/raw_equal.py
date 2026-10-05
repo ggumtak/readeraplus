@@ -8,6 +8,8 @@ Usage (prints one word or line; never exits non-zero, the CI run is best effort)
   raw_equal.py darker A B N         PASS when colour A is at least N levels darker than B (channel mean), else FAIL
   raw_equal.py --uniform A.raw Y0 Y1  UNIFORM when rows [Y0, Y1) are one colour (the page's paper: the themes are flat),
                                     MIXED <n> bbox x0,y0-x1,y1 (n pixels differ from the first one), or BADSIZE
+  raw_equal.py ink A.raw Y0 Y1 N W  INK <n> bbox … when at least N pixels of rows [Y0, Y1) are off the paper (their
+                                    first pixel) and their box is at least W wide (drawn text), else NOINK <n> …, BADSIZE
 """
 import struct
 import sys
@@ -93,11 +95,28 @@ def uniform(a, y0, y1):
     return f"MIXED {count} bbox {x0},{y0d}-{x1},{y1d}"
 
 
+def ink(a, y0, y1, min_px, min_w):
+    """INK when rows y0..y1 hold drawn text: at least min_px pixels off the paper colour (the rows' first pixel, as in
+    uniform) in a box at least min_w wide; else NOINK with the same count and box. A line of glyphs that draw nothing
+    (CI 99: 聖 in the old 나눔명조 OTF) leaves only paper: NOINK 0."""
+    r = uniform(a, y0, y1)
+    if r == "BADSIZE":
+        return r
+    if r == "UNIFORM":
+        return "NOINK 0"
+    n = int(r.split()[1])
+    box = r.split()[3]
+    width = int(box.split("-")[1].split(",")[0]) - int(box.split(",")[0]) + 1
+    return ("INK " if n >= min_px and width >= min_w else "NOINK ") + r[len("MIXED "):]
+
+
 def main(argv):
     mode = argv[0] if argv else ""
     try:
         if mode == "--uniform":
             return uniform(argv[1], int(argv[2]), int(argv[3]))
+        if mode == "ink":
+            return ink(argv[1], int(argv[2]), int(argv[3]), int(argv[4]), int(argv[5]))
         if mode == "pixel":
             return pixel(argv[1], int(argv[2]), int(argv[3]))
         if mode == "near":

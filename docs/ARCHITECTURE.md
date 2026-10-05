@@ -303,6 +303,13 @@ as you like, same package & signatures).
     `setFontVariationSettings("'wght' N")`. Static fonts: use the bold file when `weight ≥ 600` and one
     exists, else the regular file. Italic: `Typeface.create(base, weight, true)` (API 28+) or no-op (the
     measurer applies skew). Unknown id → default (`FontCatalog.DEFAULT_ID`, `nanummyeongjo` since R2).
+    **2026-10-05 (한자 빈칸):** every face gets the system fallback chain explicitly (API 29+
+    `Typeface.CustomFallbackBuilder(...).setSystemFallback`, 26–28 `Typeface.Builder.setFallback` once the file
+    has loaded): `"serif"` for serif faces, `"sans-serif"` for the rest (`FontMath.systemFallback`). A font file
+    that maps characters to glyphs without an outline (`HollowGlyphs`: the old 나눔명조 OTF's 4,888 Hanja, the
+    syllables outside KS X 1001 in 마루 부리 / SUIT / 바른바탕) loads from a private copy whose cmap leaves them out
+    (`FontRepairs`, cacheDir/fonts-fixed, one scan per file and install), so the system font draws them. 나눔명조
+    ships as Naver's TTF (no Hanja in its cmap, like MaruViewer's).
   - `syntheticStroke(id, weight, sizePx)`: static fonts only. `w = weight` minus 300 if the bold file is used
     (i.e. bold file ≈ 700), result `max(0, (w - 400) / 100f) * 0.012f * sizePx` (so 900 ≈ 6% of size).
   - `importFont(context, uri)`: copy via ContentResolver into `filesDir/fonts/` (validate the sfnt header

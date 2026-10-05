@@ -190,6 +190,16 @@ internal object FontMath {
         return if (bold) minOf(900, b + 300) else b
     }
 
+    /** The system's default fallback chain (what `Typeface.Builder` puts behind a face unless told otherwise). */
+    const val SANS_FALLBACK = "sans-serif"
+
+    /**
+     * The system fallback chain behind a font file's own glyphs (Hanja the font lacks, symbols, other scripts): a serif
+     * (명조/바탕) face gets the serif chain, whose Hanja are Noto Serif CJK's on devices that have it (fonts.xml
+     * `fallbackFor="serif"`; elsewhere the chain is the default one), a sans face the default chain.
+     */
+    fun systemFallback(serif: Boolean): String = if (serif) "serif" else SANS_FALLBACK
+
     /** Static fonts switch to their bold file from 600 up. */
     fun usesBoldFile(weight: Int, hasBoldFile: Boolean): Boolean = hasBoldFile && weight >= 600
 

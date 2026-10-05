@@ -46,8 +46,12 @@ object LayoutKeys {
      * half is enforced by `LayoutGoldenTest` (test/.../engine), which hashes the layout of a fixed corpus and compares
      * it with [GOLDEN_HASH]: update both together. Measurer changes (FontManager, AndroidTextMeasurer, the synthetic
      * stroke's advances or line metrics) are not covered by that test: whoever makes one bumps this by hand.
+     * 2 (2026-10-05, 한자 빈칸): characters a font maps to blank glyphs are measured in the system font
+     * (`HollowGlyphs`: a blank 聖 was 0.95 em in 나눔명조 OTF, an empty Hangul syllable as wide as 가 in 마루 부리 /
+     * SUIT / 바른바탕), and serif faces fall back to the system serif (other fallback advances). 나눔명조's own key also
+     * changed with its file (OTF → TTF: taller line box metrics). Every cached page count is counted once again.
      */
-    const val ALGO_VERSION = 1
+    const val ALGO_VERSION = 2
 
     /** Hash of `LayoutGoldenTest`'s layouts at [ALGO_VERSION]; see there. */
     const val GOLDEN_HASH = "071717a86d158ac8"

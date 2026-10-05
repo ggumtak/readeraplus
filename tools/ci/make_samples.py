@@ -130,11 +130,61 @@ def write_epub(name):
         for n, body in enumerate(chapters, 1):
             z.writestr(f"OEBPS/Text/ch{n}.xhtml", xhtml(f"제{n}장", body))
 
+# CI 99 (2026-10-05, 한자 빈칸: 나눔명조 OTF drew 聖 and 俗 as blanks). Each glyph sample starts with paragraphs made
+# only of characters some font maps to blank glyphs, so the top rows of its first page hold ink only if they are drawn;
+# the reported line follows for the eye. HANJA: KS X 1001 Hanja (blank in the old 나눔명조 OTF, left to the system font
+# by the TTF); RARE_HANGUL: syllables outside KS X 1001 (blank in 학교안심 바른바탕, repaired at run time).
+HANJA = "聖俗善惡科學形而上人間社會歷史文化自由平等罪罰良心理性信仰"
+RARE_HANGUL = "똠됬햏뷁펲믜쨰쌰얬갅"
+GLYPH_TAIL = ["선과 악, 성(聖)과 속(俗), 과학과 형이상학의", "漢字 𠀀"]
+
+
+def glyph_paragraphs(chars, count=4, length=40):
+    """count paragraphs of length characters cycling through chars (no spaces: nothing but those glyphs)."""
+    return ["".join(chars[(7 * i + k) % len(chars)] for k in range(length)) for i in range(count)]
+
+
+def write_glyph_txt(name, chars):
+    with open(os.path.join(OUT, name), "w", encoding="utf-8", newline="") as f:
+        f.write("\r\n\r\n".join(glyph_paragraphs(chars) + GLYPH_TAIL) + "\r\n")
+
+
+def write_glyph_epub(name, chars):
+    body = "".join(f"<p>{p}</p>" for p in glyph_paragraphs(chars) + GLYPH_TAIL)
+    page = f'''<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="ko">
+<head><title>漢字</title></head><body>{body}</body></html>'''
+    nav = '''<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="ko">
+<head><title>목차</title></head><body><nav epub:type="toc"><ol><li><a href="Text/ch1.xhtml">漢字</a></li></ol></nav></body></html>'''
+    opf = '''<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:identifier id="uid">readeraplus-glyphs</dc:identifier><dc:title>한자 샘플 EPUB</dc:title><dc:language>ko</dc:language>
+</metadata>
+<manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+<item id="ch1" href="Text/ch1.xhtml" media-type="application/xhtml+xml"/></manifest>
+<spine><itemref idref="ch1"/></spine>
+</package>'''
+    with zipfile.ZipFile(os.path.join(OUT, name), "w") as z:
+        z.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+        z.writestr("META-INF/container.xml", '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>')
+        z.writestr("OEBPS/content.opf", opf)
+        z.writestr("OEBPS/nav.xhtml", nav)
+        z.writestr("OEBPS/Text/ch1.xhtml", page)
+
+
 print("sample-cp949.txt", write_txt("sample-cp949.txt", 12, 40, "cp949"))
 print("sample-utf8.txt", write_txt("sample-utf8.txt", 3, 20, "utf-8"))
 print("big-cp949.txt", write_txt("big-cp949.txt", 900, 110, "cp949"))
 write_epub("sample.epub")
 print("sample.epub", os.path.getsize(os.path.join(OUT, "sample.epub")))
+write_glyph_txt("glyphs-hanja.txt", HANJA)
+write_glyph_epub("glyphs-hanja.epub", HANJA)
+write_glyph_txt("glyphs-hangul.txt", RARE_HANGUL)
+print("glyphs-hanja.txt glyphs-hanja.epub glyphs-hangul.txt")
 
 
 def restore_backup(epub_size):

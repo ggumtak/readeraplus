@@ -21,6 +21,22 @@
 >   (밝기 211 → 215), 본문 그림자는 전처럼 그리되 그림자 픽셀의 ≈ 5–7 %가 패널 한 단계 어둡다(가장자리 포함, 두 단계 이상은
 >   없다). 점검표 11i-9.
 >
+> **사용자 지적 2026-10-05: 한자가 빈칸("성(   )과 속(   )", 마루뷰어와 같은 죄와 벌 EPUB), "둘 다 똑같은 글꼴(나눔명조)인데
+> 하나만 안 돼".** 원인은 글꼴 파일: 우리 나눔명조 OTF(3.011)는 KS X 1001 한자 4,888자(와 、 。)를 cmap에 두고 모양 없는 글리프에
+> 맡겨, Minikin이 시스템 글꼴로 넘어가지 않고 0.95 em 빈칸을 그렸다. 마루뷰어의 나눔명조는 한자가 아예 없는 TTF라 시스템 글꼴이
+> 그린다(그래서 조금 굵은 고딕풍).
+> - 나눔명조 = 네이버 TTF 3.011(Debian fonts-nanum과 같은 바이트, OFL, 수정 없음). 글자 폭은 OTF와 같고 줄 상자 수치만 다르다
+>   (ascent/descent 0.92/0.23 em, 전에는 0.80/0.30: 기본 줄 간격에서 글자가 줄 안에서 ≈ 0.04 em 내려간다).
+> - 모든 글꼴에 시스템 대체 글꼴을 명시한다(`FontMath.systemFallback`): 명조 · 바탕은 "serif"(기기에 Noto Serif CJK가 있으면 명조풍
+>   한자, 없으면 기본 체인), 고딕은 "sans-serif". API 29+ `CustomFallbackBuilder`, 26–28 `Typeface.Builder.setFallback`.
+> - 모양 없는 글리프에 글자를 맡긴 글꼴(마루 부리 · SUIT · 학교안심 바른바탕의 KS X 1001 밖 음절 — 똠 · 됬 · 햏 · 갅 —, 나눔바른고딕
+>   ‐ ∥, 이롭게 바탕 €, 같은 함정의 사용자 글꼴)은 첫 사용 때 한 번 살펴 그 글자를 뺀 cmap 사본을 앱 캐시에 만들어 쓴다
+>   (`HollowGlyphs`, `FontRepairs`; 띄어쓰기 · 채움 문자 · 결합 기호 · 기본 GSUB가 바꾸는 글리프는 그대로). 측정과 그리기가 같은
+>   글꼴을 쓰므로 쪽 나눔이 그려지는 글자와 맞는다. 쪽 수 캐시는 `LayoutKeys.ALGO_VERSION` 2로 한 번 다시 센다.
+> - EPUB 쪽은 원인이 아니었다(글꼴 · @font-face · 숨김을 읽지 않고 한자를 거르지 않는다). 생성 표지는 정한 대로 판본에 글꼴을
+>   넣지 않아 이미 만든 표지는 캐시 비우기 전까지 그대로다.
+> - CI 99(§5.3): glyphs-hanja.txt / .epub, glyphs-hangul.txt 첫 쪽 윗부분에 잉크. 점검표 §11j.
+>
 > **사용자 지시 2026-10-05: 위 상태 줄은 마루뷰어처럼 맨 위(카메라 띠 안), 본문 자리는 그대로.**
 > 마루뷰어 S25 화면과 함께: "마루처럼 아예 이렇게 맨 위까지 올라가는 건 안 돼?", ReadEra 화면과 함께: "ㄴㄴ 좀 가려도 되니까
 > 책갈피 딱 붙여 readera처럼 오른쪽 위 파란색으로 사이즈도 더 작게해 지금보다", "그리고 마루뷰어처럼 윗줄은 좌우여백에 영향을
@@ -1329,6 +1345,7 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 43 | `57_dialog_no_reflow` | fullscreen on; `rawshot 57_open`, wait 3 s, `rawshot 57_still_b` (CHECK `57_still` EQUAL); one warm-up 페이지 이동 open/cancel; `rawshot 57_before`; 페이지 이동 open (number pad seen), cancel (dialog gone, one more BACK if not); `rawshot 57_after` | `raw_equal 57_before 57_after` EQUAL; **[Δ]** `no_relayout`. The cold first frame differs from every redraw by a few hundred edge pixels per screen (CI 28–32, rasterization, no relayout): logged as `57_firstframe (info)` | A (H4) |
 | 44 | `92_thumbs`, `93_thumbs_next` (W2) | ⋮ → 페이지 미리보기 (페이지 썸네일 until the 2026-10-04 review); swipe | 4×3 (or 5×3) grid, current page framed, labels = footer numbers, marks; next grid page | N |
 | 45 | `70_before` … `78_closed_then_recents` | R §7 block (kill, force-stop, history intent `-f 0x10100000`, `install -r`, second book + kill, don't-keep-activities, Back control) | `top_is ReaderActivity` + `same` PASS for 71–77; 78: `top_is LibraryActivity` | R (H1) |
+| 45b | `99a_hanja_txt`, `99b_hanja_epub`, `99c_hanja_epub_bareon`, `99d_hangul_bareon` (2026-10-05) | push the glyph samples (make_samples.py: 4 paragraphs of only KS X 1001 Hanja / only syllables outside KS X 1001, then "성(聖)과 속(俗)" and "漢字 𠀀"); open glyphs-hanja.txt, glyphs-hanja.epub (나눔명조); ⚙ › 글꼴 › 학교안심 바른바탕; glyphs-hangul.txt; back to 나눔명조. After the U1 block: the samples join the library | **CHECK 99a–d: ink in `top_rows` (`pv + 80 … pv + 680`, `raw_equal.py ink`: 2000+ px off the paper in a box 300+ px wide)**; a page of blank glyphs (the old 나눔명조 OTF's Hanja, 바른바탕's 똠 before the repaired copy) is paper only | user |
 | 46 | `95_restore_offer`, `96_restored`, `97_restored_margins`, `98_backup_page` | S §3.9 (crafted backup, `pm clear`, appops) — **last** | the offer dialog; 96: 8 s after 복원, drawer → 읽고 있는 책 shelf: toolbar title 읽고 있는 책, drawer closed, 샘플 EPUB listed; "좌우 여백 0" and "상하 여백 0" from a legacy 18/16 backup; the 자동 백업 section (설정 from the library → 백업·복원: the list 설정 shows over a book has no 백업·복원) | S, A |
 
 Every shot: `logcat -b crash` is empty and there is no "draw failed".

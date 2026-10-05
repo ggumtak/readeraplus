@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for the pure CI helpers: perf_log.py, find_node.py, ui_rows.py, hub_rows.py, raw_equal.py (with
---uniform) and the crafted restore backup of make_samples.py. Run from the repository root:
+--uniform and ink), the glyph samples and the crafted restore backup of make_samples.py. Run from the repository root:
 python3 -m unittest tools/ci/test_ci_tools.py"""
 import json
 import os
@@ -558,6 +558,55 @@ class RawEqualTest(unittest.TestCase):
             out = subprocess.run([sys.executable, os.path.join(HERE, "raw_equal.py"), "--uniform", a, "1", "4"],
                                  capture_output=True, text=True)
             self.assertEqual(out.stdout.strip(), "UNIFORM")
+
+    def test_ink_is_drawn_text_across_the_line(self):
+        # CI 99: a page of Hanja the font draws blank is paper only; drawn text puts many pixels across the line.
+        with tempfile.TemporaryDirectory() as d:
+            a, b = (os.path.join(d, n) for n in ("a.raw", "b.raw"))
+            raw_image(a, 4, 6, [255, 255, 255, 0, 255, 255])
+            self.assertEqual(raw_equal.ink(a, 0, 3, 1, 1), "NOINK 0")
+            self.assertEqual(raw_equal.ink(a, 0, 6, 4, 4), "INK 4 bbox 0,3-3,3")
+            self.assertEqual(raw_equal.ink(a, 0, 6, 5, 4), "NOINK 4 bbox 0,3-3,3")  # too few pixels
+            self.assertEqual(raw_equal.ink(a, 0, 9, 1, 1), "BADSIZE")
+            # One dot (a stray mark, a tofu corner) is too narrow.
+            with open(a, "rb") as f:
+                data = bytearray(f.read())
+            data[16 + (1 * 4 + 2) * 4] = 0  # (x 2, y 1) after the 16-byte header
+            with open(b, "wb") as f:
+                f.write(bytes(data))
+            self.assertEqual(raw_equal.ink(b, 0, 3, 1, 2), "NOINK 1 bbox 2,1-2,1")
+            out = subprocess.run([sys.executable, os.path.join(HERE, "raw_equal.py"), "ink", b, "0", "6", "5", "4"],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.stdout.strip(), "INK 5 bbox 0,1-3,3")
+            self.assertEqual(raw_equal.main(["ink", b, "0"]), "BADSIZE")
+
+
+class GlyphSamplesTest(unittest.TestCase):
+    def test_glyph_samples_start_with_only_those_characters(self):
+        # CI 99 checks ink in the top rows of the first page: they must hold nothing but the characters under test.
+        with tempfile.TemporaryDirectory() as d:
+            out = subprocess.run([sys.executable, os.path.join(HERE, "make_samples.py"), d],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            with open(os.path.join(d, "glyphs-hanja.txt"), encoding="utf-8", newline="") as f:
+                hanja = [p for p in f.read().split("\r\n") if p]
+            with open(os.path.join(d, "glyphs-hangul.txt"), encoding="utf-8", newline="") as f:
+                hangul = [p for p in f.read().split("\r\n") if p]
+            for p in hanja[:4]:
+                self.assertEqual(len(p), 40)
+                # KS X 1001 Hanja: two bytes each in EUC-KR (the old 나눔명조 OTF drew all 4,888 blank).
+                self.assertTrue(all(0x4E00 <= ord(c) <= 0x9FFF and len(c.encode("euc-kr")) == 2 for c in p), p)
+            for p in hangul[:4]:
+                # Syllables outside KS X 1001's 2,350 (EUC-KR spells them with 8 bytes): blank in 학교안심 바른바탕.
+                self.assertTrue(all(0xAC00 <= ord(c) <= 0xD7A3 and len(c.encode("euc-kr")) == 8 for c in p), p)
+            self.assertIn("성(聖)과 속(俗)", hanja[4])
+            self.assertEqual(hanja[5], "漢字 \U00020000")
+            import zipfile
+            with zipfile.ZipFile(os.path.join(d, "glyphs-hanja.epub")) as z:
+                self.assertEqual(z.read("mimetype"), b"application/epub+zip")
+                page = z.read("OEBPS/Text/ch1.xhtml").decode("utf-8")
+            body = page[page.index("<body>") + 6:]
+            self.assertTrue(body.startswith("<p>" + hanja[0] + "</p>"), body[:60])
 
 
 class RestoreBackupTest(unittest.TestCase):
