@@ -148,7 +148,6 @@ class CompactSettingsTest {
     @Test
     fun defaultChoiceUndoesAnyPreset() {
         val d = ReaderSettings()
-        assertTrue(StyleChoice.DEFAULT_CHOICE.startsWith("기본 ("))
         for (p in StylePreset.entries) {
             // A preset with the user's own size, margins, 흑백 반전 and TXT options …
             val s = p.applyTo(d.copy(fontSizeSp = 23.5f, marginLeftDp = 30, invert = true, txtBlankLines = 2))

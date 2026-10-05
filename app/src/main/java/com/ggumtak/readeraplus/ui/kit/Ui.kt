@@ -510,12 +510,22 @@ fun Context.popupMenu(anchor: View, items: List<MenuItem>, widthDp: Int = 240): 
     return popup
 }
 
-/** Single-choice list dialog. */
-fun Context.chooser(title: String, options: List<String>, selected: Int, onPick: (Int) -> Unit) {
-    alert().setTitle(title)
+/**
+ * Single-choice list dialog. [extraButton] adds a button just left of 취소 (e.g. "기본" in 추천 스타일): it closes the
+ * dialog and runs [onExtra].
+ */
+fun Context.chooser(
+    title: String, options: List<String>, selected: Int,
+    extraButton: String? = null, onExtra: (() -> Unit)? = null,
+    onPick: (Int) -> Unit,
+) {
+    val b = alert().setTitle(title)
         .setSingleChoiceItems(options.toTypedArray(), selected) { d, which -> d.dismiss(); onPick(which) }
-        .setNegativeButton("취소", null)
-        .showNoAnim()
+    // The platform orders the bar [negative][positive] at the right edge: the extra one is the negative so it sits
+    // right next to 취소.
+    if (extraButton != null) b.setNegativeButton(extraButton) { _, _ -> onExtra?.invoke() }.setPositiveButton("취소", null)
+    else b.setNegativeButton("취소", null)
+    b.showNoAnim()
 }
 
 /**

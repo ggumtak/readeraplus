@@ -220,15 +220,16 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         return StyleChoice.selectedUser(r, list)?.name ?: if (list.isEmpty()) "없음" else "${list.size}개 저장됨"
     }
 
-    /** One tap: 기본 or a preset's typography at once; the rows it changed are rebuilt. 기본 comes first, so a preset can be undone. */
+    /**
+     * One tap: a preset's typography at once; the rows it changed are rebuilt. The 기본 button next to 취소 puts the
+     * defaults' look back, so a preset can always be undone.
+     */
     private fun chooseStyle() {
         val all = StylePreset.entries
-        val r = Settings.reader
-        val sel = StyleChoice.selected(r)?.let { all.indexOf(it) + 1 } ?: if (StyleChoice.isDefault(r)) 0 else -1
-        val items = listOf(StyleChoice.DEFAULT_CHOICE) + all.map { "${it.label} (${it.description})" }
-        ctx.chooser("추천 스타일", items, sel) { i ->
-            applyStyle { if (i == 0) StyleChoice.applyDefault(it) else all[i - 1].applyTo(it) }
-        }
+        val sel = StyleChoice.selected(Settings.reader)?.let { all.indexOf(it) } ?: -1
+        ctx.chooser("추천 스타일", all.map { "${it.label} (${it.description})" }, sel,
+            extraButton = DEFAULT_STYLE, onExtra = { applyStyle { StyleChoice.applyDefault(it) } },
+        ) { i -> applyStyle { all[i].applyTo(it) } }
     }
 
     private fun applyStyle(f: (ReaderSettings) -> ReaderSettings) {

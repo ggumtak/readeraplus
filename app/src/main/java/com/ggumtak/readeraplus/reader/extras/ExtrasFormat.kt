@@ -478,9 +478,6 @@ internal object StyleChoice {
             s.pageTheme == d.pageTheme
     }
 
-    /** "기본" as a choice of 추천 스타일: its line in the chooser (first, before the presets). */
-    const val DEFAULT_CHOICE = "기본 (흰 바탕 · 나눔명조)"
-
     /**
      * [s] with the defaults' typography and page colours: exactly the fields a preset sets ([isDefault] is then true),
      * so a preset can always be undone. Font size, margins, status bar, 흑백 반전 and the TXT options stay.
