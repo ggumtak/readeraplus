@@ -26,11 +26,13 @@ import com.ggumtak.readeraplus.ui.kit.dpF
  * screen edge (the top bar through its inset padding, the bottom bar through the gesture strip). The edge is a band
  * of [edgeArea] px drawn over the page side after the children: a short shadow fading into the page
  * ([ChromePalette.shadow], phones) or a solid 1 px line ([ChromePalette.edge]: e-ink, and 흑백 반전, where a shadow
- * would not show). The band
- * lies in the bar's own padding on the page side (the owner pads it by [edgeArea]); the bottom bar's starts at its
- * first panel child ([panelFrom]): the history row above it stays on the page colour, starts over that padding
- * ([fitLead]) and the band covers its foot, as in ReadEra. Positions come from the children at draw time: no layout
- * listener, nothing measured twice.
+ * would not show). Rows outside the panel sit on the page colour, as in ReadEra. The bottom bar's history row is above
+ * its first panel child ([panelFrom]): it starts over the bar's top padding, where the band lies without it
+ * ([fitLead]), and the band covers its foot. The top bar's rows from [pageFrom] on (the brightness row and its options)
+ * are filled with the page colour ([ChromePalette.page], the very pixels of the page): the band covers their head, and
+ * the bar's bottom padding, while the owner gives one (the options are open), holds a second band under them. Without
+ * [pageFrom] the whole top bar is the panel and its band lies in that padding. Positions come from the children at draw
+ * time: no layout listener, nothing measured twice.
  */
 internal class ChromeBar(ctx: Context, private val edgeAtTop: Boolean) : LinearLayout(ctx) {
     /**
@@ -46,18 +48,24 @@ internal class ChromeBar(ctx: Context, private val edgeAtTop: Boolean) : LinearL
             fitLead()
         }
 
+    /**
+     * Top bar: index of the first child on the page colour; the panel ends at its top. Out of range (the default):
+     * every child is on the panel.
+     */
+    var pageFrom = Int.MAX_VALUE
+
     /** Height of the edge band: [ChromePalette.SHADOW_DP] with a shadow, 1 px with a line, else 0. */
     var edgeArea = 1
         private set
 
     private var surface = 0
+    private var page = 0
     private var shadow = 0
     private var edge = 0
     private val fill = Paint()
+    private val pageFill = Paint()
+    /** The band, drawn translated to its place: a shadow's gradient is built once per look, from 0 to [edgeArea]. */
     private val band = Paint()
-    // The shader is built for one band position and colour, and rebuilt only when either changes.
-    private var shaderY = Int.MIN_VALUE
-    private var shaderColor = 0
 
     init {
         orientation = VERTICAL
@@ -73,15 +81,25 @@ internal class ChromeBar(ctx: Context, private val edgeAtTop: Boolean) : LinearL
             look.edge != 0 -> 1
             else -> 0
         }
-        if (look.surface == surface && look.shadow == shadow && look.edge == edge && area == edgeArea) return false
+        if (look.surface == surface && look.page == page && look.shadow == shadow && look.edge == edge &&
+            area == edgeArea) return false
         surface = look.surface
+        page = look.page
         shadow = look.shadow
         edge = look.edge
         fill.color = surface
-        band.shader = null
+        pageFill.color = page
         // A shader is drawn with the paint's alpha: opaque for the shadow, the line's own colour otherwise.
         band.color = if (shadow != 0) Color.BLACK else edge
-        shaderY = Int.MIN_VALUE
+        band.shader = if (shadow != 0) {
+            // Strongest at the panel, gone at the far side of the band.
+            val clear = shadow and 0x00FFFFFF
+            val atTop = if (edgeAtTop) clear else shadow
+            val atBottom = if (edgeAtTop) shadow else clear
+            LinearGradient(0f, 0f, 0f, area.toFloat(), atTop, atBottom, Shader.TileMode.CLAMP)
+        } else {
+            null
+        }
         val changed = area != edgeArea
         edgeArea = area
         if (changed) fitLead()
@@ -107,31 +125,51 @@ internal class ChromeBar(ctx: Context, private val edgeAtTop: Boolean) : LinearL
         if (inert && ev.actionMasked == MotionEvent.ACTION_DOWN) false else super.dispatchTouchEvent(ev)
 
     override fun onDraw(canvas: Canvas) {
-        val from = if (edgeAtTop) panelTop() else 0
-        val to = if (edgeAtTop) height else height - edgeArea
-        if (to > from) canvas.drawRect(0f, from.toFloat(), width.toFloat(), to.toFloat(), fill)
+        val w = width.toFloat()
+        if (edgeAtTop) {
+            val from = panelTop()
+            if (height > from) canvas.drawRect(0f, from.toFloat(), w, height.toFloat(), fill)
+            return
+        }
+        // The bottom padding only ever holds the band, over the page.
+        val end = height - paddingBottom
+        val split = pageTop()
+        if (split > 0) canvas.drawRect(0f, 0f, w, split.toFloat(), fill)
+        if (end > split) canvas.drawRect(0f, split.toFloat(), w, end.toFloat(), pageFill)
     }
 
     override fun dispatchDraw(canvas: Canvas) {
         super.dispatchDraw(canvas)
         if (edgeArea <= 0) return
-        val y = if (edgeAtTop) panelTop() - edgeArea else height - edgeArea
-        if (shadow != 0 && (y != shaderY || shadow != shaderColor)) {
-            // Strongest at the panel, gone at the far side of the band.
-            val clear = shadow and 0x00FFFFFF
-            val atTop = if (edgeAtTop) clear else shadow
-            val atBottom = if (edgeAtTop) shadow else clear
-            val y1 = (y + edgeArea).toFloat()
-            band.shader = LinearGradient(0f, y.toFloat(), 0f, y1, atTop, atBottom, Shader.TileMode.CLAMP)
-            shaderY = y
-            shaderColor = shadow
+        if (edgeAtTop) {
+            drawBand(canvas, panelTop() - edgeArea)
+            return
         }
-        canvas.drawRect(0f, y.toFloat(), width.toFloat(), (y + edgeArea).toFloat(), band)
+        val end = height - paddingBottom
+        val split = pageTop()
+        if (split < end) drawBand(canvas, split)
+        if (paddingBottom > 0) drawBand(canvas, end)
+    }
+
+    private fun drawBand(canvas: Canvas, y: Int) {
+        val saved = canvas.save()
+        canvas.translate(0f, y.toFloat())
+        canvas.drawRect(0f, 0f, width.toFloat(), edgeArea.toFloat(), band)
+        canvas.restoreToCount(saved)
     }
 
     /** Top of the first shown panel child: the panel starts there (the bar's own end when none is shown). */
     private fun panelTop(): Int {
         for (i in panelFrom until childCount) {
+            val c = getChildAt(i)
+            if (c.visibility != GONE) return c.top
+        }
+        return height - paddingBottom
+    }
+
+    /** Top of the first shown child on the page colour: the panel ends there (at the bottom padding when none is). */
+    private fun pageTop(): Int {
+        for (i in pageFrom until childCount) {
             val c = getChildAt(i)
             if (c.visibility != GONE) return c.top
         }

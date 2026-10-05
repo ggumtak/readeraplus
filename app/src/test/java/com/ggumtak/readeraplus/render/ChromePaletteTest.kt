@@ -38,6 +38,35 @@ class ChromePaletteTest {
     }
 
     @Test
+    fun theBrightnessRowIsThePageColourItself() {
+        // The user (2026-10-05, beside ReadEra): "색 조절하는 부분만이라도 색을 아예 똑같이". The row is filled with the
+        // page token, the page's own background, in every look: 흰 바탕, 마루뷰어, 흑백 반전, phone and e-ink alike.
+        for (p in pages) {
+            for (eink in listOf(false, true, null)) {
+                val k = ChromePalette.of(p, eink)
+                assertEquals("${Integer.toHexString(p.background)} eink=$eink", p.background, k.page)
+            }
+        }
+        // ...not the bar's surface on a phone (that was the boxed-in look).
+        for (p in pages) assertTrue(ChromePalette.of(p, false).surface != p.background)
+    }
+
+    @Test
+    fun theBrightnessRowReadsOnThePage() {
+        // Its icons and the NONE link in the history row's colour, the bar's track and accent, the auto look's ring and
+        // the options' titles in the text colour, their subtitles in text2: all on the page colour now.
+        for (k in all()) {
+            val name = Integer.toHexString(k.page) + if (k.eink) " e-ink" else " phone"
+            assertTrue("$name icons", contrast(k.hist, k.page) >= 4.5)
+            assertTrue("$name text", contrast(k.text, k.page) >= 7.0)
+            assertTrue("$name text2", contrast(k.text2, k.page) >= 4.5)
+            assertTrue("$name progress", contrast(k.accent, k.page) >= 3.0)
+            assertTrue("$name track", contrast(k.track, k.page) >= 1.6)
+            assertTrue("$name progress on the track", contrast(k.accent, k.track) >= 2.0)
+        }
+    }
+
+    @Test
     fun theAccentIsThePagesOwnStatusColour() {
         // Black on 흰 바탕, MaruViewer's gold, white on 흑백 반전: no colour borrowed from another app.
         for (p in pages) {

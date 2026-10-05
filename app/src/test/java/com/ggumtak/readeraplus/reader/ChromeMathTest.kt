@@ -53,6 +53,76 @@ class ChromeMathTest {
     }
 
     @Test
+    fun theBottomPanelIsAsLowAsReadEras() {
+        // The user's S25 split screen beside ReadEra (2026-10-05): its page label 25 dp under the panel's top, its seek
+        // track 61 dp (36 dp apart; ours were 47), 24 dp from the track to the panel's content bottom: 85 dp.
+        for (density in listOf(2f, 3f)) {
+            assertEquals(Math.round(25 * density), ChromeMath.labelCentre(density))
+            assertEquals(Math.round(61 * density), ChromeMath.seekCentre(density))
+            assertEquals(Math.round(85 * density), ChromeMath.panelHeight(density, gap = 0))
+        }
+        assertEquals(85, ChromeMath.PANEL_DP)
+        // A 2.625 phone (420 dpi) truncates like the views: within a px of the same dp.
+        assertEquals(61 * 2.625f, ChromeMath.seekCentre(2.625f).toFloat(), 1f)
+    }
+
+    @Test
+    fun theTwoRowsShareOnlyTheSpaceBetweenTheirGlyphs() {
+        // Every control keeps its 48 dp target: the label row's (rotation, pin, the label) run 1..49 dp under the panel's
+        // top, the seek row's (⏮, the seek bar, ⏭) 37..85. They overlap by 12 dp, exactly the empty space between the
+        // 24 dp glyphs (the label row's end at 37, the seek row's start at 49): no glyph lies in the other row's target.
+        val half = ChromeMath.TOUCH_DP / 2
+        val glyph = ChromeMath.GLYPH_DP / 2
+        val labelTouch = ChromeMath.LABEL_CENTRE_DP - half..ChromeMath.LABEL_CENTRE_DP + half
+        val seekTouch = ChromeMath.SEEK_TOP_DP..ChromeMath.SEEK_TOP_DP + ChromeMath.TOUCH_DP
+        assertEquals(1..49, labelTouch)
+        assertEquals(37..85, seekTouch)
+        assertEquals(ChromeMath.LABEL_CENTRE_DP + glyph, seekTouch.first)
+        assertEquals(ChromeMath.SEEK_CENTRE_DP - glyph, labelTouch.last)
+        assertTrue(labelTouch.first >= 0)
+        assertEquals(ChromeMath.PANEL_DP, seekTouch.last)
+        assertTrue(ChromeMath.LABEL_ROW_DP <= ChromeMath.PANEL_DP)
+    }
+
+    @Test
+    fun s25FullScreenKeepsTheGestureStrip() {
+        // 전체 화면 with gesture navigation: no bar inset, the 48 px mandatory gesture strip (16 dp) under the panel. The
+        // seek track's centre sits 40 dp above the edge (ReadEra's ≈ 39), the panel 101 dp (ReadEra's 100).
+        val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 48, minGap = 48, floats = false)
+        assertEquals(48, gap)
+        assertEquals(120, ChromeMath.seekAboveBottom(3f, gap))   // 40 dp
+        assertEquals(303, ChromeMath.panelHeight(3f, gap))       // 101 dp
+        // 전체 화면 off: the navigation bar's inset is the larger one; never the sum.
+        assertEquals(63, ChromeMath.bottomGap(barInset = 63, gestureInset = 48, minGap = 48, floats = false))
+    }
+
+    @Test
+    fun s25SplitScreenUpperWindowEndsAtItsEdge() {
+        // The upper window has no bottom inset at all (the system's strip is under the lower window): ReadEra's 85 dp.
+        val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 48, floats = true)
+        assertEquals(0, gap)
+        assertEquals(255, ChromeMath.panelHeight(3f, gap))       // 85 dp
+        assertEquals(72, ChromeMath.seekAboveBottom(3f, gap))    // 24 dp
+        // The lower window reaches the screen's bottom: its strip stays under the panel.
+        assertEquals(48, ChromeMath.bottomGap(barInset = 48, gestureInset = 48, minGap = 48, floats = false))
+        // A floating window that still has a bottom inset (a pop-up over the strip) keeps it.
+        assertEquals(48, ChromeMath.bottomGap(barInset = 0, gestureInset = 48, minGap = 48, floats = true))
+    }
+
+    @Test
+    fun cometFullScreenKeepsTheMinimumGap() {
+        // No gesture navigation, no bar in full screen, a bezel over the outer rows: the 16 dp minimum, never dropped
+        // for a window that reaches the bottom.
+        val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 32, floats = false)
+        assertEquals(32, gap)
+        assertEquals(80, ChromeMath.seekAboveBottom(2f, gap))    // 40 dp, as on the S25
+        assertEquals(202, ChromeMath.panelHeight(2f, gap))       // 85 + 16 dp
+        assertEquals(50, ChromeMath.labelCentre(2f))
+        assertEquals(122, ChromeMath.seekCentre(2f))
+        assertEquals(16, ChromeMath.BOTTOM_GAP_DP)
+    }
+
+    @Test
     fun barsFadeOnlyWithMotionAndSystemAnimations() {
         assertTrue(ChromeMath.animates(motion = true, durationScale = 1f))
         assertTrue(ChromeMath.animates(motion = true, durationScale = 0.5f))

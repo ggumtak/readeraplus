@@ -1,8 +1,9 @@
 package com.ggumtak.readeraplus.render
 
 /**
- * The reader chrome's colours (the bars, the history row above the bottom panel, the brightness options, the seek
- * preview, the return chip) for a page palette and the device class: the design tokens of UI_SPEC §2.1 (2026-10-05).
+ * The reader chrome's colours (the bars, the history row above the bottom panel, the brightness row and its options,
+ * the seek preview, the return chip) for a page palette and the device class: the design tokens of UI_SPEC §2.1
+ * (2026-10-05).
  * Pure (Ints only, unit-tested); six shared instances, so asking for one allocates nothing.
  *
  * The bars follow the page: a surface close to the page colour (light on 흰 바탕, dark on 마루뷰어 and 흑백 반전),
@@ -14,7 +15,7 @@ package com.ggumtak.readeraplus.render
  * their colours ([PagePalette.grey]).
  */
 internal class ChromePalette private constructor(
-    /** The page colour (the history row sits on it). */
+    /** The page colour, [PagePalette.background] itself: the history row and the brightness row sit on it. */
     val page: Int,
     /** The bars' fill. */
     val surface: Int,
@@ -26,7 +27,7 @@ internal class ChromePalette private constructor(
     val accent: Int,
     /** Low-contrast lines inside a panel (between option rows). */
     val divider: Int,
-    /** The line under the title and above the options panel: [divider] on phones, the old black rule on e-ink. */
+    /** The line above the brightness options: [divider] on phones, the old black rule on e-ink. */
     val rule: Int,
     /** A 1 px line where a bar meets the page when there is no [shadow]; 0 = none. */
     val edge: Int,
@@ -35,7 +36,7 @@ internal class ChromePalette private constructor(
      * of the boxes that float over the page text (the return chip and its inner line, the seek preview).
      */
     val track: Int,
-    /** The history row's text on the page colour, below the page label's emphasis. */
+    /** The history row's text and the brightness row's icons on the page colour, below the page label's emphasis. */
     val hist: Int,
     /** ARGB at a bar's edge, fading linearly to nothing over [SHADOW_DP] toward the page; 0 = no shadow. */
     val shadow: Int,

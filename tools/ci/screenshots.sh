@@ -706,8 +706,11 @@ chrome_pin() { # 13 (+rawshot), 13b–13i, 13f, then rawshot 10a_pre and the bar
 # ------------------------------------------------------------------ reader steps: bars in the page colours (13t–13w)
 # User feedback 2026-10-05 (PLAN): the bars take the reading theme's colours (흰 바탕, 마루뷰어, 흑백 반전), meet the page
 # with a short shadow (a 1 px line on black), the history row sits on the page colour right above the bottom panel in
-# three fixed columns, and the bars fade in and out unless the system's animations are off. The emulator is a phone:
-# the e-ink looks (solid lines, no fade, no pressed flash) are covered by the JVM tests and the device checklist.
+# three fixed columns, and the bars fade in and out unless the system's animations are off. Later the same day (ReadEra
+# side by side): the brightness row sits on the page colour itself under the top bar's edge, nothing under it, and the
+# bottom panel is as low as ReadEra's (at density 2: the page label's centre 50 px under the panel's top, the seek
+# track's 72 px under the label's, 48 px from the track to the bottom gap). The emulator is a phone: the e-ink looks
+# (solid lines, no fade, no pressed flash) are covered by the JVM tests and the device checklist.
 
 history_cols() { # history_cols <n> <left text or ""> [right text or ""]: the history row's columns in the last dump
   # (U §3.4): 지우기 centred on the 720 px row (x 358..362) whichever sides show, each shown side label inside its own
@@ -737,11 +740,15 @@ set_page_look() { # set_page_look "흰 바탕"|마루뷰어 on|off: 화면 색 a
   leave_settings
   return $rc
 }
+edge_check() { # edge_check <n> <colour> <page colour> shadow|<edge #RRGGBB> <what>: where a bar's panel meets the page, a
+  # shadow (at least 12 levels darker than the page) or the 1 px edge line
+  if [ "$4" = shadow ]; then darker_check "$1" "$2" "$3" 12 "$5"; else near_check "$1" "$2" "$4" "$5"; fi
+}
 history_row() { # 13u <tag> <page #RRGGBB>: the history row on the page colour, right on the panel, its columns fixed.
   # Pins the current page P (on it: the filled pin and no row), turns twice (only "‹ P쪽으로": the right column stays
   # empty), comes back by the row (only "P+2쪽으로 ›": the left column empty, 지우기 at the same x), then 지우기 empties it
   # without moving the panel. Ends on P with an empty history, the bars open.
-  local t=$1 pg=$2 p cb lb y_label y_row v cx_one
+  local t=$1 pg=$2 p cb lb y_label y_row v y2 yc sh cx_one
   show_chrome || return 1
   has "지우기" && { tap_label "지우기" || return 1; sleep 1; dump; } # a clean row (an earlier step may have left places)
   p=$(page_no); [ -n "$p" ] || { log "13u_$t: no page label"; return 1; }
@@ -758,24 +765,27 @@ history_row() { # 13u <tag> <page #RRGGBB>: the history row on the page colour, 
   dump; history_cols "13u_${t}_cols" "" "$((p + 2))쪽으로"
   ! has "${p}쪽으로"; check "13u_${t}_no_left" $? "back on $p: no left item (nothing before it)"
   [ "$HIST_CX" = "$cx_one" ]; check "13u_${t}_still" $? "지우기 at x = $HIST_CX with the right label, $cx_one with the left"
+  # The row ends where the panel starts (y = v): the page label's centre 50 px (25 dp) below it
   cb=$(box_of "지우기"); lb=$(box_of "페이지 이동" contains)
   read -r _ y_row _ v <<<"${cb:-0 0 0 0}"; y_row=$(((y_row + v) / 2))
-  read -r _ y_label _ _ <<<"${lb:-0 0 0 0}"
-  [ -n "$cb" ] && [ -n "$lb" ] && [ $((y_label - v)) -ge 0 ] && [ $((y_label - v)) -le 2 ]
-  check "13u_${t}_on_panel" $? "the row ends at y = $v, the page label row starts at $y_label"
+  read -r _ y_label _ y2 <<<"${lb:-0 0 0 0}"; yc=$(((y_label + y2) / 2))
+  [ -n "$cb" ] && [ -n "$lb" ] && [ $((yc - v)) -ge 49 ] && [ $((yc - v)) -le 51 ]
+  check "13u_${t}_on_panel" $? "the row ends at y = $v, the page label's centre is at $yc ($((yc - v)) px below; 50 expected)"
   near_check "13u_${t}_page" "$(raw_pixel "13u_${t}_history" 8 "$y_row")" "$pg" "the row's background at (8, $y_row)"
-  v=$(raw_pixel "13u_${t}_history" 8 $((y_label - 2)))
-  darker_check "13u_${t}_shadow" "$v" "$pg" 12 "the panel's shadow at (8, $((y_label - 2)))"
+  sh=$(raw_pixel "13u_${t}_history" 8 $((v - 2)))
+  darker_check "13u_${t}_shadow" "$sh" "$pg" 12 "the panel's shadow over the row's foot at (8, $((v - 2)))"
   tap_label "지우기" || return 1
   shot "13u_${t}_empty" 2
   dump; lb=$(box_of "페이지 이동" contains); read -r _ v _ _ <<<"${lb:-0 0 0 0}"
   ! has "지우기" && [ "$v" = "$y_label" ]; check "13u_${t}_empty" $? "no 지우기, the label row at y = $v (was $y_label)"
 }
 chrome_look() { # 13t <tag> <page> <surface> shadow|<edge> (#RRGGBB): the bars in this page's colours. Closed / open /
-  # closed again: the page at (8, 700), the top bar's surface right of ←, the bottom panel's at the label row, the first
-  # row under the brightness bar a shadow (darker than the page) or the 1 px edge; hiding the bars changes no page pixel
-  # (below the header band, where a clock may tick) and lays nothing out
-  local t=$1 pg=$2 sf=$3 ed=$4 b y0 y1 x2 y2 v
+  # closed again: the page at (8, 700), the top bar's surface right of ← and under the title; the brightness row's
+  # background the page's own pixel, the top bar's edge (a shadow darker than the page, or the 1 px line) on the row's
+  # first row, and the page right under the row (no edge there); the bottom panel's surface at the label row, its edge
+  # right above the panel, and its rows at ReadEra's offsets (13t_rows); hiding the bars changes no page pixel (below
+  # the header band, where a clock may tick) and lays nothing out
+  local t=$1 pg=$2 sf=$3 ed=$4 b y0 y1 x2 y2 v w p0 yl ys
   hide_chrome; sleep 1
   rawshot "13t_${t}_closed"; perf_mark "13t_${t}_a"
   show_chrome || return 1
@@ -784,13 +794,26 @@ chrome_look() { # 13t <tag> <page> <surface> shadow|<edge> (#RRGGBB): the bars i
   b=$(box_of "뒤로"); read -r _ y0 x2 y2 <<<"${b:-0 0 0 0}"
   v=$(raw_pixel "13t_${t}_open" $((x2 + 16)) $(((y0 + y2) / 2)))
   near_check "13t_${t}_top" "$v" "$sf" "the top bar right of ←"
-  b=$(box_of "페이지 이동" contains); read -r _ y0 _ y2 <<<"${b:-0 0 0 0}"
+  p0=$(raw_pixel "13t_${t}_open" 8 700)
+  b=$(box_of "밝기"); read -r _ y0 _ y2 <<<"${b:-0 0 0 0}"
   v=$(raw_pixel "13t_${t}_open" 8 $(((y0 + y2) / 2)))
-  near_check "13t_${t}_bottom" "$v" "$sf" "the bottom panel at its label row"
-  b=$(box_of "밝기"); read -r _ _ _ y2 <<<"${b:-0 0 0 0}"
-  v=$(raw_pixel "13t_${t}_open" 8 "$y2")
-  if [ "$ed" = shadow ]; then darker_check "13t_${t}_edge" "$v" "$pg" 12 "the row under the top bar (8, $y2)"
-  else near_check "13t_${t}_edge" "$v" "$ed" "the 1 px edge under the top bar (8, $y2)"; fi
+  [ -n "$b" ] && [ "$v" = "$p0" ]
+  check "13t_${t}_bright" $? "the brightness row at (8, $(((y0 + y2) / 2))) is $v, the page at (8, 700) $p0 (the same pixel)"
+  near_check "13t_${t}_title" "$(raw_pixel "13t_${t}_open" 8 $((y0 - 2)))" "$sf" "the title block above the edge (8, $((y0 - 2)))"
+  edge_check "13t_${t}_edge" "$(raw_pixel "13t_${t}_open" 8 "$y0")" "$pg" "$ed" \
+    "the top bar's edge between the title and the brightness row (8, $y0)"
+  v=$(raw_pixel "13t_${t}_open" 8 "$y2"); w=$(raw_pixel "13t_${t}_open" 8 $((y2 + 6)))
+  [ -n "$b" ] && [ "$v" = "$p0" ] && [ "$w" = "$p0" ]
+  check "13t_${t}_under" $? "nothing under the brightness row: (8, $y2) $v, (8, $((y2 + 6))) $w, the page $p0"
+  b=$(box_of "페이지 이동" contains); read -r _ y0 _ y2 <<<"${b:-0 0 0 0}"; yl=$(((y0 + y2) / 2))
+  near_check "13t_${t}_bottom" "$(raw_pixel "13t_${t}_open" 8 "$yl")" "$sf" "the bottom panel at its label row"
+  edge_check "13t_${t}_panel_edge" "$(raw_pixel "13t_${t}_open" 8 $((yl - 51)))" "$pg" "$ed" \
+    "the bottom panel's edge right above it (8, $((yl - 51)))"
+  # The seek track 72 px (36 dp) under the label's centre, the seek row's 48 px under the track, then the gap: at least
+  # 32 px (16 dp) in a full-screen window (the gesture strip or the navigation bar when larger; never 0 here)
+  b=$(box_of "페이지 위치"); read -r _ y0 _ y2 <<<"${b:-0 0 0 0}"; ys=$(((y0 + y2) / 2))
+  [ -n "$b" ] && [ $((ys - yl)) -ge 71 ] && [ $((ys - yl)) -le 73 ] && [ $((1440 - ys - 48)) -ge 32 ]
+  check "13t_${t}_rows" $? "label centre $yl, seek centre $ys ($((ys - yl)) px; 72 expected), $((1440 - ys - 48)) px under the seek row"
   hide_chrome; sleep 1
   rawshot "13t_${t}_closed2"; perf_mark "13t_${t}_b"
   read -r y0 y1 <<<"$(pv_rows)"
@@ -821,7 +844,8 @@ motion_check() { # 13v: the bars follow the system's animation scale. At 1 they 
   show_chrome || return 1
   sleep 1; rawshot 13v_open_ref
   b=$(box_of "밝기"); read -r _ _ _ top <<<"${b:-0 0 0 0}"
-  b=$(box_of "페이지 이동" contains); read -r _ bottom _ _ <<<"${b:-0 0 0 1440}"
+  # The bottom panel's top: 50 px above the page label's centre (its edge band the 8 px above that)
+  b=$(box_of "페이지 이동" contains); read -r _ y0 _ y1 <<<"${b:-0 1490 0 1490}"; bottom=$(((y0 + y1) / 2 - 50))
   hide_chrome; sleep 1
   adb shell settings put global animator_duration_scale 1; sleep 2
   n0=$(chrome_lines "show fade")

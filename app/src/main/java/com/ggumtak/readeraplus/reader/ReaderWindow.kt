@@ -98,6 +98,27 @@ internal object ReaderWindow {
         0.5f
     }
 
+    /** Height of the bottom strip the system keeps for its swipes (home, recents); 0 before API 29. */
+    fun gestureBottom(insets: WindowInsets): Int = when {
+        Build.VERSION.SDK_INT >= 30 -> insets.getInsets(WindowInsets.Type.mandatorySystemGestures()).bottom
+        Build.VERSION.SDK_INT >= 29 -> @Suppress("DEPRECATION") insets.mandatorySystemGestureInsets.bottom
+        else -> 0
+    }
+
+    /**
+     * The window ends above the display's bottom edge: the upper window of a split screen, a pop-up window. Only in
+     * multi-window mode (a full-screen window always reaches the edge, the Comet's too); API 30+ from the window's
+     * bounds on the display, before that every multi-window window counts (`ChromeMath.bottomGap` also asks for no
+     * bottom inset at all: a window at the bottom of a phone always has the navigation bar's or the gesture strip's,
+     * since multi-window never hides the system bars).
+     */
+    fun floatsAboveBottom(activity: Activity): Boolean {
+        if (!activity.isInMultiWindowMode) return false
+        if (Build.VERSION.SDK_INT < 30) return true
+        val wm = activity.windowManager
+        return wm.currentWindowMetrics.bounds.bottom < wm.maximumWindowMetrics.bounds.bottom
+    }
+
     /**
      * Insets to keep the page and chrome clear of: cutouts always, system bars only when they are shown, as
      * [left, top, right, bottom, cutoutTop]. cutoutTop is the part of top that only a display cutout takes (no system
@@ -106,12 +127,6 @@ internal object ReaderWindow {
      * transient bars count as 0), so asking for system bars even in fullscreen costs nothing, and keeps the page clear
      * of a navigation bar that a vendor firmware refuses to hide (the Comet cut-off-bottom-bar problem).
      */
-    /** Height of the bottom strip the system keeps for its swipes (home, recents); 0 before API 29. */
-    fun gestureBottom(insets: WindowInsets): Int = when {
-        Build.VERSION.SDK_INT >= 30 -> insets.getInsets(WindowInsets.Type.mandatorySystemGestures()).bottom
-        Build.VERSION.SDK_INT >= 29 -> @Suppress("DEPRECATION") insets.mandatorySystemGestureInsets.bottom
-        else -> 0
-    }
 
     fun insetsOf(insets: WindowInsets, fullscreen: Boolean): IntArray {
         if (Build.VERSION.SDK_INT >= 30) {
