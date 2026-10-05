@@ -20,7 +20,9 @@ class CrispTextTest {
 
     @Test
     fun textSizeIsTheWholePixelsAndroidDrawsAt() {
-        // 17 sp on the S25 (2.8125 px per dp) is 47.81 px: drawn at 47, MaruViewer's size (minikin truncates it anyway).
+        // 17 sp on the S25 (2.8125 px per dp) is 47.81 px: drawn at 47, MaruViewer's size. The floor is load-bearing:
+        // minikin lays out at (int) size, but the glyphs are drawn at the paint's own size, which FreeType hints at the
+        // rounded ppem (48 for NanumMyeongjo, head.flags bit 3): unfloored, 48-ppem glyphs would sit on 47-px advances.
         assertEquals(47f, CrispText.textPx(17f * 2.8125f), 0f)
         assertEquals(47f, CrispText.textPx(47.99f), 0f)
         // The Comet (2 px per dp, 0.5 sp steps) and whole sizes stay as they are.
@@ -40,6 +42,36 @@ class CrispTextTest {
         assertEquals(1f, CrispText.textPx(-3f), 0f)
         assertEquals(1f, CrispText.textPx(Float.NaN), 0f)
         assertEquals(1f, CrispText.textPx(Float.POSITIVE_INFINITY), 0f)
+    }
+
+    @Test
+    fun paintsDrawAtTheWholeSizeTheyAreLaidOutAt() {
+        // What AndroidTextMeasurer.createPaint sets: whole px at the S25's fractional density, for the body and every run
+        // scale the parsers make (TXT headings 1.2, super/sub 0.75, EPUB font-size factors), so the glyphs hwui draws at
+        // the paint's size are the size minikin laid them out at ((int) textSize).
+        val s25 = 2.8125f
+        assertEquals(47f, CrispText.paintTextPx(17f * s25, 1f), 0f)
+        assertEquals(57f, CrispText.paintTextPx(17f * s25, 1.2f), 0f)
+        assertEquals(35f, CrispText.paintTextPx(17f * s25, 0.75f), 0f)
+        for (density in floatArrayOf(s25, 2.625f, 3f, 3.5f, 2f, 1.5f)) {
+            var sp = 10f
+            while (sp <= 40f) {
+                val em = sp * density
+                for (scale in floatArrayOf(1f, 1.2f, 0.75f, 0.83f, 1.5f, 2f)) {
+                    val px = CrispText.paintTextPx(em, scale)
+                    assertEquals("whole at $sp sp x $density, scale $scale", Math.floor(px.toDouble()).toFloat(), px, 0f)
+                    assertTrue("not above the unrounded size", px <= em * scale + 0.001f)
+                    assertTrue("less than 1 px below it", px > em * scale - 1f)
+                }
+                sp += 0.5f
+            }
+        }
+        // Run scales are kept to 0.3–4; nonsense is 1.
+        assertEquals(47f, CrispText.paintTextPx(17f * s25, Float.NaN), 0f)
+        assertEquals(47f, CrispText.paintTextPx(17f * s25, 0f), 0f)
+        assertEquals(47f, CrispText.paintTextPx(17f * s25, -2f), 0f)
+        assertEquals(191f, CrispText.paintTextPx(17f * s25, 10f), 0f)
+        assertEquals(14f, CrispText.paintTextPx(17f * s25, 0.1f), 0f)
     }
 
     @Test

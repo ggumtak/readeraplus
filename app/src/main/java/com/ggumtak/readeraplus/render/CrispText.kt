@@ -18,10 +18,18 @@ import android.graphics.Paint
 internal object CrispText {
     /**
      * The body paints' flags (one paint measures and draws a style, [AndroidTextMeasurer.paintFor]): anti-aliased and
-     * nothing else. Without LINEAR_TEXT_FLAG the font's hinting is applied and advances are whole px (minikin lays out and
-     * draws a non-linear paint at its whole-px size); without SUBPIXEL_TEXT_FLAG Skia puts every glyph on a whole pixel,
-     * as MaruViewer and TextView do, so a justified line's extra space lands within half a pixel, and a shadow offset of
-     * whole px ([shadowOffsetPx]) is the same under every glyph. The status lines keep their own paint (already hinted).
+     * nothing else. Without LINEAR_TEXT_FLAG the font's hinting is applied and advances are whole px (minikin lays out a
+     * non-linear paint at `(int) textSize`; the glyphs are drawn at the paint's own size, hence [paintTextPx]); without
+     * SUBPIXEL_TEXT_FLAG Skia puts every glyph on a whole pixel (its origin rounded), as MaruViewer and TextView do, so
+     * each glyph lies within half a pixel of its layout x and the gaps between the words or letters of a justified line
+     * can differ by 1 px; a shadow offset of whole px ([shadowOffsetPx]) is the same under every glyph. The status lines
+     * keep their own paint (already hinted).
+     *
+     * Letter spacing (`Paint.letterSpacing`, the 글자 간격 setting) is whole px per glyph on such a paint, as in TextView:
+     * minikin (LayoutCore) rounds `letterSpacing × (int) textSize` when LinearMetrics is off. The setting's 1 % steps are
+     * therefore not linear: at 47 px (17 sp on the S25) ±1 % (0.47 px) draws nothing and +2 % / +3 % both draw 1 px; at
+     * 34 px (the Comet) +2 % to +4 % all draw 1 px. Measuring uses the same paint, so text never overlaps. The presets
+     * use 0. (Linear spacing would need the layout to place every glyph itself: one draw call per glyph.)
      */
     const val PAINT_FLAGS = Paint.ANTI_ALIAS_FLAG
 
@@ -30,15 +38,29 @@ internal object CrispText {
 
     /**
      * The text size (px) a body paint gets for [px] (the em times the run's scale): whole pixels, rounded down, at least 1.
-     * Android lays out and draws a non-linear paint at `(int) textSize` anyway (MinikinUtils.prepareMinikinPaint), so this
-     * only makes the paint's font metrics, synthetic stroke and underline use the size that is drawn: 17 sp on the S25
-     * (2.8125 px per dp) is 47.81 px, drawn at 47 like MaruViewer's; the Comet's sizes (2 px per dp, 0.5 sp steps) are
-     * whole already. The layout's em (line height, indents, margins in em) stays the unrounded size.
+     * Load-bearing, not cosmetic: minikin lays out a non-linear paint at `(int) textSize`
+     * (`MinikinUtils::prepareMinikinPaint`), but hwui draws the glyphs at the paint's own size
+     * (`MinikinFontSkia::populateSkFont` sets the typeface, embolden and skew, never the size), and FreeType hints a
+     * TrueType font whose head.flags bit 3 is set (both NanumMyeongjo files: 0b11111) at the rounded ppem. Unrounded,
+     * 47.81 px would draw 48-ppem glyphs on 47-px advances: tighter, possibly touching, unlike MaruViewer's. Whole, the
+     * drawn glyphs, their advances, the font metrics, the synthetic stroke and the underline all use one size: 17 sp on
+     * the S25 (2.8125 px per dp) is 47.81 px, drawn at 47 like MaruViewer's; the Comet's sizes (2 px per dp, 0.5 sp
+     * steps) are whole already. The layout's em (line height, indents, margins in em) stays the unrounded size.
      */
     fun textPx(px: Float): Float {
         if (!(px > 1f) || px.isInfinite()) return 1f
         return maxOf(1f, Math.floor(px + WHOLE_SLACK).toFloat())
     }
+
+    /**
+     * The text size of a body paint for a run at [sizeScale] (RunStyle.sizeScale; nonsense is 1, kept to 0.3–4) of the
+     * layout's em [emPx]: [textPx] of the product. `AndroidTextMeasurer.createPaint` sets exactly this, so the tests hold
+     * the drawn size whole at the S25's fractional density ([textPx] says why it must be).
+     */
+    fun paintTextPx(emPx: Float, sizeScale: Float): Float = textPx(emPx * runScale(sizeScale))
+
+    /** A run's size scale as the paints use it: 1 for nonsense, else kept to 0.3–4. */
+    fun runScale(s: Float): Float = if (s > 0f && s.isFinite()) s.coerceIn(0.3f, 4f) else 1f
 
     /**
      * A baseline at [y] (canvas px) on a whole pixel row. Skia rounds horizontal text's y itself; rounding first keeps the

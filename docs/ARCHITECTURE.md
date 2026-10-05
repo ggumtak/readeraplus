@@ -323,10 +323,14 @@ as you like, same package & signatures).
   look: no `LINEAR_TEXT_FLAG`, which makes hwui draw unhinted, and no `SUBPIXEL_TEXT_FLAG`, so glyphs sit on whole
   pixels; measuring and drawing share the paint, so advances are the hinted whole-px ones; `LayoutKeys.ALGO_VERSION` 2),
   typeface from FontManager (bold → weight+300 capped at 900; monospace → `Typeface.MONOSPACE`), `textSize =
-  CrispText.textPx(emPx * sizeScale)` (whole px, rounded down as minikin does for a non-linear paint; `emPx` itself,
-  the layout's em, stays unrounded; ×0.75 for super/sub — the parser already sets sizeScale; don't double apply),
-  `letterSpacing = settings.letterSpacingPm / 1000f`, synthetic stroke via `Style.FILL_AND_STROKE` +
-  `strokeWidth`, italic skew `-0.2f` when the typeface isn't italic, underline/strike flags, color black.
+  CrispText.paintTextPx(emPx, sizeScale)` (whole px, rounded down; load-bearing: minikin lays out a non-linear paint at
+  `(int) textSize`, but hwui draws the glyphs at the paint's own size and FreeType hints NanumMyeongjo, head.flags bit 3,
+  at the rounded ppem, so an unrounded 47.81 px would draw 48-ppem glyphs on 47-px advances; `emPx` itself, the
+  layout's em, stays unrounded; ×0.75 for super/sub — the parser already sets sizeScale; don't double apply),
+  `letterSpacing = settings.letterSpacingPm / 1000f` (whole px per glyph on this non-linear paint: minikin rounds
+  `letterSpacing × size`, so at 47 px ±1 % draws nothing; `CrispText.PAINT_FLAGS`), synthetic stroke via
+  `Style.FILL_AND_STROKE` + `strokeWidth`, italic skew `-0.2f` when the typeface isn't italic, underline/strike flags,
+  color black.
   `measure` uses `paint.getTextWidths(String, start, end, FloatArray)` into a reusable temp array, then
   zeroes `'\n'` and `OBJECT_CHAR`. `metrics(style)`: from `paint.fontMetrics` (ascent = -ascent), cached.
 - **ImageCache**: bounds via `BitmapFactory` `inJustDecodeBounds`; decode with `inSampleSize` (largest power
@@ -343,6 +347,9 @@ as you like, same package & signatures).
   segments; superscript shift `-0.35 em`, subscript `+0.2 em`; underline/strike/link underline as lines. The
   baseline (with its shift) is rounded to a whole row and a page look's text shadow offset to whole px
   (`CrispText.baselineY`, `CrispText.shadowOffsetPx`; 2026-10-05), so every glyph's shadow lies the same distance away.
+  Skia rounds each segment's x to a whole pixel (no `SUBPIXEL_TEXT_FLAG`): every glyph lies within half a pixel of its
+  layout x, so the gaps between a justified line's words (or, in EXPAND_CHARS lines, letters) can differ by 1 px, as in
+  MaruViewer and TextView.
   Images: `drawBitmap(src, null, dstRect, filterPaint)`. Rules: centred line 25% of width, 1dp.
   Bookmarked: a black ribbon (small pentagon) at the view's top-right corner. No allocations per draw beyond
   first use (reuse Paint/RectF/arrays). Night mode draws images through one shared inverting `ColorMatrixColorFilter`.
