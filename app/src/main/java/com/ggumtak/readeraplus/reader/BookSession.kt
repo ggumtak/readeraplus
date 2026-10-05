@@ -106,6 +106,13 @@ class BookSession(
         @JvmField var waiters = 0
         /** Set on the layout thread when the work begins (from then on it runs to completion). */
         @Volatile @JvmField var started = false
+        /**
+         * RAPerf DEBUG ([traceLayout]): the finished layout's loadSection and Typesetter.layout time (ns, -1 = not
+         * timed) and its chars, set on the layout thread and read on the main thread after it.
+         */
+        @JvmField var loadNs = -1L
+        @JvmField var typesetNs = -1L
+        @JvmField var chars = 0
     }
 
     var listener: Listener? = null
@@ -184,14 +191,14 @@ class BookSession(
     // Confined to the layout thread.
     private var layoutGenId = -1
     private var layoutMeasurer: AndroidTextMeasurer? = null
-    /** A layout of this session was logged already ([traceLayout], RAPerf DEBUG). */
-    private var layoutTraced = false
     // Confined to the count thread.
     private var countGenId = -1
     private var countMeasurer: AndroidTextMeasurer? = null
     // Main thread: renderer for drawing (same metrics as the layout measurer of the current settings).
     private var renderer: PageRenderer? = null
     private var rendererSettings: ReaderSettings? = null
+    /** Main thread: a layout of this session was logged already ([traceLayout], RAPerf DEBUG). */
+    private var layoutTraced = false
 
     val isClosed: Boolean get() = closed
 
@@ -345,7 +352,7 @@ class BookSession(
             try {
                 result = withContext(layoutDispatcher) {
                     p.started = true
-                    layoutOnThread(gen, section, foreground)
+                    layoutOnThread(gen, section, p)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -355,7 +362,11 @@ class BookSession(
                 if (pending[section] === p) pending.remove(section)
                 val ok = result != null && gen === generation && !closed
                 if (ok) store(section, result!!)
+                // RAPerf DEBUG: labelled by whether anything waits for it now, not by who asked first.
+                val waited = p.waiters > 0
                 p.deferred.complete(if (ok) result else null)
+                val done = result
+                if (done != null && p.typesetNs >= 0L) traceLayout(gen.id, section, !waited, p, done.pageCount)
             }
         }
         return p
@@ -398,7 +409,8 @@ class BookSession(
 
     // ------------------------------------------------------------------ worker-thread code
 
-    private fun layoutOnThread(gen: Generation, section: Int, foreground: Boolean): SectionLayout {
+    /** [p] gets the timings of [traceLayout] when RAPerf DEBUG is on. */
+    private fun layoutOnThread(gen: Generation, section: Int, p: Pending): SectionLayout {
         if (layoutGenId != gen.id || layoutMeasurer == null) {
             layoutMeasurer = AndroidTextMeasurer(context, gen.settings) { images.size(it) }
             layoutGenId = gen.id
@@ -418,17 +430,23 @@ class BookSession(
             failedSections.add(section)
             Typesetter(m, gen.config).layout(errorContent(t))
         }
-        if (t0 != 0L) traceLayout(gen.id, section, !foreground, t1 - t0, System.nanoTime() - t1, content.length, layout)
+        if (t0 != 0L) {
+            p.loadNs = t1 - t0
+            p.typesetNs = System.nanoTime() - t1
+            p.chars = content.length
+        }
         return layout
     }
 
-    /** RAPerf DEBUG: one line per finished layout; the session's first is the open's ("open layout …"). Layout thread. */
-    private fun traceLayout(gen: Int, section: Int, prefetch: Boolean, loadNs: Long, typesetNs: Long, chars: Int,
-                            layout: SectionLayout) {
+    /**
+     * RAPerf DEBUG: one line per finished layout, timed by [layoutOnThread] into [p]; the session's first is the
+     * open's ("open layout …"). [prefetch]: nothing waited for it. Main thread, after its waiters were released.
+     */
+    private fun traceLayout(gen: Int, section: Int, prefetch: Boolean, p: Pending, pages: Int) {
         val open = !layoutTraced
         layoutTraced = true
-        val line = PerfLines.layoutLine(StringBuilder(112), open, section, gen, loadNs, chars, typesetNs,
-            layout.pageCount, prefetch)
+        val line = PerfLines.layoutLine(StringBuilder(112), open, section, gen, p.loadNs, p.chars, p.typesetNs, pages,
+            prefetch)
         Log.d(ReaderPerf.TAG, line.toString())
     }
 

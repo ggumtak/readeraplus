@@ -765,8 +765,12 @@ The release gates compare these numbers with the Wave 0 baseline recorded on the
 The same switch adds the measuring lines of `reader/PerfTrace.kt` `PerfLines` (DEVICE_CHECKLIST §15b): per turn
 "turn #n tap: contact … ms, wait … ms, up+… ms, down+… ms, onDraw … ms" (a key shows the system's hold as `wait`) and
 the FrameMetrics of its frame, "frame #n: total … ms (…), done up+… ms" (`reader/FrameWatch.kt`, registered only with
-the tag on); per open "open doc …", "open layout s: …" (BookSession, every layout logs a "layout s: …" line) and
-"open <id>: onDraw … ms". `reportFullyDrawn()` runs once per reader after the first page is drawn (always on).
+the tag on); per open "open doc …" (TXT index / parse, EPUB plan / scan / small; also for a re-parse in the reader),
+"open layout s: …" (BookSession, every layout logs a "layout s: …" line, ", prefetch" when nothing waited for it) and
+"open <id>: onDraw … ms". The two turn lines are written after the turn's frame, so its FrameMetrics hold no logging.
+`reportFullyDrawn()` runs once per reader after the first page is drawn, also only with the tag on: since Android 10
+it ends ART's startup phase too (VMRuntime.notifyStartupCompleted), which a normal open leaves to ART (~5 s after
+launch).
 
 
 ## Contract revision R3 (2026-10-02)

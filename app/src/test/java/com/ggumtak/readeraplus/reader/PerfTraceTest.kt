@@ -108,6 +108,17 @@ class PerfTraceTest {
         assertEquals("open 7: onDraw 5.1 ms", PerfLines.openDrawLine(sb(), 7L, 5_060_000L).toString())
     }
 
+    @Test
+    fun epubOpenSaysWhetherItUsedThePlanScannedOrHadNothingToScan() {
+        assertEquals("plan", PerfLines.epubHow(planFromCache = true, scannedItems = 0))
+        assertEquals("scan", PerfLines.epubHow(planFromCache = false, scannedItems = 2))
+        // No item above the scan threshold: neither scanned nor cached, on every open.
+        assertEquals("small", PerfLines.epubHow(planFromCache = false, scannedItems = 0))
+        assertEquals("open doc EPUB small 8.0 ms, 412000 bytes, ~137333 chars, 12 sections",
+            PerfLines.docLine(sb(), "EPUB", PerfLines.epubHow(false, 0), 8_000_000L, 412_000L, 137_333L, false, 12)
+                .toString())
+    }
+
     /** tools/ci/perf_log.py reads only `show` lines with this shape (SHOW_RE): no new line may be taken for one. */
     @Test
     fun noNewLineLooksLikeAShowLine() {

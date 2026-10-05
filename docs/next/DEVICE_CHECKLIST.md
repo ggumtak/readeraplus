@@ -505,19 +505,21 @@ adb shell input keyevent 93                  # PAGE_DOWN
 | 숫자 | RAPerf 줄 | 뜻 |
 |---|---|---|
 | 손가락 접촉 시간 | `turn #n tap: contact C ms, …` | 넘긴 탭이 닿아 있던 시간(뗀 시각 − 닿은 시각). 영상의 F1−F0, getevent의 DOWN→UP과 같아야 한다. 스와이프는 `swipe:` |
-| 볼륨 키 대기 | `turn #n key: held 0 ms, wait W ms, …` | W = 입력 이벤트 시각부터 리더가 넘김을 시작할 때까지(탭은 보통 몇 ms). 볼륨 키는 안드로이드가 ≈ 150 ms 붙잡는다(앱에서 못 없앤다). PAGE_DOWN의 W가 몇 ms면 그 차이가 대기다. `held`는 키를 누르고 있을 때의 반복 넘김에서만 0보다 크다 |
+| 볼륨 키 대기 | `turn #n key: held 0 ms, wait W ms, …` | W = 입력 이벤트 시각부터 리더가 넘김을 시작할 때까지(탭은 보통 몇 ms). 볼륨 아래 키는 스크린샷 조합(볼륨 아래 + 전원) 때문에 ≈ 150 ms 늦게 온다(앱에서 못 없앤다). 볼륨 위 키는 기기 설정(벨소리 끄기 · 접근성 단축키 조합)에 따라 다르다: 넘김 방향을 바꿔 볼륨 위로 넘기면 대기가 없을 수 있다. PAGE_DOWN의 W가 몇 ms면 그 차이가 대기다. `held`는 키를 누르고 있을 때의 반복 넘김에서만 0보다 크다 |
 | 손 뗀 뒤 앱 | `turn N ms` 다음 줄 `turn #n …, up+U ms, down+D ms, onDraw X ms` | U = 손 뗀 순간부터 새 쪽을 다 그릴 때까지(앞 줄의 N과 같다), D = 닿은 순간부터, X = 그중 onDraw. 아직 화면에 나오기 전이다 |
 | 넘김 프레임 | `frame #n: total T ms (delay …, input …, anim …, layout …, draw …, sync …, cmd …, swap …, gpu …), done up+U ms, down+D ms` | 같은 n의 넘김을 그린 프레임(FrameMetrics). T = vsync부터 화면 버퍼를 시스템에 넘길 때까지, done = 그 시각을 손 뗀 순간 · 닿은 순간부터 잰 값. 패널 갱신은 이 뒤에 시작한다: 영상의 F2−F1에서 done의 U를 빼면 버퍼를 넘긴 뒤 패널이 글자를 바꾸기 시작하기까지 걸린 시간이다 |
-| 열기: 파일 | `open doc TXT index … ms, B bytes, C chars, S sections` | Documents.open. TXT `index` = 저장된 색인만 읽음(다시 열기), `parse` = 파일 전체 해석(처음 열기, TXT 옵션을 바꾼 뒤). EPUB은 `plan`(저장된 구간 나누기) 또는 `scan`(큰 항목을 훑음), 글자 수 앞 `~`는 추정 |
+| 열기: 파일 | `open doc TXT index … ms, B bytes, C chars, S sections` | Documents.open. TXT `index` = 저장된 색인만 읽음(다시 열기), `parse` = 파일 전체 해석(처음 열기, TXT 옵션을 바꾼 뒤). 리더 안에서 TXT 옵션을 바꾸면 그 자리에서 다시 해석하며 `open doc TXT parse`와 `open layout` 줄이 나오고, 그 뒤 서재에서 열면 `index`다. EPUB은 `plan`(저장된 구간 나누기), `scan`(192 KB가 넘는 큰 항목을 훑음), `small`(그런 항목이 없어 훑을 것도 저장할 것도 없음: 다시 열어도 `small`). 글자 수 앞 `~`는 추정 |
 | 열기: 첫 구간 | `open layout s:N g:G load L ms C chars, typeset T ms P pages` | 첫 구간 불러오기(loadSection: 큰 EPUB 항목은 변환 포함)와 조판(Typesetter.layout) |
-| 다른 구간 | `layout s:N g:G …` / `…, prefetch` | 장 경계 넘김이 기다린 조판 / 미리 준비한 이웃 구간 |
+| 다른 구간 | `layout s:N g:G …` / `…, prefetch` | 끝날 때 무언가가 기다리던 조판(장 경계 넘김 등. 미리 준비하던 이웃 구간을 넘김이 따라잡아 기다린 것도 여기다) / 아무것도 기다리지 않은 미리 준비. 넘김이 기다린 시간 자체는 같은 넘김의 `show TURN … Nms`로 본다 |
 | 열기: 첫 그리기 | `open <id>: onDraw X ms` | 첫 페이지의 onDraw |
 | 열기: 전체 | `open <id>: first page N ms`, `frame open: … done open+N ms`, 시스템 `Fully drawn …: +N ms` | 리더가 열기를 시작한 뒤 첫 페이지를 다 그릴 때까지 / 그 버퍼를 넘길 때까지 / 서재에서 누른 뒤 첫 페이지까지(리더 실행 포함) |
 
-- `turn N ms`, `show …`, `open … first page` 줄은 예전 그대로다. 새 줄은 이 로그를 켰을 때만 나오고, 끄면 하는 일이 없다.
-  "Fully drawn"만 늘 나온다(첫 페이지 뒤 리더 하나에 한 번, 시스템 기록).
-- `frame` 줄이 하나도 없으면 이 기기의 창이 FrameMetrics를 주지 않는 것이다(하드웨어 가속 꺼짐 등). 그때는 `turn #n`의 onDraw와
-  gfxinfo framestats(마지막 줄의 FrameCompleted − IntendedVsync)로 본다.
+- `turn N ms`, `show …`, `open … first page` 줄의 내용은 예전 그대로다(`turn` 두 줄은 그 넘김의 프레임이 끝난 뒤에 쓴다:
+  로그 쓰는 시간이 `frame #n`에 섞이지 않게). 새 줄은 이 로그를 켰을 때만 나오고, 끄면 하는 일이 없다. 시스템
+  "Fully drawn"도 이 로그를 켰을 때만 나온다(첫 페이지 뒤 리더 하나에 한 번). 안드로이드 10부터 이 호출이 앱 시작 단계도
+  끝내므로(ART가 원래 실행 5초쯤 뒤에 하는 일) 평소에는 부르지 않는다.
+- `frame metrics unavailable` 줄이 나오거나 `frame` 줄이 하나도 없으면 이 기기에서 FrameMetrics를 받지 못한 것이다. 그때는
+  `turn #n`의 onDraw로 보고, gfxinfo framestats에 줄이 있으면 그 마지막 줄의 FrameCompleted − IntendedVsync도 본다.
 - 이 줄들은 모두 화면에 보이기 *전*까지다. 패널이 바뀌고 안정되는 시간(F2, F3)은 영상으로만 잴 수 있다.
 
 **성공 기준** (제안값. 중앙값과 최악값을 둘 다 본다)

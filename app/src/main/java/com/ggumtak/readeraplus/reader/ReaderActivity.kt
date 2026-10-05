@@ -249,9 +249,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /** Runs [afterOpen] after the first successful body draw ([PageView.afterFirstFrame]). */
     private val afterFirstPage = Runnable {
         if (isDestroyed) return@Runnable
-        // The first page has been drawn: the system's "Fully drawn" launch time ends here, not at the blank frame
-        // before it. Once per reader (a later book or re-parse opens in the same activity).
-        if (fullyDrawn.take()) safely { reportFullyDrawn() }
+        // RAPerf DEBUG only: the first page has been drawn, so the system's "Fully drawn" launch time ends here, not
+        // at the blank frame before it. Once per reader (a later book or re-parse opens in the same activity). Not
+        // always on: since Android 10 the call also ends ART's startup phase (VMRuntime.notifyStartupCompleted: a
+        // pause of all threads and a binder call) at this moment instead of ~5 s after launch, on the UI thread.
+        if (ReaderPerf.turns && fullyDrawn.take()) safely { reportFullyDrawn() }
         val s = session
         val b = bookRef
         if (!afterOpenPending || s == null || b == null) return@Runnable
@@ -1386,7 +1388,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun traceDoc(d: BookDocument, f: File, nanos: Long) {
         val how = when (d) {
             is TxtBook -> if (d.parsed) "parse" else "index"
-            is EpubBook -> if (d.planFromCache) "plan" else "scan"
+            is EpubBook -> PerfLines.epubHow(d.planFromCache, d.scannedItems)
             else -> "-"
         }
         var chars = 0L
@@ -3366,7 +3368,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             var adopted = false
             try {
                 val d = withContext(Dispatchers.IO) {
-                    Documents.open(File(b.path), newSettings.parseOptions(b.encoding)).also { doc = it }
+                    val f = File(b.path)
+                    val docFrom = if (ReaderPerf.turns) System.nanoTime() else 0L
+                    Documents.open(f, newSettings.parseOptions(b.encoding)).also {
+                        doc = it
+                        if (docFrom != 0L) traceDoc(it, f, System.nanoTime() - docFrom)
+                    }
                 }
                 if (d.sections.isEmpty()) throw DocumentException("내용이 없는 책입니다")
                 // Layout-only changes made while parsing (same parse options) are taken along.

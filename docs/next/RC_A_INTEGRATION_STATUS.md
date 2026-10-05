@@ -602,13 +602,32 @@ tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci
 - 열기 나눠 보기: `open doc TXT index|parse` / `EPUB plan|scan` `… ms, B bytes, C chars, S sections`(`TxtBook.parsed` 추가),
   조판마다 `[open ]layout s: g: load … ms … chars, typeset … ms … pages[, prefetch]`(세션의 첫 조판 = 열기), `open <id>:
   onDraw … ms`, 그리고 기존 `open <id>: first page N ms`(전체).
-- `reportFullyDrawn()`: 첫 페이지가 실제로 그려진 뒤(afterFirstFrame) 리더 하나에 한 번(`OnceGate`). 항상 켜져 있다. 시스템
-  "Fully drawn"이 빈 화면이 아니라 첫 페이지까지를 잰다. 그리기 · 갱신은 늘지 않는다.
+- `reportFullyDrawn()`: 첫 페이지가 실제로 그려진 뒤(afterFirstFrame) 리더 하나에 한 번(`OnceGate`), 로그를 켰을 때만(아래
+  리뷰 수정). 시스템 "Fully drawn"이 빈 화면이 아니라 첫 페이지까지를 잰다. 그리기 · 갱신은 늘지 않는다.
 - 점검표 §15b 속도 측정(코멧): 슬로모션 영상 F0–F3, 조건, 마루뷰어 비교 준비, adb 명령, 숫자마다 읽을 줄, 성공 기준.
 - 테스트 `PerfTraceTest` 17개: 줄 형식, 0.1 ms 반올림, 빌더에 쓸 때 할당 0, FrameTrace 짝 찾기 · 덮어쓰기 · 할당 0, OnceGate,
   TXT parse / index 표시, 새 줄이 show 줄로 읽히지 않음.
 - JVM 측정(개발 PC, 코멧 아님, 로그를 켰을 때의 비용): turn 줄 ≈ 40–50 ns, frame 줄 ≈ 150 ns(빌더에 할당 0), 문자열로 만들기까지
   ≈ 60 ns · 96 B, FrameTrace 기록 + 찾기 두 번 ≈ 40 ns · 0 B. 꺼져 있을 때는 정적 값 읽기뿐이다.
-- 하지 않은 것: TXT 옵션을 바꾼 뒤의 다시 해석(reopenDocument)에는 `open doc` 줄을 넣지 않았다(조판 줄은 나온다). Choreographer
-  콜백은 FrameMetrics로 대신했다. 열 때의 빈 화면 단계는 재기만 하고 막지 않았다(영상으로 확인한 뒤 결정).
+- 하지 않은 것: Choreographer 콜백은 FrameMetrics로 대신했다. 열 때의 빈 화면 단계는 재기만 하고 막지 않았다(영상으로 확인한 뒤 결정).
 - 검사: `tools/typecheck.sh` 0, `tools/unittest.sh` OK (1627 tests), CI Python 47개 OK(새 줄 무시 확인 1개 추가), `bash -n` 통과.
+
+## 속도 측정 계측 리뷰 수정 (2026-10-05, 성능 검토 첫 묶음 3)
+- `reportFullyDrawn()`도 RAPerf 로그를 켰을 때만 부른다. 안드로이드 10부터 이 호출은 시스템 기록만이 아니라 ART의 시작 단계
+  마무리(VMRuntime.notifyStartupCompleted: 모든 스레드를 잠깐 세우는 정리 + 바인더 호출)도 한다. 평소에는 ART가 실행 5초쯤
+  뒤에 스스로 하므로, 첫 페이지 직후(afterOpen 앞, UI 스레드)로 당기지 않는다. 열기 동작은 이 계측 전과 같다. 점검표 §15b는
+  늘 로그를 켜므로 `Fully drawn` 줄은 그대로 나온다.
+- EPUB `open doc` 표시: `plan`(저장된 구간 나누기), `scan`(192 KB가 넘는 항목을 실제로 훑음), `small`(그런 항목이 없음: 훑지도
+  저장하지도 않으니 다시 열어도 `small`). 전에는 캐시가 아니면 모두 `scan`이라, 보통 EPUB을 다시 열어도 `scan`으로 보였다
+  (`EpubBook.scannedItems`, `PerfLines.epubHow`).
+- `layout … , prefetch`는 누가 먼저 요청했는지가 아니라 조판이 끝날 때 기다리는 쪽이 있는지로 정한다. 미리 준비하던 이웃 구간을
+  장 경계 넘김이 따라잡아 기다린 조판은 이제 `prefetch` 없이 나온다. 시간은 조판 스레드에서 재어 요청(Pending)에 두고, 줄은 메인
+  스레드에서 기다리던 쪽을 깨운 뒤에 쓴다.
+- 리더 안에서 TXT 옵션을 바꾼 다시 해석(reopenDocument)도 `open doc` 줄을 쓴다(같은 스위치, IO 스레드).
+- `FrameWatch`의 경고(`frame metrics unavailable`)를 RAPerf 태그로 쓴다: `logcat -s RAPerf`에서 `frame` 줄이 없는 까닭이 보인다.
+  점검표의 대안 문구도 고쳤다(하드웨어 가속 이야기 삭제, framestats는 줄이 있을 때만).
+- `turn N ms`와 `turn #n …` 두 줄은 그 넘김의 프레임이 끝난 뒤 post로 쓴다(열기 줄과 같은 방식). 로그 쓰는 시간이 그
+  프레임의 `frame #n` draw · total에 섞이지 않는다. 줄 내용 · 순서는 그대로.
+- 점검표: 볼륨 키 대기는 볼륨 아래 키(스크린샷 조합)에서 ≈ 150 ms, 볼륨 위 키는 기기 설정에 따라 다르다고 고쳤다.
+- 테스트: `PerfTraceTest`에 EPUB 표시 1개, `EpubPlanCacheTest`에 scannedItems(처음 열기 1, 캐시로 다시 열기 0, 작은 책 0).
+- 검사: `tools/typecheck.sh` 0, `tools/unittest.sh` OK (1629 tests), CI Python 47개 OK, `bash -n` 통과.

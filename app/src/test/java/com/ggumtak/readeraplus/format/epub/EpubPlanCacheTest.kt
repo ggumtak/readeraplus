@@ -185,6 +185,22 @@ class EpubPlanCacheTest {
         assertEquals(2, planFiles().size)
     }
 
+    /** What the reader's RAPerf "open doc EPUB plan|scan|small" line reports (DEVICE_CHECKLIST 15b). */
+    @Test
+    fun scannedItemsCountsOnlyWhatThisOpenScanned() = withCache {
+        val f = wholeBookEpub(60, "scanned.epub")
+        EpubBook.open(f, ParseOptions()).use {
+            assertFalse(it.planFromCache)
+            assertEquals("the one big item", 1, it.scannedItems)
+        }
+        Documents.writeDeferredCaches()
+        EpubBook.open(f, ParseOptions()).use {
+            assertTrue(it.planFromCache)
+            assertEquals("plan from the cache", 0, it.scannedItems)
+        }
+        Documents.writeDeferredCaches()
+    }
+
     @Test
     fun secondOpenOfABigBookIsFaster() = withCache {
         val f = wholeBookEpub(600, "big.epub") // one ~2 MB spine item
@@ -251,7 +267,10 @@ class EpubPlanCacheTest {
 <spine><itemref idref="a"/></spine></package>"""
         val f = writeEpub(listOf(container("content.opf"), text("content.opf", opf), text("a.xhtml", EpubTestUtil.html("<p>짧은 책</p>"))), "small.epub")
         val before = EpubPlanCache.lookups
-        EpubBook.open(f, ParseOptions()).use { assertFalse(it.planFromCache) }
+        EpubBook.open(f, ParseOptions()).use {
+            assertFalse(it.planFromCache)
+            assertEquals("nothing to scan", 0, it.scannedItems)
+        }
         assertEquals(before, EpubPlanCache.lookups)
         assertEquals(0, EpubPlanCache.pendingCount)
         assertFalse(File(cacheDir, "epubplan").exists())

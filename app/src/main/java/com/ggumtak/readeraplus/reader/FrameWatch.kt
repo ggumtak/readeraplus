@@ -43,13 +43,12 @@ internal class FrameWatch private constructor(
         try {
             window.removeOnFrameMetricsAvailableListener(this)
         } catch (t: Throwable) {
-            Log.w(TAG, "frame metrics listener removal failed", t)
+            Log.w(ReaderPerf.TAG, "frame metrics listener removal failed", t)
         }
         thread.quitSafely()
     }
 
     companion object {
-        private const val TAG = "FrameWatch"
         private const val NS_PER_MS = 1_000_000L
 
         /** FrameMetrics durations in [PerfLines] order, all but the last ("gpu", API 31). */
@@ -65,7 +64,8 @@ internal class FrameWatch private constructor(
             return try {
                 FrameWatch(thread).also { window.addOnFrameMetricsAvailableListener(it, Handler(thread.looper)) }
             } catch (t: Throwable) {
-                Log.w(TAG, "frame metrics unavailable", t)
+                // Under the RAPerf tag, so `adb logcat -s RAPerf` shows why no "frame" line comes (DEVICE_CHECKLIST 15b).
+                Log.w(ReaderPerf.TAG, "frame metrics unavailable", t)
                 thread.quitSafely()
                 null
             }

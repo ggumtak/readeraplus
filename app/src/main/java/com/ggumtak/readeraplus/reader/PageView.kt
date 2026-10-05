@@ -254,15 +254,21 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
             }
         }
         if (turnTraceFrom != 0L) {
-            Log.d(ReaderPerf.TAG, "turn ${now - turnTraceFrom} ms")
-            // The same turn in detail ([traceTurn] is only called with RAPerf DEBUG); "frame #n" comes from FrameWatch.
+            // "turn N ms" and the same turn in detail ([traceTurn] is only called with RAPerf DEBUG). Timed here and
+            // written after this frame like the open's lines, so the frame measured as "frame #n" (FrameWatch) holds
+            // no logging.
+            val ms = now - turnTraceFrom
             val n = ++turnSeq
             val sb = perfText ?: StringBuilder(160).also { perfText = it }
             sb.setLength(0)
             PerfLines.turnLine(sb, n, turnTraceKind, turnTraceFrom, turnTraceDown, turnTraceWait, now, drawNs)
-            Log.d(ReaderPerf.TAG, sb.toString())
+            val detail = sb.toString()
             frameTrace?.expect(drawingTime, n, turnTraceKind, turnTraceFrom, turnTraceDown)
             turnTraceFrom = 0L
+            post {
+                Log.d(ReaderPerf.TAG, "turn $ms ms")
+                Log.d(ReaderPerf.TAG, detail)
+            }
         }
     }
 

@@ -66,6 +66,10 @@ internal class EpubBook private constructor(
     internal var planFromCache = false
         private set
 
+    /** Items above [EpubSplit.SCAN_MIN_BYTES] whose text this open scanned (0: none that big, or a cached plan). */
+    internal var scannedItems = 0
+        private set
+
     init {
         planSections()
     }
@@ -166,6 +170,7 @@ internal class EpubBook private constructor(
         val anchors = if (key != null) EpubPlanCache.anchorHash(big, nBig, wanted) else 0L
         if (key != null) EpubPlanCache.load(key)?.let { if (usePlan(it, big, nBig, anchors)) return }
 
+        scannedItems = nBig
         val chars = IntArray(nBig)
         val frags = arrayOfNulls<Map<String, Int>>(nBig)
         var complete = true

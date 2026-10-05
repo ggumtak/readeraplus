@@ -9,8 +9,10 @@ package com.ggumtak.readeraplus.reader
  *   its "turn N ms"
  * - "frame #<n>: total T ms (delay …, input …, anim …, layout …, draw …, sync …, cmd …, swap …, gpu …), done up+U ms,
  *   down+D ms": the FrameMetrics of that turn's frame ([FrameWatch]); "frame open: …" for a book's first page
- * - "open doc <TXT|EPUB> <how> T ms, B bytes, C chars, S sections": what Documents.open did
- * - "[open ]layout s:<section> g:<gen> load T ms C chars, typeset T ms P pages[, prefetch]": one per section layout
+ * - "open doc <TXT|EPUB> <how> T ms, B bytes, C chars, S sections": what Documents.open did (TXT index / parse,
+ *   EPUB plan / scan / small: [epubHow])
+ * - "[open ]layout s:<section> g:<gen> load T ms C chars, typeset T ms P pages[, prefetch]": one per section layout;
+ *   ", prefetch" when nothing waited for it
  * - "open <id>: onDraw X ms": the first page's draw, before the existing "open <id>: first page N ms"
  */
 internal object PerfLines {
@@ -77,7 +79,17 @@ internal object PerfLines {
         return sb
     }
 
-    /** Documents.open took [nanos] ([how]: TXT index / parse, EPUB plan / scan) for a book of [bytes] and [chars]. */
+    /**
+     * What an EPUB open did for its section plan ([docLine]'s how): "plan" = the cached plan, "scan" = it read
+     * [scannedItems] big items to split them, "small" = no item was big enough to need either.
+     */
+    fun epubHow(planFromCache: Boolean, scannedItems: Int): String = when {
+        planFromCache -> "plan"
+        scannedItems > 0 -> "scan"
+        else -> "small"
+    }
+
+    /** Documents.open took [nanos] ([how]: TXT index / parse, EPUB [epubHow]) for a book of [bytes] and [chars]. */
     fun docLine(
         sb: StringBuilder, format: String, how: String, nanos: Long, bytes: Long, chars: Long, exactChars: Boolean,
         sections: Int,
@@ -88,7 +100,10 @@ internal object PerfLines {
         return sb.append(chars).append(" chars, ").append(sections).append(" sections")
     }
 
-    /** One section layout: loadSection [loadNs] for [chars] chars, then Typesetter.layout [typesetNs] into [pages]. */
+    /**
+     * One section layout: loadSection [loadNs] for [chars] chars, then Typesetter.layout [typesetNs] into [pages];
+     * [prefetch] when nothing waited for it (a prefetch a turn caught up with was waited for).
+     */
     fun layoutLine(
         sb: StringBuilder, open: Boolean, section: Int, gen: Int, loadNs: Long, chars: Int, typesetNs: Long, pages: Int,
         prefetch: Boolean,
