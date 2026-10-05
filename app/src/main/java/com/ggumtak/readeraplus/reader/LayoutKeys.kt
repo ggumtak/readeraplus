@@ -48,7 +48,13 @@ object LayoutKeys {
     /** Margin used when the "페이지 여백" switch is off. */
     const val TINY_MARGIN_DP = 4
 
-    fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float): PageGeometry {
+    /**
+     * The content box of a [viewW] × [viewH] page view. [extraTop]: px at the view's top that a display cutout covers
+     * (fullscreen, system bars hidden: the S25's camera band). The view reaches into that band so the header can hug the
+     * screen's top edge like MaruViewer's status line; the text box starts below it, so it keeps the place and size (and
+     * the pagination) it had when the view was laid out below the cutout. 0 elsewhere (the Comet has no cutout).
+     */
+    fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, extraTop: Int = 0): PageGeometry {
         fun px(dp: Int): Int = Math.round((if (s.pageMargins) dp else TINY_MARGIN_DP) * density)
         val ml = px(s.marginLeftDp.coerceAtLeast(0))
         val mr = px(s.marginRightDp.coerceAtLeast(0))
@@ -61,11 +67,13 @@ object LayoutKeys {
             w = minOf(minBox, viewW).coerceAtLeast(1)
             left = ((viewW - w) / 2).coerceAtLeast(0)
         }
-        var h = viewH - mt - mb
-        var top = mt
+        val band = extraTop.coerceIn(0, viewH)
+        val below = viewH - band
+        var h = below - mt - mb
+        var top = band + mt
         if (h < minBox) {
-            h = minOf(minBox, viewH).coerceAtLeast(1)
-            top = ((viewH - h) / 2).coerceAtLeast(0)
+            h = minOf(minBox, below).coerceAtLeast(1)
+            top = band + ((below - h) / 2).coerceAtLeast(0)
         }
         return PageGeometry(viewW, viewH, left, top, w, h)
     }

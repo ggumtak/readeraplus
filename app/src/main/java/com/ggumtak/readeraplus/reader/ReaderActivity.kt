@@ -296,7 +296,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private class PendingNav(val section: Int, val offset: Int, val pageIndex: Int, val fraction: Float)
     private var displayedGenId = -1
     private var lastChapterIdx = Int.MIN_VALUE
-    private var insets = IntArray(4)
+    /** [ReaderWindow.insetsOf]: left, top, right, bottom and the cutout-only part of top. */
+    private var insets = IntArray(ReaderWindow.INSETS)
+    /** The cutout band at the page view's top ([applyPageInsets]); the session's text box starts below it. */
+    override var pageCutoutTop = 0
+        private set
 
     private var bookmarks: List<Bookmark> = emptyList()
     /** Ids of bookmarks the user removed while their insert was still running ([toggleBookmark]). */
@@ -1205,7 +1209,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 viewReady.await()
                 val (vw, vh) = pageTargetSize()
                 // PLAN C16: a note opens with natural pagination; restored and normal opens are anchored at the start.
-                s.setViewport(vw, vh, if (target != null) null else AnchorSpec(sec, anchor.offset))
+                s.setViewport(vw, vh, pageCutoutTop, if (target != null) null else AnchorSpec(sec, anchor.offset))
                 openOwnsViewport = false
                 // Cached page counts load in parallel with the first layout.
                 s.startCounting(COUNT_DELAY_MS)
@@ -1814,7 +1818,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val s = session ?: return
         // A rotation mid-fling keeps the line that is on top now (settled against the old frame), A §5.5.
         scroll?.stopMotion()
-        if (!s.setViewport(w, h, keepHere())) return
+        if (!s.setViewport(w, h, pageCutoutTop, keepHere())) return
         onNewGeneration()
         relayout()
     }
@@ -3202,7 +3206,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 val sec = target.section.coerceIn(0, s.sectionCount - 1)
                 val (vw, vh) = pageTargetSize()
                 // The needle is text of the old anchor's section: searched only where that section still is.
-                s.setViewport(vw, vh, AnchorSpec(sec, target.offset, if (target === pos && sec == pos.section) needle else null))
+                s.setViewport(vw, vh, pageCutoutTop, AnchorSpec(sec, target.offset, if (target === pos && sec == pos.section) needle else null))
                 val l = s.layout(sec)
                 if (l != null) {
                     val at = if (l.anchorBreak >= 0) l.anchorBreak else target.offset.coerceIn(0, l.content.length)
@@ -3252,7 +3256,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 val want = readerTarget
                 val keep = AnchorSpec(sec, off)
                 val changed = want != null && want != s.settings && s.updateSettings(want, keep) != BookSession.Change.NONE
-                if (s.setViewport(nw, nh, keep) || changed) {
+                if (s.setViewport(nw, nh, pageCutoutTop, keep) || changed) {
                     anchor = DocPosition(sec, off)
                     relayout()
                 } else {
@@ -3296,15 +3300,26 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         updateChipPosition()
     }
 
-    /** The page view's top/bottom margins: the system-bar insets, nothing else (U §2.6, C18). */
+    /**
+     * The page view's top/bottom margins: the system-bar insets, nothing else (U §2.6, C18). A top inset that only a
+     * display cutout takes (fullscreen on the S25: no bar shown there) is no margin: the view reaches into the camera
+     * band so its header hugs the screen's top edge like MaruViewer's, and the session lays the text box out below the
+     * band ([pageCutoutTop], LayoutKeys.geometry), where and as large as it was: the same pages, the same first char.
+     */
     private fun applyPageInsets() {
         val lp = page.layoutParams as? FrameLayout.LayoutParams ?: return
-        val t = insets[1]
+        val cut = insets[4]
+        val t = insets[1] - cut
         val b = insets[3]
+        val bandMoved = cut != pageCutoutTop
+        pageCutoutTop = cut
         if (lp.topMargin != t || lp.bottomMargin != b) {
             lp.topMargin = t
             lp.bottomMargin = b
             page.layoutParams = lp
+        } else if (bandMoved) {
+            // The view keeps its size (no onSizeChanged): the text box moves by the band alone.
+            onViewSizeChanged(page.width, page.height)
         }
     }
 

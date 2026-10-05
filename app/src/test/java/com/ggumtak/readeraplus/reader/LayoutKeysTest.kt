@@ -22,10 +22,49 @@ class LayoutKeysTest {
     @Test
     fun geometryWithMarginsHeaderFooter() {
         val g = LayoutKeys.geometry(s, 720, 1440, density)
-        assertEquals(80, g.contentLeft)
+        // MaruViewer's 20 dp at the sides, 40 dp at top and bottom.
+        assertEquals(40, g.contentLeft)
         assertEquals(80, g.contentTop)
-        assertEquals(720 - 160, g.contentWidth)
+        assertEquals(720 - 80, g.contentWidth)
         assertEquals(1440 - 160, g.contentHeight)
+    }
+
+    @Test
+    fun sideMarginsAreTheSameShareOfTheWidthOnBothDevices() {
+        // dp, not px: 20 dp is 60 of 1080 px on the S25 (density 3) and 40 of 720 px on the Comet (density 2).
+        val s25 = LayoutKeys.geometry(s, 1080, 2340, 3f)
+        val comet = LayoutKeys.geometry(s, 720, 1440, 2f)
+        assertEquals(60, s25.contentLeft)
+        assertEquals(40, comet.contentLeft)
+        assertEquals(s25.contentLeft / 1080f, comet.contentLeft / 720f, 1e-6f)
+        assertEquals(1080 - s25.contentWidth, 2 * s25.contentLeft)
+    }
+
+    @Test
+    fun aCutoutBandAtTheTopKeepsTheTextBoxWhereItWas() {
+        // Fullscreen on the S25: the page view now starts at the screen's top edge instead of below the camera band,
+        // and the band goes into the text box's top. Same box on screen, same size, same key: the same pages.
+        val font = "f|1"
+        for (band in listOf(0, 1, 87, 120)) for (t in listOf(s, s.copy(pageMargins = false), s.copy(marginTopDp = 0))) {
+            val below = LayoutKeys.geometry(t, 1080, 2340 - band, 3f)
+            val into = LayoutKeys.geometry(t, 1080, 2340, 3f, extraTop = band)
+            assertEquals(below.contentLeft, into.contentLeft)
+            assertEquals(below.contentTop + band, into.contentTop)
+            assertEquals(below.contentWidth, into.contentWidth)
+            assertEquals(below.contentHeight, into.contentHeight)
+            assertEquals(2340, into.viewHeight)
+            // The bottom margin is the same, so the footer and the progress lane stay where they were.
+            assertEquals(below.viewHeight - below.contentTop - below.contentHeight, into.viewHeight - into.contentTop - into.contentHeight)
+            val parse = t.parseOptions()
+            assertEquals(LayoutKeys.key(t, parse, below, 3f, font), LayoutKeys.key(t, parse, into, 3f, font))
+        }
+        // No cutout (the Comet): nothing changes.
+        assertEquals(LayoutKeys.geometry(s, 720, 1440, 2f), LayoutKeys.geometry(s, 720, 1440, 2f, extraTop = 0))
+        // A box too small for the margins is centred below the band.
+        val tight = s.copy(marginTopDp = 900, marginBottomDp = 900)
+        val g = LayoutKeys.geometry(tight, 1080, 2340, 3f, extraTop = 87)
+        assertTrue(g.contentTop >= 87)
+        assertEquals(LayoutKeys.geometry(tight, 1080, 2340 - 87, 3f).contentTop + 87, g.contentTop)
     }
 
     @Test
@@ -57,7 +96,7 @@ class LayoutKeysTest {
         assertEquals(1.5f, c.indentEm, 1e-6f)
         assertEquals(Align.LEFT, c.align)
         assertEquals(LineBreakMode.CHAR, c.lineBreak)
-        assertEquals(560, c.width)
+        assertEquals(640, c.width)
     }
 
     @Test

@@ -115,10 +115,26 @@ class UserStylesTest {
 
     @Test fun oldAndDeliberateMarginMarkers() {
         val old=JSONObject().put("name","old").put("marginLeftDp",18).put("marginRightDp",18).put("marginTopDp",16).put("marginBottomDp",16)
-        val moved=UserStyles.fromJson(old)!!;assertEquals(40,moved.marginLeftDp);assertEquals(40,moved.marginTopDp)
+        val moved=UserStyles.fromJson(old)!!;assertEquals(20,moved.marginLeftDp);assertEquals(20,moved.marginRightDp);assertEquals(40,moved.marginTopDp)
         old.put("marginBase",40).put("marginBaseV",40)
         val deliberate=UserStyles.fromJson(old)!!;assertEquals(18,deliberate.marginLeftDp);assertEquals(16,deliberate.marginTopDp)
+        assertEquals(20,UserStyles.toJson(deliberate).getInt("marginBase"))
         assertEquals(40,UserStyles.toJson(deliberate).getInt("marginBaseV"))
+    }
+
+    @Test fun aStyleSavedWithTheFortyDpDefaultGetsMaruViewersSides() {
+        // Saved by an R3 build ("marginBase" 40) with the untouched 40 dp sides: MaruViewer's 20 dp now. Top and bottom stay.
+        val r3=JSONObject().put("name","r3").put("marginBase",40).put("marginBaseV",40)
+            .put("marginLeftDp",40).put("marginRightDp",40).put("marginTopDp",40).put("marginBottomDp",40)
+        val moved=UserStyles.fromJson(r3)!!
+        assertEquals(listOf(20,20,40,40),listOf(moved.marginLeftDp,moved.marginRightDp,moved.marginTopDp,moved.marginBottomDp))
+        // A side margin the user changed stays, as do unequal sides.
+        assertEquals(30,UserStyles.fromJson(JSONObject(r3.toString()).put("marginLeftDp",30).put("marginRightDp",30))!!.marginLeftDp)
+        assertEquals(40,UserStyles.fromJson(JSONObject(r3.toString()).put("marginRightDp",36))!!.marginLeftDp)
+        // Saved by this build: 40/40 is a choice and round-trips.
+        val chosen=UserStyle.from("40", ReaderSettings(marginLeftDp=40,marginRightDp=40))
+        assertEquals(chosen,UserStyles.fromJson(UserStyles.toJson(chosen))!!)
+        assertEquals(chosen,UserStyles.parse(UserStyles.toJson(listOf(chosen)).toString()).single())
     }
 
 }

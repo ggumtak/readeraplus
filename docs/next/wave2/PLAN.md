@@ -1,5 +1,15 @@
 # PLAN.md — wave 2 build plan: R3 = scroll + UI + NOTES + user addendum U1–U6
 
+> **사용자 변경 지시 (2026-10-05): 마루뷰어 여백 · 상태 표시줄.**
+> 좌우 여백 기본값은 마루뷰어와 같은 20 dp다(S25에서 본문 왼쪽 x ≈ 60 px, 폭의 5.6 %). 퀵옵션과 읽기 설정의 좌우 여백 "0"이
+> 20 dp이고 범위는 −20..+60(0..80 dp)이다. 상하 여백은 그대로 40 dp = "0"이다. 저장값은 계속 실제 dp이고, 예전 기본값을
+> 그대로 둔 좌우 여백(R3 40/40, R2 18/18)만 한 번 20/20이 된다(설정 · 백업 · 내 스타일). 위 상태 표시줄 기본값은 마루뷰어의
+> 줄: 왼쪽 배터리 아이콘(채운 만큼이 잔량, 숫자 없음)과 시계, 가운데 책 제목(길면 앞을 줄여 끝을 남긴다), 오른쪽 쪽 번호.
+> 기존 설치에도 한 번 적용한다(아래 상태 표시줄 · 진행 막대 · 글자 크기는 그대로). 위 상태 줄은 화면 위 끝에 붙고(글자 위
+> 끝이 위 끝에서 4 dp; 전체 화면의 S25에서는 카메라 구멍 띠 안), 아래 줄은 진행 선 바로 위(또는 아래 끝 4 dp 위)에 붙는다.
+> 위 여백 가운데 정렬(U2)은 이 지시로 대체한다. 본문 상자는 그대로라 쪽 나눔과 첫 글자가 바뀌지 않는다. 이 문서의 "40 dp =
+> '0'"(S §2.2)은 좌우에 대해 이 지시로 대체한다.
+>
 > **사용자 변경 지시 (2026-10-02): 페이지 넘김 애니메이션 없음.**
 > 탭·볼륨 키·기기 버튼·자동 넘김은 PAGED/SCROLL, STEP/SMOOTH, 휴대폰/e-ink 모두 즉시 이동한다.
 > 이 문서의 180 ms step/startScroll 애니메이션과 관련 예외·성능 기준은 이 지시로 대체한다.
@@ -1115,20 +1125,20 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 5 | `11_txt_page2`, `12_txt_tap_right` (+ `rawshot 12b`) | as today | — | — |
 | 6 | `13_txt_chrome` (+ rawshot) | as today | back · 🔖 🔊 🔍 ☰ ⚙ ⋮; one-line title at x = 40; brightness row with ⌄, no grey square; "3 / 167" centred at x = 360 ± 2, bold, not underlined; ⟳ + outline pin; ⏮ seek ⏭; no strip | U |
 | 7 | `13b_pin` | `tap_label "이 페이지 고정"` | filled pin; strip "(pin) 3쪽" · "지우기" (79cd1a5: "N쪽", "N쪽으로"); `raw_equal 13 13b 360 1100` EQUAL | U |
-| 8 | `13c_pin_close` | tap 360 700 | chrome closed, **no turn**: `raw_equal 12b 13c` over PageView rows EQUAL; no chip | U |
+| 8 | `13c_pin_close` | tap 360 700 | chrome closed, **no turn**: `raw_equal 12b 13c` over PageView rows below the header's clock (`pv + 48 …`, 2026-10-05) EQUAL; no chip | U |
 | 9 | `13d_strip`, `13d_return` | volume-down ×5; tap 360 720; `tap_label "3쪽으로" contains` | label "8 / 167", strip "‹ 3쪽으로"; then "3 / 167", "(pin) 3쪽" · 지우기 · "8쪽으로 ›" | U |
 | 10 | `13e_brightness_opts` | `tap_label "밝기 옵션"` | the row stays, ⌃, "스와이프로 밝기 조절" (off, filled knob), "기기 밝기 직접 조절"; no question (not e-ink) | U |
 | 11 | `13f_clear` | `tap_label "지우기"` | strip gone, pin outline | U |
 | 12 | `13g_seek_chip`, `13h_chip_gone` (+ `rawshot 10a_pre`) | two seeks with the menu open, close; volume-down ×2; `rawshot 10a_pre` (chrome closed) | chip "‹ 3쪽으로 \| ✕" (the first origin) above the progress line; gone after 2 turns | U |
 | 13 | `14_reading_settings` | as today | **68aa271:** centred popup (16 ± 1 px gaps): one top bar 전체 읽기 설정 › · 닫기, then 글자 크기 · 굵기 · 줄 간격 · 문단 간격 · 좌우 여백 · 상하 여백 (96 px rows) · 글꼴, no 더보기, no scrollbar; CHECK 14q: the popup's 좌우 여백 / 상하 여백 read "0"; "전체 읽기 설정" opens 설정 → 읽기 설정 (여백·페이지: "좌우 여백 0", "상하 여백 0", CHECK 14m), BACK returns to the same page | U, S, A |
-| 14 | `14b_status_slots` | ⋮ → 설정 → 화면·밝기 → 위쪽 상태 표시줄 · 아래쪽 상태 표시줄 (its first two sections; each band's rows 왼쪽 / 가운데 / 오른쪽, read under their header: `slot_row`, `ui_rows.py` "header › row") | 위 [없음][챕터 제목][없음], 아래 all 없음; 진행 막대 on | U |
+| 14 | `14b_status_slots` | ⋮ → 설정 → 화면·밝기 → 위쪽 상태 표시줄 · 아래쪽 상태 표시줄 (its first two sections; each band's rows 왼쪽 / 가운데 / 오른쪽, read under their header: `slot_row`, `ui_rows.py` "header › row") | 위 [배터리 아이콘 · 시계][책 제목][쪽 번호] (MaruViewer's line, 2026-10-05), 아래 all 없음; 진행 막대 on | U |
 | 15 | `14c_slot_list` | the 가운데 row under 아래쪽 상태 표시줄; "쪽 번호 (12 / 3259)" | 12 items with examples ("챕터 쪽 번호 (2 / 32)" right under 쪽 번호); "없음" checked | U |
 | 16 | `10b_footer_slots` (+ `rawshot 10b`) | after 14c's `back` (popup closed, chrome hidden, same page as `10a_pre`) | footer centre "N / M" centred on the text column above the line; **`raw_equal 10a_pre 10b` over the content rows: EQUAL** (turning the footer on did not move the text); **[Δ]** `no_relayout 10a_pre 10b` (perf marks at both rawshots) | U, A |
 | 17 | `14d_volume_mode` | ⋮ → 설정 → 넘기기·터치·키 → 버튼·키 → 볼륨 키 (one chooser again, 68aa271; was the popup's 더보기) → "위 키로 다음 페이지"; back; VOLUME_UP; tap 360 720; find "페이지 이동, " | the row read "아래 키로 다음 페이지" and its chooser lists the 3 entries (14d_list); the label is one page further; then restore "아래 키로 다음 페이지 (기본)" and close the chrome | R (H3) |
 | 18 | `15_toc`, `16_search` | as today | TOC title 20 sp bold | U |
 | 19 | `17_selection` | as today | one row of 5 (복사 · 인용 · 메모 · 사전·번역 · ⋮); the 인용 cell shows a yellow dot with ▾ | U, N |
 | 20 | `20_epub_page1`, `21_epub_page4`, `22_epub_page9` | as today | narrower column (560 px) | S |
-| 21 | `60_scroll_on` … `69_scroll_again` | S §1.15 steps | S §1.15 expectations; **plus:** header, footer, progress line and return strip stay fixed while the text scrolls (61) | S |
+| 21 | `60_scroll_on` … `69_scroll_again` | S §1.15 steps | S §1.15 expectations; **plus:** header, footer, progress line and return strip stay fixed while the text scrolls (61; their live values — 쪽 번호, the clock, the dot — may change: under 1500 px) | S |
 | 22 | `69b_back_to_paged` | ⋮ → "페이지로 보기"; 스크롤 움직임 → 손가락을 따라 (기본) | logged only (restores defaults for later steps) | PLAN |
 | 23 | `30_big_txt`, `31_big_txt_later`, `32_big_txt_reopen` | as today; **[Δ]** `perf_mark 31` before closing, `perf_mark 32` after the reopen | reopen shows the same first line (anchored open): **[Δ]** `first_is 31 32` | A |
 | 24 | `40_library_after` | as today | library (no resume: `am start -n` has no action) | R |
@@ -1145,7 +1155,7 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 35 | `86_notes_quotes`, `87_notes_jump` + CHECK 87 | (before 85: sample-utf8.txt read 3 pages past the quotes, so its saved place is off the quote's page, §1.6.1) 인용문 tab; tap the first row | filter row; the reader at the quote with the mark; the chip "‹ N쪽으로" found | N |
 | 36 | `88_notes_select`, `89_notes_words` | long-press → 선택; 단어장 tab | "1개 선택" bar; word row with 다시 찾기 and the word in bold | N |
 | 37 | `90_highlight_ink` | 설정 → 화면·밝기 → 인용문 색 표시 → 흑백 무늬; open sample-utf8.txt, 3 pages back to the quotes | grey band + thin line / lighter band + dashed; restore 자동 | N |
-| 38 | `52_footer_toggle_same_text` | open sample TXT; ⋮ → 설정 → 화면·밝기 → 아래 가운데 = 없음 (no footer: 10b had set it); back; `rawshot 52a`; the same page → 아래 가운데 = 쪽 번호, 아래 오른쪽 = 시계 · 배터리, 위 가운데 = 없음; back; `rawshot 52b` | **`raw_equal 52a 52b` over the content rows: EQUAL**; only the bands differ (header gone, footer shown); **[Δ]** `no_relayout 52a 52b` | A |
+| 38 | `52_footer_toggle_same_text` | open sample TXT; ⋮ → 설정 → 화면·밝기 → 아래 가운데 = 없음 (no footer: 10b had set it); back; `rawshot 52a`; the same page → 아래 가운데 = 쪽 번호, 아래 오른쪽 = 배터리 아이콘 · 시계, 위 가운데 = 없음; back; `rawshot 52b` | **`raw_equal 52a 52b` over the content rows: EQUAL**; only the bands differ (header gone, footer shown); **[Δ]** `no_relayout 52a 52b` | A |
 | 39 | `53_progress_toggle_same_text` | 화면·밝기 → 진행 막대 off; back; rawshot | same crop EQUAL; **[Δ]** `no_relayout`; restore on | A |
 | 40 | `54_margin_v_exact` | **[Δ]** `perf_mark 54a`; ⚙ → 전체 읽기 설정 → 상하 여백 +10; back; `perf_mark 54b`; shot; then 상하 여백 back to 0 | **[Δ]** `first_is 54a 54b` (the exact first char; height-only change) | A |
 | 41 | `55_font_up_down` | 글자 크기 +1, then −1 | `raw_equal` with the shot before the change: EQUAL (content rows valid again: 54 restored "0") | A |

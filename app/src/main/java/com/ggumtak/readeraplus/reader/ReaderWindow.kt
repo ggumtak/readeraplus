@@ -79,10 +79,12 @@ internal object ReaderWindow {
     }
 
     /**
-     * Insets to keep the page and chrome clear of: cutouts always, system bars only when they are shown.
-     * API 30+: [WindowInsets.getInsets] only reports *visible* bars (hidden and swipe-revealed transient bars
-     * count as 0), so asking for system bars even in fullscreen costs nothing, and keeps the page clear of a
-     * navigation bar that a vendor firmware refuses to hide (the Comet cut-off-bottom-bar problem).
+     * Insets to keep the page and chrome clear of: cutouts always, system bars only when they are shown, as
+     * [left, top, right, bottom, cutoutTop]. cutoutTop is the part of top that only a display cutout takes (no system
+     * bar shown there: fullscreen on the S25); the page view reaches into it for its header (`applyPageInsets`), the
+     * chrome does not. API 30+: [WindowInsets.getInsets] only reports *visible* bars (hidden and swipe-revealed
+     * transient bars count as 0), so asking for system bars even in fullscreen costs nothing, and keeps the page clear
+     * of a navigation bar that a vendor firmware refuses to hide (the Comet cut-off-bottom-bar problem).
      */
     /** Height of the bottom strip the system keeps for its swipes (home, recents); 0 before API 29. */
     fun gestureBottom(insets: WindowInsets): Int = when {
@@ -94,21 +96,25 @@ internal object ReaderWindow {
     fun insetsOf(insets: WindowInsets, fullscreen: Boolean): IntArray {
         if (Build.VERSION.SDK_INT >= 30) {
             val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-            return intArrayOf(i.left, i.top, i.right, i.bottom)
+            val bars = insets.getInsets(WindowInsets.Type.systemBars())
+            return intArrayOf(i.left, i.top, i.right, i.bottom, if (bars.top == 0) i.top else 0)
         }
         if (fullscreen) {
             if (Build.VERSION.SDK_INT >= 28) {
                 val c = insets.displayCutout
-                if (c != null) return intArrayOf(c.safeInsetLeft, c.safeInsetTop, c.safeInsetRight, c.safeInsetBottom)
+                if (c != null) return intArrayOf(c.safeInsetLeft, c.safeInsetTop, c.safeInsetRight, c.safeInsetBottom, c.safeInsetTop)
             }
-            return IntArray(4)
+            return IntArray(INSETS)
         }
         @Suppress("DEPRECATION")
         return intArrayOf(
             insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
-            insets.systemWindowInsetRight, insets.systemWindowInsetBottom,
+            insets.systemWindowInsetRight, insets.systemWindowInsetBottom, 0,
         )
     }
+
+    /** Size of [insetsOf]'s array. */
+    const val INSETS = 5
 }
 
 /**

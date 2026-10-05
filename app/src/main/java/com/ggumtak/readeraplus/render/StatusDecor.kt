@@ -8,25 +8,31 @@ class StatusSlot {
     @JvmField var battery = -1
     @JvmField val batteryChars = CharArray(3)
     @JvmField var batteryLength = 0
+    /** The battery icon comes first and has no number (MaruViewer's corner, `StatusItem.CLOCK_BATTERY`). */
+    @JvmField var batteryFirst = false
+    /** A [text] too wide for its slot is shortened at its start, keeping the end (`StatusItem.keepsEnd`). */
+    @JvmField var keepEnd = false
     val isEmpty: Boolean get() = length == 0 && text == null && battery < 0
 
-    fun set(src: CharArray, n: Int, battery: Int): Boolean {
+    fun set(src: CharArray, n: Int, battery: Int, batteryFirst: Boolean = false): Boolean {
         val count = n.coerceIn(0, minOf(src.size, CAPACITY))
         val level = if (battery < 0) -1 else battery.coerceAtMost(100)
-        var changed = text != null || length != count || this.battery != level
+        val first = batteryFirst && level >= 0
+        var changed = text != null || length != count || this.battery != level || this.batteryFirst != first
         for (i in 0 until count) if (chars[i] != src[i]) changed = true
         src.copyInto(chars, 0, 0, count)
-        length = count; text = null; this.battery = level
-        batteryLength = when { level < 0 -> 0; level < 10 -> 1; level < 100 -> 2; else -> 3 }
+        length = count; text = null; this.battery = level; this.batteryFirst = first; keepEnd = false
+        batteryLength = when { level < 0 || first -> 0; level < 10 -> 1; level < 100 -> 2; else -> 3 }
         var value = level
         for (i in batteryLength - 1 downTo 0) { batteryChars[i] = ('0'.code + value % 10).toChar(); value /= 10 }
         return changed
     }
 
-    fun setText(t: String?): Boolean {
+    fun setText(t: String?, keepEnd: Boolean = false): Boolean {
         val title = t?.takeIf { it.isNotEmpty() }
-        val changed = text != title || length != 0 || battery >= 0
-        text = title; length = 0; battery = -1; batteryLength = 0
+        val end = keepEnd && title != null
+        val changed = text != title || length != 0 || battery >= 0 || this.keepEnd != end
+        text = title; length = 0; battery = -1; batteryLength = 0; batteryFirst = false; this.keepEnd = end
         return changed
     }
 

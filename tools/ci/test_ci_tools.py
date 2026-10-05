@@ -355,10 +355,10 @@ class UiRowsTest(unittest.TestCase):
         lower = self.write("lower.xml", [
             ("아래쪽 상태 표시줄", "[0,100][720,180]", PLAIN),
             ("가운데", "[32,200][130,246]", PLAIN), ("쪽 번호", "[32,246][130,290]", PLAIN),
-            ("오른쪽", "[32,330][130,376]", PLAIN), ("시계 · 배터리", "[32,376][200,420]", PLAIN),
+            ("오른쪽", "[32,330][130,376]", PLAIN), ("배터리 아이콘 · 시계", "[32,376][240,420]", PLAIN),
         ])
         self.assertEqual(self.tool("values", f"{self.page},{lower}", f"{TOP_MID}|{BOTTOM_MID}|{BOTTOM_RIGHT}|위쪽 상태 표시줄 › 왼쪽"),
-                         f"{TOP_MID}=챕터 제목; {BOTTOM_MID}=없음; {BOTTOM_RIGHT}=시계 · 배터리; 위쪽 상태 표시줄 › 왼쪽=?")
+                         f"{TOP_MID}=챕터 제목; {BOTTOM_MID}=없음; {BOTTOM_RIGHT}=배터리 아이콘 · 시계; 위쪽 상태 표시줄 › 왼쪽=?")
 
 
 # The 독서 노트 hub's 인용문 tab as in CI 34 (86_notes_quotes.png, density 2), with a3b8826's 40 dp chips on a 48 dp row

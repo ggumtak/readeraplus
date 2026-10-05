@@ -70,12 +70,13 @@ internal class StatusModel {
         return when (item) {
             StatusItem.NONE -> slot.clear()
             StatusItem.CHAPTER -> if (inp.chapterStartsHere) slot.clear() else slot.setText(inp.chapterTitle)
-            StatusItem.BOOK_TITLE -> slot.setText(inp.bookTitle)
+            StatusItem.BOOK_TITLE -> slot.setText(inp.bookTitle, keepEnd = item.keepsEnd)
             StatusItem.BATTERY -> if (inp.battery < 0) slot.clear() else slot.set(b, 0, inp.battery)
+            // MaruViewer's corner: the battery icon (no number), then the time.
             StatusItem.CLOCK_BATTERY -> when {
                 inp.minuteOfDay < 0 && inp.battery < 0 -> slot.clear()
-                inp.minuteOfDay < 0 -> slot.set(b, 0, inp.battery)
-                else -> slot.set(b, StatusText.clock(b, 0, inp.minuteOfDay, inp.is24), inp.battery)
+                inp.minuteOfDay < 0 -> slot.set(b, 0, inp.battery, batteryFirst = true)
+                else -> slot.set(b, StatusText.clock(b, 0, inp.minuteOfDay, inp.is24), inp.battery, batteryFirst = true)
             }
             else -> {
                 val n = chars(b, item, inp)
@@ -112,24 +113,14 @@ internal class StatusModel {
             StatusItem.CHAPTER -> inp.chapterTitle?.takeIf { it.isNotEmpty() }
             StatusItem.BOOK_TITLE -> inp.bookTitle?.takeIf { it.isNotEmpty() }
             StatusItem.BATTERY -> if (inp.battery < 0) null else inp.battery.coerceAtMost(100).toString()
-            StatusItem.CLOCK_BATTERY -> {
-                val clock = if (inp.minuteOfDay < 0) null else String(b, 0, StatusText.clock(b, 0, inp.minuteOfDay, inp.is24))
-                val battery = if (inp.battery < 0) null else inp.battery.coerceAtMost(100).toString()
-                when {
-                    clock != null && battery != null -> "$clock$SAMPLE_SEP$battery"
-                    else -> clock ?: battery
-                }
-            }
+            // The icon has no text: the time, as [StatusItem.CLOCK_BATTERY]'s example shows ("14:05").
+            StatusItem.CLOCK_BATTERY ->
+                if (inp.minuteOfDay < 0) null else String(b, 0, StatusText.clock(b, 0, inp.minuteOfDay, inp.is24))
             else -> {
                 val n = chars(b, item, inp)
                 if (n <= 0) null else String(b, 0, n)
             }
         }
-    }
-
-    private companion object {
-        /** Joins the clock and the battery in a sample, as [StatusItem.CLOCK_BATTERY]'s example shows ("14:05 · 80"). */
-        const val SAMPLE_SEP = " · "
     }
 }
 

@@ -132,6 +132,8 @@ class BookSession(
     @Volatile private var liveGenId = 0
     private var viewW = 0
     private var viewH = 0
+    /** The cutout band at the page view's top ([LayoutKeys.geometry]'s extraTop). */
+    private var viewCutoutTop = 0
     /** Uptime when the current generation was created (partial counts are saved only for settled layouts). */
     private var generationBornAt = 0L
 
@@ -189,12 +191,16 @@ class BookSession(
 
     val isClosed: Boolean get() = closed
 
-    /** Sets the page view size. Returns true when the geometry changed (a new generation was created). */
-    fun setViewport(width: Int, height: Int, anchor: AnchorSpec? = null): Boolean {
+    /**
+     * Sets the page view size and the display cutout band at its top ([cutoutTop], see [LayoutKeys.geometry]). Returns
+     * true when the geometry changed (a new generation was created).
+     */
+    fun setViewport(width: Int, height: Int, cutoutTop: Int, anchor: AnchorSpec? = null): Boolean {
         if (width <= 0 || height <= 0) return false
-        if (width == viewW && height == viewH && generation != null) return false
+        if (width == viewW && height == viewH && cutoutTop == viewCutoutTop && generation != null) return false
         viewW = width
         viewH = height
+        viewCutoutTop = cutoutTop
         rebuild(anchor)
         return true
     }
@@ -218,7 +224,7 @@ class BookSession(
     private fun rebuild(anchor: AnchorSpec?) {
         if (closed || viewW <= 0 || viewH <= 0) return
         val dm = context.resources.displayMetrics
-        val g = LayoutKeys.geometry(settings, viewW, viewH, dm.density)
+        val g = LayoutKeys.geometry(settings, viewW, viewH, dm.density, viewCutoutTop)
         genCounter++
         liveGenId = genCounter
         generationBornAt = SystemClock.uptimeMillis()

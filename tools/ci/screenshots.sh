@@ -35,15 +35,32 @@ pv_rows() { # "top bottom" of the PageView in screen rows (dumpsys bounds); the 
   b=$(python3 tools/ci/perf_log.py pv_bounds /tmp/top.txt)
   echo "${b:-0 1440}"
 }
-content_rows() { # "Y0 Y1" of the text box: pv + 80 … pv + 1360 (valid only at 상하 여백 "0", PLAN §5.3)
+content_rows() { # "Y0 Y1" of the text box: pv + 80 … pv + 1360 (valid only at 상하 여백 "0", PLAN §5.3; the emulator
+  # has no display cutout, so the page view and its text box start where they did before the edge-hugging header)
   local pv; pv=$(pv_rows); pv=${pv%% *}
   echo "$((pv + 80)) $((pv + 1360 > 1440 ? 1440 : pv + 1360))"
 }
-raw_check() { # raw_check <n> <raw A> <raw B> <Y0 Y1 | content | pageview>: raw_equal.py over those rows, as a CHECK
+band_check() { # band_check <n> <raw A> <raw B> <Y0> <Y1>: a status band that must stay put while the text scrolls. EQUAL
+  # passes, and so does a DIFF under 1500 px (its live values changed: 쪽 번호, the clock, the progress dot); scrolled text
+  # in the band differs by thousands (about 90 px per text row).
+  local r n
+  r=$(python3 tools/ci/raw_equal.py "shots/$2.raw" "shots/$3.raw" "$4" "$5")
+  case "$r" in
+    EQUAL) check "$1" 0 "pixels EQUAL $2 vs $3 rows $4..$5";;
+    DIFF*) n=${r#DIFF }; n=${n%% *}
+      if [ "$n" -lt 1500 ]; then check "$1" 0 "band fixed, only its live values changed ($r) rows $4..$5"
+      else check "$1" 1 "band changed like moving text ($r) rows $4..$5"; fi;;
+    *) check "$1" 1 "pixels ${r:-error} $2 vs $3 rows $4..$5";;
+  esac
+}
+raw_check() { # raw_check <n> <raw A> <raw B> <Y0 Y1 | content | pageview | belowheader>: raw_equal.py over those rows, as
+  # a CHECK. belowheader: the page view but its top 48 rows, where the default header (MaruViewer's line, 2026-10-05)
+  # draws the clock 8 px (4 dp) below the top (its glyphs end near row 40 at 11 sp): a minute may pass between two shots.
   local r y0 y1
   case "$4" in
     content) read -r y0 y1 <<<"$(content_rows)" ;;
     pageview) read -r y0 y1 <<<"$(pv_rows)" ;;
+    belowheader) read -r y0 y1 <<<"$(pv_rows)"; y0=$((y0 + 48)) ;;
     *) y0=$4; y1=$5 ;;
   esac
   r=$(python3 tools/ci/raw_equal.py "shots/$2.raw" "shots/$3.raw" "$y0" "$y1")
@@ -552,10 +569,10 @@ chrome_pin() { # 13 (+rawshot), 13b–13h, then rawshot 10a_pre and the bars ope
   raw_check 13b 13_txt_chrome 13b_pin 360 1100
   dump; if has "고정 해제" && has "지우기"; then check 13b_pin 0 "pin filled (고정 해제) and the strip with 지우기"
   else check 13b_pin 1 "no filled pin or no strip"; fi
-  # 13c: a tap on the page closes the bars and turns nothing
+  # 13c: a tap on the page closes the bars and turns nothing (below the header's clock: 12b is a minute or so older)
   adb shell input tap 360 700
   shot 13c_pin_close 2; rawshot 13c
-  raw_check 13c 12b 13c pageview
+  raw_check 13c 12b 13c belowheader
   dump; if has "쪽으로" contains; then check 13c 1 "a return chip is shown"; else check 13c 0 "no chip"; fi
   # 13d: five pages on, the strip offers the pinned page; going there offers the way back. The strip and the chip say
   # "3쪽" / "‹ 3쪽으로" / "8쪽으로 ›" since 79cd1a5 (the unit after a number is 쪽, attached; it was "3 페이지로").
@@ -640,9 +657,11 @@ reading_settings() { # 14 the quick options (⚙) and 14q their margins; 14s the
     *"; 아래 왼쪽=없음; 아래 가운데=없음; 아래 오른쪽=없음; 진행 막대=on") check 14b 0 "bottom slots 없음, 진행 막대 on ($STATUS)";;
     *) check 14b 1 "bottom slots not all 없음 or 진행 막대 not on ($STATUS)";;
   esac
+  # The default header is MaruViewer's line (2026-10-05): battery icon and clock, the book's title, the page.
   case "$STATUS" in
-    "위 왼쪽=없음; 위 가운데=챕터 제목; 위 오른쪽=없음;"*) check 14b_top 0 "top slots [없음][챕터 제목][없음]";;
-    *) check 14b_top 1 "top slots not [없음][챕터 제목][없음] ($STATUS)";;
+    "위 왼쪽=배터리 아이콘 · 시계; 위 가운데=책 제목; 위 오른쪽=쪽 번호;"*)
+      check 14b_top 0 "top slots [배터리 아이콘 · 시계][책 제목][쪽 번호]";;
+    *) check 14b_top 1 "top slots not [배터리 아이콘 · 시계][책 제목][쪽 번호] ($STATUS)";;
   esac
   # 14c: the slot chooser of 아래 가운데 ("쪽 번호 (12 / 3259)" … "챕터 쪽 번호 (2 / 32)": the first "쪽 번호" is the
   # page), its row 가운데 under 아래쪽 상태 표시줄
@@ -836,19 +855,12 @@ scroll_moves() { # 61–66 in the scroll mode set by 60
   # `input motionevent` is a process start, and a DOWN left alone for the 500 ms long-press would select text.
   adb shell input swipe 360 1100 360 500 9000; shot 61_scroll_drag 2; rawshot 61b
   read -r top bot <<<"$(pv_rows)"
-  raw_check 61_header 61a 61b "$top" $((top + 80))
-  # The footer band stays put; its live values follow the position (14c's 아래 가운데 = 쪽 번호 until 52, the progress
-  # dot). Scrolled text in the band would differ by thousands of pixels (about 90 per text row), those values by a few
-  # hundred.
-  local y0 y1 r n
-  r=$(python3 tools/ci/raw_equal.py shots/61a.raw shots/61b.raw $((bot - 80)) "$bot")
-  case "$r" in
-    EQUAL) check 61_footer 0 "pixels EQUAL 61a vs 61b rows $((bot - 80))..$bot";;
-    DIFF*) n=${r#DIFF }; n=${n%% *}
-      if [ "$n" -lt 1500 ]; then check 61_footer 0 "footer band fixed, only its live values changed ($r) rows $((bot - 80))..$bot"
-      else check 61_footer 1 "footer band changed like moving text ($r) rows $((bot - 80))..$bot"; fi;;
-    *) check 61_footer 1 "pixels ${r:-error} 61a vs 61b rows $((bot - 80))..$bot";;
-  esac
+  # Both bands stay put while the text scrolls; their live values follow the position and the time: the header's 쪽 번호
+  # and clock (MaruViewer's line, the default since 2026-10-05), the footer's 쪽 번호 (14c's 아래 가운데 until 52) and the
+  # progress dot. The header's 80 rows hold its glyphs from row 8 (4 dp below the edge) down to about row 40.
+  band_check 61_header 61a 61b "$top" $((top + 80))
+  band_check 61_footer 61a 61b $((bot - 80)) "$bot"
+  local y0 y1 r
   read -r y0 y1 <<<"$(content_rows)"
   r=$(python3 tools/ci/raw_equal.py shots/61a.raw shots/61b.raw "$y0" "$y1")
   case "$r" in DIFF*) check 61_moved 0 "the text moved ($r)";; *) check 61_moved 1 "the text did not move ($r)";; esac
@@ -1194,7 +1206,7 @@ footer_toggle() { # 52: footer slots and header changed on 화면·밝기 (over 
   rawshot 52a; perf_mark 52a
   open_screen_over_reader || return 1
   set_slot "아래 가운데" "쪽 번호" || { leave_settings; return 1; }
-  set_slot "아래 오른쪽" "시계 · 배터리" || { leave_settings; return 1; } # "시계 · 배터리 (14:05 · 80)" (contains)
+  set_slot "아래 오른쪽" "배터리 아이콘 · 시계" || { leave_settings; return 1; } # "배터리 아이콘 · 시계 (14:05)" (contains)
   set_slot "위 가운데" "없음" || { leave_settings; return 1; }
   leave_settings || return 1
   shot 52_footer_toggle_same_text 1; rawshot 52b; perf_mark 52b

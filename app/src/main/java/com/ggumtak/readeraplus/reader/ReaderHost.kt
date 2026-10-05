@@ -59,6 +59,12 @@ interface ReaderHost {
     /** The page view (for anchoring popups and converting coordinates). */
     val pageView: View
 
+    /**
+     * Px at the page view's top that a display cutout covers (fullscreen, the S25's camera band): the text box starts
+     * below them (`LayoutKeys.geometry`'s extraTop). 0 without one.
+     */
+    val pageCutoutTop: Int get() = 0
+
     /** Converts view coordinates to (section offset) on the current page, or -1. */
     fun hitTest(x: Float, y: Float): Int
 

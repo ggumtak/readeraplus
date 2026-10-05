@@ -96,6 +96,7 @@ object Settings {
             putString("r.pageBreak", s.pageBreak.name)
             putInt(SideMargin.KEY, SideMargin.ZERO_DP)
             putInt(VerticalMargin.KEY, VerticalMargin.ZERO_DP)
+            putBoolean(MaruHeader.KEY, true)
             for (key in StatusMigration.LEGACY_KEYS) remove(key)
             putFloat("r.statusFontSizeSp", s.statusFontSizeSp)
             putBoolean("r.widowOrphanControl", s.widowOrphanControl)
@@ -187,7 +188,8 @@ object Settings {
         val d = ReaderSettings()
         val p = prefs
         val mig = if (p.contains(StatusMigration.MARKER_KEY)) null else StatusMigration.migrate(StatusMigration.Legacy.from(p))
-        val sideLegacy = SideMargin.isLegacyDefault(p.contains(SideMargin.KEY), p.getInt("r.marginLeftDp", d.marginLeftDp), p.getInt("r.marginRightDp", d.marginRightDp))
+        val sideBase = if (p.contains(SideMargin.KEY)) p.getInt(SideMargin.KEY, 0) else null
+        val sideLegacy = SideMargin.isLegacyDefault(sideBase, p.getInt("r.marginLeftDp", d.marginLeftDp), p.getInt("r.marginRightDp", d.marginRightDp))
         val verticalLegacy = VerticalMargin.isLegacyDefault(p.contains(VerticalMargin.KEY), p.getInt("r.marginTopDp", d.marginTopDp), p.getInt("r.marginBottomDp", d.marginBottomDp))
         return ReaderSettings(
             fontId = p.getString("r.fontId", d.fontId) ?: d.fontId,
@@ -224,7 +226,7 @@ object Settings {
             txtEmphasizeHeadings = p.getBoolean("r.txtEmphasizeHeadings", d.txtEmphasizeHeadings),
             txtReplaceRules = p.getString("r.txtReplaceRules", d.txtReplaceRules) ?: "",
             epubPublisherStyles = p.getBoolean("r.epubPublisherStyles", d.epubPublisherStyles),
-        )
+        ).let { if (p.contains(MaruHeader.KEY)) it else MaruHeader.applyTo(it) } // saved before MaruViewer's header
     }
 
     private fun loadApp(): AppSettings {

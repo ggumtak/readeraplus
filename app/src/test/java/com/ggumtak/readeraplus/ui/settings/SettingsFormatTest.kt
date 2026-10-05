@@ -268,7 +268,7 @@ class SettingsFormatTest {
         assertTrue(R3Rows.statusFits(r))
         assertTrue(R3Rows.hasStatusText(r))
         // No text in any band: nothing to fit, and no size row.
-        val none = r.withSlot(0, 1, StatusItem.NONE)
+        val none = r.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
         assertFalse(R3Rows.hasStatusText(none))
         assertTrue(R3Rows.statusFits(none.copy(marginTopDp = 0, marginBottomDp = 0)))
         // A header in a 4 dp margin does not fit.
@@ -379,9 +379,9 @@ class SettingsFormatTest {
                 txtReplaceRules = "a=>b", txtDetectChapters = false,
             ),
         )
-        assertEquals(listOf(40, 40, 40, 40), listOf(r.marginLeftDp, r.marginRightDp, r.marginTopDp, r.marginBottomDp))
+        assertEquals(listOf(20, 20, 40, 40), listOf(r.marginLeftDp, r.marginRightDp, r.marginTopDp, r.marginBottomDp))
         assertEquals(PageBreakMode.LINE, r.pageBreak)
-        assertEquals(StatusItem.CHAPTER, r.headerCenter)
+        assertEquals(StatusItem.BOOK_TITLE, r.headerCenter)
         assertEquals(StatusItem.NONE, r.footerRight)
         assertEquals("a=>b", r.txtReplaceRules)
         assertFalse(r.txtDetectChapters)

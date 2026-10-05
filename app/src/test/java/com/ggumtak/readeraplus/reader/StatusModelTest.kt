@@ -26,15 +26,18 @@ class StatusModelTest {
     @Test
     fun onlyTheShownItemsAreFormatted() {
         val m = StatusModel()
-        val s = ReaderSettings(footerLeft = StatusItem.PAGE, footerRight = StatusItem.CLOCK_BATTERY, progressBar = false)
+        val s = ReaderSettings(headerLeft = StatusItem.NONE, headerCenter = StatusItem.CHAPTER, headerRight = StatusItem.NONE,
+            footerLeft = StatusItem.PAGE, footerRight = StatusItem.BATTERY, progressBar = false)
         assertTrue(m.update(s, inputs(), track))
         val d = m.decor
-        assertEquals("제3화 비밀", d.header.center.text)               // default header: the chapter title
+        assertEquals("제3화 비밀", d.header.center.text)
+        assertFalse(d.header.center.keepEnd)                       // a chapter title is shortened at its end
         assertTrue(d.header.left.isEmpty && d.header.right.isEmpty)
         assertEquals("12 / 3259", chars(d.footer.left))
         assertTrue(d.footer.center.isEmpty)
-        assertEquals("14:05", chars(d.footer.right))
+        assertEquals("", chars(d.footer.right))
         assertEquals(80, d.footer.right.battery)
+        assertFalse(d.footer.right.batteryFirst)
         assertEquals("80", String(d.footer.right.batteryChars, 0, d.footer.right.batteryLength))
         assertFalse(d.lane)
         assertEquals(-1f, d.progress, 0f)
@@ -118,9 +121,55 @@ class StatusModelTest {
     }
 
     @Test
+    fun theDefaultHeaderIsMaruViewersLine() {
+        // Battery icon and clock on the left, the book title in the middle, the page on the right; no footer text.
+        val m = StatusModel()
+        val s = ReaderSettings()
+        assertEquals(StatusItem.CLOCK_BATTERY, s.headerLeft)
+        assertEquals(StatusItem.BOOK_TITLE, s.headerCenter)
+        assertEquals(StatusItem.PAGE, s.headerRight)
+        assertFalse(s.hasFooterText)
+        assertTrue(s.progressBar)
+        assertTrue(m.update(s, inputs(), track))
+        val h = m.decor.header
+        // MaruViewer's corner: the icon first, its fill the level, no number; then the time.
+        assertEquals("14:05", chars(h.left))
+        assertEquals(80, h.left.battery)
+        assertTrue(h.left.batteryFirst)
+        assertEquals(0, h.left.batteryLength)
+        // The book title keeps its end when it is shortened ("…능을 전혀 안숨김 1-246").
+        assertEquals("책 제목", h.center.text)
+        assertTrue(h.center.keepEnd)
+        assertEquals("12 / 3259", chars(h.right))
+        assertTrue(m.decor.footer.isEmpty)
+        // The battery level alone changes the icon's fill: a change. The clock unknown: the icon alone.
+        val inp = inputs()
+        m.update(s, inp, track)
+        inp.battery = 79
+        assertTrue(m.update(s, inp, track))
+        assertEquals(79, h.left.battery)
+        inp.minuteOfDay = -1
+        assertTrue(m.update(s, inp, track))
+        assertEquals(0, h.left.length)
+        assertTrue(h.left.batteryFirst && !h.left.isEmpty)
+        // No battery reading: the time alone, no icon.
+        inp.minuteOfDay = 9 * 60; inp.battery = -1
+        assertTrue(m.update(s, inp, track))
+        assertEquals("09:00", chars(h.left))
+        assertEquals(-1, h.left.battery)
+        assertFalse(h.left.batteryFirst)
+        // The same title moved from 책 제목 to 챕터 제목 changes how it is shortened: a change.
+        val same = inputs().apply { chapterTitle = bookTitle }
+        m.update(s, same, track)
+        assertTrue(m.update(s.copy(headerCenter = StatusItem.CHAPTER), same, track))
+        assertFalse(h.center.keepEnd)
+    }
+
+    @Test
     fun hiddenItemsDoNotCauseChanges() {
         val m = StatusModel()
-        val s = ReaderSettings(progressBar = false)               // header chapter only
+        val s = ReaderSettings(headerLeft = StatusItem.NONE, headerCenter = StatusItem.CHAPTER, headerRight = StatusItem.NONE,
+            progressBar = false)                                  // header chapter only
         val inp = inputs()
         m.update(s, inp, track)
         inp.minuteOfDay++; inp.battery--; inp.page++; inp.bar = 0.9f; inp.percent++
@@ -215,9 +264,12 @@ class StatusModelTest {
         assertEquals("책 7시간 20분", m.sample(StatusItem.TIME_LEFT_BOOK, inp))
         assertEquals("14:05", m.sample(StatusItem.CLOCK, inp))
         assertEquals("80", m.sample(StatusItem.BATTERY, inp))
-        assertEquals("14:05 · 80", m.sample(StatusItem.CLOCK_BATTERY, inp))
+        // The battery icon has no text: the sample is the time, like the item's example.
+        assertEquals("14:05", m.sample(StatusItem.CLOCK_BATTERY, inp))
+        assertEquals(StatusItem.CLOCK_BATTERY.example, m.sample(StatusItem.CLOCK_BATTERY, inp))
         assertNull(m.sample(StatusItem.PAGE, StatusInputs()))
         assertNull(m.sample(StatusItem.CLOCK_BATTERY, StatusInputs()))
+        assertNull(m.sample(StatusItem.CLOCK_BATTERY, StatusInputs().apply { battery = 80 }))
     }
 
     @Test

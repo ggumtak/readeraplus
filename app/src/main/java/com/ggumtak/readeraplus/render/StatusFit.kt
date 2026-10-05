@@ -2,7 +2,12 @@ package com.ggumtak.readeraplus.render
 
 import com.ggumtak.readeraplus.settings.ReaderSettings
 
-/** U2: fitting the status bands into the page margins (px; pure). The text box never makes room for them. */
+/**
+ * U2: fitting the status bands into the page margins (px; pure). The text box never makes room for them. Since
+ * 2026-10-05 the bands hug the screen edges like MaruViewer's status line (user: "제목이 좀 위에 딱 달라붙어있었으면"):
+ * the header's glyph box sits [EDGE_DP] below the top edge ([headerBaseline]), the footer's just above the progress
+ * lane or the bottom edge gap ([footerBaseline]); neither is centred in its margin any more.
+ */
 internal object StatusFit {
     /** Paper kept above and below the status glyphs. */
     const val PAD_DP = 2f
@@ -13,9 +18,11 @@ internal object StatusFit {
     /** Below this bottom margin (above [EDGE_DP]) the progress line is not drawn. */
     const val LANE_MIN_DP = 6f
     /**
-     * Paper kept between the bottom status (footer text, progress line) and the screen's bottom edge: small e-ink
-     * readers hide the panel's last pixel rows under the bezel. On the Comet (5.84", 720×1440) the progress dot, drawn
-     * 0.5 mm from the edge, was cut (user, 2026-10-04). Status geometry only: the text box never moves for it.
+     * Paper kept between the status and the screen's edges: small e-ink readers hide the panel's outer pixel rows
+     * under the bezel. On the Comet (5.84", 720×1440) the progress dot, drawn 0.5 mm from the edge, was cut (user,
+     * 2026-10-04). At the bottom it is kept below the footer text and the progress line; at the top it is where the
+     * header's glyph box starts (MaruViewer's glyphs ≈ 5 dp from the top). Status geometry only: the text box never
+     * moves for it.
      */
     const val EDGE_DP = 4f
     /** Ascent + descent per px of text size assumed for dp estimates in the settings UI (CJK system fonts ≈ 1.45). */
@@ -49,9 +56,33 @@ internal object StatusFit {
     fun lane(marginPx: Float, density: Float): Float =
         if (marginPx < LANE_MIN_DP * density) 0f else minOf(LANE_DP * density, marginPx)
 
+    /**
+     * The room [size] gets for the header above a text box whose top is [contentTopPx] below the page view's top edge:
+     * the glyph box starts [EDGE_DP] below the edge and keeps [PAD_DP] above the text ([size] counts a pad on each
+     * side, so the edge gap replaces the top one).
+     */
+    fun headerRoom(contentTopPx: Float, density: Float): Float = contentTopPx - edgePx(density) + PAD_DP * density
+
+    /** Header baseline: the glyph box's top [EDGE_DP] below the page view's top edge; [ascentPx] at the drawn size. */
+    fun headerBaseline(ascentPx: Float, density: Float): Float = edgePx(density) + ascentPx
+
+    /**
+     * Footer baseline: the glyph box's bottom [PAD_DP] above a progress lane [lanePx] tall, or at [edgeBottomPx] (the
+     * view's bottom less the edge gap) without one; [descentPx] at the drawn size. [size] of the room between the text
+     * box and the lane keeps the glyphs below the text.
+     */
+    fun footerBaseline(edgeBottomPx: Float, lanePx: Float, descentPx: Float, density: Float): Float =
+        edgeBottomPx - (if (lanePx > 0f) lanePx + PAD_DP * density else 0f) - descentPx
+
     /** Settings-UI estimate (dp): does a [statusSp] band show in a [marginDp] margin minus [laneDp]? */
     fun fitsDp(statusSp: Float, marginDp: Int, laneDp: Float): Boolean =
         marginDp - laneDp >= MIN_SP * GLYPH_EM + 2f * PAD_DP
+
+    /**
+     * [fitsDp] for the header ([headerRoom]): the glyph box starts [EDGE_DP] below the top edge. A display cutout
+     * above the margin (the S25's camera band, fullscreen) only adds room, so this is the device without one.
+     */
+    fun headerFitsDp(statusSp: Float, marginDp: Int): Boolean = fitsDp(statusSp, marginDp, EDGE_DP - PAD_DP)
 
     /** [fitsDp] for the footer: its margin also keeps the [EDGE_DP] gap and, with the progress bar on, the lane. */
     fun footerFitsDp(statusSp: Float, marginDp: Int, progressBar: Boolean): Boolean =

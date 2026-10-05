@@ -444,7 +444,7 @@ internal object StatusUi {
     fun showsFitNote(s: ReaderSettings): Boolean {
         val top = if (s.pageMargins) s.marginTopDp else TINY_MARGIN_DP
         val bottom = if (s.pageMargins) s.marginBottomDp else TINY_MARGIN_DP
-        val headerHidden = s.hasHeader && !StatusFit.fitsDp(s.statusFontSizeSp, top, 0f)
+        val headerHidden = s.hasHeader && !StatusFit.headerFitsDp(s.statusFontSizeSp, top)
         val footerHidden = s.hasFooterText &&
             !StatusFit.footerFitsDp(s.statusFontSizeSp, bottom, s.progressBar)
         return headerHidden || footerHidden

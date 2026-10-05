@@ -113,8 +113,8 @@ object UserStyles {
     }
 
     fun toJson(u: UserStyle): JSONObject = JSONObject()
-        .put("marginBase", 40)
-        .put(VerticalMargin.STYLE_KEY, 40)
+        .put(SideMargin.STYLE_KEY, SideMargin.ZERO_DP)
+        .put(VerticalMargin.STYLE_KEY, VerticalMargin.ZERO_DP)
         .put("name", u.name)
         .put("fontId", u.fontId)
         .put("fontSizeSp", u.fontSizeSp.toDouble())
@@ -161,7 +161,8 @@ object UserStyles {
         val name = cleanName(str(o, "name", ""))
         if (name.isEmpty()) return null
         val d = ReaderSettings()
-        val sideLegacy = SideMargin.isLegacyDefault(o.has("marginBase"), int(o, "marginLeftDp", d.marginLeftDp), int(o, "marginRightDp", d.marginRightDp))
+        val sideBase = if (o.has(SideMargin.STYLE_KEY)) int(o, SideMargin.STYLE_KEY, -1) else null
+        val sideLegacy = SideMargin.isLegacyDefault(sideBase, int(o, "marginLeftDp", d.marginLeftDp), int(o, "marginRightDp", d.marginRightDp))
         val verticalLegacy = VerticalMargin.isLegacyDefault(o.has(VerticalMargin.STYLE_KEY), int(o, "marginTopDp", d.marginTopDp), int(o, "marginBottomDp", d.marginBottomDp))
         return UserStyle(
             name = name,
@@ -174,10 +175,10 @@ object UserStyles {
             letterSpacingPm = int(o, "letterSpacingPm", d.letterSpacingPm).coerceIn(-500, 1000),
             align = Align.entries.firstOrNull { it.name == o.optString("align") } ?: d.align,
             lineBreak = LineBreakMode.entries.firstOrNull { it.name == o.optString("lineBreak") } ?: d.lineBreak,
-            marginLeftDp = if (sideLegacy) 40 else int(o, "marginLeftDp", d.marginLeftDp).coerceIn(0, 300),
-            marginRightDp = if (sideLegacy) 40 else int(o, "marginRightDp", d.marginRightDp).coerceIn(0, 300),
-            marginTopDp = if (verticalLegacy) 40 else int(o, "marginTopDp", d.marginTopDp).coerceIn(0, 300),
-            marginBottomDp = if (verticalLegacy) 40 else int(o, "marginBottomDp", d.marginBottomDp).coerceIn(0, 300),
+            marginLeftDp = if (sideLegacy) SideMargin.ZERO_DP else int(o, "marginLeftDp", d.marginLeftDp).coerceIn(0, 300),
+            marginRightDp = if (sideLegacy) SideMargin.ZERO_DP else int(o, "marginRightDp", d.marginRightDp).coerceIn(0, 300),
+            marginTopDp = if (verticalLegacy) VerticalMargin.ZERO_DP else int(o, "marginTopDp", d.marginTopDp).coerceIn(0, 300),
+            marginBottomDp = if (verticalLegacy) VerticalMargin.ZERO_DP else int(o, "marginBottomDp", d.marginBottomDp).coerceIn(0, 300),
             pageMargins = (o.opt("pageMargins") as? Boolean) ?: d.pageMargins,
             pageTheme = PageTheme.entries.firstOrNull { it.name == o.optString("pageTheme") } ?: d.pageTheme,
         )

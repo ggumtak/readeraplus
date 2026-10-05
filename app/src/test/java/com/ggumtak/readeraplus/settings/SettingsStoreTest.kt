@@ -203,10 +203,38 @@ class SettingsStoreTest {
         val raw=hashMapOf<String,Any?>("r.marginLeftDp" to 18,"r.marginRightDp" to 18,"r.marginTopDp" to 16,"r.marginBottomDp" to 16,
             "r.showFooter" to true,"r.footerPage" to false,"r.footerPercent" to true,"r.footerClock" to true,"r.footerBattery" to true,"a.pinChrome" to true,"reader.brightnessCollapsed" to true)
         val before=HashMap(raw);val p=fresh(raw);val r=Settings.reader
-        assertEquals(40,r.marginLeftDp);assertEquals(40,r.marginTopDp);assertEquals(StatusItem.PERCENT,r.footerLeft);assertEquals(StatusItem.CLOCK_BATTERY,r.footerRight);assertEquals(before,raw)
+        assertEquals(20,r.marginLeftDp);assertEquals(40,r.marginTopDp);assertEquals(StatusItem.PERCENT,r.footerLeft);assertEquals(StatusItem.CLOCK_BATTERY,r.footerRight);assertEquals(before,raw)
         Settings.saveReader(r);Settings.saveApp(Settings.app)
         for (k in StatusMigration.LEGACY_KEYS) assertFalse(p.contains(k))
         assertTrue(p.contains(StatusMigration.MARKER_KEY));assertFalse(p.contains("a.pinChrome"));assertFalse(p.contains("reader.brightnessCollapsed"))
+    }
+    @Test fun untouchedFortyDpSidesBecomeMaruViewersTwenty() {
+        // Saved by an R3 build: the marker holds 40, its "0". Read as 20/20 without writing; a save writes the new "0".
+        val raw=hashMapOf<String,Any?>(SideMargin.KEY to 40,VerticalMargin.KEY to 40,MaruHeader.KEY to true,
+            "r.marginLeftDp" to 40,"r.marginRightDp" to 40,"r.marginTopDp" to 40,"r.marginBottomDp" to 40)
+        val before=HashMap(raw);val p=fresh(raw);val r=Settings.reader
+        assertEquals(listOf(20,20,40,40),listOf(r.marginLeftDp,r.marginRightDp,r.marginTopDp,r.marginBottomDp));assertEquals(before,raw)
+        Settings.saveReader(r);assertEquals(20,p.map[SideMargin.KEY]);assertEquals(20,p.map["r.marginLeftDp"])
+        Settings.initForTest(p);assertEquals(r,Settings.reader)
+        // Values the user changed under R3 stay; so does 40/40 saved by this build.
+        fresh(hashMapOf(SideMargin.KEY to 40,"r.marginLeftDp" to 30,"r.marginRightDp" to 30));assertEquals(30,Settings.reader.marginLeftDp)
+        fresh(hashMapOf(SideMargin.KEY to 40,"r.marginLeftDp" to 40,"r.marginRightDp" to 44));assertEquals(40,Settings.reader.marginLeftDp)
+        val q=fresh();val forty=ReaderSettings(marginLeftDp=40,marginRightDp=40);Settings.saveReader(forty);Settings.initForTest(q);assertEquals(forty,Settings.reader)
+    }
+    @Test fun maruViewersHeaderComesOnceAndLaterChoicesStay() {
+        // Prefs saved before the switch: the user's own header (and footer) slots.
+        val raw=hashMapOf<String,Any?>("r.headerLeft" to "NONE","r.headerCenter" to "CHAPTER","r.headerRight" to "CHAPTER_PAGES_LEFT",
+            "r.footerLeft" to "PERCENT","r.footerCenter" to "NONE","r.footerRight" to "NONE","r.progressBar" to false,"r.statusFontSizeSp" to 13f)
+        val before=HashMap(raw);val p=fresh(raw);val r=Settings.reader
+        assertEquals(listOf(StatusItem.CLOCK_BATTERY,StatusItem.BOOK_TITLE,StatusItem.PAGE),listOf(r.headerLeft,r.headerCenter,r.headerRight))
+        // Footer, progress bar and size are the user's still; loading wrote nothing.
+        assertEquals(StatusItem.PERCENT,r.footerLeft);assertFalse(r.progressBar);assertEquals(13f,r.statusFontSizeSp,0f);assertEquals(before,raw)
+        Settings.saveReader(r);assertEquals(true,p.map[MaruHeader.KEY])
+        // Once saved, the user's next choice stays.
+        val mine=r.copy(headerLeft=StatusItem.NONE,headerRight=StatusItem.PERCENT);Settings.saveReader(mine)
+        Settings.initForTest(p);assertEquals(mine,Settings.reader)
+        // A fresh install has nothing to switch: the defaults.
+        fresh();assertEquals(ReaderSettings(),Settings.reader)
     }
     @Test fun deliberateMarginsAndPageBreakRoundTrip() {
         val p=fresh();val r=ReaderSettings(marginLeftDp=18,marginRightDp=18,marginTopDp=16,marginBottomDp=16,pageBreak=com.ggumtak.readeraplus.engine.PageBreakMode.PARAGRAPH)

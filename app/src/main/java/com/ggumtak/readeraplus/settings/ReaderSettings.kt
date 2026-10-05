@@ -26,8 +26,9 @@ data class ReaderSettings(
     val align: Align = Align.LEFT,
     /** CHAR = 글자 단위 like ReadEra (tight justified lines); WORD = 어절 단위 (keep-all). */
     val lineBreak: LineBreakMode = LineBreakMode.WORD,
-    val marginLeftDp: Int = 40,
-    val marginRightDp: Int = 40,
+    /** MaruViewer's side margin ([SideMargin.ZERO_DP], 2026-10-05). */
+    val marginLeftDp: Int = SideMargin.ZERO_DP,
+    val marginRightDp: Int = SideMargin.ZERO_DP,
     val marginTopDp: Int = 40,
     val marginBottomDp: Int = 40,
     /** ReadEra's "페이지 여백" switch: false = use tiny margins. */
@@ -36,10 +37,13 @@ data class ReaderSettings(
     val invert: Boolean = false,
     /** Page colours ("화면 색"; default black on white). Like [invert], a change repaints and never re-lays out. */
     val pageTheme: PageTheme = PageTheme.PAPER,
-    /** Status line at the top: left / centre / right. All NONE = no header band. Default: chapter title centred. */
-    val headerLeft: StatusItem = StatusItem.NONE,
-    val headerCenter: StatusItem = StatusItem.CHAPTER,
-    val headerRight: StatusItem = StatusItem.NONE,
+    /**
+     * Status line at the top: left / centre / right. All NONE = no header band. Default: MaruViewer's line (2026-10-05):
+     * battery and clock, the book title, the page ([MaruHeader] gives it to settings saved before).
+     */
+    val headerLeft: StatusItem = StatusItem.CLOCK_BATTERY,
+    val headerCenter: StatusItem = StatusItem.BOOK_TITLE,
+    val headerRight: StatusItem = StatusItem.PAGE,
     /** Status line at the bottom. All NONE = no footer band. That is the default (user request). */
     val footerLeft: StatusItem = StatusItem.NONE,
     val footerCenter: StatusItem = StatusItem.NONE,
@@ -329,10 +333,14 @@ enum class StatusItem(val label: String, val short: String, val example: String?
     CLOCK("시계", "시계", "14:05"),
     // The page draws the battery icon, then the bare number: no "%" here either.
     BATTERY("배터리", "배터리", "80"),                       // [Δ] no "▭": U+25AD is missing from some firmware fonts
-    CLOCK_BATTERY("시계 · 배터리", "시계·배터리", "14:05 · 80");
+    // MaruViewer's corner: the battery icon (its fill is the level, no number), then the time. The name stays (stored).
+    CLOCK_BATTERY("배터리 아이콘 · 시계", "배터리·시계", "14:05");
 
     /** Titles are the only items shortened with "…" when their slot is narrow. Numbers never are. */
     val elastic: Boolean get() = this == CHAPTER || this == BOOK_TITLE
+
+    /** A shortened book title keeps its end, like MaruViewer's file name ("…능을 전혀 안숨김 1-246"); a chapter its start. */
+    val keepsEnd: Boolean get() = this == BOOK_TITLE
 }
 
 /** Reading modes; changing mode does not change pagination. */

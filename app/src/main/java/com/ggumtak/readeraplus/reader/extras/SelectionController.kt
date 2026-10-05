@@ -314,7 +314,7 @@ class SelectionController(private val host: ReaderHost) {
             }
         }
         // Fallback: the reader's own content box (margins only; the status bands sit inside the margins, A §2.5).
-        val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density)
+        val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density, host.pageCutoutTop)
         originX = if (!dx.isNaN()) dx else SelectionOrigin.fallbackX(g, v.paddingLeft)
         originY = if (!dy.isNaN()) dy else SelectionOrigin.fallbackY(g, v.paddingTop)
         originKey = if (!dx.isNaN() && !dy.isNaN()) key else null

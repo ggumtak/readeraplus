@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.data
 
+import com.ggumtak.readeraplus.settings.MaruHeader
 import com.ggumtak.readeraplus.settings.StatusMigration
 import com.ggumtak.readeraplus.settings.SideMargin
 import com.ggumtak.readeraplus.settings.VerticalMargin
@@ -48,9 +49,11 @@ internal object SettingsJson {
 
     /**
      * Raw pref keys that are device/session state and must not travel with a backup (matched as lower-case
-     * substrings). The permission ones would hide the "모든 파일 접근" panel on a device that lacks the permission.
+     * substrings). The permission ones would hide the "모든 파일 접근" panel on a device that lacks the permission;
+     * [MaruHeader.KEY] is this device's one-time switch (a restore saves the backup's own header slots).
      */
-    private val TRANSIENT = listOf("lastscan", "lastbackup", "cacheepoch", "permpanelhidden", "legacypermasked", "installid", "restoreoffer", "backupauto", "deviceclass")
+    private val TRANSIENT = listOf("lastscan", "lastbackup", "cacheepoch", "permpanelhidden", "legacypermasked", "installid", "restoreoffer", "backupauto", "deviceclass",
+        MaruHeader.KEY.lowercase())
     val DROPPED_KEYS = StatusMigration.LEGACY_KEYS + listOf("a.pinChrome", "reader.brightnessCollapsed", "a.brightnessDevice")
 
     fun isTransient(key: String): Boolean {
@@ -143,14 +146,15 @@ internal object SettingsJson {
         val hasSlots = listOf("r.headerLeft", "r.headerCenter", "r.headerRight", "r.footerLeft", "r.footerCenter", "r.footerRight").any(o::has)
         val migrated = if (!hasSlots && StatusMigration.LEGACY_KEYS.any(o::has))
             StatusMigration.migrate(StatusMigration.Legacy.from(o)).applyTo(loaded) else loaded
+        val sideBase = if (o.has(SideMargin.KEY)) BackupJson.int(o, SideMargin.KEY, -1) else null
         val side = o.has("r.marginLeftDp") && o.has("r.marginRightDp") &&
-            SideMargin.isLegacyDefault(o.has(SideMargin.KEY), migrated.marginLeftDp, migrated.marginRightDp)
+            SideMargin.isLegacyDefault(sideBase, migrated.marginLeftDp, migrated.marginRightDp)
         val vertical = o.has("r.marginTopDp") && o.has("r.marginBottomDp") &&
             VerticalMargin.isLegacyDefault(o.has(VerticalMargin.KEY), migrated.marginTopDp, migrated.marginBottomDp)
-        migrated.copy(marginLeftDp = if (side) 40 else migrated.marginLeftDp,
-            marginRightDp = if (side) 40 else migrated.marginRightDp,
-            marginTopDp = if (vertical) 40 else migrated.marginTopDp,
-            marginBottomDp = if (vertical) 40 else migrated.marginBottomDp)
+        migrated.copy(marginLeftDp = if (side) SideMargin.ZERO_DP else migrated.marginLeftDp,
+            marginRightDp = if (side) SideMargin.ZERO_DP else migrated.marginRightDp,
+            marginTopDp = if (vertical) VerticalMargin.ZERO_DP else migrated.marginTopDp,
+            marginBottomDp = if (vertical) VerticalMargin.ZERO_DP else migrated.marginBottomDp)
     }
 
     // ---- app ----

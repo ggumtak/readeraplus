@@ -156,8 +156,9 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         root.addView(stepperRow("문단 간격", cur.paragraphSpacingPct.toFloat(), 0f, 300f, 10f, { Fmt.pct(it.toInt()) }) {
             update(cur.copy(paragraphSpacingPct = it.toInt()), debounce = true)
         })
-        // The margins as on 읽기 설정: "0" = the default margin, −40..+40 in steps of 2 (stored values stay dp). While
-        // 여백 사용 is off they show the margin the page has (QuickFields.sideUi / verticalUi).
+        // The margins as on 읽기 설정: "0" = the default margin (sides −20..+60 around MaruViewer's 20 dp, top and
+        // bottom −40..+40 around 40 dp), in steps of 2 (stored values stay dp). While 여백 사용 is off they show the
+        // margin the page has (QuickFields.sideUi / verticalUi).
         root.addView(stepperRow(
             "좌우 여백",
             QuickFields.sideUi(cur).toFloat(),
@@ -326,7 +327,7 @@ internal object QuickFields {
 
     /**
      * The 좌우 여백 stepper's value: the margin the page has, so while "여백 사용" is off the minimal margin
-     * ([LayoutKeys.TINY_MARGIN_DP], "−36"), not the stored one the page does not use.
+     * ([LayoutKeys.TINY_MARGIN_DP], "−16"; "−36" on the 상하 여백 stepper), not the stored one the page does not use.
      */
     fun sideUi(s: ReaderSettings): Int =
         SideMargin.toUi(if (s.pageMargins) s.marginLeftDp else LayoutKeys.TINY_MARGIN_DP).coerceIn(SideMargin.UI_MIN, SideMargin.UI_MAX)

@@ -6,7 +6,9 @@ import org.json.JSONObject
 
 class StatusMigrationTest {
  private fun m(vararg kv: Pair<String,Any>): ReaderSettings { val o=JSONObject();kv.forEach { o.put("r."+it.first,it.second) };return StatusMigration.migrate(StatusMigration.Legacy.from(o)).applyTo(ReaderSettings()) }
- @Test fun absentAndUntouchedAndHidden() { assertEquals(ReaderSettings(),m());assertFalse(m("showFooter" to false).hasFooterText);assertEquals(StatusItem.NONE,m("showHeader" to false).headerCenter);assertFalse(m("footerPage" to true,"footerPercent" to true,"footerClock" to true,"footerBattery" to true).hasFooterText) }
+ /** ≤ R2 had the chapter title centred on top (the MaruViewer header is [MaruHeader]'s, for prefs only). */
+ private val r2Header = ReaderSettings(headerLeft = StatusItem.NONE, headerCenter = StatusItem.CHAPTER, headerRight = StatusItem.NONE)
+ @Test fun absentAndUntouchedAndHidden() { assertEquals(r2Header,m());assertFalse(m("showFooter" to false).hasFooterText);assertEquals(StatusItem.NONE,m("showHeader" to false).headerCenter);assertFalse(m("footerPage" to true,"footerPercent" to true,"footerClock" to true,"footerBattery" to true).hasFooterText) }
  @Test fun priorityAndRightSide() { val s=m("footerEpisode" to true,"footerChapterLeft" to true,"footerTimeLeft" to 2);assertEquals(StatusItem.PAGE,s.footerLeft);assertEquals(StatusItem.EPISODE,s.footerCenter);assertEquals(StatusItem.CLOCK_BATTERY,s.footerRight) }
  @Test fun individualChoices() {
   fun solo(k:String,v:Any)=m("footerPage" to false,"footerPercent" to false,"footerClock" to false,"footerBattery" to false,k to v)

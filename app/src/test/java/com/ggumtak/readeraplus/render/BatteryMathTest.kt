@@ -15,6 +15,9 @@ class BatteryMathTest {
         assertEquals(2f, BatteryMath.nubWidth(ts), 0f)
         assertEquals(6f, BatteryMath.nubHeight(ts), 0f)
         assertEquals(5.5f, BatteryMath.gap(ts), 0.001f)
+        // The whole icon, and the gap to the slot's text (MaruViewer's corner: icon, then the time).
+        assertEquals(22f, BatteryMath.iconWidth(ts), 0f)
+        assertEquals(11f, BatteryMath.labelGap(ts), 0.001f)
         // Tiny text still leaves room for a 1 px outline, 1 px of paper and a fill.
         assertEquals(6f, BatteryMath.bodyWidth(2f), 0f)
         assertEquals(5f, BatteryMath.bodyHeight(2f), 0f)

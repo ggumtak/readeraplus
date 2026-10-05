@@ -83,6 +83,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val slotSource = arrayOfNulls<String>(6)
     private val slotAvail = FloatArray(6) { Float.NaN }
     private val slotSize = FloatArray(6) { Float.NaN }
+    private val slotKeepEnd = BooleanArray(6)
     private val quoteFill = Array(QuoteStyles.COUNT) { Paint().apply { style = Paint.Style.FILL } }
     private val quoteHasFill = BooleanArray(QuoteStyles.COUNT)
     private val quoteLine = IntArray(QuoteStyles.COUNT)
@@ -300,19 +301,20 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val edgeBottom = viewHeight - StatusFit.edgeGapPx(viewHeight - (top + ch), density)
         val bottom = edgeBottom - (top + ch)
         val lane = if (st.lane) StatusFit.lane(bottom, density) else 0f
+        // Both bands hug their screen edge like MaruViewer's status line (StatusFit), not centred in their margin.
         if (!st.header.isEmpty) {
-            val ts = bandSize(0, top)
+            val ts = bandSize(0, StatusFit.headerRoom(top, density))
             if (ts > 0f) {
-                val baseline = centredBaseline(0f, top, ts)
-                val inset = RibbonMath.headerInset(density, left + cw, viewWidth, ribbonH,
-                    baseline - statusAscent * ts / statusPaint.textSize)
+                val ascent = statusAscent * ts / statusPaint.textSize
+                val baseline = StatusFit.headerBaseline(ascent, density)
+                val inset = RibbonMath.headerInset(density, left + cw, viewWidth, ribbonH, baseline - ascent)
                 drawBand(canvas, st, st.header, left + inset, maxOf(0f, cw - 2f * inset), baseline, 0, ts, inset)
             }
         }
         if (!st.footer.isEmpty) {
             val ts = bandSize(1, bottom - lane)
-            if (ts > 0f) drawBand(canvas, st, st.footer, left, cw,
-                centredBaseline(top + ch, edgeBottom - lane, ts), 1, ts, 0f)
+            if (ts > 0f) drawBand(canvas, st, st.footer, left, cw, StatusFit.footerBaseline(edgeBottom.toFloat(), lane,
+                statusDescent * ts / statusPaint.textSize, density), 1, ts, 0f)
         }
         if (lane > 0f) drawProgress(canvas, st.progress, viewWidth, edgeBottom, lane)
     }
@@ -327,9 +329,6 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         return bandTextSize[band]
     }
 
-    private fun centredBaseline(top: Float, bottom: Float, ts: Float): Float =
-        (top + bottom) / 2f + (statusAscent - statusDescent) * ts / statusPaint.textSize / 2f
-
     private fun slot(b: StatusBand, i: Int): StatusSlot = when (i) { 0 -> b.left; 1 -> b.center; else -> b.right }
 
     private fun natural(s: StatusSlot, paint: TextPaint, index: Int): Float {
@@ -337,9 +336,10 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val label = if (text != null) paint.measureText(text, 0, text.length)
             else if (s.length > 0) paint.measureText(s.chars, 0, s.length) else 0f
         slotLabelWidth[index] = label
-        val digits = if (s.battery >= 0) paint.measureText(s.batteryChars, 0, s.batteryLength) else 0f
-        return label + if (s.battery >= 0) BatteryMath.bodyWidth(paint.textSize) + BatteryMath.nubWidth(paint.textSize) +
-            BatteryMath.gap(paint.textSize) + digits + if (label > 0f) paint.textSize * 0.5f else 0f else 0f
+        if (s.battery < 0) return label
+        val ts = paint.textSize
+        val digits = if (s.batteryLength > 0) BatteryMath.gap(ts) + paint.measureText(s.batteryChars, 0, s.batteryLength) else 0f
+        return label + BatteryMath.iconWidth(ts) + digits + if (label > 0f) BatteryMath.labelGap(ts) else 0f
     }
 
     private fun drawBand(canvas: Canvas, status: StatusDecor, band: StatusBand, x: Float, w: Float,
@@ -355,12 +355,14 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
                 val width = slotWidths[i]
                 slotGeometry[index * 2] = when (i) { 0 -> 0f; 1 -> (w - width) / 2f; else -> w - width }
                 slotGeometry[index * 2 + 1] = width
-                val src = slot(band, i).text
-                if (slotSource[index] !== src || slotAvail[index] != width || slotSize[index] != ts) {
-                    slotSource[index] = src; slotAvail[index] = width; slotSize[index] = ts
+                val s = slot(band, i)
+                val src = s.text
+                if (slotSource[index] !== src || slotAvail[index] != width || slotSize[index] != ts || slotKeepEnd[index] != s.keepEnd) {
+                    slotSource[index] = src; slotAvail[index] = width; slotSize[index] = ts; slotKeepEnd[index] = s.keepEnd
                     slotText[index] = if (src == null || width <= 0f) null
                         else if (slotNatural[i] <= width) src
-                        else TextUtils.ellipsize(src, paint, width, TextUtils.TruncateAt.END)
+                        else TextUtils.ellipsize(src, paint, width,
+                            if (s.keepEnd) TextUtils.TruncateAt.START else TextUtils.TruncateAt.END)
                 }
             }
         }
@@ -368,16 +370,21 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             val index = start + i
             if (slotGeometry[index * 2 + 1] <= 0f) continue
             val s = slot(band, i)
-            val sx = x + slotGeometry[index * 2]
+            var sx = x + slotGeometry[index * 2]
+            if (s.battery >= 0 && s.batteryFirst) {
+                // MaruViewer's corner: the icon, then the time.
+                drawBattery(canvas, s, sx, baseline, paint)
+                sx += BatteryMath.iconWidth(ts) + BatteryMath.labelGap(ts)
+            }
             val text = slotText[index]
             if (s.text != null && text != null) canvas.drawText(text, 0, text.length, sx, baseline, paint)
             else if (s.length > 0) canvas.drawText(s.chars, 0, s.length, sx, baseline, paint)
-            if (s.battery >= 0) drawBattery(canvas, s, sx + slotLabelWidth[index] +
-                if (slotLabelWidth[index] > 0f) ts * 0.5f else 0f, baseline, paint)
+            if (s.battery >= 0 && !s.batteryFirst) drawBattery(canvas, s, sx + slotLabelWidth[index] +
+                if (slotLabelWidth[index] > 0f) BatteryMath.labelGap(ts) else 0f, baseline, paint)
         }
     }
 
-    /** Fixed char buffers supply battery digits: no String conversion on a frame. */
+    /** Fixed char buffers supply battery digits (none for an icon first): no String conversion on a frame. */
     private fun drawBattery(canvas: Canvas, slot: StatusSlot, x: Float, baseline: Float, paint: TextPaint) {
         val ts = paint.textSize
         val bodyLeft = Math.round(x).toFloat()
@@ -391,7 +398,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val nubTop = bodyTop + Math.round((bodyH - nubH) / 2f)
         val nubRight = bodyRight + BatteryMath.nubWidth(ts)
         canvas.drawRect(bodyRight, nubTop, nubRight, nubTop + nubH, statusLine)
-        canvas.drawText(slot.batteryChars, 0, slot.batteryLength, nubRight + BatteryMath.gap(ts), baseline, paint)
+        if (slot.batteryLength > 0) canvas.drawText(slot.batteryChars, 0, slot.batteryLength, nubRight + BatteryMath.gap(ts), baseline, paint)
         val inL = bodyLeft + 2f
         val fillR = BatteryMath.fillRight(inL, bodyRight - 2f, slot.battery)
         if (fillR > inL) canvas.drawRect(inL, bodyTop + 2f, fillR, bodyBottom - 2f, statusLine)
@@ -707,8 +714,9 @@ internal object RibbonMath {
 }
 
 /**
- * Footer battery icon geometry in px from the status text size `ts` (pure, unit-tested): a 0.9 × 0.5 ts outline with a
- * 0.08 × 0.25 ts nub, 0.25 ts before the digits; sizes are whole px so the 1 px lines stay crisp on e-ink.
+ * Status battery icon geometry in px from the status text size `ts` (pure, unit-tested): a 0.9 × 0.5 ts outline with a
+ * 0.08 × 0.25 ts nub, 0.25 ts before the digits, 0.5 ts from the slot's text; sizes are whole px so the 1 px lines stay
+ * crisp on e-ink.
  */
 internal object BatteryMath {
     fun bodyWidth(ts: Float): Float = maxOf(6f, Math.round(0.9f * ts).toFloat())
@@ -720,6 +728,12 @@ internal object BatteryMath {
     fun nubHeight(ts: Float): Float = maxOf(1f, Math.round(0.25f * ts).toFloat())
 
     fun gap(ts: Float): Float = 0.25f * ts
+
+    /** Body and nub: the icon's whole width. */
+    fun iconWidth(ts: Float): Float = bodyWidth(ts) + nubWidth(ts)
+
+    /** Between the icon (with its number) and a slot's text, on either side of it. */
+    fun labelGap(ts: Float): Float = 0.5f * ts
 
     /**
      * Right edge of the level fill spanning [inLeft, inRight) for [level] percent: [inLeft] (no fill) at 0 or when there

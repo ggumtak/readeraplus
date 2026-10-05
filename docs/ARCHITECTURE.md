@@ -767,7 +767,8 @@ The release gates compare these numbers with the Wave 0 baseline recorded on the
 - **Chrome / insets:** reader bars and the return chip overlay the page. Pinned chrome is removed; page view size
   depends only on InsetsGate-approved system insets. Popups/dialogs preserve the underlying geometry.
 - **Status / margins:** six `StatusItem` slots and a progress lane draw inside existing margins. Text box = view
-  minus margins, with no header/footer subtraction. Defaults are 40 dp = UI `0`. Model/renderer reuse buffers;
+  minus margins, with no header/footer subtraction. Defaults are 40 dp = UI `0` (sides 20 dp since 2026-10-05,
+  MaruViewer; the bands then hug the screen edges instead of centring in the margins). Model/renderer reuse buffers;
   redraw only for a changed visible value or changed dot pixel. `footerEpisode`/`footerTimeLeft` become typed slots.
 - **Pagination:** `PageBreakMode.LINE` preserves the golden output; PARAGRAPH keeps a whole paragraph when it fits.
   Relayout opens an anchored generation so the first character stays; its changed section is masked from saved

@@ -54,3 +54,20 @@ object StatusMigration {
             q.getOrNull(0) ?: StatusItem.NONE, q.getOrNull(1) ?: StatusItem.NONE, right ?: q.getOrNull(2) ?: StatusItem.NONE)
     }
 }
+
+/**
+ * MaruViewer's status line as the header (user, 2026-10-05: "위에 써있는 것도 보이지? 저런 식으로 최대한 카피해줘"):
+ * prefs saved before it ([KEY] absent) load with the header slots of the [ReaderSettings] defaults; the footer, the
+ * progress bar and the status size stay. Like the margin markers, loading never writes: every `Settings.saveReader`
+ * stores [KEY], so the first save keeps the new header and any later choice. [KEY] is no reader setting and never
+ * travels with a backup (`SettingsJson` drops it): a restore applies the backup's slots as they are.
+ */
+object MaruHeader {
+    const val KEY = "status.maruHeader.v1"
+
+    /** [s] with the default header slots. */
+    fun applyTo(s: ReaderSettings): ReaderSettings {
+        val d = ReaderSettings()
+        return s.copy(headerLeft = d.headerLeft, headerCenter = d.headerCenter, headerRight = d.headerRight)
+    }
+}

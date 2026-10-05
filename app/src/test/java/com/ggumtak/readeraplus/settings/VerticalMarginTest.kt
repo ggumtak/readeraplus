@@ -7,7 +7,9 @@ import org.junit.Test
 
 class VerticalMarginTest {
     @Test
-    fun scaleMatchesTheSideMargins() {
+    fun fortyDpStaysTheZeroOfTopAndBottom() {
+        // The sides moved to MaruViewer's 20 dp (2026-10-05); top and bottom did not.
+        assertEquals(40, VerticalMargin.ZERO_DP)
         assertEquals(0, VerticalMargin.toUi(40))
         assertEquals(-24, VerticalMargin.toUi(16))
         assertEquals(80, VerticalMargin.toDp(VerticalMargin.UI_MAX))
