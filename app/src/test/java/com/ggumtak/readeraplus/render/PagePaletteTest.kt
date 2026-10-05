@@ -175,6 +175,31 @@ class PagePaletteTest {
         for (v in 0..255) assertEquals("$v", 0, PagePalette.inkGrey(v, 255, darker = true) % 17)
     }
 
+    @Test
+    fun theLowBatteryIsTheStatusColourOnlyRedder() {
+        // User (2026-10-05): "25때는 약간 빨간색으로 바뀌고". The status colour 65 % of the way to #E53935 on each look.
+        assertEquals(0xFF952522.toInt(), PagePalette.PAPER.batteryLow)
+        assertEquals(0xFFEE7E7C.toInt(), PagePalette.NIGHT.batteryLow)
+        assertEquals(0xFFE96E57.toInt(), PagePalette.MARU.batteryLow)
+        for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT, PagePalette.MARU)) {
+            val low = p.batteryLow
+            // Redder than the status colour: more red than green and blue, and still clear on the page (a graphic at
+            // least 3:1; 흰 바탕 and 흑백 반전 well past 7:1).
+            assertTrue((low shr 16 and 0xFF) > (low shr 8 and 0xFF) + 60)
+            assertTrue((low shr 16 and 0xFF) > (low and 0xFF) + 60)
+            assertTrue(contrast(low, p.background) >= 4.0)
+            assertTrue(low != p.status)
+        }
+        assertTrue(contrast(PagePalette.PAPER.batteryLow, PagePalette.PAPER.background) >= 7.0)
+        assertTrue(contrast(PagePalette.NIGHT.batteryLow, PagePalette.NIGHT.background) >= 7.0)
+        // ReadEra's blue bookmark ribbon on phones is a clear graphic on every look too.
+        for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT, PagePalette.MARU))
+            assertTrue(contrast(RibbonMath.COLOR, p.background) >= 3.0)
+        // blend: 0 keeps the colour, 1 is the target.
+        assertEquals(0xFF123456.toInt(), PagePalette.blend(0xFF123456.toInt(), 0xFFE53935.toInt(), 0f))
+        assertEquals(0xFFE53935.toInt(), PagePalette.blend(0xFF123456.toInt(), 0xFFE53935.toInt(), 1f))
+    }
+
     private fun contrast(a: Int, b: Int): Double {
         val la = luminance(a)
         val lb = luminance(b)

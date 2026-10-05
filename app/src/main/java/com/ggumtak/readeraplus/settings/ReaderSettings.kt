@@ -54,7 +54,8 @@ data class ReaderSettings(
     val footerRight: StatusItem = StatusItem.NONE,
     /** ReadEra-style reading-progress line along the bottom edge, in its own band below the margin ("진행 막대"). */
     val progressBar: Boolean = true,
-    val statusFontSizeSp: Float = 11f,            // unchanged
+    /** MaruViewer's status size in the phone's UI font ([MaruSize], 2026-10-05; 11 sp before). */
+    val statusFontSizeSp: Float = StatusBands.DEFAULT_SP,
     val widowOrphanControl: Boolean = true,
     val pageBreak: PageBreakMode = PageBreakMode.LINE,
     // --- parsing options (TXT / EPUB) ---

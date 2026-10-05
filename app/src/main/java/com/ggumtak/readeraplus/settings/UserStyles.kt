@@ -115,6 +115,7 @@ object UserStyles {
     fun toJson(u: UserStyle): JSONObject = JSONObject()
         .put(SideMargin.STYLE_KEY, SideMargin.ZERO_DP)
         .put(VerticalMargin.STYLE_KEY, VerticalMargin.BANDS)
+        .put(MaruSize.STYLE_KEY, true)
         .put("name", u.name)
         .put("fontId", u.fontId)
         .put("fontSizeSp", u.fontSizeSp.toDouble())
@@ -167,9 +168,21 @@ object UserStyles {
         val verticalLegacy = VerticalMargin.isLegacyDefault(verticalBase != null, int(o, "marginTopDp", d.marginTopDp), int(o, "marginBottomDp", d.marginBottomDp))
         // Top/bottom saved from the screen's edge: a style carries no status bar, so they are counted from the default
         // bands (the user's own on both devices: MaruViewer's header, the progress line), where the text box stays put.
+        // Saved from the bands before MaruViewer's status size: those were the 11 sp default bands, and lose what the
+        // 13 sp ones add (MaruSize.keepBox), as the settings saved with them do.
         val edge = VerticalMargin.countsFromEdge(verticalBase)
-        fun top(dp: Int): Int = if (edge && o.has("marginTopDp")) VerticalMargin.topFromEdge(dp, d) else dp
-        fun bottom(dp: Int): Int = if (edge && o.has("marginBottomDp")) VerticalMargin.bottomFromEdge(dp, d) else dp
+        val oldBands = !edge && !o.has(MaruSize.STYLE_KEY)
+        val old = d.copy(statusFontSizeSp = MaruSize.OLD_SP)
+        fun top(dp: Int): Int = when {
+            edge && o.has("marginTopDp") -> VerticalMargin.topFromEdge(dp, d)
+            oldBands -> MaruSize.keepBox(old, d.copy(marginTopDp = dp)).marginTopDp
+            else -> dp
+        }
+        fun bottom(dp: Int): Int = when {
+            edge && o.has("marginBottomDp") -> VerticalMargin.bottomFromEdge(dp, d)
+            oldBands -> MaruSize.keepBox(old, d.copy(marginBottomDp = dp)).marginBottomDp
+            else -> dp
+        }
         return UserStyle(
             name = name,
             fontId = str(o, "fontId", d.fontId).trim().ifEmpty { d.fontId },

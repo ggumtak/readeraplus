@@ -56,8 +56,12 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val onePx = 1f
     private val em = measurer.emPx
 
+    /**
+     * Both status lines in the phone's own UI font (Typeface.DEFAULT: Samsung's on the S25, as MaruViewer draws its status
+     * line), never the book's.
+     */
     private val statusPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-        typeface = Typeface.SANS_SERIF
+        typeface = Typeface.DEFAULT
         textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, StatusBands.statusSp(settings), context.resources.displayMetrics)
         color = palette.status
         textLocale = Locale.KOREAN
@@ -75,7 +79,14 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     /** The progress line's height and its dots' radius ([ProgressMath]), in px. */
     private val progressLineH = ProgressMath.lineH(density).toFloat()
     private val progressDotR = ProgressMath.dotD(density) / 2f
+    /** E-ink (or not probed yet): greys only, no blue ribbon and no red battery. */
+    private val eink = DeviceClass.cached(context) != false
     private val bandCache = arrayOf(StatusDrawCache(), StatusDrawCache())
+    /** The header's side insets ([StatusFit.sideInset]) and the corners and glyph middle they were computed for. */
+    private var headerInsetLeft = 0f
+    private var headerInsetRight = 0f
+    private val insetsCorners = IntArray(6) { Int.MIN_VALUE }
+    private var insetsMiddle = Float.NaN
     private val slotGeometry = FloatArray(12)
     private val slotNatural = FloatArray(3)
     private val slotWidths = FloatArray(3)
@@ -110,11 +121,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         style = Paint.Style.STROKE
         strokeWidth = onePx
     }
-    /** MaruViewer's icon-first battery ([BatteryMath.firstStroke]: 2 px on the S25, 1 px on the Comet). */
-    private val statusOutlineFirst = Paint().apply {
-        style = Paint.Style.STROKE
-        strokeWidth = BatteryMath.firstStroke(density)
-    }
+    /** MaruViewer's icon-first battery, drawn as filled rects: the status colour, slightly red at one bar on phones. */
+    private val batteryFirst = Paint().apply { style = Paint.Style.FILL }
     /** ReadEra's 탐색줄: a faint line and three slightly darker dots (or lighter, on a dark page). */
     private val progressLine = Paint().apply { style = Paint.Style.FILL }
     private val progressDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -123,7 +131,10 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         if (palette.invertImages) colorFilter = nightImageFilter
     }
     private val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    /** Background-coloured edge that keeps the ribbon apart from glyphs it touches (tiny margins, no header). */
+    /**
+     * E-ink only (its ribbon is the text colour): a background-coloured edge that keeps the ribbon apart from glyphs it
+     * touches (tiny margins, no header). A phone's blue ribbon stands apart from every page look's text as it is.
+     */
     private val ribbonHalo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 2f * onePx
@@ -133,7 +144,6 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val ribbon = Path()
     private var ribbonForWidth = -1
     private var ribbonForHeight = -1f
-    private var ribbonForTop = -1f
 
     private var xs = FloatArray(256)
     private var lineChars = CharArray(0)
@@ -168,15 +178,17 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         digitMiddle = if (digit.height() > 0) (digit.top + digit.bottom) / 2f else -0.36f * statusPaint.textSize
         outline.color = fg
         line.color = fg
-        ribbonPaint.color = fg
+        // ReadEra's blue on phones. E-ink: the page's text colour, as before (its blue would be a mid grey, ≈ #7E7E7E,
+        // which a binary fast update (A2) turns black or white by the panel's threshold, and which stands only about 4:1
+        // off the white page).
+        ribbonPaint.color = if (eink) fg else RibbonMath.COLOR
         ribbonHalo.color = bg
         statusLine.color = palette.status
         statusOutline.color = palette.status
-        statusOutlineFirst.color = palette.status
+        batteryFirst.color = palette.status
         // On e-ink, greys on the panel's own levels. Unknown (no probe yet) counts as e-ink, as for the chrome
         // (ChromePalette.of): there the panel's levels keep the line from rounding into the page, while a phone that
         // is not probed yet only shows the line a few greys off the screenshot's until the next renderer.
-        val eink = DeviceClass.cached(context) != false
         progressLine.color = if (eink) palette.inkProgressLine else palette.progressLine
         progressDot.color = if (eink) palette.inkProgressDot else palette.progressDot
     }
@@ -194,8 +206,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     ) {
         canvas.drawColor(bg)
         val cw = layout.config.width.toFloat()
-        val ribbonTop = ribbonTop(decor)
-        val ribbonH = if (decor.bookmarked) RibbonMath.height(density, contentTop - ribbonTop, contentLeft + cw, viewWidth) else 0f
+        val ribbonH = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + cw, viewWidth) else 0f
         drawStatus(canvas, decor, contentLeft, contentTop, cw, viewWidth, viewHeight, ribbonH)
         if (pageIndex in 0 until layout.pages.size) {
             val page = layout.pages[pageIndex]
@@ -203,7 +214,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             if (decor.highlights.isNotEmpty()) drawHighlights(canvas, layout, lines, decor.highlights, contentLeft, contentTop)
             for (i in 0 until lines.size) drawLine(canvas, layout, lines[i], contentLeft, contentTop, cw)
         }
-        if (decor.bookmarked) drawRibbon(canvas, viewWidth, ribbonH, ribbonTop)
+        if (decor.bookmarked) drawRibbon(canvas, viewWidth, ribbonH)
         if (images != null) prefetchNeighbours(layout, pageIndex)
     }
 
@@ -263,7 +274,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     fun drawChrome(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float,
                    viewWidth: Int, viewHeight: Int) {
         canvas.drawColor(bg)
-        val h = if (decor.bookmarked) RibbonMath.height(density, contentTop - ribbonTop(decor), contentLeft + contentWidth, viewWidth) else 0f
+        val h = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + contentWidth, viewWidth) else 0f
         drawStatus(canvas, decor, contentLeft, contentTop, contentWidth, viewWidth, viewHeight, h)
     }
 
@@ -302,8 +313,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
 
     fun drawOverlay(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float, viewWidth: Int) {
         if (!decor.bookmarked) return
-        val top = ribbonTop(decor)
-        drawRibbon(canvas, viewWidth, RibbonMath.height(density, contentTop - top, contentLeft + contentWidth, viewWidth), top)
+        drawRibbon(canvas, viewWidth, RibbonMath.height(density, contentTop, contentLeft + contentWidth, viewWidth))
     }
 
     /** One latest-pending batch; copy callers' reusable slot arrays before submitting. */
@@ -331,28 +341,51 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
 
     /**
      * The status bands in their own places at the screen's edges (StatusFit; the text box starts and ends a margin away
-     * from them), at the chosen size: the header at the top, or below [StatusDecor.top] (a display cutout's band) centred
-     * between it and the text box, the footer and the progress line above the bottom edge gap. [top] / [cw]: the text
-     * box, whose column the slots share.
+     * from them), at the chosen size: the header at the top (over [StatusDecor.top], a display cutout's band, too: its
+     * own band stays reserved below it), the footer and the progress line above the bottom edge gap. The header spans
+     * the page view less its own side insets ([updateHeaderInsets]: the display's corners), MaruViewer's line; the footer
+     * shares the text box's column ([left] / [cw]; [top]: the text box's top).
      */
     private fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Float, cw: Float,
                            viewWidth: Int, viewHeight: Int, ribbonH: Float) {
         val st = decor.status ?: return
         val ts = statusPaint.textSize
         if (!st.header.isEmpty) {
-            val baseline = StatusFit.headerBaseline(st.top.toFloat(), top, statusAscent, statusDescent, statusInkTop,
-                statusInkBottom, statusGlyphPx, density)
+            val baseline = StatusFit.headerBaseline(st.top.toFloat(), statusAscent, statusInkTop, statusInkBottom,
+                statusGlyphPx, density)
+            updateHeaderInsets(st, baseline + (statusInkTop + statusInkBottom) / 2f)
+            val x = headerInsetLeft
+            val w = maxOf(0f, viewWidth - headerInsetLeft - headerInsetRight)
             // The ribbon's place at the header's right end is kept on every page (bookmarked or not), so toggling the
             // bookmark moves only the right slot, by that much, and never re-fits the slots (or the title). The ribbon
-            // hangs from the cutout's band (ribbonTop): both measured from there.
-            val reserve = RibbonMath.headerInset(density, left + cw, viewWidth,
-                RibbonMath.height(density, top - st.top, left + cw, viewWidth), baseline + statusInkTop - st.top)
-            drawBand(canvas, st, st.header, left, cw, baseline, 0, ts, reserve, if (ribbonH > 0f) reserve else 0f)
+            // may cover the header's band ("좀 가려도 되니까"), never its glyphs.
+            val reserve = RibbonMath.headerInset(density, x + w, viewWidth,
+                RibbonMath.height(density, top, left + cw, viewWidth), baseline + statusInkTop)
+            drawBand(canvas, st, st.header, x, w, baseline, 0, ts, reserve, if (ribbonH > 0f) reserve else 0f)
         }
         if (!st.footer.isEmpty) drawBand(canvas, st, st.footer, left, cw, StatusFit.footerBaseline(viewHeight.toFloat(),
             st.lane, statusDescent, statusInkTop, statusInkBottom, statusGlyphPx, density), 1, ts, 0f, 0f)
         if (st.lane) drawProgress(canvas, st.progress, viewWidth, viewHeight)
     }
+
+    /**
+     * The header's side insets for the display's top corners in [st] and the glyphs' vertical [middle]; computed again
+     * only when those change (the window's insets, the renderer's font), never per frame.
+     */
+    private fun updateHeaderInsets(st: StatusDecor, middle: Float) {
+        val l = st.cornerLeft
+        val r = st.cornerRight
+        val k = insetsCorners
+        if (middle == insetsMiddle && k[0] == l.radius && k[1] == l.centreIn && k[2] == l.centreY &&
+            k[3] == r.radius && k[4] == r.centreIn && k[5] == r.centreY) return
+        k[0] = l.radius; k[1] = l.centreIn; k[2] = l.centreY; k[3] = r.radius; k[4] = r.centreIn; k[5] = r.centreY
+        insetsMiddle = middle
+        headerInsetLeft = sideInset(l, middle)
+        headerInsetRight = sideInset(r, middle)
+    }
+
+    private fun sideInset(c: StatusCorner, middle: Float): Float =
+        StatusFit.sideInset(c.radius.toFloat(), c.centreIn.toFloat(), c.centreY.toFloat(), middle, density)
 
     private fun slot(b: StatusBand, i: Int): StatusSlot = when (i) { 0 -> b.left; 1 -> b.center; else -> b.right }
 
@@ -364,7 +397,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         if (s.battery < 0) return label
         val ts = paint.textSize
         val digits = if (s.batteryLength > 0) BatteryMath.gap(ts) + paint.measureText(s.batteryChars, 0, s.batteryLength) else 0f
-        return label + BatteryMath.iconWidth(ts, s.batteryFirst) + digits + if (label > 0f) BatteryMath.labelGap(ts) else 0f
+        val gap = if (label <= 0f) 0f else if (s.batteryFirst) BatteryMath.firstGap(ts) else BatteryMath.labelGap(ts)
+        return label + BatteryMath.iconWidth(ts, s.batteryFirst) + digits + gap
     }
 
     /**
@@ -402,8 +436,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             var sx = x + slotGeometry[index * 2] - if (i == 2) shift else 0f
             if (s.battery >= 0 && s.batteryFirst) {
                 // MaruViewer's corner: the icon, then the time.
-                drawBattery(canvas, s, sx, baseline, paint)
-                sx += BatteryMath.iconWidth(ts, true) + BatteryMath.labelGap(ts)
+                drawFirstBattery(canvas, s.battery, sx, baseline, ts)
+                sx += BatteryMath.iconWidth(ts, true) + BatteryMath.firstGap(ts)
             }
             val text = slotText[index]
             if (s.text != null && text != null) canvas.drawText(text, 0, text.length, sx, baseline, paint)
@@ -413,25 +447,21 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         }
     }
 
-    /**
-     * Fixed char buffers supply battery digits (none for an icon first): no String conversion on a frame. An icon first
-     * (MaruViewer's corner) is wider, with a heavier outline: it stands for the number it does not show.
-     */
+    /** Fixed char buffers supply the battery digits: no String conversion on a frame. */
     private fun drawBattery(canvas: Canvas, slot: StatusSlot, x: Float, baseline: Float, paint: TextPaint) {
         val ts = paint.textSize
-        val first = slot.batteryFirst
-        val stroke = if (first) statusOutlineFirst else statusOutline
+        val stroke = statusOutline
         val sw = stroke.strokeWidth
         val bodyLeft = Math.round(x).toFloat()
-        val bodyRight = bodyLeft + BatteryMath.bodyWidth(ts, first)
-        val bodyH = BatteryMath.bodyHeight(ts, first)
+        val bodyRight = bodyLeft + BatteryMath.bodyWidth(ts)
+        val bodyH = BatteryMath.bodyHeight(ts)
         val bodyTop = Math.round(baseline + digitMiddle * ts / statusPaint.textSize - bodyH / 2f).toFloat()
         val bodyBottom = bodyTop + bodyH
         rect.set(bodyLeft + sw / 2f, bodyTop + sw / 2f, bodyRight - sw / 2f, bodyBottom - sw / 2f)
         canvas.drawRect(rect, stroke)
         val nubH = BatteryMath.nubHeight(ts)
         val nubTop = bodyTop + Math.round((bodyH - nubH) / 2f)
-        val nubRight = bodyRight + BatteryMath.nubWidth(ts, first)
+        val nubRight = bodyRight + BatteryMath.nubWidth(ts)
         canvas.drawRect(bodyRight, nubTop, nubRight, nubTop + nubH, statusLine)
         if (slot.batteryLength > 0) canvas.drawText(slot.batteryChars, 0, slot.batteryLength, nubRight + BatteryMath.gap(ts), baseline, paint)
         // One px of paper inside the outline, then the level.
@@ -439,6 +469,35 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val inL = bodyLeft + inset
         val fillR = BatteryMath.fillRight(inL, bodyRight - inset, slot.battery)
         if (fillR > inL && bodyBottom - inset > bodyTop + inset) canvas.drawRect(inL, bodyTop + inset, fillR, bodyBottom - inset, statusLine)
+    }
+
+    /**
+     * MaruViewer's icon first (it stands for the number it does not show; [BatteryMath]): the nub on the left, the body's
+     * outline and its bars as whole-px rects, the bars from the far end, [level] in its 25 % steps. At one bar the whole
+     * icon turns slightly red on phones ([PagePalette.batteryLow]); e-ink keeps the status colour (greys only).
+     */
+    private fun drawFirstBattery(canvas: Canvas, level: Int, x: Float, baseline: Float, ts: Float) {
+        val p = batteryFirst
+        p.color = if (!eink && BatteryMath.low(level)) palette.batteryLow else palette.status
+        val s = BatteryMath.firstStroke(ts)
+        val bodyH = BatteryMath.bodyHeight(ts, true)
+        val nubH = BatteryMath.firstNubHeight(ts)
+        val left = Math.round(x).toFloat()
+        val bodyLeft = left + BatteryMath.nubWidth(ts, true)
+        val bodyRight = bodyLeft + BatteryMath.bodyWidth(ts, true)
+        val bodyTop = Math.round(baseline + digitMiddle * ts / statusPaint.textSize - bodyH / 2f).toFloat()
+        val bodyBottom = bodyTop + bodyH
+        val nubTop = bodyTop + (bodyH - nubH) / 2f
+        canvas.drawRect(left, nubTop, bodyLeft, nubTop + nubH, p)
+        canvas.drawRect(bodyLeft, bodyTop, bodyRight, bodyTop + s, p)
+        canvas.drawRect(bodyLeft, bodyBottom - s, bodyRight, bodyBottom, p)
+        canvas.drawRect(bodyLeft, bodyTop + s, bodyLeft + s, bodyBottom - s, p)
+        canvas.drawRect(bodyRight - s, bodyTop + s, bodyRight, bodyBottom - s, p)
+        val bar = BatteryMath.barWidth(ts)
+        for (k in 0 until BatteryMath.bars(level)) {
+            val r = BatteryMath.barRight(bodyRight, ts, k)
+            canvas.drawRect(r - bar, bodyTop + 2f * s, r, bodyBottom - 2f * s, p)
+        }
     }
 
     /**
@@ -702,65 +761,78 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     // Bookmark ribbon
 
     /**
-     * The ribbon hangs from the page view's top, or from the bottom of a display cutout's band ([StatusDecor.top]: the
-     * S25's camera hole in fullscreen), where the installed build hung it and where the bookmark's tap corner starts.
+     * ReadEra's ribbon ([RibbonMath]) [h] px tall from the page view's very top, over a display cutout's band too (the
+     * S25's camera band in fullscreen; the bookmark's tap corner covers it there: `TapZones.corner`).
      */
-    private fun ribbonTop(decor: PageDecor): Float = (decor.status?.top ?: 0).toFloat()
-
-    private fun drawRibbon(canvas: Canvas, viewWidth: Int, h: Float, top: Float) {
-        if (ribbonForWidth != viewWidth || ribbonForHeight != h || ribbonForTop != top) {
+    private fun drawRibbon(canvas: Canvas, viewWidth: Int, h: Float) {
+        if (ribbonForWidth != viewWidth || ribbonForHeight != h) {
             val l = RibbonMath.left(viewWidth, density)
-            val r = l + RibbonMath.WIDTH_DP * density
-            val notch = h * RibbonMath.NOTCH_FRACTION
+            val r = RibbonMath.right(viewWidth, density)
             ribbon.reset()
-            ribbon.moveTo(l, top)
-            ribbon.lineTo(r, top)
-            ribbon.lineTo(r, top + h)
-            ribbon.lineTo((l + r) / 2f, top + h - notch)
-            ribbon.lineTo(l, top + h)
+            ribbon.moveTo(l, 0f)
+            ribbon.lineTo(r, 0f)
+            ribbon.lineTo(r, h)
+            ribbon.lineTo((l + r) / 2f, h - RibbonMath.notch(h))
+            ribbon.lineTo(l, h)
             ribbon.close()
             ribbonForWidth = viewWidth
             ribbonForHeight = h
-            ribbonForTop = top
         }
-        canvas.drawPath(ribbon, ribbonHalo)
+        if (eink) canvas.drawPath(ribbon, ribbonHalo)
         canvas.drawPath(ribbon, ribbonPaint)
     }
 }
 
 /**
- * Bookmark ribbon geometry (px; pure, unit-tested). The ribbon hangs from the top edge, or from the bottom of a display
- * cutout's band (the S25's camera hole in fullscreen: every top and height here is then measured from that band's
- * bottom), [RIGHT_DP] from the view's right edge. It keeps its full height only where that stays above the text column;
- * otherwise it shrinks to the band above the text (never below [MIN_HEIGHT_DP]). A header that would run under it keeps
+ * Bookmark ribbon geometry (px; pure, unit-tested), ReadEra's (user, 2026-10-05: "좀 가려도 되니까 책갈피 딱 붙여 readera처럼
+ * 오른쪽 위 파란색으로 사이즈도 더 작게해 지금보다"; measured on the S25 at 3 px per dp: 42 × 62 px from the screen's top,
+ * its right edge 51 px from the screen's, a V notch ≈ 12 px deep, solid #4286F5, no outline). It hangs from the page
+ * view's very top, over a display cutout's band too (the S25's punch hole is at the top centre, clear of it), its right
+ * edge [RIGHT_DP] from the view's, in whole px. It keeps its full height only where that stays above the text column;
+ * otherwise it shrinks to the paper above the text (never below [MIN_HEIGHT_DP]). A header that would run under it keeps
  * [headerInset] free at its right end (StatusMath.allocate's reserve) on every page, so a bookmark moves only its right
- * slot.
+ * slot: the ribbon may cover the header's band, never its glyphs. The thumbnails' mark has its shape at [THUMB_WIDTH_DP].
  */
 internal object RibbonMath {
     const val WIDTH_DP = 14f
-    const val HEIGHT_DP = 24f
+    /** ReadEra's 62 px at 3 px per dp; 41 px on the Comet. */
+    const val HEIGHT_DP = 20.7f
     const val MIN_HEIGHT_DP = 12f
-    const val RIGHT_DP = 14f
+    /** ReadEra's 51 px at 3 px per dp; 34 px on the Comet. */
+    const val RIGHT_DP = 17f
     /** Clearance kept between the ribbon and text. */
     const val GAP_DP = 3f
-    const val NOTCH_FRACTION = 0.25f
+    /** The V notch cut up from the bottom's middle, a share of the height (ReadEra's ≈ 12 of 62 px). */
+    const val NOTCH_FRACTION = 0.2f
+    /** ReadEra's blue, on phones on every page look; e-ink panels draw the page's text colour (`PageRenderer`). */
+    const val COLOR = 0xFF4286F5.toInt()
+    /** The thumbnails' mark: this wide, the ribbon's proportions otherwise (`ThumbGridView`). */
+    const val THUMB_WIDTH_DP = 8f
 
-    fun left(viewWidth: Int, density: Float): Float = viewWidth - (RIGHT_DP + WIDTH_DP) * density
+    /** [dp] in whole px. */
+    fun px(dp: Float, density: Float): Float = Math.round(dp * density).toFloat()
 
-    /** Ribbon height for a text column whose top is [contentTop] and right edge [contentRight]. */
+    fun left(viewWidth: Int, density: Float): Float = right(viewWidth, density) - px(WIDTH_DP, density)
+
+    fun right(viewWidth: Int, density: Float): Float = viewWidth - px(RIGHT_DP, density)
+
+    /** The notch's depth for a ribbon [h] px tall, in whole px. */
+    fun notch(h: Float): Float = Math.round(h * NOTCH_FRACTION).toFloat()
+
+    /** Ribbon height (whole px) for a text column whose top is [contentTop] and right edge [contentRight]. */
     fun height(density: Float, contentTop: Float, contentRight: Float, viewWidth: Int): Float {
-        val full = HEIGHT_DP * density
+        val full = px(HEIGHT_DP, density)
         if (contentRight <= left(viewWidth, density) - GAP_DP * density) return full
-        return (contentTop - GAP_DP * density).coerceIn(MIN_HEIGHT_DP * density, full)
+        return Math.floor((contentTop - GAP_DP * density).toDouble()).toFloat().coerceIn(px(MIN_HEIGHT_DP, density), full)
     }
 
     /**
-     * Width the header (on a column ending at [contentRight]) keeps free at its right end so its glyphs, whose top is
-     * at [glyphTop], stay clear of a ribbon of height [ribbonH]; 0 when they cannot meet.
+     * Width the header (on a band ending at [bandRight]) keeps free at its right end so its glyphs, whose top is at
+     * [glyphTop], stay clear of a ribbon of height [ribbonH]; 0 when they cannot meet.
      */
-    fun headerInset(density: Float, contentRight: Float, viewWidth: Int, ribbonH: Float, glyphTop: Float): Float {
+    fun headerInset(density: Float, bandRight: Float, viewWidth: Int, ribbonH: Float, glyphTop: Float): Float {
         if (!(ribbonH > 0f) || glyphTop >= ribbonH + GAP_DP * density) return 0f
-        return (contentRight - (left(viewWidth, density) - GAP_DP * density)).coerceAtLeast(0f)
+        return (bandRight - (left(viewWidth, density) - GAP_DP * density)).coerceAtLeast(0f)
     }
 }
 
@@ -768,22 +840,57 @@ internal object RibbonMath {
  * Status battery icon geometry in px from the status text size `ts` (pure, unit-tested): a 0.9 × 0.5 ts outline with a
  * 0.08 × 0.25 ts nub, 0.25 ts before the digits, 0.5 ts from the slot's text; sizes are whole px so the 1 px lines stay
  * crisp on e-ink. The icon that comes first and has no number (`first`, MaruViewer's corner: `StatusItem.CLOCK_BATTERY`)
- * is MaruViewer's shape: 1.75 × 0.6 ts with a 0.1 ts nub and a [firstStroke] outline.
+ * is MaruViewer's, measured on the user's S25 screenshot (2026-10-05; 70 × 30 px beside 39 px text): the nub on the left
+ * (5 × 10 px), then a 65 × 30 px body drawn as a [firstStroke] outline (3 px) with as much paper inside it, and [BARS]
+ * bars (11 px wide, the same 3 px apart) that empty from the nub's side: [bars] of the level in 25 % steps
+ * (user: "배터리 100, 75, 50,25에 따라 배터리 아이콘이 바뀌어"). [firstGap] before the time.
  */
 internal object BatteryMath {
+    /** MaruViewer's icon has four bars. */
+    const val BARS = 4
+
     fun bodyWidth(ts: Float, first: Boolean = false): Float =
-        if (first) maxOf(10f, Math.round(1.75f * ts).toFloat()) else maxOf(6f, Math.round(0.9f * ts).toFloat())
+        if (first) 7f * firstStroke(ts) + BARS * barWidth(ts) else maxOf(6f, Math.round(0.9f * ts).toFloat())
 
     fun bodyHeight(ts: Float, first: Boolean = false): Float =
-        if (first) maxOf(6f, Math.round(0.6f * ts).toFloat()) else maxOf(5f, Math.round(0.5f * ts).toFloat())
+        if (first) maxOf(4f * firstStroke(ts) + 1f, Math.round(0.77f * ts).toFloat())
+        else maxOf(5f, Math.round(0.5f * ts).toFloat())
 
     fun nubWidth(ts: Float, first: Boolean = false): Float =
-        maxOf(1f, Math.round((if (first) 0.1f else 0.08f) * ts).toFloat())
+        maxOf(1f, Math.round((if (first) 0.128f else 0.08f) * ts).toFloat())
 
     fun nubHeight(ts: Float): Float = maxOf(1f, Math.round(0.25f * ts).toFloat())
 
-    /** The first icon's outline: 0.6 dp in whole px (2 px at density 3, 1 px at 2: crisp on e-ink). */
-    fun firstStroke(density: Float): Float = maxOf(1f, Math.round(0.6f * density).toFloat())
+    /** The first icon's nub: a third of its body's height, as much body above it as below. */
+    fun firstNubHeight(ts: Float): Float {
+        val h = bodyHeight(ts, true)
+        return h - 2f * Math.round(h / 3f)
+    }
+
+    /** The first icon's outline, and the paper inside it and between its bars: ts / 13 in whole px (3 px at 39 px). */
+    fun firstStroke(ts: Float): Float = maxOf(1f, Math.round(ts / 13f).toFloat())
+
+    /** One of the first icon's bars: 11 px at 39 px. */
+    fun barWidth(ts: Float): Float = maxOf(1f, Math.round(0.282f * ts).toFloat())
+
+    /**
+     * Right edge of bar [k] (0 = the one farthest from the nub, the last to go) inside a first icon whose body ends at
+     * [bodyRight]: one stroke and one stroke of paper from the body's end, then a bar and a stroke of paper per bar.
+     */
+    fun barRight(bodyRight: Float, ts: Float, k: Int): Float =
+        bodyRight - 2f * firstStroke(ts) - k * (barWidth(ts) + firstStroke(ts))
+
+    /** Bars for [level] percent: 76–100 → 4, 51–75 → 3, 26–50 → 2, 0–25 → 1; 0 while it is unknown (< 0). */
+    fun bars(level: Int): Int = if (level < 0) 0 else ((level.coerceAtMost(100) + 24) / 25).coerceIn(1, BARS)
+
+    /**
+     * [level] in the first icon's steps (25, 50, 75, 100; −1 unknown): what its slot keeps, so a level that stays within
+     * a step changes nothing on the page (`StatusModel`).
+     */
+    fun stepLevel(level: Int): Int = if (level < 0) -1 else bars(level) * (100 / BARS)
+
+    /** One bar left (≤ 25 %): on phones the first icon turns slightly red (`PagePalette.batteryLow`). */
+    fun low(level: Int): Boolean = bars(level) == 1
 
     fun gap(ts: Float): Float = 0.25f * ts
 
@@ -792,6 +899,9 @@ internal object BatteryMath {
 
     /** Between the icon (with its number) and a slot's text, on either side of it. */
     fun labelGap(ts: Float): Float = 0.5f * ts
+
+    /** Between the first icon and the time (MaruViewer's 17 px at 39 px). */
+    fun firstGap(ts: Float): Float = Math.round(0.44f * ts).toFloat()
 
     /**
      * Right edge of the level fill spanning [inLeft, inRight) for [level] percent: [inLeft] (no fill) at 0 or when there

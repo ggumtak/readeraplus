@@ -10,8 +10,8 @@ class SettingsJsonR3Test {
     @Test fun oldMarginsMigrateAndNewDeliberateMarginsStay() {
         val old=JSONObject().put("r.marginLeftDp",18).put("r.marginRightDp",18).put("r.marginTopDp",16).put("r.marginBottomDp",16)
         val moved=SettingsJson.readerFromJson(old,ReaderSettings())
-        // R2's 16/16 = 40/40 from the edge, counted from the bands (the backup has no slots: the device's defaults).
-        assertEquals(20,moved.marginLeftDp);assertEquals(20,moved.marginRightDp);assertEquals(18,moved.marginTopDp);assertEquals(22,moved.marginBottomDp)
+        // R2's 16/16 = 40/40 from the edge, counted from the bands (the backup has no slots or size: the device's defaults).
+        assertEquals(20,moved.marginLeftDp);assertEquals(20,moved.marginRightDp);assertEquals(15,moved.marginTopDp);assertEquals(22,moved.marginBottomDp)
         val deliberate=ReaderSettings(marginLeftDp=18,marginRightDp=18,marginTopDp=16,marginBottomDp=16,pageBreak=PageBreakMode.PARAGRAPH)
         assertEquals(deliberate,SettingsJson.readerFromJson(SettingsJson.readerToJson(deliberate),ReaderSettings()))
     }
@@ -19,7 +19,7 @@ class SettingsJsonR3Test {
         val r3=JSONObject().put(SideMargin.KEY,40).put(VerticalMargin.KEY,40)
             .put("r.marginLeftDp",40).put("r.marginRightDp",40).put("r.marginTopDp",40).put("r.marginBottomDp",40)
         val moved=SettingsJson.readerFromJson(r3,ReaderSettings(marginLeftDp=30,marginRightDp=30))
-        assertEquals(listOf(20,20,18,22),listOf(moved.marginLeftDp,moved.marginRightDp,moved.marginTopDp,moved.marginBottomDp))
+        assertEquals(listOf(20,20,15,22),listOf(moved.marginLeftDp,moved.marginRightDp,moved.marginTopDp,moved.marginBottomDp))
         // Chosen R3 values stay.
         val chosen=SettingsJson.readerFromJson(JSONObject(r3.toString()).put("r.marginLeftDp",24).put("r.marginRightDp",24),ReaderSettings())
         assertEquals(24,chosen.marginLeftDp)
@@ -32,20 +32,29 @@ class SettingsJsonR3Test {
         val env=SettingsJson.settingsToJson(ReaderSettings(),AppSettings(),mapOf(MaruHeader.KEY to true)).toString()
         assertFalse(env.contains(MaruHeader.KEY))
         assertTrue(SettingsJson.otherFromJson(JSONObject().put(MaruHeader.KEY,true),null).isEmpty())
+        // So is the status size switch (MaruSize): a backup's 11 sp and its margins come back as they are.
+        val sized=SettingsJson.settingsToJson(ReaderSettings(),AppSettings(),mapOf(MaruSize.KEY to true)).toString()
+        assertFalse(sized.contains(MaruSize.KEY))
+        assertTrue(SettingsJson.otherFromJson(JSONObject().put(MaruSize.KEY,true),null).isEmpty())
+        val eleven=ReaderSettings(statusFontSizeSp=11f,marginTopDp=18)
+        assertEquals(eleven,SettingsJson.readerFromJson(SettingsJson.readerToJson(eleven),ReaderSettings()))
         // A backup's own header slots are restored as they are (here the R2-era chapter title).
         val r2=SettingsJson.readerFromJson(JSONObject().put("r.headerLeft","NONE").put("r.headerCenter","CHAPTER").put("r.headerRight","NONE"),ReaderSettings())
         assertEquals(listOf(StatusItem.NONE,StatusItem.CHAPTER,StatusItem.NONE),listOf(r2.headerLeft,r2.headerCenter,r2.headerRight))
     }
     @Test fun topAndBottomOfAnOlderBackupCountFromItsOwnBands() {
-        // Saved from the edge (U3 marker 40) with the backup's own status: no header, footer items above the line (36 dp).
+        // Saved from the edge (U3 marker 40) with the backup's own status: no header, footer items above the line (39 dp
+        // at the default 13 sp: the backup holds no size).
         val r3=JSONObject().put(VerticalMargin.KEY,40).put("r.marginTopDp",40).put("r.marginBottomDp",50)
             .put("r.headerLeft","NONE").put("r.headerCenter","NONE").put("r.headerRight","NONE")
             .put("r.footerLeft","NONE").put("r.footerCenter","PAGE").put("r.footerRight","NONE").put("r.progressBar",true)
         val moved=SettingsJson.readerFromJson(r3,ReaderSettings())
-        assertEquals(listOf(40,14),listOf(moved.marginTopDp,moved.marginBottomDp))
+        assertEquals(listOf(40,11),listOf(moved.marginTopDp,moved.marginBottomDp))
+        // With the backup's own 11 sp: its 36 dp band.
+        assertEquals(14,SettingsJson.readerFromJson(JSONObject(r3.toString()).put("r.statusFontSizeSp",11.0),ReaderSettings()).marginBottomDp)
         // Only what the backup holds moves: a missing bottom keeps the device's (already counted from the bands).
         val topOnly=SettingsJson.readerFromJson(JSONObject().put(VerticalMargin.KEY,40).put("r.marginTopDp",40),ReaderSettings(marginBottomDp=30))
-        assertEquals(listOf(18,30),listOf(topOnly.marginTopDp,topOnly.marginBottomDp))
+        assertEquals(listOf(15,30),listOf(topOnly.marginTopDp,topOnly.marginBottomDp))
         // This build writes the band marker: a backup's 0/0 comes back 0/0, never moved twice.
         val zero=ReaderSettings(marginTopDp=0,marginBottomDp=0)
         val json=SettingsJson.readerToJson(zero)

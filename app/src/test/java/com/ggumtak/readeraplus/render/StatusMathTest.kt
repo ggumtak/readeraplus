@@ -57,6 +57,25 @@ class StatusMathTest {
         // On a bookmarked page the right slot is drawn 33 px in: still a gap after the centre.
         assertTrue((960f + a[1]) / 2f + 33f <= 960f - 33f - a[2])
     }
+    @Test fun maruViewersWideHeaderOnTheS25() {
+        // 13 sp (39 px) on the S25, MaruViewer's band: the page view less 45 px on each side (990 px from x 45), not the
+        // 960 px text column. Battery icon 70 + 17 + "오후 05:03" ≈ 170 = 257 | a long book title | "12 / 3259" ≈ 170; gap
+        // 39; the ribbon's place 57 px (its 14 dp from x 987, the gap). The title gets the band less twice the wider side.
+        val a = FloatArray(3)
+        StatusMath.allocate(990f, 39f, 257f, 2000f, 170f, false, true, false, 117f, a, reserveRight = 57f)
+        assertArrayEquals(floatArrayOf(257f, 990f - 2f * (257f + 39f), 170f), a, 0f)
+        // Wider than the column's band would have given it (960 px from x 60).
+        val column = FloatArray(3)
+        StatusMath.allocate(960f, 39f, 257f, 2000f, 170f, false, true, false, 117f, column, reserveRight = 27f)
+        assertTrue(a[1] > column[1])
+        // The page number flush with the band's end at 1035 (MaruViewer's ends at 1032), or 57 px in on a bookmarked page:
+        // left of the ribbon (987) by the gap, and still a gap after the centred title.
+        val x = 45f
+        assertEquals(1035f, x + 990f, 0f)
+        val rightEnd = x + 990f - 57f
+        assertTrue(rightEnd <= 987f - 9f)
+        assertTrue(x + (990f + a[1]) / 2f + 39f <= rightEnd - a[2])
+    }
     @Test fun ribbonReserveKeepsEverySlotClearOfTheRibbon() {
         // No right item: the centre alone keeps clear of the ribbon's place (still centred on the whole band).
         val c = FloatArray(3)

@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.reader.ThumbGridMath
 import com.ggumtak.readeraplus.render.DeviceClass
+import com.ggumtak.readeraplus.render.RibbonMath
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.InkNumPad
 import com.ggumtak.readeraplus.ui.kit.InkPagerBar
@@ -269,7 +270,12 @@ internal class ThumbGridView(context: Context) : View(context) {
     }
     private val chip = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Ink.WHITE }
     private val chipEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f; color = Ink.BLACK }
-    private val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Ink.BLACK }
+    /** E-ink (or not probed yet): the bookmark mark in black with a white edge; phones draw the page ribbon's blue. */
+    private val eink = DeviceClass.cached(context) != false
+    private val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = if (eink) Ink.BLACK else RibbonMath.COLOR
+    }
     private val ribbonEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f; color = Ink.WHITE }
     private val labelBaseline: Float
     private val numberDrop: Float
@@ -344,19 +350,20 @@ internal class ThumbGridView(context: Context) : View(context) {
 
     private fun drawMarks(canvas: Canvas, marks: Int, left: Float, top: Float, w: Float, h: Float) {
         if (marks and ThumbCell.MARK_BOOKMARK != 0) {
-            val rw = 8f * density
-            val rh = 12f * density
-            val r = left + w - 4f * density
+            // The page's ribbon (RibbonMath: ReadEra's shape, blue on phones), scaled to the mark's width.
+            val rw = RibbonMath.THUMB_WIDTH_DP * density
+            val rh = rw * RibbonMath.HEIGHT_DP / RibbonMath.WIDTH_DP
+            val r = left + w - rw * RibbonMath.RIGHT_DP / RibbonMath.WIDTH_DP
             val l = r - rw
             ribbon.reset()
             ribbon.moveTo(l, top)
             ribbon.lineTo(r, top)
             ribbon.lineTo(r, top + rh)
-            ribbon.lineTo(l + rw / 2f, top + rh - rw / 2f)
+            ribbon.lineTo(l + rw / 2f, top + rh - rh * RibbonMath.NOTCH_FRACTION)
             ribbon.lineTo(l, top + rh)
             ribbon.close()
             canvas.drawPath(ribbon, ribbonPaint)
-            canvas.drawPath(ribbon, ribbonEdge)
+            if (eink) canvas.drawPath(ribbon, ribbonEdge)
         }
         val quote = marks and ThumbCell.MARK_QUOTE != 0
         val note = marks and ThumbCell.MARK_NOTE != 0

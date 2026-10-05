@@ -56,6 +56,14 @@ internal class PagePalette private constructor(
     val inkProgressLine: Int = rgb(inkGrey(luma(progressLine), luma(background), lightPage, INK_LINE_STEPS))
     val inkProgressDot: Int = rgb(inkGrey(luma(progressDot), luma(inkProgressLine), lightPage))
 
+    /**
+     * MaruViewer's battery icon at one bar (≤ 25 %), on phones (user, 2026-10-05: "25때는 약간 빨간색으로 바뀌고"): the
+     * [status] colour [LOW_SHARE] of the way to [LOW_RED], per channel, so it stays this look's colour, only redder:
+     * 흰 바탕 #952522 (dark red on white, 8.2:1), 흑백 반전 #EE7E7C (light red on black, 7.9:1), MARU #E96E57 (salmon beside
+     * the gold on #323232, 4.2:1 against the gold's 8.7:1). E-ink keeps [status] (the renderer).
+     */
+    val batteryLow: Int = blend(status, LOW_RED, LOW_SHARE)
+
     /** Paint.setShadowLayer's radius in px for this page's blur at [density]; 0 (no shadow) without one. */
     fun shadowRadiusPx(density: Float): Float = if (hasShadow) radiusForSigma(shadowSigmaDp * density) else 0f
 
@@ -84,6 +92,19 @@ internal class PagePalette private constructor(
         /** The same toward white on a dark page (12.2 % and 19.6 %). */
         private const val DARK_LINE = 31
         private const val DARK_DOT = 50
+        /** The red [batteryLow] moves the status colour toward (Material Red 600), and how far (of 1). */
+        private const val LOW_RED = 0xFFE53935.toInt()
+        private const val LOW_SHARE = 0.65f
+
+        /** [a] moved [share] (0..1) of the way to [b], per channel, opaque. */
+        fun blend(a: Int, b: Int, share: Float): Int {
+            fun ch(shift: Int): Int {
+                val x = a shr shift and 0xFF
+                return x + Math.round(((b shr shift and 0xFF) - x) * share)
+            }
+            return OPAQUE or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
+        }
+
         /** One of an e-ink panel's 16 grey levels (0x00, 0x11 … 0xFF). */
         private const val INK_STEP = 17
         /** The e-ink progress line's least distance from the page, in panel levels ([inkProgressLine]). */

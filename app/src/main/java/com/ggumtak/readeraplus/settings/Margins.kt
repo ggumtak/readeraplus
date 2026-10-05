@@ -60,14 +60,17 @@ object StatusBands {
      */
     const val GLYPH_EM = 1.45
 
-    /** The status text size the page draws (sp): [ReaderSettings.statusFontSizeSp] within 6..40, 11 when unusable. */
-    fun statusSp(s: ReaderSettings): Float =
-        s.statusFontSizeSp.let { if (it.isFinite() && it > 0f) it.coerceIn(6f, 40f) else 11f }
+    /** The default status size ([ReaderSettings.statusFontSizeSp]): MaruViewer's ([MaruSize]; 11 sp before). */
+    const val DEFAULT_SP = 13f
 
-    /** The status glyph box in whole dp, rounded up: 16 dp at 11 sp. */
+    /** The status text size the page draws (sp): [ReaderSettings.statusFontSizeSp] within 6..40, else [DEFAULT_SP]. */
+    fun statusSp(s: ReaderSettings): Float =
+        s.statusFontSizeSp.let { if (it.isFinite() && it > 0f) it.coerceIn(6f, 40f) else DEFAULT_SP }
+
+    /** The status glyph box in whole dp, rounded up: 19 dp at 13 sp (16 dp at 11 sp). */
     fun glyphDp(s: ReaderSettings): Int = Math.ceil(statusSp(s) * GLYPH_EM - 1e-3).toInt()
 
-    /** The header's band: [EDGE_DP], the glyph box and [PAD_DP]; 0 without header items. 22 dp by default. */
+    /** The header's band: [EDGE_DP], the glyph box and [PAD_DP]; 0 without header items. 25 dp by default (13 sp). */
     fun headerDp(s: ReaderSettings): Int = if (s.hasHeader) EDGE_DP + glyphDp(s) + PAD_DP else 0
 
     /**
@@ -86,24 +89,26 @@ object StatusBands {
  * U3: top/bottom margins, stored as actual dp. Since 2026-10-05 they count from the status bands ([StatusBands]), not
  * from the screen's edge: the top margin is the paper between the header's band and the text, the bottom one between the
  * text and the footer's band. The defaults keep the text box where 40 dp from the edge put it with the default bands
- * (user: "코멧에서 본문 지금 자리 그대로 되게 숫자 맞춰줘"): [TOP_ZERO_DP] = 40 − 22, [BOTTOM_ZERO_DP] = 40 − 18, rows
- * 80..1360 on the Comet as before. Each side's default is its "0"; the one 상하 여백 stepper moves both by its value.
+ * (user: "코멧에서 본문 지금 자리 그대로 되게 숫자 맞춰줘"): [TOP_ZERO_DP] = 40 − 25 (MaruViewer's 13 sp header; 40 − 22
+ * at 11 sp before [MaruSize]), [BOTTOM_ZERO_DP] = 40 − 18, rows 80..1360 on the Comet as before. Each side's default
+ * is its "0"; the one 상하 여백 stepper moves both by its value.
  * [KEY] (prefs and the backup's reader object; [STYLE_KEY] in a saved style) says how the values were saved: [BANDS] now,
  * [EDGE] from U3 until the bands ("40 dp = 0" from the edge), nothing ≤ R2. Values saved from the edge move once when
  * they are read ([fromEdge]: the text box stays where it was); the next save writes [BANDS], so nothing moves twice.
+ * Values counted from the 11 sp bands lose the 13 sp bands' growth once ([MaruSize.keepBox]).
  */
 object VerticalMargin {
     /** Where the text box starts and ends from the screen's edges with the default margins and bands (dp). */
     const val EDGE_DP = 40
-    /** The top margin's "0": [EDGE_DP] less the default header band (22 dp). */
-    const val TOP_ZERO_DP = 18
+    /** The top margin's "0": [EDGE_DP] less the default header band (25 dp at 13 sp). */
+    const val TOP_ZERO_DP = 15
     /** The bottom margin's "0": [EDGE_DP] less the default footer band (the progress line, 18 dp). */
     const val BOTTOM_ZERO_DP = 22
     /** Either margin's largest value on the steppers. */
     const val MAX_DP = 80
     /** ≤ R2 default of marginTopDp / marginBottomDp. */
     const val LEGACY_DEFAULT_DP = 16
-    /** −22..+62: both margins 0..80 dp (each stops at its end). */
+    /** −22..+65: both margins 0..80 dp (each stops at its end). */
     const val UI_MIN = -BOTTOM_ZERO_DP
     const val UI_MAX = MAX_DP - TOP_ZERO_DP
     const val UI_STEP = SideMargin.UI_STEP
@@ -149,7 +154,7 @@ object VerticalMargin {
 
     /**
      * [s] with the margins it read from the edge ([top], [bottom]: those that were saved) counted from its own bands, so
-     * its text box stays where it was: 40/40 with the default bands become the defaults 18/22.
+     * its text box stays where it was: 40/40 with the default bands become the defaults 15/22.
      */
     fun fromEdge(s: ReaderSettings, top: Boolean = true, bottom: Boolean = true): ReaderSettings = s.copy(
         marginTopDp = if (top) topFromEdge(s.marginTopDp, s) else s.marginTopDp,

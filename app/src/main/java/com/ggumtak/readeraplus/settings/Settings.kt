@@ -97,6 +97,7 @@ object Settings {
             putInt(SideMargin.KEY, SideMargin.ZERO_DP)
             putInt(VerticalMargin.KEY, VerticalMargin.BANDS)
             putBoolean(MaruHeader.KEY, true)
+            putBoolean(MaruSize.KEY, true)
             for (key in StatusMigration.LEGACY_KEYS) remove(key)
             putFloat("r.statusFontSizeSp", s.statusFontSizeSp)
             putBoolean("r.widowOrphanControl", s.widowOrphanControl)
@@ -228,11 +229,18 @@ object Settings {
             txtReplaceRules = p.getString("r.txtReplaceRules", d.txtReplaceRules) ?: "",
             epubPublisherStyles = p.getBoolean("r.epubPublisherStyles", d.epubPublisherStyles),
         ).let { if (p.contains(MaruHeader.KEY)) it else MaruHeader.applyTo(it) } // saved before MaruViewer's header
-            // Top/bottom saved from the screen's edge: counted from the bands the page now has (MaruViewer's header
-            // included), so the text box stays. Read only: the next saveReader writes them with VerticalMargin.BANDS.
-            .let {
-                if (!VerticalMargin.countsFromEdge(verticalBase)) it
-                else VerticalMargin.fromEdge(it, p.contains("r.marginTopDp"), p.contains("r.marginBottomDp"))
+            .let { before ->
+                // MaruViewer's status size for an untouched 11 sp. Then top/bottom saved from the screen's edge are
+                // counted from the bands the page now has (MaruViewer's header and size included), and those counted from
+                // the 11 sp bands lose what the 13 sp bands add: either way the text box stays. Read only: the next
+                // saveReader writes VerticalMargin.BANDS and MaruSize.KEY.
+                val sized = if (p.contains(MaruSize.KEY)) before else MaruSize.applyTo(before)
+                when {
+                    VerticalMargin.countsFromEdge(verticalBase) ->
+                        VerticalMargin.fromEdge(sized, p.contains("r.marginTopDp"), p.contains("r.marginBottomDp"))
+                    sized !== before -> MaruSize.keepBox(before, sized)
+                    else -> sized
+                }
             }
     }
 

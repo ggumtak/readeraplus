@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.data
 
 import com.ggumtak.readeraplus.settings.MaruHeader
+import com.ggumtak.readeraplus.settings.MaruSize
 import com.ggumtak.readeraplus.settings.StatusMigration
 import com.ggumtak.readeraplus.settings.SideMargin
 import com.ggumtak.readeraplus.settings.VerticalMargin
@@ -50,10 +51,11 @@ internal object SettingsJson {
     /**
      * Raw pref keys that are device/session state and must not travel with a backup (matched as lower-case
      * substrings). The permission ones would hide the "모든 파일 접근" panel on a device that lacks the permission;
-     * [MaruHeader.KEY] is this device's one-time switch (a restore saves the backup's own header slots).
+     * [MaruHeader.KEY] and [MaruSize.KEY] are this device's one-time switches (a restore saves the backup's own header
+     * slots, status size and margins).
      */
     private val TRANSIENT = listOf("lastscan", "lastbackup", "cacheepoch", "permpanelhidden", "legacypermasked", "installid", "restoreoffer", "backupauto", "deviceclass",
-        MaruHeader.KEY.lowercase())
+        MaruHeader.KEY.lowercase(), MaruSize.KEY.lowercase())
     val DROPPED_KEYS = StatusMigration.LEGACY_KEYS + listOf("a.pinChrome", "reader.brightnessCollapsed", "a.brightnessDevice")
 
     fun isTransient(key: String): Boolean {

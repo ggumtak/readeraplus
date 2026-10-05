@@ -156,7 +156,7 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
             val dp = SideMargin.toDp(v.toInt())
             edit { it.copy(marginLeftDp = dp, marginRightDp = dp) }
         }
-        // Top and bottom from the status bands, each "0" its own default (18 / 22 dp): one value moves both, by the step
+        // Top and bottom from the status bands, each "0" its own default (15 / 22 dp): one value moves both, by the step
         // from the value shown (VerticalMargin.step: a pair off the defaults' line never jumps).
         var verticalUi = VerticalMargin.toUi(r.marginTopDp, r.marginBottomDp)
         val vertical = stepper(

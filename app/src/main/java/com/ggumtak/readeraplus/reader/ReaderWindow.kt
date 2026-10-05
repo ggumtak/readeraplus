@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.RoundedCorner
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -153,6 +154,32 @@ internal object ReaderWindow {
 
     /** Size of [insetsOf]'s array. */
     const val INSETS = 5
+
+    /**
+     * The display's rounded top-left and top-right corners in window px into [out] (radius, centre x, centre y each; see
+     * [InsetSplit.pageCorners]): API 31+ from [WindowInsets.getRoundedCorner], radius 0 where the window has none (a
+     * square panel, the inner corner of a split screen). Before API 31 they are unknown: radius −1. On insets dispatch
+     * only (allocates the corners' centre points).
+     */
+    fun topCorners(insets: WindowInsets, out: IntArray) {
+        if (Build.VERSION.SDK_INT < 31) {
+            out.fill(0)
+            out[0] = -1
+            out[3] = -1
+            return
+        }
+        for (i in 0..1) {
+            val position = if (i == 0) RoundedCorner.POSITION_TOP_LEFT else RoundedCorner.POSITION_TOP_RIGHT
+            val c = insets.getRoundedCorner(position)
+            val centre = c?.center
+            out[i * 3] = c?.radius ?: 0
+            out[i * 3 + 1] = centre?.x ?: 0
+            out[i * 3 + 2] = centre?.y ?: 0
+        }
+    }
+
+    /** Size of [topCorners]' array. */
+    const val CORNERS = 6
 }
 
 /**
@@ -170,6 +197,24 @@ internal object InsetSplit {
 
     /** The page view's top margin: the inset less the cutout band the view reaches into. */
     fun pageTopMargin(top: Int, cutoutTop: Int): Int = (top - cutoutTop.coerceIn(0, maxOf(0, top))).coerceAtLeast(0)
+
+    /**
+     * The display's top corners [window] (`ReaderWindow.topCorners`: radius, centre x, centre y in window px, top-left then
+     * top-right) relative to a page view whose left, top and right edges are at [left], [top] and [right] in the window,
+     * into [out]: radius, how far the centre lies inside the view's left (right) edge, how far below its top. A radius
+     * that is 0 (square) or unknown (< 0) is kept as it is, with no centre. The header's side insets clear these
+     * (`StatusFit.sideInset`).
+     */
+    fun pageCorners(window: IntArray, left: Int, top: Int, right: Int, out: IntArray) {
+        val l = window[0] > 0
+        val r = window[3] > 0
+        out[0] = window[0]
+        out[1] = if (l) window[1] - left else 0
+        out[2] = if (l) window[2] - top else 0
+        out[3] = window[3]
+        out[4] = if (r) right - window[4] else 0
+        out[5] = if (r) window[5] - top else 0
+    }
 }
 
 /**

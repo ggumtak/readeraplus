@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.reader
 
+import com.ggumtak.readeraplus.render.BatteryMath
 import com.ggumtak.readeraplus.render.StatusDecor
 import com.ggumtak.readeraplus.render.StatusSlot
 import com.ggumtak.readeraplus.settings.ReaderSettings
@@ -42,13 +43,22 @@ internal class StatusModel {
     private var dotPx = -1
 
     /**
-     * Fills decor for the slots of [s]; [top]: the display cutout's band above the header's (`PageGeometry.cutoutTop`).
-     * Zero allocation. True when anything drawn changed (then decor.version++).
+     * Fills decor for the slots of [s]; [top]: the display cutout's band above the header's (`PageGeometry.cutoutTop`);
+     * [corners]: the display's rounded top corners relative to the page view (`InsetSplit.pageCorners`: radius, centre's
+     * distance inside the side, centre's y, top-left then top-right; null = unknown). Zero allocation. True when anything
+     * drawn changed (then decor.version++).
      */
-    fun update(s: ReaderSettings, inp: StatusInputs, trackPx: Int, top: Int = 0): Boolean {
+    fun update(s: ReaderSettings, inp: StatusInputs, trackPx: Int, top: Int = 0, corners: IntArray? = null): Boolean {
         var changed = false
         val d = decor
         if (d.top != top) { d.top = top; changed = true }
+        if (corners == null) {
+            if (d.cornerLeft.set(-1, 0, 0)) changed = true
+            if (d.cornerRight.set(-1, 0, 0)) changed = true
+        } else {
+            if (d.cornerLeft.set(corners[0], corners[1], corners[2])) changed = true
+            if (d.cornerRight.set(corners[3], corners[4], corners[5])) changed = true
+        }
         if (fill(d.header.left, s.headerLeft, inp)) changed = true
         if (fill(d.header.center, s.headerCenter, inp)) changed = true
         if (fill(d.header.right, s.headerRight, inp)) changed = true
@@ -76,11 +86,15 @@ internal class StatusModel {
             StatusItem.CHAPTER -> if (inp.chapterStartsHere) slot.clear() else slot.setText(inp.chapterTitle)
             StatusItem.BOOK_TITLE -> slot.setText(inp.bookTitle, keepEnd = item.keepsEnd)
             StatusItem.BATTERY -> if (inp.battery < 0) slot.clear() else slot.set(b, 0, inp.battery)
-            // MaruViewer's corner: the battery icon (no number), then the time as the phone shows it ("오전 08:53").
-            StatusItem.CLOCK_BATTERY -> when {
-                inp.minuteOfDay < 0 && inp.battery < 0 -> slot.clear()
-                inp.minuteOfDay < 0 -> slot.set(b, 0, inp.battery, batteryFirst = true)
-                else -> slot.set(b, StatusText.clockKo(b, 0, inp.minuteOfDay, inp.is24), inp.battery, batteryFirst = true)
+            // MaruViewer's corner: the battery icon (no number; its level in the bars' 25 % steps, so a level within a
+            // step changes nothing), then the time as the phone shows it ("오전 08:53").
+            StatusItem.CLOCK_BATTERY -> {
+                val level = BatteryMath.stepLevel(inp.battery)
+                when {
+                    inp.minuteOfDay < 0 && level < 0 -> slot.clear()
+                    inp.minuteOfDay < 0 -> slot.set(b, 0, level, batteryFirst = true)
+                    else -> slot.set(b, StatusText.clockKo(b, 0, inp.minuteOfDay, inp.is24), level, batteryFirst = true)
+                }
             }
             else -> {
                 val n = chars(b, item, inp)

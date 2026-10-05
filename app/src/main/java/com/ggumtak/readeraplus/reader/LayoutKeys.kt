@@ -21,9 +21,9 @@ data class PageGeometry(
     val contentHeight: Int,
     /**
      * Px at the view's top that a display cutout covers ([LayoutKeys.geometry]'s extraTop; the S25's camera band in
-     * fullscreen), 0 without one. The header's band is reserved below it (the header is drawn between it and the text
-     * box: `StatusFit.headerBaseline`), the bookmark ribbon hangs from its bottom, only paper is drawn in it, and a
-     * thumbnail leaves it out.
+     * fullscreen), 0 without one. The header's band is reserved below it (only paper is drawn there), the header itself
+     * is drawn inside it at the very top as MaruViewer draws it (`StatusFit.headerBaseline`), the bookmark ribbon hangs
+     * from the view's top over it (`RibbonMath`), and a thumbnail leaves it out.
      */
     val cutoutTop: Int = 0,
 )

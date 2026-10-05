@@ -309,6 +309,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /** The cutout band at the page view's top ([applyPageInsets]); the session's text box starts below it. */
     override var pageCutoutTop = 0
         private set
+    /** [ReaderWindow.topCorners] of the last insets: the display's rounded top corners in window px (−1: unknown). */
+    private val windowCorners = IntArray(ReaderWindow.CORNERS).also { it[0] = -1; it[3] = -1 }
+    /** [windowCorners] relative to the page view ([InsetSplit.pageCorners]) for the header's side insets; its place. */
+    private val pageCorners = IntArray(ReaderWindow.CORNERS)
+    private val pageInWindow = IntArray(2)
 
     private var bookmarks: List<Bookmark> = emptyList()
     /** Ids of bookmarks the user removed while their insert was still running ([toggleBookmark]). */
@@ -883,6 +888,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             configChanged = false
             insetsFullscreen = app.fullscreen
             insetsGate.offer(ReaderWindow.insetsOf(wi, app.fullscreen), settled, forced)?.let(::applyInsets)
+            // The display's corners never come and go with transient bars: no gate. A change always comes with a new
+            // page view size or place (rotation, split screen), whose new pages pick them up (buildDecor).
+            ReaderWindow.topCorners(wi, windowCorners)
             // The bars only (never the page): the bottom bar stays above the system's swipe strip, and needs no gap in
             // the upper window of a split screen (nothing of the system's under it).
             chrome.setGestureBottom(ReaderWindow.gestureBottom(wi), ReaderWindow.floatsAboveBottom(this))
@@ -2957,8 +2965,19 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
         }
         fillStatus(s, l, p, statusInputs, sample, all = false)
-        status.update(s.settings, statusInputs, statusTrackPx(s), s.generation?.geometry?.cutoutTop ?: 0)
+        status.update(s.settings, statusInputs, statusTrackPx(s), s.generation?.geometry?.cutoutTop ?: 0, cornersOfPage())
         return PageDecor(hl ?: emptyList(), isBookmarked(l, p), status.decor, status.decor.version)
+    }
+
+    /**
+     * The display's rounded top corners relative to the page view, for the header's side insets (MaruViewer's line:
+     * the corners, not the text margins). The view's place in the window only when a corner is rounded.
+     */
+    private fun cornersOfPage(): IntArray {
+        val w = windowCorners
+        if (w[0] > 0 || w[3] > 0) page.getLocationInWindow(pageInWindow) else pageInWindow.fill(0)
+        InsetSplit.pageCorners(w, pageInWindow[0], pageInWindow[1], pageInWindow[0] + page.width, pageCorners)
+        return pageCorners
     }
 
     private fun addOverlapping(into: ArrayList<Highlight>?, list: List<Highlight>, p: PageInfo): ArrayList<Highlight>? {

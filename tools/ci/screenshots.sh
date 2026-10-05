@@ -36,16 +36,16 @@ pv_rows() { # "top bottom" of the PageView in screen rows (dumpsys bounds); the 
   echo "${b:-0 1440}"
 }
 content_rows() { # "Y0 Y1" of the text box: pv + 80 … pv + 1360 (valid only at 상하 여백 "0", PLAN §5.3, with the
-  # default bands: the header's 22 dp + 18 dp, the progress line's 18 dp + 22 dp; the emulator has no display cutout). The
-  # margins count from the status bands since 2026-10-05: with a footer item (a 36 dp band: from 14c/10b, off at 52a, again
-  # from 52b) the box ends at pv + 1324 and rows 1324..1360 are margin paper, fine for an EQUAL or DIFF of the same
-  # settings.
+  # default bands: the header's 25 dp + 15 dp (MaruViewer's 13 sp), the progress line's 18 dp + 22 dp; the emulator has no
+  # display cutout). The margins count from the status bands since 2026-10-05: with a footer item (a 39 dp band: from
+  # 14c/10b, off at 52a, again from 52b) the box ends at pv + 1318 and rows 1318..1360 are margin paper, fine for an
+  # EQUAL or DIFF of the same settings.
   local pv; pv=$(pv_rows); pv=${pv%% *}
   echo "$((pv + 80)) $((pv + 1360 > 1440 ? 1440 : pv + 1360))"
 }
 top_rows() { # "Y0 Y1" of the text box's upper part, pv + 80 … pv + 680: its first lines stay put when a status band that
   # comes or goes moves only the box's bottom and the page keeps its first character (10b, 52, 53). 680: half the
-  # smallest of those boxes (80..1324) less a line, since an anchored relayout may move a keep-with-next run of up to half
+  # smallest of those boxes (80..1318) less a line, since an anchored relayout may move a keep-with-next run of up to half
   # a page (KEEP_MAX_MOVE) to the next page
   local pv; pv=$(pv_rows); pv=${pv%% *}
   echo "$((pv + 80)) $((pv + 680))"
@@ -72,7 +72,7 @@ raw_blank() { # raw_blank <n> <raw> <Y0> <Y1>: rows that must hold only the page
 }
 raw_check() { # raw_check <n> <raw A> <raw B> <Y0 Y1 | content | contenttop | pageview | belowheader>: raw_equal.py over
   # those rows, as a CHECK. belowheader: the page view but its top 48 rows, where the default header (MaruViewer's line,
-  # 2026-10-05) draws the clock 8 px (4 dp) below the top (its glyph box ends at row 40 at 11 sp, its band at 44): a minute
+  # 2026-10-05) draws the clock 8 px (4 dp) below the top (its glyph box ends at row 46 at 13 sp, its band at 50): a minute
   # may pass between two shots. contenttop: top_rows.
   local r y0 y1
   case "$4" in
@@ -978,16 +978,16 @@ reading_settings() { # 14 the quick options (⚙) and 14q their margins; 14s the
   choose_item "쪽 번호" || { leave_settings; return 1; }
   sleep 2; dump && log "14c: 아래 가운데 reads '$(row_value "$(slot_row "아래 가운데")")'"
   leave_settings || return 1 # two pages (설정, 화면·밝기): the book applies the slot once, back in front
-  # 10b: same page as 10a_pre, footer now on. Its band (36 dp, the progress line's alone 18 dp) ends the text box 36 px
-  # higher (2026-10-05: the margins count from the bands): one relayout that keeps the page's first character, and the
-  # first lines in place. 10b_margin: the box really ends there, its 22 dp bottom margin above the footer's band
-  # (bot − 116 … bot − 72) is paper only on this full page (13h: no chip); 4 px under the box are left for a last line's
+  # 10b: same page as 10a_pre, footer now on. Its band (39 dp at 13 sp, the progress line's alone 18 dp) ends the text box
+  # 42 px higher (2026-10-05: the margins count from the bands): one relayout that keeps the page's first character, and
+  # the first lines in place. 10b_margin: the box really ends there, its 22 dp bottom margin above the footer's band
+  # (bot − 122 … bot − 78) is paper only on this full page (13h: no chip); 4 px under the box are left for a last line's
   # shadow. Text laid out down to the old box (bot − 80) would show there.
   shot 10b_footer_slots 2; rawshot 10b; perf_mark 10b
   raw_check 10b 10a_pre 10b contenttop
   perf_check 10b first_is 10a_pre 10b
   local pvt pvb; read -r pvt pvb <<<"$(pv_rows)"
-  raw_blank 10b_margin 10b $((pvb - 112)) $((pvb - 72))
+  raw_blank 10b_margin 10b $((pvb - 118)) $((pvb - 78))
 }
 
 # ------------------------------------------------------------------ reader steps: H3, TOC, go-to, end of book
@@ -1169,15 +1169,15 @@ scroll_moves() { # 61–66 in the scroll mode set by 60
   read -r top bot <<<"$(pv_rows)"
   # Both bands stay put while the text scrolls; their live values follow the position and the time: the header's 쪽 번호
   # and clock (MaruViewer's line, the default since 2026-10-05), the footer's 쪽 번호 (14c's 아래 가운데 until 52) and the
-  # progress dot. The header's glyphs fill rows 8 (4 dp below the edge) to about 40 (11 sp × 1.45 = 32 px; its band ends
-  # at 44, then its 18 dp margin): its live values may change there (band_check). The paper below them down to the text
+  # progress dot. The header's glyphs fill rows 8 (4 dp below the edge) to at most 46 (13 sp × 1.45 → 19 dp = 38 px; its
+  # band ends at 50, then its 15 dp margin): its live values may change there (band_check). The paper below them down to the text
   # box (rows 48..80, as raw_check's belowheader) has nothing live, so it must stay EQUAL: scrolled text clipped a few px
-  # too high would show there. The same at the bottom: 14c's footer item gives a 36 dp band (bot − 72 … bot) under the
-  # 22 dp margin, so the text box ends at bot − 116 and the paper between (no chip in 61a/61b) must stay EQUAL too.
+  # too high would show there. The same at the bottom: 14c's footer item gives a 39 dp band (bot − 78 … bot) under the
+  # 22 dp margin, so the text box ends at bot − 122 and the paper between (no chip in 61a/61b) must stay EQUAL too.
   band_check 61_header 61a 61b "$top" $((top + 48))
   raw_check 61_header_gap 61a 61b $((top + 48)) $((top + 80))
   band_check 61_footer 61a 61b $((bot - 80)) "$bot"
-  raw_check 61_footer_gap 61a 61b $((bot - 116)) $((bot - 72))
+  raw_check 61_footer_gap 61a 61b $((bot - 122)) $((bot - 78))
   local y0 y1 r
   read -r y0 y1 <<<"$(content_rows)"
   r=$(python3 tools/ci/raw_equal.py shots/61a.raw shots/61b.raw "$y0" "$y1")
@@ -1519,9 +1519,9 @@ notes_ink() { # 90: 인용문 색 표시 (설정 → 화면·밝기 since 68aa27
 # ------------------------------------------------------------------ anchor checks (A §6.6 → 52–57)
 
 footer_toggle() { # 52: footer slots and header changed on 화면·밝기 (over the book; 68aa271): once the book is back in
-  # front, the page keeps its first character and its first lines. The footer's band that comes (36 dp) ends the text box
+  # front, the page keeps its first character and its first lines. The footer's band that comes (39 dp) ends the text box
   # higher since 2026-10-05 (the margins count from the bands): one relayout, anchored; the header keeps its band (two of
-  # its slots keep their items), so the box's top stays. 52a follows a relayout too (10b's footer item off: 36 → 18 dp),
+  # its slots keep their items), so the box's top stays. 52a follows a relayout too (10b's footer item off: 39 → 18 dp),
   # so it waits for the page as 54 and 56 do.
   fresh_reader sample-cp949.txt text/plain
   goto_page 3 || return 1 # a full page of text (the book was left on its short last page by 18)
@@ -1538,7 +1538,7 @@ footer_toggle() { # 52: footer slots and header changed on 화면·밝기 (over 
   raw_check 52 52a 52b contenttop
   perf_check 52 first_is 52a 52b
 }
-progress_toggle() { # 53: 진행 막대 off (화면·밝기, over the book): the footer's band shrinks by the lane (36 → 22 dp), one
+progress_toggle() { # 53: 진행 막대 off (화면·밝기, over the book): the footer's band shrinks by the lane (39 → 25 dp), one
   # anchored relayout: the same first character and first lines; then on again
   open_screen_over_reader || return 1
   set_toggle "진행 막대" off || { leave_settings; return 1; }

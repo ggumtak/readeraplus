@@ -71,3 +71,35 @@ object MaruHeader {
         return s.copy(headerLeft = d.headerLeft, headerCenter = d.headerCenter, headerRight = d.headerRight)
     }
 }
+
+/**
+ * MaruViewer's status size (user, 2026-10-05: "배터리 아이콘 글씨 크기 폰트도 따라할 수 있어 혹시?"): [StatusBands.DEFAULT_SP]
+ * in the phone's UI font gives the ink of MaruViewer's status line on the S25 (3 px per dp: Hangul ≈ 33 px, digits ≈ 29 px,
+ * where this app's 11 sp line in the same font measured 29 and 24.5 px; 13 sp scales those to 34 and 29). Prefs saved
+ * before it ([KEY] absent) that still hold the old default [OLD_SP] load with the new default; a size the user chose
+ * stays. The larger size makes the bands taller, so margins counted from the bands lose that growth ([keepBox]) and the
+ * text box stays on the same pixels. Like [MaruHeader], loading never writes ([KEY] is stored by every
+ * `Settings.saveReader`) and [KEY] never travels with a backup (`SettingsJson` drops it): a restore keeps the backup's
+ * size and margins as they are. A saved style carries [STYLE_KEY]: its margins count from the 13 sp default bands.
+ */
+object MaruSize {
+    const val KEY = "status.maruSize.v1"
+    /** In a saved style's JSON: present = its top/bottom margins count from the default bands at 13 sp. */
+    const val STYLE_KEY = "statusSizeV"
+    /** The default status size before MaruViewer's. */
+    const val OLD_SP = 11f
+
+    /** [s] at the new default size when it holds the old default [OLD_SP] (else [s] itself). */
+    fun applyTo(s: ReaderSettings): ReaderSettings =
+        if (s.statusFontSizeSp == OLD_SP) s.copy(statusFontSizeSp = StatusBands.DEFAULT_SP) else s
+
+    /**
+     * [now] with its top/bottom margins less what its bands grew over [before]'s (the same settings at the old size), never
+     * below 0: the text box keeps its place. With 13 sp for 11: the header's band 22 → 25 dp, the footer's with text 36 →
+     * 39 dp (with the progress line); the progress line alone keeps 18 dp.
+     */
+    fun keepBox(before: ReaderSettings, now: ReaderSettings): ReaderSettings = now.copy(
+        marginTopDp = (now.marginTopDp - (StatusBands.headerDp(now) - StatusBands.headerDp(before))).coerceAtLeast(0),
+        marginBottomDp = (now.marginBottomDp - (StatusBands.footerDp(now) - StatusBands.footerDp(before))).coerceAtLeast(0),
+    )
+}

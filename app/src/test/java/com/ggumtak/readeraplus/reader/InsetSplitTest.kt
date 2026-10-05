@@ -40,6 +40,24 @@ class InsetSplitTest {
     }
 
     @Test
+    fun theDisplaysCornersRelativeToThePageView() {
+        // S25 portrait fullscreen, a 132 px corner at each top corner of the 1080 px window; the page view fills it.
+        val window = intArrayOf(132, 132, 132, 132, 1080 - 132, 132)
+        val out = IntArray(6)
+        InsetSplit.pageCorners(window, 0, 0, 1080, out)
+        assertEquals(listOf(132, 132, 132, 132, 132, 132), out.toList())
+        // Bars shown: the view starts below the 110 px status bar, so the corners' centres are 22 px below its top.
+        InsetSplit.pageCorners(window, 0, 110, 1080, out)
+        assertEquals(listOf(132, 132, 22, 132, 132, 22), out.toList())
+        // Landscape with the camera on the left: the view starts 87 px in (2340 px wide window).
+        InsetSplit.pageCorners(intArrayOf(132, 132, 132, 132, 2340 - 132, 132), 87, 0, 2340, out)
+        assertEquals(listOf(132, 45, 132, 132, 132, 132), out.toList())
+        // No rounded corner (the Comet, a split screen's inner corner) and unknown ones (before API 31) carry no centre.
+        InsetSplit.pageCorners(intArrayOf(0, 5, 5, -1, 7, 7), 0, 0, 720, out)
+        assertEquals(listOf(0, 0, 0, -1, 0, 0), out.toList())
+    }
+
+    @Test
     fun oddValuesStayInRange() {
         assertEquals(0, InsetSplit.cutoutTop(-5, 0))
         assertEquals(0, InsetSplit.pageTopMargin(-5, 0))

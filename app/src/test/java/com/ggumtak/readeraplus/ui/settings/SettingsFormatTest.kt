@@ -372,7 +372,7 @@ class SettingsFormatTest {
                 txtReplaceRules = "a=>b", txtDetectChapters = false,
             ),
         )
-        assertEquals(listOf(20, 20, 18, 22), listOf(r.marginLeftDp, r.marginRightDp, r.marginTopDp, r.marginBottomDp))
+        assertEquals(listOf(20, 20, 15, 22), listOf(r.marginLeftDp, r.marginRightDp, r.marginTopDp, r.marginBottomDp))
         assertEquals(PageBreakMode.LINE, r.pageBreak)
         assertEquals(StatusItem.BOOK_TITLE, r.headerCenter)
         assertEquals(StatusItem.NONE, r.footerRight)

@@ -132,9 +132,9 @@ class StatusModelTest {
         assertTrue(s.progressBar)
         assertTrue(m.update(s, inputs(), track))
         val h = m.decor.header
-        // MaruViewer's corner: the icon first, its fill the level, no number; then the time.
+        // MaruViewer's corner: the icon first, its bars the level in 25 % steps (80 % → four), no number; then the time.
         assertEquals("14:05", chars(h.left))
-        assertEquals(80, h.left.battery)
+        assertEquals(100, h.left.battery)
         assertTrue(h.left.batteryFirst)
         assertEquals(0, h.left.batteryLength)
         // The book title keeps its end when it is shortened ("…능을 전혀 안숨김 1-246").
@@ -142,12 +142,26 @@ class StatusModelTest {
         assertTrue(h.center.keepEnd)
         assertEquals("12 / 3259", chars(h.right))
         assertTrue(m.decor.footer.isEmpty)
-        // The battery level alone changes the icon's fill: a change. The clock unknown: the icon alone.
+        // A level within the same step changes nothing (no repaint, no e-ink update); the next step does: 76 % keeps
+        // four bars, 75 % has three, 25 % one (the red one on phones), 0 % still one. The clock unknown: the icon alone.
         val inp = inputs()
         m.update(s, inp, track)
+        inp.battery = 76
+        assertFalse(m.update(s, inp, track))
+        inp.battery = 75
+        assertTrue(m.update(s, inp, track))
+        assertEquals(75, h.left.battery)
+        inp.battery = 51
+        assertFalse(m.update(s, inp, track))
+        inp.battery = 25
+        assertTrue(m.update(s, inp, track))
+        assertEquals(25, h.left.battery)
+        inp.battery = 0
+        assertFalse(m.update(s, inp, track))
+        assertEquals(25, h.left.battery)
         inp.battery = 79
         assertTrue(m.update(s, inp, track))
-        assertEquals(79, h.left.battery)
+        assertEquals(100, h.left.battery)
         inp.minuteOfDay = -1
         assertTrue(m.update(s, inp, track))
         assertEquals(0, h.left.length)
@@ -207,8 +221,30 @@ class StatusModelTest {
     }
 
     @Test
+    fun theDisplaysCornersGoWithTheDecor() {
+        // The header's side insets clear the display's rounded corners: a new corner is a change, the same one is not.
+        val m = StatusModel()
+        val inp = inputs()
+        val s = ReaderSettings()
+        m.update(s, inp, track)
+        assertEquals(-1, m.decor.cornerLeft.radius)                       // unknown until the window reports them
+        val corners = intArrayOf(132, 132, 132, 132, 132, 132)
+        val v = m.decor.version
+        assertTrue(m.update(s, inp, track, corners = corners))
+        assertEquals(v + 1, m.decor.version)
+        assertEquals(132, m.decor.cornerRight.centreIn)
+        assertFalse(m.update(s, inp, track, corners = corners))
+        corners[5] = 22                                                   // the bars shown: the view starts lower
+        assertTrue(m.update(s, inp, track, corners = corners))
+        assertEquals(22, m.decor.cornerRight.centreY)
+        assertTrue(m.update(s, inp, track))
+        assertEquals(-1, m.decor.cornerRight.radius)
+    }
+
+    @Test
     fun theHeaderStartsBelowACutoutBand() {
-        // S25 fullscreen: the geometry's 87 px camera band goes with the decor, so the header draws under it.
+        // S25 fullscreen: the geometry's 87 px camera band goes with the decor (the header draws inside it, its band
+        // stays reserved below it).
         val m = StatusModel()
         val inp = inputs()
         val s = ReaderSettings()
@@ -231,7 +267,7 @@ class StatusModelTest {
         assertTrue(m.update(ReaderSettings(footerLeft = StatusItem.CLOCK), inp, track))
         assertEquals("14:05", chars(m.decor.footer.left))
         assertTrue(m.update(ReaderSettings(footerLeft = StatusItem.CLOCK_BATTERY), inp, track))
-        assertEquals(80, m.decor.footer.left.battery)
+        assertEquals(100, m.decor.footer.left.battery)                      // 80 % in the icon's steps: four bars
         assertTrue(m.update(ReaderSettings(footerLeft = StatusItem.NONE), inp, track))
         assertTrue(m.decor.footer.left.isEmpty)
     }
@@ -297,7 +333,7 @@ class StatusModelTest {
         val left = m.decor.header.left
         assertEquals("오전 08:53", chars(left))
         assertTrue(left.batteryFirst)
-        assertEquals(80, left.battery)
+        assertEquals(100, left.battery)
         assertEquals("오전 08:53", m.sample(StatusItem.CLOCK_BATTERY, inp))
         // The plain clock keeps its short form.
         assertEquals("8:53", m.sample(StatusItem.CLOCK, inp))

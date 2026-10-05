@@ -14,14 +14,19 @@ This is an intermediate contract commit: named stubs are replaced in W1, then W2
 - Default margins are 40 dp (`0` in controls). Marked deliberate 18/16 dp values stay unchanged. Since 2026-10-05 the
   side margins' `0` is MaruViewer's 20 dp (`SideMargin.ZERO_DP`; untouched R3 40/40 and R2 18/18 become 20/20 once).
   Since 2026-10-05 (user: "위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지") top/bottom count from the
-  status bands (`StatusBands`, whole dp from the settings only: header 22 dp, progress line 18 dp at the defaults), and
-  their `0` is each side's default, 18 / 22 dp, so the default text box is where 40 dp from the edge put it (Comet
+  status bands (`StatusBands`, whole dp from the settings only: header 25 dp at MaruViewer's 13 sp, progress line 18 dp
+  at the defaults), and their `0` is each side's default, 15 / 22 dp, so the default text box is where 40 dp from the
+  edge put it (Comet
   80..1360). One stepper moves both by its step (`VerticalMargin.step`). Values saved from the edge (`r.marginBaseV` 40 or none) move once by their own bands; new saves write
   `VerticalMargin.BANDS`. This replaces "the text box never makes room for the status bands" and the '가려짐' fit note.
   The bands hug the screen edges (`StatusFit.headerBaseline` / `footerBaseline`), and in fullscreen a cutout-only top
   inset goes into `LayoutKeys.geometry`'s `extraTop` instead of the page view's margin: left out like a system bar, the
-  header's band is reserved below it, and the header is centred between it and the text box as the user's screenshot of
-  the installed build has it (S25: text box 207..2220, header ink 147–181, ribbon 87..159, as before).
+  header's band is reserved below it (paper only), the text box below that as the user's screenshot of the installed
+  build has it (S25: 207..2220, as before). Since the MaruViewer status line (2026-10-05) the header itself is drawn at
+  the very top inside that band (ink ≈ 15–49 px; `StatusFit.INK_TOP_DP`), spans the page view less its own side insets
+  (`StatusFit.sideInset`: 15 dp or the display's rounded corner, `InsetSplit.pageCorners`), and the bookmark ribbon is
+  ReadEra's from the view's top (`RibbonMath`: 42 × 62 px at x 987 on the S25, blue on phones). Prefs at the old 11 sp
+  default become 13 sp once with margins less the bands' growth (`MaruSize`).
 - No probe, database write, counting, backfill, brightness-device initialization or auto-backup before the first page.
 - Main thread owns Views, `BookSession` state, scroll positions and decor. Its IO and layout work are dispatched.
 - Engine/math/migration/export helpers are pure; database APIs and `DeviceLight`/`LightProbe` IO are blocking off-main.
