@@ -55,8 +55,8 @@ internal data class BackupOrigin(val installId: String, val auto: Boolean, val a
 internal data class BackupLogDay(val day: Int, val seconds: Long, val pages: Int, val chars: Long)
 
 /**
- * A book's `book_prefs` row (T1-9 / T1-2 / T2-13; v3 [returnMark], U §3.3: the pinned return point as
- * `ReturnMarkCodec` text). [finishedAt] 0 = not finished.
+ * A book's `book_prefs` row (T1-9 / T1-2 / T2-13; v3 [returnMark], U §3.3: the return history as
+ * `ReturnHistoryCodec` text). [finishedAt] 0 = not finished.
  */
 internal data class BackupPrefs(
     val txtOverride: TxtOverride? = null,

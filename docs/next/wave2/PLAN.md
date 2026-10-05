@@ -17,6 +17,20 @@
 > 표(1 px 선, 끝 캡, 6 dp 점, 상태 색)와 아래 지시의 "진행 점은 2302"를 대체한다. CI 13w(흰 바탕 · 마루뷰어 · 흑백 반전의 선
 > · 끝 점 색과 자리), 점검표 §11f.
 >
+> **사용자 변경 지시 (2026-10-05): 이동 기록 줄 = ReadEra 방식 (이전 · 다음).**
+> "이전이 없으면 왼쪽이 사라지고 이전이 있으면 왼쪽이 생기는 방식이어야지. 오른쪽은 다음이 있으면 생기고 없으면 없고"
+> (ReadEra 화면 두 장: 1749쪽에서 "< 1 페이지로 | 지우기 | 150 페이지로 >", 1쪽에서 "지우기 | 1749 페이지로 >"). 고정 위치
+> 하나와 다른 곳 하나(UI_SPEC §3 ★1 · ★2 · ★4)를 두던 방식을 브라우저처럼 '이전' · '다음' 목록 두 개로 바꿨다(UI_SPEC §3).
+> 기억하는 이동(목차 · 검색 · 북마크 · 페이지 이동 · 쪽 이동 막대 · 링크 · 노트)은 떠나는 쪽을 이전 목록 맨 위에 넣고 다음
+> 목록을 비운다. 왼쪽 "‹ N쪽으로"는 이전 목록 맨 위, 오른쪽 "M쪽으로 ›"는 다음 목록 맨 위이고, 없거나 지금 보는 쪽이면 그
+> 칸은 보이지 않는다(칸 자리는 남아 지우기가 움직이지 않는다). 왼쪽을 누르면 지금 쪽이 다음 목록 맨 위로, 오른쪽을 누르면
+> 이전 목록 맨 위로 간다. 지우기는 두 목록을 비운다. 아래 막대의 고정(핀, "이 페이지 고정")은 지금 쪽을 이전 목록 맨 위에
+> 넣고 다음 목록은 그대로 둔다. 이전 목록 맨 위가 지금 쪽이면 아이콘이 채워지고("고정 해제") 다시 누르면 그 자리를 뺀다.
+> 줄에 회색 "📌 N쪽" 같은 누를 수 없는 표시는 없다. 손으로 넘기기 전에 쪽 이동 막대를 여러 번 끌면 처음 떠난 쪽만 남는다
+> (★3). 메뉴를 닫은 채 이동하면 뜨는 칩 "‹ N쪽으로 | ✕"는 그대로다(손으로 2쪽 넘기기, ✕, 기록 사용, 지우기에 사라짐). 두
+> 목록은 각 20곳까지 책마다 저장되어 다시 열어도 남고(예전에 저장한 고정 위치 하나는 이전 목록으로 읽는다), TXT를 다른
+> 설정으로 다시 나누면 각 위치를 글자 비율로 다시 찾는다. CI 13b–13i · 13u, 점검표 11-2–11-5 · 11e-5 · 11e-13 · 11f.
+>
 > **사용자 변경 지시 (2026-10-05): 위·아래 여백은 상태 표시줄을 뺀 본문 영역 기준.**
 > "아니지 위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지". 위 상태 줄 · 아래 상태 줄 · 진행 막대는 화면 끝에
 > 자기 띠를 갖고(`StatusBands`, 설정만으로 정한 정수 dp: 위 띠 = 끝 4 dp + 글자 상자 + 2 dp, 11 sp에서 22 dp; 아래 띠 =
@@ -1182,12 +1196,12 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 4 | `10_txt_page1` | as today | **no footer text**; progress line on row 1423 between end dots x 14–22 and 697–705 (rows 1419–1427; 2026-10-05, ReadEra's 탐색줄 in faint greys: was row 1415, x 24..696), dot at the start; header band 0..44 with MaruViewer's line (배터리 아이콘 · 시계, 책 제목, 쪽 번호; glyph box 8..40); text box 40..680 × 80..1360 (2026-10-05: the 18 dp top and 22 dp bottom margins count from the 22 dp header band and the 18 dp progress line's band) | U, A |
 | 5 | `11_txt_page2`, `12_txt_tap_right` (+ `rawshot 12b`) | as today | — | — |
 | 6 | `13_txt_chrome` (+ rawshot) | as today | back · 🔖 🔊 🔍 ☰ ⚙ ⋮; one-line title at x = 40; brightness row with ⌄, no grey square; "3 / 167" centred at x = 360 ± 2, bold, not underlined; ⟳ + outline pin; ⏮ seek ⏭; no strip | U |
-| 7 | `13b_pin` | `tap_label "이 페이지 고정"` | filled pin; strip "(pin) 3쪽" · "지우기" (79cd1a5: "N쪽", "N쪽으로"); `raw_equal 13 13b 360 1100` EQUAL | U |
+| 7 | `13b_pin` | `tap_label "이 페이지 고정"` | filled pin ("고정 해제") and **no history row** (2026-10-05, ReadEra's row: the pinned page is the one on screen, nothing to go to; was "(pin) 3쪽" · "지우기"); `raw_equal 13 13b 360 1100` EQUAL | U |
 | 8 | `13c_pin_close` | tap 360 700 | chrome closed, **no turn**: `raw_equal 12b 13c` over PageView rows below the header's clock (`pv + 48 …`, 2026-10-05) EQUAL; no chip | U |
-| 9 | `13d_strip`, `13d_return` | volume-down ×5; tap 360 720; `tap_label "3쪽으로" contains` | label "8 / 167", strip "‹ 3쪽으로"; then "3 / 167", "(pin) 3쪽" · 지우기 · "8쪽으로 ›" | U |
+| 9 | `13d_strip`, `13d_return`, `13d_forward` | volume-down ×5; tap 360 720; `tap_label "3쪽으로"`; `tap_label "8쪽으로"` | label "8 / 167", row "‹ 3쪽으로" · 지우기, no right item; then "3 / 167", **no left item** · 지우기 · "8쪽으로 ›", pin outline; then "8 / 167", "‹ 3쪽으로" only (2026-10-05). 지우기 at x 358..362 in every state (`history_cols`) | U |
 | 10 | `13e_brightness_opts` | `tap_label "밝기 옵션"` | the row stays, ⌃, "스와이프로 밝기 조절" (off, filled knob), "기기 밝기 직접 조절"; no question (not e-ink) | U |
-| 11 | `13f_clear` | `tap_label "지우기"` | strip gone, pin outline | U |
-| 12 | `13g_seek_chip`, `13h_chip_gone` (+ `rawshot 10a_pre`) | two seeks with the menu open, close; volume-down ×2; `rawshot 10a_pre` (chrome closed) | chip "‹ 3쪽으로 \| ✕" (the first origin) above the progress line; gone after 2 turns | U |
+| 11 | `13f_clear` | after 12 (on q): `tap_label "지우기"`; the bars close for `rawshot 10a_pre`, then open for 13 | row gone, pin outline | U |
+| 12 | `13g_seek_chip`, `13h_chip_gone`, `13i_*` (+ `rawshot 10a_pre`) | after 10 (on 8): two seeks with the menu open, close; volume-down ×2; open: "8쪽으로", "3쪽으로", "8쪽으로", "q쪽으로" (2026-10-05) | chip "‹ 8쪽으로 \| ✕" (the first origin) above the progress line; gone after 2 turns. **The user's two ReadEra shots:** on q "‹ 8쪽으로" only; on 8 "‹ 3쪽으로" · 지우기 · "q쪽으로 ›"; on 3 지우기 · "8쪽으로 ›" only; forward twice, on q "‹ 8쪽으로" only | U |
 | 13 | `14_reading_settings` | as today | **68aa271:** centred popup (16 ± 1 px gaps): one top bar 전체 읽기 설정 › · 닫기, then 글자 크기 · 굵기 · 줄 간격 · 문단 간격 · 좌우 여백 · 상하 여백 (96 px rows) · 글꼴, no 더보기, no scrollbar; CHECK 14q: the popup's 좌우 여백 / 상하 여백 read "0"; "전체 읽기 설정" opens 설정 → 읽기 설정 (여백·페이지: "좌우 여백 0", "상하 여백 0", CHECK 14m), BACK returns to the same page | U, S, A |
 | 14 | `14b_status_slots` | ⋮ → 설정 → 화면·밝기 → 위쪽 상태 표시줄 · 아래쪽 상태 표시줄 (its first two sections; each band's rows 왼쪽 / 가운데 / 오른쪽, read under their header: `slot_row`, `ui_rows.py` "header › row") | 위 [배터리 아이콘 · 시계][책 제목][쪽 번호] (MaruViewer's line, 2026-10-05), 아래 all 없음; 진행 막대 on | U |
 | 15 | `14c_slot_list` | the 가운데 row under 아래쪽 상태 표시줄; "쪽 번호 (12 / 3259)" | 12 items with examples ("챕터 쪽 번호 (2 / 32)" right under 쪽 번호); "없음" checked | U |

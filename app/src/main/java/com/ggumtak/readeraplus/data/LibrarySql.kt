@@ -247,7 +247,7 @@ internal object LibrarySql {
     const val SELECT_FINISHED_BETWEEN = "SELECT p.book_id, p.finished_at FROM book_prefs p " +
         "JOIN books b ON b.id = p.book_id WHERE p.finished_at >= ? AND p.finished_at < ? AND p.finished_at > 0 " +
         "AND b.trashed = 0 AND b.have_read = 1 ORDER BY p.finished_at DESC, p.book_id DESC"
-    /** The book's pinned return point (U §3.3; ReturnMarkCodec text), NULL = none. */
+    /** The book's return history (U §3.3; ReturnHistoryCodec text), NULL = none. */
     const val SELECT_RETURN_MARK = "SELECT return_mark FROM book_prefs WHERE book_id = ?"
     /** txt_override, finished_at, episode_label of one book. */
     const val SELECT_BOOK_PREFS = "SELECT txt_override, finished_at, episode_label FROM book_prefs WHERE book_id = ?"
@@ -263,7 +263,7 @@ internal object LibrarySql {
     const val INSERT_PREFS_EPISODE = "INSERT INTO book_prefs(book_id, episode_label) SELECT id, ? FROM books WHERE id = ?"
     const val SET_PREFS_RETURN = "UPDATE book_prefs SET return_mark = ? WHERE book_id = ?"
     const val INSERT_PREFS_RETURN = "INSERT INTO book_prefs(book_id, return_mark) SELECT id, ? FROM books WHERE id = ?"
-    /** "읽은 기록 초기화": the pinned return point goes with the position (U §3.3). Prune the row afterwards. */
+    /** "읽은 기록 초기화": the return history goes with the position (U §3.3). Prune the row afterwards. */
     const val CLEAR_RETURN_MARK = "UPDATE book_prefs SET return_mark = NULL WHERE book_id = ?"
     /** Backup restore of a whole row. Args: txt_override, finished_at, episode_label, book_id. */
     const val SET_PREFS_ROW = "UPDATE book_prefs SET txt_override = ?, finished_at = ?, episode_label = ? WHERE book_id = ?"

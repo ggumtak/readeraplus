@@ -104,11 +104,14 @@ object BookPrefs {
     /** Longest stored override JSON (chars): the row must fit a 2 MB CursorWindow with room to spare. */
     internal const val MAX_OVERRIDE_CHARS = 200_000
     internal const val MAX_EPISODE_LABEL = 40
-    /** Longest stored return mark (ReturnMarkCodec text is a few dozen chars; anything longer is not one). */
+    /**
+     * Longest stored return history (ReturnHistoryCodec text: up to 2 × 20 places of about 20 chars; its encoder leaves
+     * the oldest places out to stay under this, and anything longer is not one).
+     */
     internal const val MAX_RETURN_MARK = 1_000
 
     /**
-     * This book's pinned return point (U §3.3; ReturnMarkCodec text) or null (no row, NULL). One primary-key read;
+     * This book's return history (U §3.3; ReturnHistoryCodec text) or null (no row, NULL). One primary-key read;
      * the reader runs it after the first page (`afterOpen`), never before.
      */
     fun returnMark(bookId: Long): String? {

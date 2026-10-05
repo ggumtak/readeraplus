@@ -73,7 +73,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         fun onRotation()
         fun onRotationChooser()
         fun onBookmark()
-        /** The pin: this page becomes the book's return point (or is released, on that page). */
+        /** The pin: this page is saved as the newest place to go back to (or, when it already is, released). */
         fun onPinHere()
         fun onSeekStart()
         /** Preview text for a seek position while dragging. */
@@ -141,7 +141,6 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     private var boundBookmarked: Boolean? = null
     private var boundRotationLocked: Boolean? = null
     private var boundPinned: Boolean? = null
-    private var boundPinDescription: String = PIN_SET
     private var boundAuto: Boolean? = null
     private var bindingBrightness = false
     private var optionsOpen = false
@@ -735,22 +734,16 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         paintToggle(bookmark, on)
     }
 
-    /** The pin's icon (filled while the book has a pinned return point) and content description (U §3.1). */
-    fun setPinned(on: Boolean, onMarkPage: Boolean) {
-        if (boundPinned != on) {
-            boundPinned = on
-            pin.setImageResource(if (on) R.drawable.ic_push_pin_fill else R.drawable.ic_push_pin)
-            paintToggle(pin, on)
-        }
-        val d = when {
-            !on -> PIN_SET
-            onMarkPage -> PIN_RELEASE
-            else -> PIN_MOVE
-        }
-        if (boundPinDescription !== d) {
-            boundPinDescription = d
-            pin.contentDescription = d
-        }
+    /**
+     * The pin's icon and content description (U §3.1): filled, "고정 해제", while this page is the newest place to go
+     * back to (ReturnNav.pinnedHere); otherwise the outline, "이 페이지 고정".
+     */
+    fun setPinned(on: Boolean) {
+        if (boundPinned == on) return
+        boundPinned = on
+        pin.setImageResource(if (on) R.drawable.ic_push_pin_fill else R.drawable.ic_push_pin)
+        pin.contentDescription = if (on) PIN_RELEASE else PIN_SET
+        paintToggle(pin, on)
     }
 
     fun setRotationLocked(locked: Boolean) {
@@ -1066,7 +1059,6 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     private companion object {
         const val PAGE_LABEL = "페이지 이동"
         const val PIN_SET = "이 페이지 고정"
-        const val PIN_MOVE = "여기로 고정 옮기기"
         const val PIN_RELEASE = "고정 해제"
         const val AUTO_FOLLOW = "시스템 밝기 따르기"
         const val AUTO_MANUAL = "직접 밝기 조절"

@@ -403,7 +403,7 @@ object Library {
     }
 
     /**
-     * Clears position/progress/flags, the finish time and the pinned return point ("읽은 기록 초기화", U §3.3).
+     * Clears position/progress/flags, the finish time and the return history ("읽은 기록 초기화", U §3.3).
      * The reading log keeps its rows: the statistics show when the user read, and that reading did happen. Touches
      * no notes, so [notesGen] stays.
      */

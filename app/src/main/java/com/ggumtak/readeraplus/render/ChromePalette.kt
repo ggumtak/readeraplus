@@ -37,8 +37,6 @@ internal class ChromePalette private constructor(
     val track: Int,
     /** The history row's text on the page colour, below the page label's emphasis. */
     val hist: Int,
-    /** The history row's "N쪽" while the pinned page is on screen (not a link): dimmer than [hist], still readable. */
-    val histOff: Int,
     /** ARGB at a bar's edge, fading linearly to nothing over [SHADOW_DP] toward the page; 0 = no shadow. */
     val shadow: Int,
     /** The pressed overlay of buttons and rows; 0 = no pressed state. */
@@ -61,14 +59,14 @@ internal class ChromePalette private constructor(
         private val PAPER = ChromePalette(
             page = rgb(0xFFFFFF), surface = rgb(0xF5F5F5), text = rgb(0x1A1A1A), text2 = rgb(0x5E5E5E),
             accent = rgb(0x000000), divider = rgb(0xDDDDDD), rule = rgb(0xDDDDDD), edge = 0, track = rgb(0xC8C8C8),
-            hist = rgb(0x5E5E5E), histOff = rgb(0x808080), shadow = 0x33000000, pressed = 0x14000000,
+            hist = rgb(0x5E5E5E), shadow = 0x33000000, pressed = 0x14000000,
             active = 0x38000000, motion = true, eink = false, dark = false,
         )
 
         private val MARU = ChromePalette(
             page = rgb(0x323232), surface = rgb(0x3C3C3C), text = rgb(0xDDDDDD), text2 = rgb(0xA8A8A8),
             accent = rgb(0xF0D096), divider = rgb(0x4E4E4E), rule = rgb(0x4E4E4E), edge = 0, track = rgb(0x606060),
-            hist = rgb(0xA8A8A8), histOff = rgb(0x8A8A8A), shadow = 0x80000000.toInt(), pressed = 0x1AFFFFFF,
+            hist = rgb(0xA8A8A8), shadow = 0x80000000.toInt(), pressed = 0x1AFFFFFF,
             active = 0x4DF0D096, motion = true, eink = false, dark = true,
         )
 
@@ -76,7 +74,7 @@ internal class ChromePalette private constructor(
         private val NIGHT = ChromePalette(
             page = rgb(0x000000), surface = rgb(0x1A1A1A), text = rgb(0xFFFFFF), text2 = rgb(0xB3B3B3),
             accent = rgb(0xFFFFFF), divider = rgb(0x333333), rule = rgb(0x333333), edge = rgb(0x333333),
-            track = rgb(0x4A4A4A), hist = rgb(0xB3B3B3), histOff = rgb(0x6E6E6E), shadow = 0, pressed = 0x1AFFFFFF,
+            track = rgb(0x4A4A4A), hist = rgb(0xB3B3B3), shadow = 0, pressed = 0x1AFFFFFF,
             active = 0x42FFFFFF, motion = true, eink = false, dark = true,
         )
 
@@ -87,7 +85,7 @@ internal class ChromePalette private constructor(
         private fun eink(p: PagePalette) = ChromePalette(
             page = p.background, surface = p.background, text = p.grey(0), text2 = p.grey(0x55), accent = p.status,
             divider = p.grey(0xCC), rule = p.grey(0), edge = p.grey(0), track = p.grey(0x99), hist = p.grey(0),
-            histOff = p.grey(0x55), shadow = 0, pressed = 0, active = 0, motion = false, eink = true, dark = p.dark,
+            shadow = 0, pressed = 0, active = 0, motion = false, eink = true, dark = p.dark,
         )
 
         private val EINK_PAPER = eink(PagePalette.PAPER)

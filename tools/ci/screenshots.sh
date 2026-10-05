@@ -579,62 +579,106 @@ status_rows() { # STATUS = "위 왼쪽=…; …; 아래 오른쪽=…; 진행 �
 
 # ------------------------------------------------------------------ reader steps: chrome (U §8.2)
 
-chrome_pin() { # 13 (+rawshot), 13b–13h, then rawshot 10a_pre and the bars open again for 14
+hist_texts() { grep -oE '(text|content-desc)="[^"]*쪽으로"' /tmp/ui.xml 2>/dev/null | sort -u | tr '\n' ' '; } # the row / chip labels
+chrome_pin() { # 13 (+rawshot), 13b–13i, 13f, then rawshot 10a_pre and the bars open again for 14
+  # The history row is ReadEra's (user, 2026-10-05: "이전이 없으면 왼쪽이 사라지고 … 오른쪽은 다음이 있으면 생기고"): left
+  # "‹ N쪽으로" = the newest place to go back to, right "M쪽으로 ›" = the nearest one gone back from, each only while it
+  # exists and is not this page; 지우기 between them never moves. The pin saves this page as a place to go back to.
+  # Labels are matched exactly ("3쪽으로" must not match "103쪽으로"); a short label keeps the full one as its description.
   show_chrome || return 1
   shot 13_txt_chrome 1; rawshot 13_txt_chrome
   dump; cp /tmp/ui.xml shots/ui_reader_chrome.xml 2>/dev/null
   if has "이 페이지 고정" && ! has "지우기"; then check 13 0 "bars open, pin outline, no strip"
   else check 13 1 "pin (이 페이지 고정) or no-strip expectation missing"; fi
-  local lb x0 x1 cx
+  local lb x0 x1 cx p q
   lb=$(box_of "페이지 이동" contains); read -r x0 _ x1 _ <<<"${lb:-0 0 0 0}"; cx=$(((x0 + x1) / 2))
   case "$(page_label)" in
     *", 3 / "*) [ "$cx" -ge 358 ] && [ "$cx" -le 362 ]; check 13_label $? "label '$(page_label)' centred at x = $cx";;
     *) check 13_label 1 "label '$(page_label)' is not page 3";;
   esac
-  # 13b: pin this page; the page itself must not change
+  # 13b: pin this page; the page itself must not change. The pinned page is the one on screen: nothing to go to, so no
+  # row (never a dead "📌 3쪽", the user's complaint); the filled pin reads 고정 해제.
   tap_label "이 페이지 고정" || return 1
   shot 13b_pin 2; rawshot 13b_pin
   raw_check 13b 13_txt_chrome 13b_pin 360 1100
-  dump; if has "고정 해제" && has "지우기"; then check 13b_pin 0 "pin filled (고정 해제) and the strip with 지우기"
-  else check 13b_pin 1 "no filled pin or no strip"; fi
+  dump; if has "고정 해제" && ! has "지우기"; then check 13b_pin 0 "pin filled (고정 해제), no history row on the pinned page"
+  else check 13b_pin 1 "pin $(has "고정 해제" && echo filled || echo outline), row: $(hist_texts)$(has "지우기" && echo 지우기)"; fi
   # 13c: a tap on the page closes the bars and turns nothing (below the header's clock: 12b is a minute or so older)
   adb shell input tap 360 700
   shot 13c_pin_close 2; rawshot 13c
   raw_check 13c 12b 13c belowheader
   dump; if has "쪽으로" contains; then check 13c 1 "a return chip is shown"; else check 13c 0 "no chip"; fi
-  # 13d: five pages on, the strip offers the pinned page; going there offers the way back. The strip and the chip say
-  # "3쪽" / "‹ 3쪽으로" / "8쪽으로 ›" since 79cd1a5 (the unit after a number is 쪽, attached; it was "3 페이지로").
+  # 13d: five pages on, the row offers the pinned page on the left and nothing on the right (nothing ahead)
   for i in 1 2 3 4 5; do adb shell input keyevent KEYCODE_VOLUME_DOWN; sleep 1; done
   show_chrome
   shot 13d_strip 1
-  if has "3쪽으로" contains && has "지우기" && [ "$(page_no)" = 8 ]; then check 13d 0 "label 8, strip '‹ 3쪽으로' · 지우기"
-  else check 13d 1 "label '$(page_label)', strip '3쪽으로' or 지우기 missing"; fi
-  tap_label "3쪽으로" contains || return 1
+  if [ "$(page_no)" = 8 ] && has "3쪽으로" && has "지우기" && ! has "쪽으로" contains 1; then
+    check 13d 0 "label 8, row '‹ 3쪽으로' · 지우기, no right item"
+  else check 13d 1 "label '$(page_label)', row: $(hist_texts)"; fi
+  history_cols 13d_left_cols "3쪽으로" ""
+  # 13d_return: "‹ 3쪽으로" → on 3 nothing is before it: no left item, 지우기 in place, "8쪽으로 ›" (ReadEra's second shot)
+  tap_label "3쪽으로" || return 1
   shot 13d_return 2
-  dump; if has "8쪽으로" contains && has "3쪽" contains && [ "$(page_no)" = 3 ]; then check 13d_return 0 "back on 3 with '3쪽' · '8쪽으로 ›'"
-  else check 13d_return 1 "label '$(page_label)', '3쪽' or '8쪽으로' missing after the return"; fi
-  history_cols 13d_cols "3쪽" "8쪽으로" # the history row's three columns (2026-10-05)
+  dump; if [ "$(page_no)" = 3 ] && has "8쪽으로" && ! has "3쪽으로" && has "이 페이지 고정"; then
+    check 13d_return 0 "back on 3: no left item, '8쪽으로 ›', pin outline"
+  else check 13d_return 1 "label '$(page_label)', row: $(hist_texts), pin $(has "고정 해제" && echo filled || echo outline)"; fi
+  history_cols 13d_cols "" "8쪽으로"
+  # 13d_forward: "8쪽으로 ›" → on 8 "‹ 3쪽으로" again and nothing ahead
+  tap_label "8쪽으로" || return 1
+  shot 13d_forward 2
+  dump; if [ "$(page_no)" = 8 ] && has "3쪽으로" && ! has "쪽으로" contains 1; then
+    check 13d_forward 0 "forward to 8: '‹ 3쪽으로', no right item"
+  else check 13d_forward 1 "label '$(page_label)', row: $(hist_texts)"; fi
   # 13e: the brightness options (the row stays)
   tap_label "밝기 옵션" || return 1
   shot 13e_brightness_opts 2
   dump; if has "스와이프로 밝기 조절" && has "기기 밝기 직접 조절"; then check 13e 0 "brightness options listed"
   else check 13e 1 "스와이프로 밝기 조절 / 기기 밝기 직접 조절 missing"; fi
-  # 13f: 지우기 drops the pin (the bars stay)
-  tap_label "지우기" || return 1
-  shot 13f_clear 2
-  dump; if ! has "지우기" && has "이 페이지 고정"; then check 13f 0 "strip gone, pin outline"
-  else check 13f 1 "strip or filled pin still shown"; fi
-  # 13g: two seeks with the menu open, then close: the chip offers the FIRST origin (3)
+  # 13g: two seeks with the menu open, then close: the chip offers the FIRST origin (scrubbing keeps it)
+  p=$(page_no)
   seek_to 2 70 || return 1
   seek_to 70 60
   adb shell input tap 360 700
   shot 13g_seek_chip 2
-  dump; if has "3쪽으로" contains; then check 13g 0 "chip '‹ 3쪽으로' after two seeks"
-  else check 13g 1 "no '3쪽으로' chip (shown: $(grep -o 'text="[^"]*쪽으로"' /tmp/ui.xml 2>/dev/null | head -1))"; fi
+  dump; if has "${p}쪽으로"; then check 13g 0 "chip '‹ ${p}쪽으로' after two seeks"
+  else check 13g 1 "no '${p}쪽으로' chip (shown: $(hist_texts))"; fi
   # 13h: two manual turns drop the chip
   adb shell input keyevent KEYCODE_VOLUME_DOWN; sleep 1; adb shell input keyevent KEYCODE_VOLUME_DOWN
   shot 13h_chip_gone 2
   dump; if has "쪽으로" contains; then check 13h 1 "the chip is still shown"; else check 13h 0 "chip gone after 2 turns"; fi
+  # 13i: ReadEra's two shots, as the user took them (1 → 1749 → 150; back; back): here 3 (pinned) → 8 → q (the seek).
+  # On q the row reads "‹ 8쪽으로" only; back to 8 "‹ 3쪽으로 · 지우기 · q쪽으로 ›" (shot 1); back to 3 "지우기 · 8쪽으로 ›"
+  # (shot 2, the nearest place ahead); forward twice ends on q again with "‹ 8쪽으로" only.
+  show_chrome || return 1
+  q=$(page_no)
+  shot 13i_row 1
+  if [ -n "$q" ] && has "${p}쪽으로" && ! has "쪽으로" contains 1; then check 13i 0 "on $q: row '‹ ${p}쪽으로' only"
+  else check 13i 1 "on '$q': row $(hist_texts)"; fi
+  tap_label "${p}쪽으로" || return 1
+  shot 13i_both 2
+  dump; if [ "$(page_no)" = "$p" ] && has "3쪽으로" && has "${q}쪽으로"; then
+    check 13i_both 0 "back on $p: '‹ 3쪽으로' · 지우기 · '${q}쪽으로 ›' (ReadEra's first shot)"
+  else check 13i_both 1 "label '$(page_label)', row: $(hist_texts)"; fi
+  history_cols 13i_both_cols "3쪽으로" "${q}쪽으로"
+  tap_label "3쪽으로" || return 1
+  shot 13i_first 2
+  dump; if [ "$(page_no)" = 3 ] && has "${p}쪽으로" && ! has "쪽으로" contains 1; then
+    check 13i_first 0 "back on 3: 지우기 · '${p}쪽으로 ›' only (ReadEra's second shot)"
+  else check 13i_first 1 "label '$(page_label)', row: $(hist_texts)"; fi
+  history_cols 13i_first_cols "" "${p}쪽으로"
+  tap_label "${p}쪽으로" || return 1
+  sleep 2
+  tap_label "${q}쪽으로" || return 1
+  shot 13i_ahead 2
+  dump; if [ "$(page_no)" = "$q" ] && has "${p}쪽으로" && ! has "쪽으로" contains 1; then
+    check 13i_ahead 0 "forward twice: on $q with '‹ ${p}쪽으로' only"
+  else check 13i_ahead 1 "label '$(page_label)', row: $(hist_texts)"; fi
+  # 13f: 지우기 empties the history (the bars stay)
+  tap_label "지우기" || return 1
+  shot 13f_clear 2
+  dump; if ! has "지우기" && has "이 페이지 고정"; then check 13f 0 "row gone, pin outline"
+  else check 13f 1 "row or filled pin still shown"; fi
+  hide_chrome; sleep 1
   rawshot 10a_pre; perf_mark 10a_pre # chrome closed: 10b compares against this page
   show_chrome # the bars open again for 14_reading_settings
 }
@@ -645,17 +689,22 @@ chrome_pin() { # 13 (+rawshot), 13b–13h, then rawshot 10a_pre and the bars ope
 # three fixed columns, and the bars fade in and out unless the system's animations are off. The emulator is a phone:
 # the e-ink looks (solid lines, no fade, no pressed flash) are covered by the JVM tests and the device checklist.
 
-history_cols() { # history_cols <n> <left text> [right text]: the history row's columns in the last dump (U §3.4):
-  # 지우기 centred on the 720 px row (x 358..362), the side labels inside their own thirds, with or without the other
-  local cb lb rb c1 c2 cx l2 r1 ok=0
-  cb=$(box_of "지우기"); lb=$(box_of "$2")
+history_cols() { # history_cols <n> <left text or ""> [right text or ""]: the history row's columns in the last dump
+  # (U §3.4): 지우기 centred on the 720 px row (x 358..362) whichever sides show, each shown side label inside its own
+  # third; an empty side is INVISIBLE (not in the dump), so its column stays and 지우기 does not move
+  local cb lb rb c1 c2 cx l2=0 r1=720 ok=0
+  cb=$(box_of "지우기")
   read -r c1 _ c2 _ <<<"${cb:-0 0 0 0}"; cx=$(((c1 + c2) / 2))
-  read -r _ _ l2 _ <<<"${lb:-0 0 9999 0}"
-  r1=480
-  if [ -n "${3:-}" ]; then rb=$(box_of "$3"); read -r r1 _ _ _ <<<"${rb:-0 0 0 0}"; fi
-  [ -n "$cb" ] && [ -n "$lb" ] && [ "$cx" -ge 358 ] && [ "$cx" -le 362 ] || ok=1
-  [ "$l2" -le 240 ] && [ "$r1" -ge 480 ] || ok=1
-  check "$1" $ok "지우기 at x = $cx, '$2' ends at $l2${3:+, '$3' starts at $r1}"
+  [ -n "$cb" ] && [ "$cx" -ge 358 ] && [ "$cx" -le 362 ] || ok=1
+  if [ -n "$2" ]; then
+    lb=$(box_of "$2"); read -r _ _ l2 _ <<<"${lb:-0 0 9999 0}"
+    [ -n "$lb" ] && [ "$l2" -le 240 ] || ok=1
+  fi
+  if [ -n "${3:-}" ]; then
+    rb=$(box_of "$3"); read -r r1 _ _ _ <<<"${rb:-0 0 0 0}"
+    [ -n "$rb" ] && [ "$r1" -ge 480 ] || ok=1
+  fi
+  check "$1" $ok "지우기 at x = $cx${2:+, '$2' ends at $l2}${3:+, '$3' starts at $r1}"
   HIST_CX=$cx
 }
 set_page_look() { # set_page_look "흰 바탕"|마루뷰어 on|off: 화면 색 and 흑백 반전 on 설정 → 읽기 설정 (⚙ → 전체 읽기
@@ -669,23 +718,26 @@ set_page_look() { # set_page_look "흰 바탕"|마루뷰어 on|off: 화면 색 a
   return $rc
 }
 history_row() { # 13u <tag> <page #RRGGBB>: the history row on the page colour, right on the panel, its columns fixed.
-  # Pins the current page (only its left label: the right column stays empty), turns twice, comes back by the row (both
-  # labels), then 지우기 empties it without moving the panel. Ends on the same page, nothing pinned, the bars open.
+  # Pins the current page P (on it: the filled pin and no row), turns twice (only "‹ P쪽으로": the right column stays
+  # empty), comes back by the row (only "P+2쪽으로 ›": the left column empty, 지우기 at the same x), then 지우기 empties it
+  # without moving the panel. Ends on P with an empty history, the bars open.
   local t=$1 pg=$2 p cb lb y_label y_row v cx_one
   show_chrome || return 1
-  has "지우기" && { tap_label "지우기" || return 1; sleep 1; dump; } # a clean row (13g's seeks left a place)
+  has "지우기" && { tap_label "지우기" || return 1; sleep 1; dump; } # a clean row (an earlier step may have left places)
   p=$(page_no); [ -n "$p" ] || { log "13u_$t: no page label"; return 1; }
   tap_label "이 페이지 고정" || return 1
   sleep 1; dump
-  history_cols "13u_${t}_one" "${p}쪽"; cx_one=$HIST_CX
-  ! has "쪽으로" contains; check "13u_${t}_one_side" $? "only '${p}쪽' (pinned, on screen): no '…쪽으로' label"
+  has "고정 해제" && ! has "지우기"; check "13u_${t}_pin" $? "pinned on $p: the pin filled, no row (nothing to go to)"
   hide_chrome
   adb shell input keyevent KEYCODE_VOLUME_DOWN; sleep 1; adb shell input keyevent KEYCODE_VOLUME_DOWN; sleep 1
   show_chrome || return 1
-  tap_label "${p}쪽으로" contains || return 1
+  history_cols "13u_${t}_one" "${p}쪽으로" ""; cx_one=$HIST_CX
+  ! has "쪽으로" contains 1; check "13u_${t}_one_side" $? "on $((p + 2)): only '‹ ${p}쪽으로' (no place ahead)"
+  tap_label "${p}쪽으로" || return 1
   shot "13u_${t}_history" 2; rawshot "13u_${t}_history"
-  dump; history_cols "13u_${t}_cols" "${p}쪽" "$((p + 2))쪽으로"
-  [ "$HIST_CX" = "$cx_one" ]; check "13u_${t}_still" $? "지우기 at x = $HIST_CX with both labels, $cx_one with one"
+  dump; history_cols "13u_${t}_cols" "" "$((p + 2))쪽으로"
+  ! has "${p}쪽으로"; check "13u_${t}_no_left" $? "back on $p: no left item (nothing before it)"
+  [ "$HIST_CX" = "$cx_one" ]; check "13u_${t}_still" $? "지우기 at x = $HIST_CX with the right label, $cx_one with the left"
   cb=$(box_of "지우기"); lb=$(box_of "페이지 이동" contains)
   read -r _ y_row _ v <<<"${cb:-0 0 0 0}"; y_row=$(((y_row + v) / 2))
   read -r _ y_label _ _ <<<"${lb:-0 0 0 0}"

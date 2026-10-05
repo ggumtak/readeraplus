@@ -60,7 +60,6 @@ class ChromePaletteTest {
         assertEquals(rgb(0), k.edge)
         assertEquals(0xFF999999.toInt(), k.track)     // Ink.DISABLED
         assertEquals(rgb(0), k.hist)
-        assertEquals(0xFF555555.toInt(), k.histOff)
         assertFalse(k.dark)
     }
 
@@ -76,7 +75,7 @@ class ChromePaletteTest {
             // A solid 1 px edge where a bar meets the page, the surface is the page itself.
             assertEquals(p.text, k.edge)
             assertEquals(p.background, k.surface)
-            for (c in listOf(k.surface, k.text, k.text2, k.divider, k.rule, k.edge, k.track, k.hist, k.histOff)) {
+            for (c in listOf(k.surface, k.text, k.text2, k.divider, k.rule, k.edge, k.track, k.hist)) {
                 assertEquals("opaque", 0xFF, c ushr 24)
             }
         }
@@ -89,8 +88,7 @@ class ChromePaletteTest {
         for (p in listOf(PagePalette.MARU, PagePalette.NIGHT)) {
             val k = ChromePalette.of(p, true)
             for ((have, was) in listOf(k.text to paper.text, k.text2 to paper.text2, k.divider to paper.divider,
-                k.rule to paper.rule, k.edge to paper.edge, k.track to paper.track, k.hist to paper.hist,
-                k.histOff to paper.histOff)) {
+                k.rule to paper.rule, k.edge to paper.edge, k.track to paper.track, k.hist to paper.hist)) {
                 assertEquals(p.grey(was and 0xFF), have)
             }
             assertTrue(k.dark)
@@ -149,10 +147,7 @@ class ChromePaletteTest {
             assertTrue("track", contrast(k.track, k.surface) < 2.5)
             assertTrue("divider", contrast(k.divider, k.surface) < 1.5)
             assertTrue("progress", contrast(k.accent, k.track) >= 3.0)
-            // "📌 588쪽" on the pinned page: dimmer than a link of the row, never buried in the page.
             val name = Integer.toHexString(k.page)
-            assertTrue("$name histOff", contrast(k.histOff, k.page) >= 3.5)
-            assertTrue("$name histOff below hist", contrast(k.histOff, k.page) < contrast(k.hist, k.page))
             // The chip and the seek preview float over the page text: their border (the track colour) must show on
             // the page, lighter than the text.
             assertTrue("$name box border", contrast(k.track, k.page) >= 1.6)

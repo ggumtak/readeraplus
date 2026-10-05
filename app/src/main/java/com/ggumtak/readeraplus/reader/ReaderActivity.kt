@@ -1419,7 +1419,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             updateQuoteLook(eink)
             scroll?.onDeviceClass()
         }
-        loadReturnMark(s, id)                                                           // 5 (U §3.3)
+        loadReturnMark(id)                                                              // 5 (U §3.3)
         if (s.settings.shows(StatusItem.EPISODE)) scheduleEpisodes()                   // 6 (U)
         openedJump?.let { openedJump = null; checkJumpAnchor(s, it) }                   // 7 (N §6.4)
         // 8 (N §6.5): the note-place backfill runs when reloadAnnotations delivers (below).
@@ -1443,10 +1443,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     /**
-     * U §3.3: the pinned return point, read on IO after the first page; applied only to the book and session it was
-     * read for (C13: a book switched meanwhile must not get the previous one's pin).
+     * U §3.3: the return history, read on IO after the first page; applied only to the book it was read for (C13: a
+     * book switched meanwhile must not get the previous one's places). A re-parse meanwhile (a new session) still
+     * gets it: its places carry their parse's signature and are found again by fraction (ReturnNav.restore), and the
+     * history is stored only once it has been applied.
      */
-    private fun loadReturnMark(s: BookSession, id: Long) {
+    private fun loadReturnMark(id: Long) {
         ReaderIo.launch {
             val text = try {
                 BookPrefs.returnMark(id)
@@ -1455,7 +1457,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 null
             }
             handler.post {
-                if (isDestroyed || bookRef?.id != id || session !== s) return@post
+                if (isDestroyed || bookRef?.id != id || session == null) return@post
                 safely { returnNav.restore(text) }
             }
         }
@@ -3405,8 +3407,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     toast("새 설정으로 책을 표시하지 못했습니다")
                     return@launch
                 }
-                // The pin's place in the old parse (its counts), found again in the new one below (U §3.5 item 8).
-                val markF = returnNav.markFraction()
+                // The return places in the old parse (its counts), found again in the new one below (U §3.5 item 8).
+                val returnF = returnNav.fractions()
                 onNewGeneration()
                 thumbs?.close(); thumbs = null
                 thumbDecorVersions = IntArray(0)
@@ -3428,7 +3430,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 // this re-open stays open: only the bar goes).
                 safely { ReaderPanels.closeSearchBar(this@ReaderActivity) }
                 ownerHighlights.clear()
-                returnNav.reparsed(markF, exact = d.format == BookFormat.EPUB && s.sectionCount == oldCount)
+                returnNav.reparsed(returnF, exact = d.format == BookFormat.EPUB && s.sectionCount == oldCount)
                 clearBacklog()
                 lastChapterIdx = Int.MIN_VALUE
                 // Where the needle was found again (the anchored break), else the estimate.
@@ -4025,7 +4027,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         chrome.setBookmarked(p != null && isBookmarked(l, p))
         chrome.setRotationLocked(app.orientationLock != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
         returnNav.bind()
-        chrome.setPinned(returnNav.pinned, returnNav.markOnScreen())
+        chrome.setPinned(returnNav.pinnedHere())
         light.bind()
     }
 
@@ -4043,7 +4045,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         override fun showChrome() = setChromeVisible(true)
     }
 
-    /** ReturnNav's view of the reader (U §3.5): positions, page numbers, the jump and the pin's storage. */
+    /** ReturnNav's view of the reader (U §3.5): positions, page numbers, the jump and the history's storage. */
     private val returnHost = object : ReturnHost {
         override val chromeVisible: Boolean get() = this@ReaderActivity.chromeVisible
         // Paged: the page start; scroll mode: the virtual page start (ReaderHost.currentPosition()'s scroll branch).
@@ -4089,7 +4091,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
         override fun saveReturnMark(text: String?) {
             val id = bookRef?.id ?: return
-            ReaderIo.launch { BookPrefs.setReturnMark(id, text) }
+            ReturnWrites.launch { BookPrefs.setReturnMark(id, text) }
         }
 
         override fun onReturnChanged() {

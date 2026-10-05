@@ -327,6 +327,10 @@ percent T, clock T, battery T.
 
 ## 4. Pin = return point (unified with the return chip)
 
+> **2026-10-05 (user):** the two-place model below is replaced by a back / forward history as ReadEra's (UI_SPEC §3):
+> the pin saves this page as a place to go back to; the row shows "‹ N쪽으로" only while there is a place back and
+> "M쪽으로 ›" only while there is one ahead.
+
 ### 4.1 Model: two places, fixed meaning
 
 | Slot | Label | Meaning | Set by |

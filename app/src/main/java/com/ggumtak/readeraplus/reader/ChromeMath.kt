@@ -29,7 +29,7 @@ internal object ChromeMath {
 
     /**
      * True when the history row (above the bottom panel, U §3.4) must use its short side labels ("‹ 12345" /
-     * "23259 ›"): the row is three equal columns (the mark · 지우기 · the other place), and a side label ([left],
+     * "23259 ›"): the row is three equal columns (back · 지우기 · forward), and a side label ([left],
      * [right]: text + paddings + glyph, 0 when hidden) must fit its own third of [rowW].
      */
     fun stripShort(left: Float, right: Float, rowW: Float): Boolean = maxOf(left, right) > rowW / 3f
