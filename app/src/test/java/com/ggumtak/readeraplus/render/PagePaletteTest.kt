@@ -34,7 +34,12 @@ class PagePaletteTest {
         assertEquals(0xFF000000.toInt(), b.background)
         assertEquals(PagePalette.MARU.text, b.text)
         assertEquals(PagePalette.MARU.status, b.status)
-        assertFalse(b.hasShadow)
+        assertTrue(b.hasShadow)
+        assertEquals(
+            listOf(PagePalette.MARU.shadowDxDp, PagePalette.MARU.shadowDyDp, PagePalette.MARU.shadowSigmaDp),
+            listOf(b.shadowDxDp, b.shadowDyDp, b.shadowSigmaDp),
+        )
+        assertEquals(PagePalette.MARU.shadowColor, b.shadowColor)
         assertTrue(b.dark)
         assertFalse(b.invertImages)
     }

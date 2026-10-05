@@ -195,11 +195,13 @@ internal class PagePalette private constructor(
 
         /**
          * 검은 바탕 (user, 2026-10-05: "검은색도 회색(마루)랑 똑같은 흰색으로"): [MARU]'s #DDDDDD text and #FFD387 status
-         * line on #000000. No shadow: a black shadow is invisible on a black page. Pictures keep their colours.
+         * line on #000000, with [MARU]'s shadow too (user, 2026-10-05: "그림자는 흰색만 없애고 검은색 회색은 다 있게").
+         * Pictures keep their colours.
          */
         val BLACK = PagePalette(
             background = OPAQUE, text = 0xFFDDDDDD.toInt(), status = 0xFFFFD387.toInt(),
-            shadowDxDp = 0f, shadowDyDp = 0f, shadowSigmaDp = 0f, shadowColor = 0, dark = true, invertImages = false,
+            shadowDxDp = 0.71f, shadowDyDp = 0.36f, shadowSigmaDp = 0.49f, shadowColor = 0xFF000000.toInt(),
+            dark = true, invertImages = false,
         )
 
         /** Android blurs a shadow by sigma = [SIGMA_PER_RADIUS] · radius + [MIN_SIGMA_PX] px. */
