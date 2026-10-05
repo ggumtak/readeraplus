@@ -1,6 +1,5 @@
 package com.ggumtak.readeraplus.reader
 
-import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -54,10 +53,10 @@ import com.ggumtak.readeraplus.ui.kit.vertical
  * they meet the page with a short shadow, buttons show a pressed state, and the bars fade and slide in and out
  * (150–200 ms, at once when the system's animations are off). On e-ink every action stays one update: solid 1 px
  * edges, no pressed state, no fade, state shown by swapping icons (never `isSelected`). Only alpha and translation
- * move, so the page never re-lays out. Both bars swallow touches so taps never fall through to the page (except while
- * one fades out). While the seek bar is dragged a full-width preview box floats just above the bottom bar (outside the
- * bars, so their heights never change). Every setter compares with the last bound value: an unchanged view is never
- * touched (e-ink).
+ * move, so the page never re-lays out. Both bars swallow touches so taps never fall through to the page (except a new
+ * touch while one fades out). While the seek bar is dragged a full-width preview box floats just above the bottom bar
+ * (outside the bars, so their heights never change). Every setter compares with the last bound value: an unchanged
+ * view is never touched (e-ink).
  */
 internal class ReaderChrome(private val ctx: Context, private val actions: Actions, returnDock: View, private val light: LightController) {
 
@@ -160,10 +159,12 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     private var panelSubtitle = LightPolicy.PANEL_SUBTITLE
     private var rows: OptionRows? = null
 
+    /** The device class the sliders' drawables are sized for ([sizeSliders]); the default look is the e-ink one. */
+    private var slidersEink = look.eink
     // Slider thumbs (U §2.2), coloured in place on a look change: manual = a solid accent dot; auto = a hollow ring
     // over a track-coloured progress. Each bar has its own drawable (a drawable has one callback).
-    private val seekThumb = dot(hollow = false)
-    private val manualThumb = dot(hollow = false)
+    private var seekThumb = dot(hollow = false)
+    private var manualThumb = dot(hollow = false)
     private var autoDot: GradientDrawable? = null
 
     init {
@@ -186,9 +187,9 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         actionsRow.addView(more)
         top.addView(actionsRow, lp())
 
-        // One line, so the bar height never depends on the title; text on the 20 dp keyline (polish 10). Below the
-        // page label in the type scale (U §2.1): 16 sp against its 18.
-        title = ctx.label("", 16f, bold = true, maxLines = 1).apply {
+        // One line, so the bar height never depends on the title; text on the 20 dp keyline (polish 10). The top of the
+        // type scale (U §2.1): 18 sp bold, above the page label's 17 and the history row's 14, as in ReadEra.
+        title = ctx.label("", 18f, bold = true, maxLines = 1).apply {
             setPadding(ctx.dp(20), 0, ctx.dp(16), ctx.dp(12))
         }
         top.addView(title, lp())
@@ -243,12 +244,13 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         val labelRow = FrameLayout(ctx).apply { minimumHeight = ctx.dp(48) }
         // Centred on the FULL width with a fixed width (rowW − 2·108 dp, set in setVisible): autosize is unreliable
         // with wrap_content, and the fixed box can never run under the right cluster. No underline (polish 1). The
-        // current page reads first (18 sp bold), the total after it smaller and in the secondary colour.
-        pageLabel = ctx.label("", 18f, maxLines = 1).apply {
+        // current page reads first (17 sp bold, below the 18 sp title), the total after it smaller and in the
+        // secondary colour.
+        pageLabel = ctx.label("", 17f, maxLines = 1).apply {
             gravity = Gravity.CENTER
             setPadding(ctx.dp(12), 0, ctx.dp(12), 0)
             fontFeatureSettings = "tnum"
-            setAutoSizeTextTypeUniformWithConfiguration(14, 18, 1, TypedValue.COMPLEX_UNIT_SP)
+            setAutoSizeTextTypeUniformWithConfiguration(14, 17, 1, TypedValue.COMPLEX_UNIT_SP)
             contentDescription = PAGE_LABEL
             setOnClickListener { actions.onPageLabel() }
         }
@@ -313,47 +315,72 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         ctx.iconButton(res, description, onClick = onClick).also { icons.add(it) }
 
     /**
-     * Brightness and page bars alike (U §2.2): a 3 dp rounded track (inactive part in the track colour, progress in
-     * the accent) and an 18 dp dot, in a 48 dp tall touch area (its row gives it exactly 48 dp: the platform measure
-     * would add the theme's minimum track height). The platform thumb is an animated selector (it grows on press:
-     * several e-ink updates), so the thumb is a plain dot. Vertical swipes over the bars belong to the system (home,
-     * recents, notifications): [SwipeSafeSeekBar].
+     * Brightness and page bars alike (U §2.2): a rounded track (inactive part in the track colour, progress in the
+     * accent) and a dot ([sizeSliders]: 2 / 16 dp on a phone, 3 / 18 dp on e-ink), in a 48 dp tall touch area (its row
+     * gives it exactly 48 dp: the platform measure would add the theme's minimum track height). The platform thumb is
+     * an animated selector (it grows on press: several e-ink updates), so the thumb is a plain dot. Vertical swipes
+     * over the bars belong to the system (home, recents, notifications): [SwipeSafeSeekBar].
      */
     private fun chromeSeekBar(thumbDot: Drawable): SeekBar = SwipeSafeSeekBar(ctx).apply {
         progressDrawable = track()
-        thumb = thumbDot
-        thumbOffset = ctx.dp(THUMB_DP) / 2
+        setThumb(this, thumbDot)
         background = null
         splitTrack = false
         minimumHeight = ctx.dp(48)
         setPadding(ctx.dp(12), ctx.dp(15), ctx.dp(12), ctx.dp(15))
     }
 
+    private fun setThumb(bar: SeekBar, d: Drawable) {
+        bar.thumb = d
+        bar.thumbOffset = d.intrinsicWidth / 2
+    }
+
     /**
-     * The track: two white rounded bars (coloured by the bar's tint lists), 3 dp tall and centred whatever height the
-     * platform gives the track; the progress layer is clipped to the progress.
+     * The track: two white rounded bars (coloured by the bar's tint lists), [TRACK_DP] tall (e-ink [TRACK_DP_EINK]) and
+     * centred whatever height the platform gives the track; the progress layer is clipped to the progress.
      */
     private fun track(): Drawable {
+        val h = ctx.dp(if (slidersEink) TRACK_DP_EINK else TRACK_DP)
         fun bar() = GradientDrawable().apply {
             setColor(Color.WHITE)
-            cornerRadius = ctx.dpF(TRACK_DP / 2f)
+            cornerRadius = h / 2f
         }
         return LayerDrawable(arrayOf(bar(), ClipDrawable(bar(), Gravity.START, ClipDrawable.HORIZONTAL))).apply {
             setId(0, android.R.id.background)
             setId(1, android.R.id.progress)
             for (i in 0..1) {
                 setLayerGravity(i, Gravity.CENTER_VERTICAL or Gravity.FILL_HORIZONTAL)
-                setLayerHeight(i, ctx.dp(TRACK_DP))
+                setLayerHeight(i, h)
             }
         }
     }
 
-    /** An 18 dp thumb: a solid accent dot, or ([hollow]) a ring of the text colour on the surface ([paintDot]). */
+    /**
+     * A [THUMB_DP] thumb (e-ink [THUMB_DP_EINK]): a solid accent dot, or ([hollow]) a ring of the text colour on the
+     * surface ([paintDot]).
+     */
     private fun dot(hollow: Boolean): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
-        val d = ctx.dp(THUMB_DP)
+        val d = ctx.dp(if (slidersEink) THUMB_DP_EINK else THUMB_DP)
         setSize(d, d)
         paintDot(this, hollow)
+    }
+
+    /**
+     * The sliders' sizes for the device class (U §2.2): ReadEra's lighter 2 dp track and 16 dp thumb on a phone, 3 / 18
+     * dp on e-ink; the drag area stays the 48 dp row. New drawables only when the class changes (once, when the probe
+     * says phone, in the update that shows the bars); [paint] colours them next.
+     */
+    private fun sizeSliders(eink: Boolean) {
+        if (eink == slidersEink) return
+        slidersEink = eink
+        seekThumb = dot(hollow = false)
+        manualThumb = dot(hollow = false)
+        autoDot = null
+        seek.progressDrawable = track()
+        brightnessBar.progressDrawable = track()
+        setThumb(seek, seekThumb)
+        setThumb(brightnessBar, if (boundAuto == true) autoThumb() else manualThumb)
     }
 
     private fun paintDot(d: GradientDrawable, hollow: Boolean) {
@@ -401,11 +428,15 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         paint()
     }
 
-    /** Colours every view built so far with [look]; views built later (option rows, the NONE link) take it then. */
+    /**
+     * Colours every view built so far with [look] (and sizes the sliders for its device class); views built later
+     * (option rows, the NONE link) take it then.
+     */
     private fun paint() {
         val k = look
         if (top.setLook(k)) padTop()
         if (bottom.setLook(k)) padBottom()
+        sizeSliders(k.eink)
         val ink = ColorStateList.valueOf(k.text)
         for (b in icons) {
             b.imageTintList = ink
@@ -454,13 +485,16 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         }
     }
 
-    /** The seek preview's box: the surface with a light rounded border on a phone, a square 1 dp edge on e-ink. */
+    /**
+     * The seek preview's box over the page text: the surface with a rounded 1 px border in the track colour on a phone
+     * (the divider would melt into the page), a square 1 dp edge on e-ink.
+     */
     private fun previewBox(): Drawable = GradientDrawable().apply {
         setColor(look.surface)
         if (look.eink) {
             setStroke(ctx.dp(1).coerceAtLeast(1), look.edge)
         } else {
-            setStroke(1, look.divider)
+            setStroke(1, look.track)
             cornerRadius = ctx.dpF(8f)
         }
     }
@@ -483,9 +517,9 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     /**
      * Shows or hides both bars; hiding also closes the seek preview and the options panel. On a phone whose system
      * animates ([ChromeMath.animates]) the bars fade and slide [ChromeMath.SLIDE_DP] from their edge
-     * ([ChromeMath.SHOW_MS] in, [ChromeMath.HIDE_MS] out; touches pass to the page while they leave, and an open
-     * options panel closes once its bar is gone); otherwise they appear and vanish in one frame. A pending look is
-     * applied before the bars show, in that same update.
+     * ([ChromeMath.SHOW_MS] in, [ChromeMath.HIDE_MS] out; a new touch passes to the page while they leave, a drag
+     * already on a bar ends there, and an open options panel closes once its bar is gone); otherwise they appear and
+     * vanish in one frame. A pending look is applied before the bars show, in that same update.
      */
     fun setVisible(visible: Boolean) {
         if (visible) {
@@ -495,7 +529,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         var fade = false
         if (visible != shown) {
             shown = visible
-            fade = ChromeMath.animates(look.motion, ValueAnimator.getDurationScale())
+            // The motion flag first: e-ink never asks the system for its animation scale.
+            fade = look.motion && ChromeMath.animates(true, animatorScale())
             move(top, visible, fade, -1f)
             move(bottom, visible, fade, 1f)
             if (ReaderPerf.turns) {
@@ -1046,11 +1081,14 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         const val ROTATION_UNLOCK = "화면 회전 잠금 해제"
         const val ASK_WINDOW_TEXT = "조명 밝기가 바뀌었나요?"
         const val ASK_DEVICE_TEXT = "막대를 움직여 보세요. 조명이 바뀌나요?"
-        /** Slider track height and thumb diameter (U §2.2). */
-        const val TRACK_DP = 3
-        const val THUMB_DP = 18
-        /** The page label's total ("/ 183") against the current page: 18 sp → ≈ 14 sp. */
-        const val TOTAL_SCALE = 0.78f
+        /** Slider track and thumb on a phone (U §2.2): ReadEra's 2 dp track, the spec's smallest thumb. */
+        const val TRACK_DP = 2
+        const val THUMB_DP = 16
+        /** The same on e-ink: a heavier line survives every waveform. */
+        const val TRACK_DP_EINK = 3
+        const val THUMB_DP_EINK = 18
+        /** The page label's total ("/ 183") against the current page: 17 sp → ≈ 14 sp, regular, in text2. */
+        const val TOTAL_SCALE = 0.82f
         /** Decelerate in, accelerate out (Material's standard curves); built on the first fade (never on e-ink). */
         val SHOW_EASE by lazy(LazyThreadSafetyMode.NONE) { PathInterpolator(0f, 0f, 0.2f, 1f) }
         val HIDE_EASE by lazy(LazyThreadSafetyMode.NONE) { PathInterpolator(0.4f, 0f, 1f, 1f) }

@@ -9,8 +9,12 @@ internal object ChromeMath {
     const val LABEL_RESERVE_DP = 108
     /** The top action row needs 8 + 7·48 = 344 dp plus a little spacer to also hold the bookmark (U §2.2). */
     const val BOOKMARK_MIN_ROW_DP = 352
-    /** The history row directly above the bottom panel (U §2.4). */
-    const val HISTORY_ROW_DP = 44
+    /**
+     * The history row directly above the bottom panel (U §2.4): a 48 dp touch target like every other control of the
+     * bars. It starts over the bottom bar's edge padding and the edge band covers its foot (ChromeBar), so on a phone
+     * the bar grows by 44 dp with it.
+     */
+    const val HISTORY_ROW_DP = 48
     /** The bars' show / hide on a phone (U §2.1 Motion): a short fade with a slide of [SLIDE_DP] toward their edge. */
     const val SHOW_MS = 180L
     const val HIDE_MS = 150L

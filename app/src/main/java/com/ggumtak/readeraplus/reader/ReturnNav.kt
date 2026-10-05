@@ -386,8 +386,10 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     }
 
     /**
-     * The row: three equal columns, each its own 44 dp touch target. The side glyphs sit on the bars' icon columns
-     * (a 16 dp glyph 20 dp from the edge: centred 28 dp in, like ← and ⏮), 지우기 on the page label's axis.
+     * The row: three fixed columns (weight 1 each), each holding its label at its own width and the row's full 48 dp
+     * height, so a touch target and a pressed rect hug the words (지우기 is never a third of the row). The side glyphs
+     * sit on the bars' icon columns (a 16 dp glyph 20 dp from the edge: centred 28 dp in, like ← and ⏮), 지우기 on the
+     * page label's axis.
      */
     private fun ensureDock() {
         if (left != null) return
@@ -397,19 +399,21 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             setOnClickListener { useMark() }
         }
-        row.addView(l, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
+        row.addView(column(l, Gravity.START), LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         val c = stripText().apply {
             text = CLEAR
             gravity = Gravity.CENTER
+            minWidth = ctx.dp(72)
+            setPadding(ctx.dp(16), 0, ctx.dp(16), 0)
             setOnClickListener { clearAll() }
         }
-        row.addView(c, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
+        row.addView(column(c, Gravity.CENTER), LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         val r = stripText().apply {
             setPaddingRelative(ctx.dp(4), 0, ctx.dp(20), 0)
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
             setOnClickListener { useOther() }
         }
-        row.addView(r, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
+        row.addView(column(r, Gravity.END), LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         dockFrame.addView(row, FrameLayout.LayoutParams(MATCH_PARENT, ctx.dp(ChromeMath.HISTORY_ROW_DP)))
         pinIcon = icon(R.drawable.ic_push_pin_fill, GLYPH_DP)
         leftChevron = icon(R.drawable.ic_chevron_left, GLYPH_DP)
@@ -422,7 +426,12 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         paintDock()
     }
 
-    /** 14 sp regular, tabular digits: below the page label (18 sp bold) in the type scale, U §2.1. */
+    /** One third of the row holding [label] at its own width, placed by [gravity] (the column itself never moves). */
+    private fun column(label: TextView, gravity: Int): FrameLayout = FrameLayout(ctx).apply {
+        addView(label, FrameLayout.LayoutParams(WRAP_CONTENT, MATCH_PARENT, gravity or Gravity.CENTER_VERTICAL))
+    }
+
+    /** 14 sp regular, tabular digits: below the title (18 sp bold) and the page label (17 sp bold), U §2.1. */
     private fun stripText(): TextView = ctx.label("", 14f, maxLines = 1).apply {
         typeface = Typeface.DEFAULT
         fontFeatureSettings = "tnum"
@@ -526,10 +535,13 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         paintChip()
     }
 
-    /** The chip on the bars' surface: a 1 px box (the edge on e-ink, the light divider on a phone), text-coloured. */
+    /**
+     * The chip on the bars' surface over the page text: a 1 px box (the edge on e-ink; the track colour on a phone,
+     * where the divider would melt into the page), text-coloured.
+     */
     private fun paintChip() {
         val k = look
-        val stroke = if (k.eink) k.edge else k.divider
+        val stroke = if (k.eink) k.edge else k.track
         chipBox?.background = GradientDrawable().apply {
             setColor(k.surface)
             setStroke(1, stroke)   // 1 physical px
@@ -550,7 +562,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
 
     // ------------------------------------------------------------------ helpers
 
-    /** A side column of the row: INVISIBLE, not GONE, when it has no place, so 지우기 and the other side stay put. */
+    /** A side label of the row: INVISIBLE, not GONE, when it has no place, so 지우기 and the other side stay put. */
     private fun show(v: View, shown: Boolean) {
         val vis = if (shown) View.VISIBLE else View.INVISIBLE
         if (v.visibility != vis) v.visibility = vis

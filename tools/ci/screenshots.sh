@@ -1564,6 +1564,8 @@ adb shell input tap 600 900; shot 12_txt_tap_right 2; rawshot 12b
 step 13_chrome_pin chrome_pin
 # 13t–13v visit 설정 three times and take some 30 shots: more time than the 300 s default
 STEP_TIMEOUT=600 step 13t_chrome_looks chrome_looks
+# 13v turns the animator scale to 1 for its fades: a step cut off by its timeout must not leave them on for the rest
+adb shell settings put global animator_duration_scale 0
 # 14, 14d, 52 and 53 go to 설정 and back (twice for most): more time than the 300 s default
 STEP_TIMEOUT=480 step 14_reading_settings reading_settings
 STEP_TIMEOUT=480 step 14d_volume_mode volume_mode

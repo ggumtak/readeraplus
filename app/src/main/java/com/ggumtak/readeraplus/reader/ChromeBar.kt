@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.reader
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -12,6 +13,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.StateListDrawable
+import android.os.Build
 import android.view.MotionEvent
 import android.widget.LinearLayout
 import com.ggumtak.readeraplus.render.ChromePalette
@@ -26,15 +28,23 @@ import com.ggumtak.readeraplus.ui.kit.dpF
  * ([ChromePalette.shadow], phones) or a solid 1 px line ([ChromePalette.edge]: e-ink, and 흑백 반전, where a shadow
  * would not show). The band
  * lies in the bar's own padding on the page side (the owner pads it by [edgeArea]); the bottom bar's starts at its
- * first panel child ([panelFrom]): the history row above it stays on the page colour and the band covers its foot,
- * as in ReadEra. Positions come from the children at draw time: no layout listener, nothing measured twice.
+ * first panel child ([panelFrom]): the history row above it stays on the page colour, starts over that padding
+ * ([fitLead]) and the band covers its foot, as in ReadEra. Positions come from the children at draw time: no layout
+ * listener, nothing measured twice.
  */
 internal class ChromeBar(ctx: Context, private val edgeAtTop: Boolean) : LinearLayout(ctx) {
-    /** While the bar fades out, touches pass through to the page under it. */
+    /**
+     * While the bar fades out, a new touch passes through to the page under it. A gesture that started on the bar
+     * before still reaches its end there (a slider drag gets its lift, as when the bar went GONE at once).
+     */
     var inert = false
 
     /** Index of the first child that is on the panel (the bottom bar's history row is above it, on the page colour). */
     var panelFrom = 0
+        set(value) {
+            field = value
+            fitLead()
+        }
 
     /** Height of the edge band: [ChromePalette.SHADOW_DP] with a shadow, 1 px with a line, else 0. */
     var edgeArea = 1
@@ -74,11 +84,27 @@ internal class ChromeBar(ctx: Context, private val edgeAtTop: Boolean) : LinearL
         shaderY = Int.MIN_VALUE
         val changed = area != edgeArea
         edgeArea = area
+        if (changed) fitLead()
         invalidate()
         return changed
     }
 
-    override fun dispatchTouchEvent(ev: MotionEvent): Boolean = if (inert) false else super.dispatchTouchEvent(ev)
+    /**
+     * The row above the panel (child 0 when [panelFrom] > 0) starts [edgeArea] higher, over the bar's edge padding: no
+     * strip of bare page is left above it (the clickable bar would swallow its taps there), and the band covers the
+     * row's foot. Without the row, the band lies in that padding. Set once per [edgeArea], never in a layout pass.
+     */
+    private fun fitLead() {
+        if (!edgeAtTop || panelFrom <= 0 || childCount == 0) return
+        val c = getChildAt(0)
+        val lp = c.layoutParams as? LayoutParams ?: return
+        if (lp.topMargin == -edgeArea) return
+        lp.topMargin = -edgeArea
+        c.layoutParams = lp
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean =
+        if (inert && ev.actionMasked == MotionEvent.ACTION_DOWN) false else super.dispatchTouchEvent(ev)
 
     override fun onDraw(canvas: Canvas) {
         val from = if (edgeAtTop) panelTop() else 0
@@ -113,9 +139,19 @@ internal class ChromeBar(ctx: Context, private val edgeAtTop: Boolean) : LinearL
     }
 }
 
+/**
+ * The system's animator duration scale (0 = animations off: 개발자 옵션, 접근성 "애니메이션 제거"). The scale itself is
+ * public from API 33; before that only whether animators run at all (API 26).
+ */
+internal fun animatorScale(): Float = when {
+    Build.VERSION.SDK_INT >= 33 -> ValueAnimator.getDurationScale()
+    ValueAnimator.areAnimatorsEnabled() -> 1f
+    else -> 0f
+}
+
 // ------------------------------------------------------------------ pressed and active looks (U §2.1 State)
 
-/** A pressed overlay fades this long after the finger lifts (phones only). */
+/** A pressed overlay fades this long after the finger lifts (phones; at once with the system's animations off). */
 private const val PRESS_FADE_MS = 120
 
 /**
@@ -126,23 +162,34 @@ private const val PRESS_FADE_MS = 120
 internal fun Context.chromeIconBackground(look: ChromePalette, active: Boolean): Drawable? {
     val on = if (active && look.active != 0) circle(look.active) else null
     if (look.pressed == 0) return on
-    val press = pressedList(circle(look.pressed))
-    return if (on == null) press else LayerDrawable(arrayOf(on, press))
+    val press = PressedList(circle(look.pressed))
+    // Stacked, not nested: the pressed circle is the active one's size, and the padding stays 4 dp either way (a
+    // toggle never changes the button's padding, so it never lays the bar out again).
+    if (on == null) return press
+    return LayerDrawable(arrayOf(on, press)).apply { paddingMode = LayerDrawable.PADDING_MODE_STACK }
 }
 
 /** A text cell's or a row's pressed overlay in [look], with corners of [radiusDp]; null on e-ink. */
 internal fun Context.chromePressed(look: ChromePalette, radiusDp: Float): Drawable? {
     if (look.pressed == 0) return null
-    return pressedList(GradientDrawable().apply {
+    return PressedList(GradientDrawable().apply {
         setColor(look.pressed)
         cornerRadius = dpF(radiusDp)
     })
 }
 
-private fun pressedList(d: Drawable): Drawable = StateListDrawable().apply {
-    addState(intArrayOf(android.R.attr.state_pressed), d)
-    addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
-    setExitFadeDuration(PRESS_FADE_MS)
+/** [d] while pressed, else nothing; fading out in [PRESS_FADE_MS], or at once while the system's animations are off. */
+private class PressedList(d: Drawable) : StateListDrawable() {
+    init {
+        addState(intArrayOf(android.R.attr.state_pressed), d)
+        addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
+    }
+
+    override fun onStateChange(stateSet: IntArray): Boolean {
+        // Read at each change: 애니메이션 제거 may be switched while a book is open.
+        setExitFadeDuration(if (ChromeMath.animates(true, animatorScale())) PRESS_FADE_MS else 0)
+        return super.onStateChange(stateSet)
+    }
 }
 
 /** A 40 dp circle centred in a 48 dp button. */

@@ -1290,7 +1290,7 @@ fun report(ctx: Context): List<String> = emptyList()
 
 ```kotlin
 internal object ChromeMath
-const val HISTORY_ROW_DP = 44                     // 2026-10-05
+const val HISTORY_ROW_DP = 48                     // 2026-10-05 (a 48 dp target like the bars' other controls)
 const val SHOW_MS = 180L; const val HIDE_MS = 150L; const val SLIDE_DP = 12
 fun labelMaxWidth(rowW: Int, density: Float): Int
 fun stripShort(left: Float, right: Float, rowW: Float): Boolean   // 2026-10-05: a side label wider than its third
@@ -1303,12 +1303,14 @@ fun animates(motion: Boolean, durationScale: Float): Boolean      // motion && s
 
 ```kotlin
 internal class ChromeBar(ctx: Context, private val edgeAtTop: Boolean) : LinearLayout(ctx)
-var inert: Boolean                                // touches pass to the page while the bar fades out
-var panelFrom: Int                                // first child on the panel (the bottom bar's history row is 0)
+var inert: Boolean                                // a new touch passes to the page while the bar fades out
+var panelFrom: Int                                // first child on the panel (the bottom bar's history row is 0,
+                                                  // its top margin −edgeArea: it starts over the edge padding)
 val edgeArea: Int                                 // 4 dp shadow band, 1 px line, or 0; the owner pads the bar by it
 fun setLook(look: ChromePalette): Boolean         // true when edgeArea changed
 internal fun Context.chromeIconBackground(look: ChromePalette, active: Boolean): Drawable?
 internal fun Context.chromePressed(look: ChromePalette, radiusDp: Float): Drawable?
+internal fun animatorScale(): Float               // getDurationScale() from API 33, else areAnimatorsEnabled() 1 / 0
 ```
 
 

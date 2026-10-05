@@ -48,8 +48,8 @@ class ChromeMathTest {
         assertTrue(ChromeMath.stripShort(293f, 0f, 720f))
         assertFalse(ChromeMath.stripShort(293f, 0f, 1080f))
         assertFalse(ChromeMath.stripShort(360f, 360f, 1080f))
-        // The row sits right above the panel and is a 44 dp touch target.
-        assertEquals(44, ChromeMath.HISTORY_ROW_DP)
+        // The row sits right above the panel and is a 48 dp touch target, like every other control of the bars.
+        assertEquals(48, ChromeMath.HISTORY_ROW_DP)
     }
 
     @Test

@@ -392,6 +392,10 @@ tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci
 - 기기 점검표 3-4 · 11d-2 · 11d-6 범위 수정(글자 상자 4 dp, 잉크 윗부분 5–7 dp), 11d-9..11d-15 추가.
 - 검사: `tools/typecheck.sh` 0, `tools/unittest.sh` OK (1593 tests), CI Python 43개 OK, `bash -n` 통과.
 
+## CI 48 결과 (4efdf0b, 마루뷰어 여백 · 상태 표시줄, 2026-10-05)
+- APK 빌드 · 구글 드라이브 업로드 성공, `[screens]` CHECK 90건 전부 PASS(FAIL 0), 앱 충돌 0. 카메라 띠 경로는 에뮬레이터에 구멍이 없어
+  단위 테스트와 점검표 §11d로만 확인된다.
+
 ## 리더 메뉴 다듬기: 막대 색 · 그림자 · 이동 기록 줄 (2026-10-05, 사용자 지시)
 - 사용자 피드백(ReadEra 화면과 비교): 기능은 그대로, 색 · 간격 · 크기 · 경계 · 상태 표시만. 마루뷰어 본문 위의 순백색 막대가 출발점.
 - 색 토큰 `render/ChromePalette`(배경 · 패널 · 글자 · 보조 글자 · 강조 · 구분선 · 트랙 · 이동 기록 · 그림자 · 눌림 · 켜짐): 화면 색 ×
@@ -399,14 +403,14 @@ tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci
   e-ink 흰 바탕 = 예전 `Ink` 그대로, 어두운 화면 색은 그 회색들을 `PagePalette.grey`로 옮긴 것.
 - `ChromeBar`(위 · 아래 막대): 패널을 화면 끝까지 칠하고 본문 쪽 경계를 직접 그린다. 휴대폰 4 dp 그림자(ReadEra 화면에서 잰 ≈ 3.5 dp
   선형), 흑백 반전과 e-ink는 1 px 선. 막대 끝의 검은 줄 두 개와 이동 기록 줄 아래 줄은 뺐다(겹친 줄).
-- 이동 기록 줄(`ReturnNav.dock`): 아래 패널 바로 위, 본문 색, 44 dp 세 칸(빈 쪽은 INVISIBLE이라 지우기가 안 움직임). 14 sp `hist` 색.
+- 이동 기록 줄(`ReturnNav.dock`): 아래 패널 바로 위, 본문 색, 세 칸(빈 쪽은 INVISIBLE이라 지우기가 안 움직임). 14 sp `hist` 색.
   짧은 글씨 규칙은 "한쪽 글씨가 제 칸(1/3)을 넘으면"(`ChromeMath.stripShort`). `ReturnPoints`와 문구는 그대로.
-- 쪽 표시: 현재 쪽 18 sp 굵게, " / 전체" ×0.78 보조 색(`ReaderFormat.pageLabelCut`). 제목 16 sp, 쪽 표시 줄 48 dp.
-- 슬라이더 둘 다 3 dp 둥근 트랙(비활성 `track`, 진행 `accent`), 18 dp 손잡이, 48 dp 높이. `SwipeSafeSeekBar` · 미리보기 · 놓으면 이동은 그대로.
+- 쪽 표시: 현재 쪽 굵게, " / 전체"는 작게 보조 색(`ReaderFormat.pageLabelCut`). 쪽 표시 줄 48 dp. (크기는 아래 리뷰 반영 참고)
+- 슬라이더 둘 다 둥근 트랙(비활성 `track`, 진행 `accent`)과 점 손잡이, 48 dp 높이. `SwipeSafeSeekBar` · 미리보기 · 놓으면 이동은 그대로.
 - 상태: 휴대폰만 눌림 표시(아이콘 40 dp 원, 글자 칸 8 dp 둥근 사각)와 켜진 북마크 · 고정 · 회전 잠금의 강조색 + 원. e-ink는 눌림 표시를
   없앴다(번쩍임 = 갱신 한 번 더). `InkToggle.setColors`.
 - 표시 · 숨김: 휴대폰 180 / 150 ms 페이드 + 12 dp 이동(알파 · 이동만이라 본문 재배치 없음, 숨는 동안 탭은 본문으로).
-  `ValueAnimator.getDurationScale() == 0`(접근성 "애니메이션 제거")이면 즉시, e-ink · 기기 종류 미확인도 즉시. RAPerf "chrome show fade 180".
+  시스템 애니메이션 배율이 0(접근성 "애니메이션 제거")이면 즉시, e-ink · 기기 종류 미확인도 즉시. RAPerf "chrome show fade 180".
 - 안전 영역 확인: 위는 인셋 하나(시스템 막대와 컷아웃의 합집합), 아래는 max(내비 인셋, 제스처 영역, 16 dp) 하나라 중복이 없다.
   고친 것: 인셋과 제스처 영역이 모두 0이면(전체 화면, 컷아웃 · 제스처 영역 없음) `setInsets`도 `setGestureBottom`도 바뀐 값이 없어 아래 16 dp
   여백이 한 번도 적용되지 않았다 → 막대를 만들 때 한 번 맞춘다.
@@ -419,3 +423,24 @@ tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci
   넣지 않았다(흰 바탕 글자 그림자는 따로; e-ink에서는 꺼야 함).
 - 검사: `tools/typecheck.sh` 0, `tools/unittest.sh` OK (1585 tests), CI Python 46개 OK, `bash -n` 통과. 실제 화면은 `[screens]` 실행(13t–13v)과
   점검표 §11e(S25 · 코멧)로 확인한다.
+
+### 리뷰 반영 (2026-10-05)
+- 숨는 막대(`ChromeBar.inert`)는 새 터치(ACTION_DOWN)만 본문으로 넘긴다. 막대에서 시작한 끌기는 끝까지 막대가 받는다: 쪽 막대를
+  잡은 채 다른 손가락으로 메뉴를 닫아도 `onStopTrackingTouch`가 와서 `isSeeking`이 풀리고, 밝기는 마지막 값이 저장된다.
+- 애니메이션 배율: `animatorScale()` = API 33부터 `ValueAnimator.getDurationScale()`, 그 전은 `areAnimatorsEnabled()`(1 / 0). e-ink는
+  `look.motion`이 먼저라 읽지 않는다. 눌림 표시의 120 ms 사라짐도 배율 0이면 즉시(누를 때마다 다시 읽음).
+- 크기 순서: 제목 18 sp 굵게 > 쪽 표시 17 sp(현재 쪽 굵게, " / 전체" ×0.82 ≈ 14 sp 보조 색, 자동 크기 14..17) > 이동 기록 14 sp.
+- 이동 기록 줄 48 dp(다른 버튼과 같은 터치 크기). 막대의 경계 여백 위에서 시작해(위쪽 여백 −edgeArea) 줄 위에 맨 본문 띠가 없고
+  막대 높이는 전과 같다(144 dp). 세 칸은 그대로 고정이고 글자는 제 너비만큼만 눌린다: 지우기는 72 dp 이상, 세 칸 전체가 아니다.
+- 꽉 찬 아이콘 네 개(회전 · 회전 잠금 · 밝기 수동 · 밝기 자동)는 XML `<group>`으로 85 %(≈ 20 dp, 선 ≈ 1.7 dp)라 고정 · 검색 ·
+  설정과 크기가 맞는다. 고정 아이콘은 이미 Material Symbols 원본과 같은 파일이라(fetch_icons.py로 받은 것과 바이트까지 같음) 그대로 둔다.
+- 색: 흰 바탕 그림자 20 %(0x33), `histOff` 흰 바탕 #808080 · 마루뷰어 #8A8A8A(본문 위 3.5 : 1 이상), 눌림 / 켜짐 원 구별
+  (흰 바탕 0x14 / 0x38 검정, 마루뷰어 0x1A 흰색 / 0x4D 금색, 흑백 반전 0x1A / 0x42 흰색). 칩과 쪽 이동 미리보기의 테두리는 휴대폰에서
+  `track` 색(본문 위에서 보이도록). 테스트에 하한을 더했다.
+- 슬라이더: 휴대폰 2 dp 트랙 · 16 dp 손잡이(ReadEra 2 dp · 12 dp, 명세 하한), e-ink 3 · 18 dp 그대로. 기기 종류가 바뀔 때만 새로 만든다.
+- 켜진 버튼의 원은 `LayerDrawable` 쌓기 모드라 눌림 원과 크기가 같고, 켜고 꺼도 버튼 여백이 바뀌지 않는다(막대 다시 배치 없음).
+- CI: 13t 단계가 시간 초과로 끊겨도 다음 단계 전에 애니메이션 배율을 0으로 돌린다.
+- 그대로 둔 것: 막대에서 여는 ⋮ 메뉴 · ⚙ 빠른 설정 · 회전 선택 · 목차 / 검색 창은 흰 바탕(PLAN에 이번 단계 예외로 적음, 리드 확인
+  대기). 밝기 줄을 패널 밖(본문 색)으로 빼는 ReadEra식 구조는 리드가 원할 때만. 그림자 3단 그라데이션은 하지 않았다(ReadEra 그림자는
+  잰 결과 선형).
+- 검사: `tools/typecheck.sh` 0, `tools/unittest.sh` OK (1586 tests), CI Python 46개 OK, `bash -n` 통과.
