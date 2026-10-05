@@ -329,7 +329,8 @@ percent T, clock T, battery T.
 
 > **2026-10-05 (user):** the two-place model below is replaced by a back / forward history as ReadEra's (UI_SPEC §3):
 > the pin saves this page as a place to go back to; the row shows "‹ N쪽으로" only while there is a place back and
-> "M쪽으로 ›" only while there is one ahead.
+> "M쪽으로 ›" only while there is one ahead. Every remembered jump's origin is a place (also two seeks with no page
+> turned between them), and pinning never hides an older place on the row.
 
 ### 4.1 Model: two places, fixed meaning
 

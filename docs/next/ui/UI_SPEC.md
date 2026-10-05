@@ -41,7 +41,7 @@ is the intended implementation unless this file overrides a detail.
 | 1 | The page number floats awkwardly left of centre in the bottom bar. It looks cheap. | The bottom bar copies ReadEra's structure (§2.4). **"N / M"** is centred on the **full width**: 17 sp bold, tabular digits, no underline. Only **[rotation][pin]** sit on the right. The bookmark moves to the top action row, into ReadEra's 6th-icon slot. No grey "selected" squares anywhere: state is shown by swapping the icon. |
 | 2 | Let me pick what shows at bottom-left, bottom-centre and bottom-right (chapter title, time, battery, …). If I pick nothing, show no footer. A thin progress line like ReadEra's would be good too. | `enum StatusItem` (12 entries). Three **footer** slots, all `NONE` by default, so a fresh install has **no footer text**. There are also three **header** slots (default: chapter title in the centre, same as today), so the user can build the "마루뷰어" top line (7a7a0a23). A **progress line** (`progressBar = true`) sits in the bottom margin: a 1 px line with end caps and a position dot. With default margins it costs no text height. |
 | 3 | Moving the brightness bar at the top changes nothing. | The window override stays the default (it works on phones). Add an opt-in **device path** that writes `Settings.System.SCREEN_BRIGHTNESS` with WRITE_SETTINGS. On e-ink devices, a **one-time question** after the first drag finds out which path works. If neither works, the reader says so honestly and links to the device's own light panel instead of leaving a dead slider (§4). **[Δ]** The device path never puts back a stale value over one the user set in the system panel, always gives auto-brightness back, and is a device-local choice (not in backups). |
-| 4 | The pin makes pages flip back and forth. It should pin a page so I can return to it anytime, like the "< 10 페이지로 · 지우기" strip. | "메뉴 고정" (pinned chrome) and all its relayout paths are **deleted**. That is the root cause of the flipping (§2.6). The pin now sets the book's **return point**, stored per book. A **return strip** docked in the bottom bar reads "‹ 10 페이지로 · 지우기 · 512 페이지로 ›". The old "← 돌아가기 (p. N)" chip becomes the same component's floating form, shown after a remembered jump whenever the chrome is hidden (§3). **[Δ]** That includes a seek made with the menu open (today's chip survives closing the menu; so does the new one), and scrubbing the seek bar several times keeps the *first* origin. |
+| 4 | The pin makes pages flip back and forth. It should pin a page so I can return to it anytime, like the "< 10 페이지로 · 지우기" strip. | "메뉴 고정" (pinned chrome) and all its relayout paths are **deleted**. That is the root cause of the flipping (§2.6). The pin now sets the book's **return point**, stored per book. A **return strip** docked in the bottom bar reads "‹ 10 페이지로 · 지우기 · 512 페이지로 ›". The old "← 돌아가기 (p. N)" chip becomes the same component's floating form, shown after a remembered jump whenever the chrome is hidden (§3). **[Δ]** That includes a seek made with the menu open (today's chip survives closing the menu; so does the new one), and scrubbing the seek bar several times keeps the *first* origin (2026-10-05: for the chip only; the history row keeps every origin, as ReadEra's). |
 | 5 | The icon to the right of the brightness slider opens options (ReadEra: "스와이프로 밝기 조절" + switch). | The icon is ⌄/⌃ (`ic_expand_more`/`ic_expand_less`) and opens an **options panel** under the slider. The brightness row is never hidden again (§2.3). |
 | 6 | Care much more about the UI. | §2.1 defines one visual system for the chrome: keylines, bands, type scale and state rules. §6 is the ranked polish list with exact values. §8 lists the CI screenshots that must prove each item. |
 
@@ -54,7 +54,7 @@ is the intended implementation unless this file overrides a detail.
 | Bookmark icon | removed from the bar | bottom-left of the bar | – | **top action row**, left of TTS | ReadEra's bottom bar has only [rotation][pin]. The top row has a free 6th slot (ReadEra's crown), which is also next to the ribbon's corner. |
 | Progress line span | page edges, 12 dp | text column | – | **page edges, 12 dp** (ReadEra) | This is the user's reference. With the scroll spec's 40 dp side margins, a column-wide line would look detached. |
 | Chapter ticks | none | 2–60 chapters | – | **none** (P2 option later) | Web-novel TXT files have hundreds of chapters, so ticks never show there. Leaving them out drops code, a redraw path and a test class. |
-| Pin model | single pin + strip | mark/other state machine + chip | – | **chrome.md's model**, with 2 changes (§3.2), **[Δ] plus 3 from the critic** (★3 chain keeps its first origin, ★4 the reading place survives a visit to the pin, ★5 the chip's offer survives the menu). **2026-10-05 (user): replaced by a back / forward history as ReadEra's (§3); ★3 and ★5 stay** | It keeps the jump origin reachable, and one component replaces the old chip. |
+| Pin model | single pin + strip | mark/other state machine + chip | – | **chrome.md's model**, with 2 changes (§3.2), **[Δ] plus 3 from the critic** (★3 chain keeps its first origin, ★4 the reading place survives a visit to the pin, ★5 the chip's offer survives the menu). **2026-10-05 (user): replaced by a back / forward history as ReadEra's (§3); ★5 stays, ★3 only for the chip (every jump's origin is a place, as in ReadEra)** | It keeps the jump origin reachable, and one component replaces the old chip. |
 | Brightness curve | linear | – | p² for both paths | **window path linear (unchanged); device path p²** | This avoids a one-time shift of every phone user's saved brightness. p² is only needed for the 1..255 device int. |
 | Brightness wiring | in ReaderActivity | – | in ReaderActivity (~200 lines) | **`LightController` (READER_UI) behind a `LightHost` interface** | Keeps ReaderActivity small, because the scroll spec edits the same file in parallel (§7). |
 | DB column | `BookPrefs` pin | `book_prefs.return_mark`, no bump (v2 unshipped) | – | **`return_mark` + `DB_VERSION = 3` via `ADDED_COLUMNS`** | R2 (v2) will very likely have shipped to the device before this lands. The column guard makes this safe either way. |
@@ -614,33 +614,41 @@ below the line, until 2026-10-05) after CI showed the row "104쪽 | 지우기 | 
 "📌 104쪽" on the pinned page: "이전이 없으면 왼쪽에 사라지고 이전이 있으면 왼쪽이 생기는 방식이어야지. 오른쪽은 다음이
 있으면 생기고 없으면 없고". Their two ReadEra screenshots (3259 pages): on page 1749 the row above the bottom panel reads
 "< 1 페이지로 | 지우기 | 150 페이지로 >"; on page 1 it reads "지우기 | 1749 페이지로 >" (no left item, 지우기 still in the
-middle). That is a back / forward history: at 1, seek to 1749 (back [1]); read; seek to 150 (back [1, 1749]); "‹ 1749"
-→ on 1749 back [1], forward [150] = shot 1; "‹ 1" → on 1 back [], forward [150, 1749] (the nearest, 1749, shows) =
-shot 2.
+middle). That is a back / forward history: at 1, seek to 1749 (back [1]); seek to 150, with or without reading 1749
+first (back [1, 1749]); "‹ 1749" → on 1749 back [1], forward [150] = shot 1; "‹ 1" → on 1 back [], forward
+[150, 1749] (the nearest, 1749, shows) = shot 2.
 Kept from before: the pin button of the bottom bar (chrome.md item 4: "pin a RETURN POINT, not the chrome"), the row
 right above the bottom panel in three equal columns with 지우기 that never moves (c184879), the floating chip after a
-jump made with the menu hidden, ★3 (scrubbing keeps the first origin) and ★5 (the chip's visibility is derived).
+jump made with the menu hidden and ★5 (the chip's visibility is derived). **Review fix (2026-10-05):** ★3 (several
+jumps before a manual turn keep only the first origin) swallowed the user's own sequence (a seek to 1749 looked at
+without turning a page, then a seek to 150, left no 1749), so every remembered jump's origin is now a place, as in
+ReadEra; ★3 stays only for the chip, which offers the first origin of such a chain.
 
 ### 3.1 What the user sees
 
 | Action | Result |
 |---|---|
 | TOC, search, bookmark, go-to, seek bar, link or note jump (a *remembered* jump) from page F | F becomes the newest place to go back to; places gone back from are forgotten (as in a browser). With the menu open the row reads "‹ F쪽으로" · 지우기. |
-| The same **with the menu hidden** | A **floating chip** appears bottom-left: "‹ F쪽으로 \| ✕". It hides after 2 manual turns, on ✕, on using the history (row or chip) and on 지우기. Opening the menu only *covers* it (the row shows the same place); closing the menu brings it back while the 2 turns have not passed. |
-| Seek-bar scrubbing (several seeks, go-tos or TOC jumps before any manual turn) | ★3 Only the *first* origin is remembered, so fine-tuning the seek bar never buries the way back to where you were reading. |
+| The same **with the menu hidden** | A **floating chip** appears bottom-left: "‹ F쪽으로 \| ✕". It hides after 2 manual turns, on ✕, on using the history (row or chip), on the pin and on 지우기. Opening the menu only *covers* it (the row shows F, or after several jumps in a row the newest origin, which steps back to F); closing the menu brings it back while the 2 turns have not passed. |
+| Several remembered jumps before a manual turn (seek, seek again; TOC, then a link) | Every origin is a place, as in ReadEra: at 1, seek to 1749, then (with or without a page turned, the menu open or closed) seek to 150 → on 150 "‹ 1749쪽으로", then "‹ 1쪽으로". ★3 (the chip only): the chip shown after such a chain offers its **first** origin (where you were reading, not a page passed while scrubbing); a tap on it goes there as that many ‹ taps would (the pages passed become places ahead). |
 | Tap "‹ N쪽으로" (left) on page H | Go to N with the menu still open. N leaves the back list and H becomes the nearest place ahead: the row reads "‹ (the next older place)" or nothing on the left, 지우기, "H쪽으로 ›". |
 | Tap "M쪽으로 ›" (right) on page H | Go to M. H becomes the newest place back; the right item shows the next place ahead, or nothing. |
+| A tap on the row or the chip while a jump is still on its way (a far layout) | Ignored: the row still describes the page on screen. A use whose page cannot be laid out ("이 부분을 표시하지 못했습니다") is undone, so its place is not lost. |
 | A new remembered jump after going back | The places ahead are forgotten (browser rule). |
-| Menu open, tap the **pin** (outline icon, content description **"이 페이지 고정"**) | This page is saved as the newest place to go back to (the places ahead stay). The icon fills ("고정 해제"). The row never offers the page you are on, so nothing new shows in it until you leave the page; then it reads "‹ P쪽으로". The page does not move or relayout, and there is no toast. |
+| Menu open, tap the **pin** (outline icon, content description **"이 페이지 고정"**) | This page is saved as the newest place to go back to (the places ahead stay, less this page). The icon fills ("고정 해제"). The row never offers the page you are on and keeps offering the older place, so it does not change on this page (on 1749 in ReadEra's first shot it still reads "‹ 1쪽으로 · 지우기 · 150쪽으로 ›"); once you leave, "‹ P쪽으로" shows. The page does not move or relayout, and there is no toast. |
 | On that page, tap the filled pin ("고정 해제") | That place is removed again; the icon is an outline. |
 | 지우기 | Both lists are emptied (also in storage); the row and the chip go. |
 | Next day, reopen the book | The history (both lists) is still there. It loads **after** the first page and shows in the row the next time the menu opens. |
 
-**Pin rule (decided 2026-10-05, the simplest that gives clear feedback):** the pin icon is **filled iff back's top (the
-newest place to go back to) is on the current page**, which is the case right after pinning while you stay on that page
-(and after you page back by hand to the place you jumped from). A tap on the filled pin removes that place
-("고정 해제"); a tap on the outline pin saves this page. Going back to a pinned page uses that place up (it moves to the
-other list, as in a browser), so the icon is an outline there; pinning it again is one tap.
+**Pin rule (decided 2026-10-05, the simplest that gives clear feedback):** the pin icon is **filled iff back's top was
+saved by the pin and is on the current page** (`pinTop`), i.e. right after pinning while you stay on that page, and
+again when you page back to it by hand or reopen the book there. A jump's origin on this page is no pin: the icon is an
+outline there, and a tap turns that place into the pin (no new entry). A tap on the filled pin removes that place
+("고정 해제"); a tap on the outline pin saves this page. Pinning the page that is the nearest place ahead moves it to the
+back list (it is not on both sides). Going back to a pinned page uses the pin up: it leaves the back list (you are on
+that page) and the page you left becomes the nearest place ahead, so the icon is an outline there and, once you read
+on, the pinned page is in neither list; pinning it again is one tap. Going back past a pin from its own page (‹ to an
+older place) takes the pin along with the page you leave: it becomes the nearest place ahead.
 
 Where the history stays off the page:
 - Places never float over the page except the chip after a remembered jump. The page stays clean, and the history is
@@ -659,26 +667,33 @@ State:
 - `offer: Boolean`: the chip offers back's top (the last remembered jump's way back). The chip shows iff `offer`, the
   chrome is hidden and back's top is not on screen (★5), so the offer survives opening and closing the menu;
 - `turns: Int`: manual turns since that jump;
-- `landed: Boolean`: true after a remembered jump until the next manual turn, use, pin or clear: "only passing
-  through; not reading here yet" (★3).
+- `landed: Boolean`: a chain of remembered jumps is open (from a jump until the next manual turn, use, pin or clear);
+- `chainBase` (private): the index in back of the chain's first origin, the chip's place while `offer` (★3, the chip
+  only); a trim of the oldest place keeps it on the chain's oldest place still kept;
+- `pinTop: Boolean`: back's top was saved by the pin and has not been replaced since (stored with the history).
 
 "The same page" is the host's question, so every call takes `here: (DocPosition) -> Boolean` = `isOnCurrentPage`.
 Every place pushed is the current one, so **a push is skipped when the list's top is `here`** (one entry per page).
+The row asks for **each list's newest place that is not `here`**, so a place on this page (a pin, a jump's origin,
+two places a re-parse put on one page) never hides an older one; these queries use index loops and allocate nothing.
 
 | Call | Effect |
 |---|---|
-| `jumped(from, here): Boolean` | ★3 If `landed` (and back is not empty): nothing is pushed (the chain keeps its first origin). Otherwise push `from` on back, empty forward, `landed = true`. Always `offer = true; turns = 0` (re-armed if ✕ had hidden it). True when a list changed (only then is the history stored). |
-| `goBack(at, here)` | `null` if back is empty. Else pop back's top T, push `at` on forward, `offer = false; landed = false`, return T. |
-| `goForward(at, here)` | `null` if forward is empty. Else pop forward's top T, push `at` on back, `offer = false; landed = false`, return T. |
-| `pin(at, here)` | If `pinnedHere(here)`: pop back's top (고정 해제). Else push `at` on back. Forward is kept. `offer = false; landed = false`. |
-| `pinnedHere(here)` | back's top is on this page (the pin icon). |
-| `leftPlace(here)` / `rightPlace(here)` | back's / forward's top, or null when there is none or it is on this page. |
+| `jumped(from, here): Boolean` | Push `from` on back (skipped when back's top is on this page), empty forward. If no chain is open, `chainBase` = back's top (the chain's origin). `landed = true; offer = true; turns = 0` (re-armed if ✕ had hidden it). True when a list changed (only then is the history stored). |
+| `goBack(at, here)` | T = back's newest place not on this page; `null` if none. The places above T are on this page (a pin, an origin): they go, and `at` is pushed on forward (skipped when forward's top is on this page), so this page is kept ahead. Pop T, `pinTop = false`, end the chain (`offer = false; landed = false`), return T. |
+| `chipBack(at, here)` | The chip: back to `chipPlace` as that many ‹ taps would: `at`, then the places above it (nearest last, those on this page left out) go on forward. `null` when back is empty. |
+| `goForward(at, here)` | T = forward's newest place not on this page; `null` if none. Drop T and the places above it, push `at` on back (skipped when back's top is on this page, e.g. a pin, which stays the pin), end the chain, return T. |
+| `pin(at, here)` | If `pinnedHere(here)`: pop back's top (고정 해제), `pinTop = false`. Else push `at` on back (an origin already on top here becomes the pin), `pinTop = true`, and drop forward's top places on this page. Forward is otherwise kept. End the chain. |
+| `pinnedHere(here)` | `pinTop` and back's top is on this page (the pin icon). |
+| `leftPlace(here)` / `rightPlace(here)` | back's / forward's newest place not on this page, or null. |
+| `chipPlace()` | While `offer`, back[`chainBase`] (the chain's first origin); otherwise back's top. |
 | `rowShown(here)` | `leftPlace != null \|\| rightPlace != null`. |
-| `clear()` | Both lists empty; `offer = false; turns = 0; landed = false`. |
+| `clear()` | Both lists empty; `pinTop = false; offer = false; turns = 0; landed = false`. |
 | `manualTurn(): Boolean` | `landed = false`. Then, if `offer && ++turns >= 2` → `offer = false`, return true (hide now). |
 | `hideChip()` (✕) | `offer = false` (the places stay: the row still has them). |
-| `restore(storedBack, storedForward)` | The stored lists, loaded after the first page. Places of this session stay on top: the stored back list goes under them (a stored top equal to the session's first place is kept once); the stored forward list is kept only while this session has no places at all (a jump would have cut it). |
-| `reparsed(map)` | Each place goes where `map(index, place)` puts it (index in back-then-forward order; null drops it), a place equal to the one before it is dropped; `offer = false; turns = 0; landed = false`. |
+| `restore(storedBack, storedForward, storedPin)` | The stored lists, loaded after the first page. Places of this session stay on top: the stored back list goes under them (a stored top equal to the session's first place is kept once); the stored forward list is kept only while this session has no places at all (a jump would have cut it). `pinTop` takes `storedPin` when the stored top is back's top. |
+| `reparsed(map)` | Each place goes where `map(index, place)` puts it (index in back-then-forward order; null drops it), a place equal to the one before it is dropped; `pinTop` stays only while back's top was kept; `offer = false; turns = 0; landed = false`. |
+| `copyFrom(other)` | The whole state of `other` (ReturnNav undoes a use whose page could not be laid out). |
 | `chipVisible(offer, chromeVisible, targetOnScreen)` | ★5 `offer && !chromeVisible && !targetOnScreen` (derived, never stored). |
 | `label(page)` | "N쪽으로" (the row and the chip add the chevron). |
 
@@ -686,14 +701,16 @@ Every place pushed is the current one, so **a push is skipped when the list's to
 
 **`ReturnHistoryCodec`** (pure, in `ReturnNav.kt`), in the existing column `book_prefs.return_mark` (no schema change):
 - **Format:** `"h1|<back>|<forward>|<textSignature or empty>"`, each list oldest first as `;`-joined places
-  `<section>,<offset>,<char fraction in millionths>`. Example: `h1|0,1000,250000;4,50,500000|1,200,125000|`.
+  `<section>,<offset>,<char fraction in millionths>`; back's top ends in `,p` when the pin saved it (`pinTop`).
+  Example: `h1|0,1000,250000;4,50,500000,p|1,200,125000|`.
 - **Size:** at most `BookPrefs.MAX_RETURN_MARK` (1000) chars. Two full lists of the longest places take about 850; the
   encoder leaves the oldest places out (the longer list first) until the text fits. An empty history encodes as null
   (the column is cleared).
 - **`decode`** is tolerant: null for a bad prefix or shape or no valid place; a malformed place (bad numbers, a
-  negative section or offset) is skipped; fractions are clamped to 0..1; each list keeps its newest 20.
+  negative section or offset, a 4th field other than `p`) is skipped; fractions are clamped to 0..1; each list keeps
+  its newest 20; a `p` on any place but back's top is ignored.
 - **Migration:** an old single pin `"m1|<section>|<offset>|<charFraction>|<sig>"` (until 2026-10-05) decodes as a back
-  list of that one place, with the old rules (null for bad numbers, NaN, negative values; fraction clamped).
+  list of that one pinned place, with the old rules (null for bad numbers, NaN, negative values; fraction clamped).
 - **Placement when restoring** (each place): TXT whose stored signature differs from `LayoutKeys.textSignature(...)`,
   and not the very start → `counts.locateFraction(fraction)`; otherwise `DocPosition(section, offset)` clamped. EPUB
   always uses this, since its signature is null. Places found by fraction are stored again under this parse.
@@ -711,7 +728,9 @@ fun setReturnMark(bookId: Long, value: String?) // null clears; longer than MAX_
 - **Load:** `afterOpen()` (after the first page) → `ReaderIo.launch { BookPrefs.returnMark(id) }` → main thread →
   `returnNav.restore(text)`, guarded by `isDestroyed || bookRef?.id != id || session == null` (a book switched meanwhile
   never gets the previous one's places). A re-parse meanwhile still gets it: the places carry their parse's signature
-  and are found again by fraction. `restore` runs once per open and is a no-op after `reset()`.
+  and are found again by fraction. `restore` runs once per open and is a no-op after `reset()`. **A failed read is not
+  applied** (no `restore(null)`): the history then counts as not loaded and nothing is written this session, so a
+  database hiccup never overwrites the stored lists with this session's places alone.
 - **Save:** on every change of the lists (jump, use, pin, 지우기, re-parse) through `ReturnHost.saveReturnMark(text)` →
   `ReturnWrites.launch { BookPrefs.setReturnMark(id, text) }`: one serial IO lane (`Dispatchers.IO.limitedParallelism(1)`,
   process-wide), so quick "‹" "›" taps are stored in the order they were made (`ReaderIo` is a pool). **Before the load has been applied nothing is written**:
@@ -724,6 +743,7 @@ fun setReturnMark(bookId: Long, value: String?) // null clears; longer than MAX_
 ```kotlin
 internal interface ReturnHost {                       // implemented by ReaderActivity (READER_A)
     val chromeVisible: Boolean
+    val navigating: Boolean                           // a jump is on its way (navJob active)
     fun currentPosition(): DocPosition                // paged: page start; scroll: top line
     fun isOnCurrentPage(pos: DocPosition): Boolean    // paged: on the page; scroll: in the visible range
     fun globalPageOf(pos: DocPosition): Int           // 1-based; estimate until counted (never "~")
@@ -738,10 +758,12 @@ internal interface ReturnHost {                       // implemented by ReaderAc
 internal class ReturnNav(ctx: Context, private val host: ReturnHost) {
     val dock: View            // the history row (ReaderChrome inserts it)
     val chip: View            // the floating chip (ReaderActivity adds it to root, BOTTOM|START)
-    fun pinnedHere(): Boolean                          // the pin icon: back's top is on this page
+    fun pinnedHere(): Boolean                          // the pin icon: back's top is the pin's and on this page
     fun onJump(from: DocPosition)                      // every remembered jump, before it
     fun onManualTurn()
     fun onPinPressed()
+    fun onJumpFailed()                                 // layoutFailed: a use made for this jump is undone
+    fun onSectionLaidOut(section: Int)                 // onSectionStored: its places note their exact page
     fun onChromeShown()                                // hides the chip VIEW (offer kept) + binds the row
     fun onChromeHidden()                               // shows the chip iff offered and its place is off screen
     fun bind()                                         // cached; 0 alloc if unchanged
@@ -758,6 +780,13 @@ each a `FrameLayout`) holding their labels at their own width and the full 48 dp
 so the touch target and the pressed rect hug the words:
 - **Left** = `leftPlace`: `START`, padding 20 / 4 dp, 16 dp `ic_chevron_left` at the start (centred 28 dp in, on the
   icon column), text "N쪽으로", content description "N쪽으로". Tap → `goBack`.
+- **A tap while a jump is on its way** (`host.navigating`) is ignored, on both sides and the chip: the row still
+  describes the page on screen, and a second "‹" would take a second place before the first one is reached. A use
+  whose page shows later keeps the history from before it; `onJumpFailed()` (called by `layoutFailed`) puts it back,
+  and the next page shown with no jump on its way drops it.
+- **A remembered jump with the menu up** stores its origin but leaves the row and the pin to the new page's
+  `bindChrome` (bound before the jump, the row would change over the old page: two e-ink updates for one far seek).
+  A jump never changes the pin's state.
 - **Centre** "지우기": `CENTER`, `minWidth 72dp`, padding 16 dp on each side; never a third of the row. Tap → clear.
 - **Right** = `rightPlace`: `END`, padding 4 / 20 dp, "M쪽으로" with 16 dp `ic_chevron_right` at the end. Tap →
   `goForward`.
@@ -769,13 +798,17 @@ so the touch target and the pressed rect hug the words:
   glyph, 0 when hidden) → both sides short, "‹ 12345" / "23259 ›". Content descriptions keep "12345쪽으로". The check
   runs only when a label or the row width changes.
 - **Labels** are rebuilt only when a page number changes (cached ints), so `bind()` on a page turn with the chrome up
-  allocates nothing. Before a place enters the history its page is asked while it is on screen (`notePage`), so
-  `ReturnPageMemo` keeps its exact page after its section leaves the layout cache.
+  allocates nothing. Before a place enters the history its page is asked while it is on screen (`notePage`), restored
+  places are asked once when the history loads, and every place is asked again whenever its section is laid out
+  (`onSectionLaidOut`, from `BookSession.Listener.onSectionStored`), so `ReturnPageMemo` keeps its exact page after its
+  section leaves the layout cache. The memo holds `2 × MAX + 2` places (both full lists and the page being left; a
+  linear scan, no allocation), so a place several taps deep never falls back to the char estimate.
 - **Lazy views:** `dock` and `chip` start as empty `GONE` frames; their contents are created on first use.
 
 **Chip:** a box on the bars' surface (1 px `edge` on e-ink or `track` on a phone) with `[label 48 dp tall: 18 dp
-chevron + "N쪽으로", 15 sp, padding (12, 0, 14, 0) dp]`, a 1 px vertical line and `[✕ 48×48 dp, "닫기"]`. It always
-offers back's top ("‹ N쪽으로"); a tap = `goBack`. ✕ **only hides** it; 지우기 clears. **Position** (READER_A
+chevron + "N쪽으로", 15 sp, padding (12, 0, 14, 0) dp]`, a 1 px vertical line and `[✕ 48×48 dp, "닫기"]`. It offers
+`chipPlace` ("‹ N쪽으로"): the last jump's origin, or after several jumps in a row their first origin (★3); a tap =
+`chipBack`. ✕ **only hides** it; 지우기 clears. **Position** (READER_A
 `updateChipPosition`, hidden-chrome branch): `bottomMargin = insets[3] + dp(PROGRESS_LANE_DP) + dp(4)`,
 `leftMargin = insets[0] + dp(8)`.
 
@@ -788,16 +821,18 @@ offers back's top ("‹ N쪽으로"); a tap = `goBack`. ✕ **only hides** it; �
    "not the page already shown" guards.
 3. `onManualTurn()` → `returnNav.onManualTurn()`.
 4. `chromeActions.onPinHere()` → `returnNav.onPinPressed()`.
-5. `ReturnHost`: `jumpToReturn(p)` = `jumpTo(p.section, p.offset, -1)`; `saveReturnMark(t)` =
-   `ReturnWrites.launch { BookPrefs.setReturnMark(id, t) }`; `onReturnChanged()` = `if (chromeVisible) bindChrome();
-   updateChipPosition()`.
+5. `ReturnHost`: `navigating` = `navJob?.isActive == true`; `jumpToReturn(p)` = `jumpTo(p.section, p.offset, -1)`;
+   `saveReturnMark(t)` = `ReturnWrites.launch { BookPrefs.setReturnMark(id, t) }`; `onReturnChanged()` =
+   `if (chromeVisible) bindChrome(); updateChipPosition()`.
 6. `bindChrome()`: `returnNav.bind()` and `chrome.setPinned(returnNav.pinnedHere())` (`ReaderChrome.setPinned(on)`:
    filled + "고정 해제" / outline + "이 페이지 고정").
 7. Every page shown and the exact counts: `if (chromeVisible) bindChrome() else returnNav.bind()`.
 8. `reopenDocument`: `val returnF = returnNav.fractions()` before switching sessions (old counts), then
    `returnNav.reparsed(returnF, exact = epub && sameSectionCount)`.
 9. `closeCurrentBook`: `returnNav.reset()`.
-10. `afterOpen`: the history load (§3.3).
+10. `afterOpen`: the history load (§3.3); a failed read posts nothing.
+11. `layoutFailed`: `returnNav.onJumpFailed()` before the old page's bind; `sessionListener.onSectionStored`:
+    `returnNav.onSectionLaidOut(section)`.
 
 **Until 2026-10-05** (replaced above, kept for the record): `ReturnPoints` held a pinned or temporary `mark`, an
 `other` place and `offer: Chip { NONE, MARK, OTHER }`; the left item was the mark (grey "📌 N쪽" while on it), the
@@ -1460,7 +1495,7 @@ Dependencies across owners in phase 1 are only phase-0 stubs:
 | contract | `ui/kit/KitResourcesTest` (+) | `keepAll` inserts U+2060 only between Hangul syllables; ASCII and mixed text unchanged; the same instance is returned when there is no Hangul pair |
 | READER_UI | `reader/StatusTextTest` (new) | each formatter equals its `ReaderFormat` twin over ranges: page 1..99999 × totals, percent 0..100, all 1440 minutes × 12/24 h, chapterLeft −1..999, episode both modes, durations 0..6000 min; the 48-char buffer is never exceeded |
 | READER_UI | `reader/StatusModelTest` (new) | only shown items are formatted; `update` returns false for identical inputs and true for a changed minute, battery, page or dot px; dot < 1 px → false; `chapterStartsHere` blanks CHAPTER only; **[Δ]** `lane` follows `progressBar` even when `bar = −1`; `sample(CHAPTER)` ignores `chapterStartsHere`; **zero allocation**: 10 000 `update` calls allocate 0 bytes after warm-up (extract `TypesetterPerfTest`'s `getThreadAllocatedBytes` helper into `test/.../AllocCounter.kt`) |
-| READER_UI | `reader/ReturnHistoryTest` **[2026-10-05]** (was `ReturnPointsTest`) | every §3.2 call; the user's two ReadEra sequences exactly (1 → 1749 → read → 150; back → on 1749 left 1, right 150; back → on 1 no left, right 1749); forward then back; a new jump after going back cuts forward; ★3 scrubbing keeps the first origin and one manual turn starts a new chain; both caps; one entry per page (push skipped when the top is here); pin / unpin and the pin keeping forward; `restore` under this session's places; `reparsed` maps, drops and dedupes; the chip: 2 turns, ✕, using the history, 지우기; ★5 `chipVisible`; the row's sides and `rowShown` in every state; `label` |
+| READER_UI | `reader/ReturnHistoryTest` **[2026-10-05]** (was `ReturnPointsTest`) | every §3.2 call; the user's two ReadEra sequences exactly (1 → 1749 → 150 with **no page turned**; back → on 1749 left 1, right 150; back → on 1 no left, right 1749); every remembered jump keeps its origin (seek, seek; TOC, link); forward then back; a new jump after going back cuts forward; ★3 the chip offers a chain's first origin and `chipBack` goes there as several ‹ would, a manual turn starts a new chain; both caps (a chain longer than the list); one entry per page (push skipped when the top is here); **pinning never hides the way back** (screenshot 1's state + pin → the row unchanged, the pin filled; reopened on a pinned page; two places on one page; paged back onto an origin); the filled pin only for a pin (`pinTop`; an origin becomes the pin on a tap); pinning forward's top; pin / unpin and the pin keeping forward; `copyFrom` (undo); `restore` under this session's places with the stored pin; `reparsed` maps, drops and dedupes, keeps a moved pin; the chip: 2 turns, ✕, using the history, 지우기; ★5 `chipVisible`; the row's sides and `rowShown` in every state; `label`. `ReturnPageMemoTest`: every place of a full history keeps its page; `ReturnHistoryCodecTest`: the pin's `,p` mark |
 | READER_UI | `reader/ReturnHistoryCodecTest` **[2026-10-05]** (was `ReturnMarkCodecTest`) | round trip of both lists with the signature (bars inside it too); one side, empty signature = EPUB; empty → null; an old "m1" pin → a one-place back list (its old rules: malformed, NaN or negative → null, fraction clamped); a malformed place skipped; fractions clamped; two full lists fit `BookPrefs.MAX_RETURN_MARK`; an overlong text leaves the oldest places out; decode keeps the newest 20 |
 | READER_UI | `reader/LightCurveTest` (new) | brightness.md §8: monotonic; `level` in 1..255; `level(out(pos(fraction(v)))) == v` for v in 1..255; `isExternal` table; **[Δ]** `stillOurs(current, last)` (equal, ±2, ±last/32 → true; the user's 120 vs our 30 → false); `LightProbe.KEY_RE` matches `ColdValue`, `screen_brightness_warm`, `LastWarmLight`, `screen_cool_brightness` and not `font_scale`; the pure `nextVerdict(ask, yes)` covers all 5 edges |
 | READER_UI | `reader/ChromeMathTest` (new) | `labelMaxWidth(rowW = 720 px, density 2) = 288 px`; the label centre equals the row centre for any label width ≤ max; **[Δ]** `stripShort(left, centre, right, rowW, gap)`: false for "‹ 10 페이지로" at 720 px, true for "‹ 12345 페이지로" + "23259 페이지로 ›" at 1.3× font scale; `bookmarkFits(rowW)` flips at 352 dp |
@@ -1498,9 +1533,9 @@ Content descriptions used below are fixed by this spec: "밝기 옵션", "이 �
 | `13d_return`, `13d_forward` | volume-down ×5; tap 360 720; shot `13d_strip`; `tap_label "3쪽으로"`; shot `13d_return`; `tap_label "8쪽으로"`; shot `13d_forward` | **[2026-10-05]** `13d_strip`: label "8 / 167"; row "‹ 3쪽으로" · "지우기", no right item. `13d_return`: label "3 / 167"; no left item (nothing before 3), "지우기", "8쪽으로 ›"; the pin an outline. `13d_forward`: label "8 / 167", "‹ 3쪽으로" again, no right item. |
 | `13e_brightness_opts` | `tap_label "밝기 옵션"`; shot | The brightness row is **still visible**, the icon is now ⌃, and the panel lists "스와이프로 밝기 조절" (switch, off with a filled knob) and "기기 밝기 직접 조절". No question row (the emulator is not e-ink). |
 | `13f_clear` | **[2026-10-05]** after `13i` (on q): `tap_label "지우기"`; shot; then the bars close for `rawshot 10a_pre` and open again for `14_reading_settings` | The row is gone and the pin is an outline |
-| `13g_seek_chip` **[Δ]** | after `13e` (menu open, on 8, back [3]): drag the seek bar thumb to 70 % with `input swipe`, release; drag again to 60 %, release; tap 360 700 (closes the menu); shot. Then volume-down ×2, shot `13h_chip_gone` | `13g`: the chip "‹ 8쪽으로 \| ✕" floats bottom-left above the progress line. It offers the **first** origin of both seeks (★3) and appears even though both seeks were made with the menu open (★5). `13h`: the chip is gone after 2 manual turns. |
-| `13i_row`, `13i_both`, `13i_first`, `13i_ahead` **[2026-10-05]** (the user's two ReadEra shots) | on q (the seeks' landing + 2 turns): open the menu; "8쪽으로"; shot; "3쪽으로"; shot; "8쪽으로", "q쪽으로"; shot | `13i_row`: "‹ 8쪽으로" only. `13i_both` (on 8): "‹ 3쪽으로" · 지우기 · "q쪽으로 ›" (shot 1). `13i_first` (on 3): 지우기 · "8쪽으로 ›" only, the nearest place ahead (shot 2). `13i_ahead`: forward twice, on q with "‹ 8쪽으로" only. |
-| `13d_left_cols`, `13d_cols`, `13i_both_cols`, `13i_first_cols` **[2026-10-05]** | in those steps' dumps (`history_cols n left right`, "" = that side empty) | "지우기" centred at x 358..362 in every state (left only, right only, both); a shown left label ends at x ≤ 240, a shown right one starts at x ≥ 480; an empty side is not in the dump (INVISIBLE) |
+| `13g_seek_chip` **[Δ]** | after `13e` (menu open, on 8, back [3]): drag the seek bar thumb to 70 % with `input swipe`, release (the page m, read from the label); drag again to 60 %, release; tap 360 700 (closes the menu); shot. Then volume-down ×2, shot `13h_chip_gone` | `13g`: the chip "‹ 8쪽으로 \| ✕" floats bottom-left above the progress line, not "m쪽으로". It offers the **first** origin of both seeks (★3, the chip only) and appears even though both seeks were made with the menu open (★5). `13h`: the chip is gone after 2 manual turns. |
+| `13i_row`, `13i_both`, `13i_pin`, `13i_back`, `13i_first`, `13i_ahead` **[2026-10-05]** (the user's two ReadEra shots: at 1 a seek to 1749, from there a seek to 150 with no page turned, ‹, ‹) | on q (the second seek's landing + 2 turns; back [3, 8, m]): open the menu; "m쪽으로"; shot; "이 페이지 고정"; shot; "8쪽으로"; shot; "3쪽으로"; shot; "8쪽으로", "m쪽으로", "q쪽으로"; shot | `13i_row`: "‹ m쪽으로" only (the second seek's origin is a place). `13i_both` (on m): "‹ 8쪽으로" · 지우기 · "q쪽으로 ›" (shot 1). `13i_pin`: the pin filled ("고정 해제") and the row **unchanged** ("8쪽으로", "q쪽으로": the pin never hides the way back). `13i_back` (on 8): "‹ 3쪽으로" · 지우기 · "m쪽으로 ›". `13i_first` (on 3): 지우기 · "8쪽으로 ›" only, the nearest place ahead (shot 2). `13i_ahead`: forward three times, on q with "‹ m쪽으로" only. |
+| `13d_left_cols`, `13d_cols`, `13i_both_cols`, `13i_pin_cols`, `13i_first_cols` **[2026-10-05]** | in those steps' dumps (`history_cols n left right`, "" = that side empty) | "지우기" centred at x 358..362 in every state (left only, right only, both); a shown left label ends at x ≤ 240, a shown right one starts at x ≥ 480; an empty side is not in the dump (INVISIBLE) |
 | `13u_<tag>_history`, `13u_<tag>_empty` **[2026-10-05]** (`history_row`, 흰 바탕 then 마루뷰어) | 지우기 if shown; pin the page P (`13u_pin`: the pin filled, no row); volume-down ×2 (`13u_one`: only "‹ P쪽으로"); "P쪽으로"; shot; 지우기; shot | On P: no left item, "P+2쪽으로 ›" in its third (`13u_cols`, `13u_no_left`), 지우기 at the same x as with the left label alone (`13u_still`); the row ends on the label row (0..2 px, `13u_on_panel`); its background at (8, row centre) is the page colour; (8, label top − 2) is ≥ 12 levels darker (the panel's shadow); after 지우기 no row and the label row at the same y. Ends on P with an empty history. |
 | `13t_<tag>_open` (+ rawshots closed / open / closed2) **[2026-10-05]** (`chrome_look`: 흰 바탕 #FFFFFF/#F5F5F5 shadow, 마루뷰어 #323232/#3C3C3C shadow, 흑백 반전 #000000/#1A1A1A edge #333333; the look set on 설정 → 읽기 설정 between them) | bars closed, open, closed again | The page at (8, 700); the top bar's surface right of ←; the bottom panel's at the label row's centre; the row under the brightness bar ≥ 12 levels darker than the page (shadow) or the edge colour (±2 levels); closed vs closed2 EQUAL below the header band; no RELAYOUT between the marks. Then 흰 바탕 and 흑백 반전 off again, `10a_pre` retaken. |
 | `13w_<tag>_dot`, `_line`, `_above`, `_below` **[2026-10-05]** (`progress_look`: 흰 바탕 #D1D1D1 / #B4B4B4, 마루뷰어 #4B4B4B / #5A5A5A, 흑백 반전 #1F1F1F / #323232; `bot` = the PageView's last row from `pv_rows`) | none: reads 13t's `13t_<tag>_closed` raw | The left end dot's centre (18, bot − 17) in the dot colour; the line colour at x 40 or x 680 on row bot − 17 (the position dot covers at most one); the page colour right above (18, bot − 22) and below (18, bot − 12) the end dot. All ±2 levels. The line before (status colour on row bot − 25, end caps at x 24 and 696) fails the first two. |

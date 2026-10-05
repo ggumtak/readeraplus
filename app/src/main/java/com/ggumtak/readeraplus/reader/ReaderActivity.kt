@@ -1453,8 +1453,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             val text = try {
                 BookPrefs.returnMark(id)
             } catch (t: Throwable) {
+                // Not applied: nothing is stored this session, so an unread history is never overwritten.
                 Log.w(TAG, "return mark load failed", t)
-                null
+                return@launch
             }
             handler.post {
                 if (isDestroyed || bookRef?.id != id || session == null) return@post
@@ -1895,6 +1896,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
 
         override fun onSectionStored(section: Int, layout: SectionLayout) {
+            returnNav.onSectionLaidOut(section) // the return places in it keep their exact page (ReturnPageMemo)
             scroll?.let {
                 it.onSectionStored(section, layout)
                 if (section == stripSection) {
@@ -2435,6 +2437,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         pendingJump = null
         cancelLoadingText()
         if (s.isClosed) return
+        returnNav.onJumpFailed() // a use of the row or the chip for this jump is undone (U §3.4)
         if (curLayout == null || layoutStale()) {
             // Nothing valid on screen to fall back to.
             showError("페이지를 나누지 못했습니다")
@@ -4048,6 +4051,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /** ReturnNav's view of the reader (U §3.5): positions, page numbers, the jump and the history's storage. */
     private val returnHost = object : ReturnHost {
         override val chromeVisible: Boolean get() = this@ReaderActivity.chromeVisible
+        override val navigating: Boolean get() = navJob?.isActive == true
         // Paged: the page start; scroll mode: the virtual page start (ReaderHost.currentPosition()'s scroll branch).
         override fun currentPosition(): DocPosition = this@ReaderActivity.currentPosition()
         override fun isOnCurrentPage(pos: DocPosition): Boolean = this@ReaderActivity.isOnCurrentPage(pos)

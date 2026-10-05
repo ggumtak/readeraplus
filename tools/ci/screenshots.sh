@@ -582,15 +582,16 @@ status_rows() { # STATUS = "위 왼쪽=…; …; 아래 오른쪽=…; 진행 �
 hist_texts() { grep -oE '(text|content-desc)="[^"]*쪽으로"' /tmp/ui.xml 2>/dev/null | sort -u | tr '\n' ' '; } # the row / chip labels
 chrome_pin() { # 13 (+rawshot), 13b–13i, 13f, then rawshot 10a_pre and the bars open again for 14
   # The history row is ReadEra's (user, 2026-10-05: "이전이 없으면 왼쪽이 사라지고 … 오른쪽은 다음이 있으면 생기고"): left
-  # "‹ N쪽으로" = the newest place to go back to, right "M쪽으로 ›" = the nearest one gone back from, each only while it
-  # exists and is not this page; 지우기 between them never moves. The pin saves this page as a place to go back to.
+  # "‹ N쪽으로" = the newest place to go back to, right "M쪽으로 ›" = the nearest one gone back from, each the newest
+  # one that is not this page; 지우기 between them never moves. Every remembered jump's origin is a place (two seeks
+  # with no turn between leave two). The pin saves this page as a place to go back to and never hides an older one.
   # Labels are matched exactly ("3쪽으로" must not match "103쪽으로"); a short label keeps the full one as its description.
   show_chrome || return 1
   shot 13_txt_chrome 1; rawshot 13_txt_chrome
   dump; cp /tmp/ui.xml shots/ui_reader_chrome.xml 2>/dev/null
   if has "이 페이지 고정" && ! has "지우기"; then check 13 0 "bars open, pin outline, no strip"
   else check 13 1 "pin (이 페이지 고정) or no-strip expectation missing"; fi
-  local lb x0 x1 cx p q
+  local lb x0 x1 cx p q m
   lb=$(box_of "페이지 이동" contains); read -r x0 _ x1 _ <<<"${lb:-0 0 0 0}"; cx=$(((x0 + x1) / 2))
   case "$(page_label)" in
     *", 3 / "*) [ "$cx" -ge 358 ] && [ "$cx" -le 362 ]; check 13_label $? "label '$(page_label)' centred at x = $cx";;
@@ -634,32 +635,49 @@ chrome_pin() { # 13 (+rawshot), 13b–13i, 13f, then rawshot 10a_pre and the bar
   shot 13e_brightness_opts 2
   dump; if has "스와이프로 밝기 조절" && has "기기 밝기 직접 조절"; then check 13e 0 "brightness options listed"
   else check 13e 1 "스와이프로 밝기 조절 / 기기 밝기 직접 조절 missing"; fi
-  # 13g: two seeks with the menu open, then close: the chip offers the FIRST origin (scrubbing keeps it)
+  # 13g: two seeks with the menu open, then close: the chip offers the FIRST origin (★3, the chip only: the row keeps
+  # both origins, 13i)
   p=$(page_no)
   seek_to 2 70 || return 1
+  dump; m=$(page_no) # the first seek's page: the second seek's origin
   seek_to 70 60
   adb shell input tap 360 700
   shot 13g_seek_chip 2
-  dump; if has "${p}쪽으로"; then check 13g 0 "chip '‹ ${p}쪽으로' after two seeks"
-  else check 13g 1 "no '${p}쪽으로' chip (shown: $(hist_texts))"; fi
+  dump; if has "${p}쪽으로" && ! has "${m}쪽으로"; then check 13g 0 "chip '‹ ${p}쪽으로' after two seeks (not $m)"
+  else check 13g 1 "no '${p}쪽으로' chip, or '${m}쪽으로' (shown: $(hist_texts))"; fi
   # 13h: two manual turns drop the chip
   adb shell input keyevent KEYCODE_VOLUME_DOWN; sleep 1; adb shell input keyevent KEYCODE_VOLUME_DOWN
   shot 13h_chip_gone 2
   dump; if has "쪽으로" contains; then check 13h 1 "the chip is still shown"; else check 13h 0 "chip gone after 2 turns"; fi
-  # 13i: ReadEra's two shots, as the user took them (1 → 1749 → 150; back; back): here 3 (pinned) → 8 → q (the seek).
-  # On q the row reads "‹ 8쪽으로" only; back to 8 "‹ 3쪽으로 · 지우기 · q쪽으로 ›" (shot 1); back to 3 "지우기 · 8쪽으로 ›"
-  # (shot 2, the nearest place ahead); forward twice ends on q again with "‹ 8쪽으로" only.
+  # 13i: ReadEra's two shots, as the user took them (at 1 a seek to 1749, from there a seek to 150 with no page turned;
+  # ‹; ‹): here 8 → m (13g's first seek) → the second seek, read on to q (13h). On q the row reads "‹ m쪽으로" only;
+  # back to m "‹ 8쪽으로 · 지우기 · q쪽으로 ›" (shot 1), and the pin there fills without changing the row; back to 8
+  # "‹ 3쪽으로 · 지우기 · m쪽으로 ›"; back to 3 "지우기 · 8쪽으로 ›" (shot 2, the nearest place ahead); forward three times
+  # ends on q with "‹ m쪽으로" only.
   show_chrome || return 1
   q=$(page_no)
   shot 13i_row 1
-  if [ -n "$q" ] && has "${p}쪽으로" && ! has "쪽으로" contains 1; then check 13i 0 "on $q: row '‹ ${p}쪽으로' only"
-  else check 13i 1 "on '$q': row $(hist_texts)"; fi
-  tap_label "${p}쪽으로" || return 1
+  if [ -n "$q" ] && [ -n "$m" ] && has "${m}쪽으로" && ! has "쪽으로" contains 1; then
+    check 13i 0 "on $q: row '‹ ${m}쪽으로' only (the second seek's origin is a place)"
+  else check 13i 1 "on '$q' (first seek '$m'): row $(hist_texts)"; fi
+  tap_label "${m}쪽으로" || return 1
   shot 13i_both 2
-  dump; if [ "$(page_no)" = "$p" ] && has "3쪽으로" && has "${q}쪽으로"; then
-    check 13i_both 0 "back on $p: '‹ 3쪽으로' · 지우기 · '${q}쪽으로 ›' (ReadEra's first shot)"
+  dump; if [ "$(page_no)" = "$m" ] && has "${p}쪽으로" && has "${q}쪽으로"; then
+    check 13i_both 0 "back on $m: '‹ ${p}쪽으로' · 지우기 · '${q}쪽으로 ›' (ReadEra's first shot)"
   else check 13i_both 1 "label '$(page_label)', row: $(hist_texts)"; fi
-  history_cols 13i_both_cols "3쪽으로" "${q}쪽으로"
+  history_cols 13i_both_cols "${p}쪽으로" "${q}쪽으로"
+  # 13i_pin: the pin with both sides showing: it fills, and the row stays as it was (the way back is not hidden)
+  tap_label "이 페이지 고정" || return 1
+  shot 13i_pin 2
+  dump; if has "고정 해제" && has "${p}쪽으로" && has "${q}쪽으로"; then
+    check 13i_pin 0 "pinned $m: the pin filled, row still '‹ ${p}쪽으로' · '${q}쪽으로 ›'"
+  else check 13i_pin 1 "pin $(has "고정 해제" && echo filled || echo outline), row: $(hist_texts)"; fi
+  history_cols 13i_pin_cols "${p}쪽으로" "${q}쪽으로"
+  tap_label "${p}쪽으로" || return 1
+  shot 13i_back 2
+  dump; if [ "$(page_no)" = "$p" ] && has "3쪽으로" && has "${m}쪽으로"; then
+    check 13i_back 0 "back on $p: '‹ 3쪽으로' · 지우기 · '${m}쪽으로 ›'"
+  else check 13i_back 1 "label '$(page_label)', row: $(hist_texts)"; fi
   tap_label "3쪽으로" || return 1
   shot 13i_first 2
   dump; if [ "$(page_no)" = 3 ] && has "${p}쪽으로" && ! has "쪽으로" contains 1; then
@@ -668,10 +686,12 @@ chrome_pin() { # 13 (+rawshot), 13b–13i, 13f, then rawshot 10a_pre and the bar
   history_cols 13i_first_cols "" "${p}쪽으로"
   tap_label "${p}쪽으로" || return 1
   sleep 2
+  tap_label "${m}쪽으로" || return 1
+  sleep 2
   tap_label "${q}쪽으로" || return 1
   shot 13i_ahead 2
-  dump; if [ "$(page_no)" = "$q" ] && has "${p}쪽으로" && ! has "쪽으로" contains 1; then
-    check 13i_ahead 0 "forward twice: on $q with '‹ ${p}쪽으로' only"
+  dump; if [ "$(page_no)" = "$q" ] && has "${m}쪽으로" && ! has "쪽으로" contains 1; then
+    check 13i_ahead 0 "forward three times: on $q with '‹ ${m}쪽으로' only"
   else check 13i_ahead 1 "label '$(page_label)', row: $(hist_texts)"; fi
   # 13f: 지우기 empties the history (the bars stay)
   tap_label "지우기" || return 1

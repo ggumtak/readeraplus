@@ -1,9 +1,13 @@
 package com.ggumtak.readeraplus.reader
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** CI 29 13g: the return chip keeps the exact page of its origin after that section leaves the layout cache. */
+/**
+ * CI 29 13g: the return chip and the row keep the exact page of each place after its section leaves the layout cache,
+ * for every place of a full history.
+ */
 class ReturnPageMemoTest {
     private val gen = Any()
     private val unknown = -1
@@ -40,15 +44,26 @@ class ReturnPageMemoTest {
     }
 
     @Test
+    fun everyPlaceOfAFullHistoryKeepsItsPage() {
+        // Both lists full and the page being left: after taps that bring any of them to a top, none reads an estimate.
+        val m = ReturnPageMemo()
+        val places = 2 * ReturnHistory.MAX + 1
+        assertTrue(ReturnPageMemo.SLOTS >= places)
+        for (s in 0 until places) m.resolve(gen, s, 210, s % 7)
+        for (s in places - 1 downTo 0) assertEquals(s % 7, m.resolve(gen, s, 210, unknown))
+    }
+
+    @Test
     fun theLeastRecentlyAskedPlaceMakesRoom() {
         val m = ReturnPageMemo()
-        for (s in 0 until ReturnPageMemo.SLOTS) m.resolve(gen, s, 0, 10 + s)
+        val n = ReturnPageMemo.SLOTS
+        for (s in 0 until n) m.resolve(gen, s, 0, 10 + s)
         m.resolve(gen, 0, 0, unknown) // the strip asks for place 0 again: it stays
-        m.resolve(gen, 9, 0, 7)       // a fifth place replaces place 1, the least recently asked
+        m.resolve(gen, n + 5, 0, 7)   // one place more replaces place 1, the least recently asked
         assertEquals(10, m.resolve(gen, 0, 0, unknown))
         assertEquals(unknown, m.resolve(gen, 1, 0, unknown))
         assertEquals(12, m.resolve(gen, 2, 0, unknown))
-        assertEquals(13, m.resolve(gen, 3, 0, unknown))
-        assertEquals(7, m.resolve(gen, 9, 0, unknown))
+        assertEquals(10 + n - 1, m.resolve(gen, n - 1, 0, unknown))
+        assertEquals(7, m.resolve(gen, n + 5, 0, unknown))
     }
 }

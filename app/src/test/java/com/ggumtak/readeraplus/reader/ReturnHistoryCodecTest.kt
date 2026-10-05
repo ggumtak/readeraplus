@@ -3,6 +3,7 @@ package com.ggumtak.readeraplus.reader
 import com.ggumtak.readeraplus.data.BookPrefs
 import com.ggumtak.readeraplus.format.DocPosition
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -30,6 +31,25 @@ class ReturnHistoryCodecTest {
         assertEquals(listOf(DocPosition(1, 200)), h.forward.map { it.pos })
         assertEquals(0.125f, h.forward.single().fraction, 0f)
         assertEquals(sig, h.sig)
+        assertFalse(h.pinTop)
+    }
+
+    @Test
+    fun thePinsMarkRidesOnBacksTop() {
+        val back = listOf(DocPosition(0, 1000), DocPosition(4, 50))
+        val text = ReturnHistoryCodec.encode(back, listOf(DocPosition(1, 200)), fraction, null, pinTop = true)
+        assertEquals("h1|0,1000,250000;4,50,500000,p|1,200,125000|", text)
+        val h = ReturnHistoryCodec.decode(text)!!
+        assertTrue(h.pinTop)
+        assertEquals(back, h.back.map { it.pos })
+        assertEquals(0.5f, h.back.last().fraction, 0f)
+        // Only back's top counts; a mark elsewhere is read and ignored.
+        assertFalse(ReturnHistoryCodec.decode("h1|0,1000,250000,p;4,50,500000|1,200,125000,p|")!!.pinTop)
+        assertNull(ReturnHistoryCodec.encode(emptyList(), emptyList(), fraction, null, pinTop = true))
+        val ahead = listOf(DocPosition(1, 200))
+        assertEquals("h1||1,200,125000|", ReturnHistoryCodec.encode(emptyList(), ahead, fraction, null, pinTop = true))
+        // Any other 4th field is a malformed place.
+        assertNull(ReturnHistoryCodec.decode("h1|1,2,3,q||"))
     }
 
     @Test
@@ -57,6 +77,7 @@ class ReturnHistoryCodecTest {
         assertEquals(0.25f, h.back.single().fraction, 0f)
         assertTrue(h.forward.isEmpty())
         assertEquals(sig, h.sig)
+        assertTrue(h.pinTop)                                  // it was the user's pin
         assertNull(ReturnHistoryCodec.decode("m1|3|0|0.5|")!!.sig)
         // Clamped as before.
         assertEquals(1f, ReturnHistoryCodec.decode("m1|1|2|1.7|")!!.back.single().fraction, 0f)
@@ -99,9 +120,10 @@ class ReturnHistoryCodecTest {
     fun aFullHistoryFitsTheColumn() {
         // Both lists full of the longest places: well under the column's limit, nothing left out.
         val big = (0 until ReturnHistory.MAX).map { DocPosition(9999, 9_999_999 - it) }
-        val text = ReturnHistoryCodec.encode(big, big, { 0.123456f }, "0123456789abcdef")!!
+        val text = ReturnHistoryCodec.encode(big, big, { 0.123456f }, "0123456789abcdef", pinTop = true)!!
         assertTrue(text.length <= BookPrefs.MAX_RETURN_MARK)
         val h = ReturnHistoryCodec.decode(text)!!
+        assertTrue(h.pinTop)
         assertEquals(big, h.back.map { it.pos })
         assertEquals(big, h.forward.map { it.pos })
     }

@@ -32,6 +32,8 @@ import kotlin.math.roundToInt
 
 internal interface ReturnHost {                       // implemented by ReaderActivity (READER_A)
     val chromeVisible: Boolean
+    /** A jump is on its way (a layout or an image preload): the page on screen is about to change. */
+    val navigating: Boolean
     fun currentPosition(): DocPosition                // paged: page start; scroll: top line
     fun isOnCurrentPage(pos: DocPosition): Boolean    // paged: on the page; scroll: in the visible range
     fun globalPageOf(pos: DocPosition): Int           // 1-based; estimate until counted (never "~")
@@ -55,7 +57,8 @@ internal interface ReturnHost {                       // implemented by ReaderAc
  * and the floating chip shown over the page after a remembered jump ([chip]). The pin of the bottom bar saves this page
  * on the back list. Both views start as empty `GONE` frames; their contents are built on first use, so opening a book
  * inflates nothing here before the first page. Colours follow the chrome's look ([setLook]). Main thread only. Labels
- * are rebuilt only when a page number changes: [bind] on an unchanged state allocates nothing.
+ * are rebuilt only when a page number changes: [bind] on an unchanged state allocates nothing. A tap on the row or the
+ * chip while a jump is on its way is ignored, and a use whose page could not be shown is undone ([onJumpFailed]).
  */
 internal class ReturnNav(private val ctx: Context, private val host: ReturnHost) {
     val dock: View = FrameLayout(ctx).apply { visibility = View.GONE }
@@ -63,6 +66,9 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     private val dockFrame = dock as FrameLayout
     private val chipFrame = chip as FrameLayout
     private val state = ReturnHistory()
+    /** The history before the last use whose page shows later; put back by [onJumpFailed] while [undo]. */
+    private val before = ReturnHistory()
+    private var undo = false
     /** "Is on the current page", made once: the row asks it on every page shown. */
     private val onScreen: (DocPosition) -> Boolean = { host.isOnCurrentPage(it) }
 
@@ -121,16 +127,20 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         if (chipLabel != null) paintChip()
     }
 
-    /** The pin icon: filled while this page is the newest place to go back to (a tap then removes it, 고정 해제). */
+    /** The pin icon: filled while this page is the place the pin saved last (a tap then removes it, 고정 해제). */
     fun pinnedHere(): Boolean = state.pinnedHere(onScreen)
 
     /** Every remembered jump, called before the jump while [from] (the origin) is still the current page. */
     fun onJump(from: DocPosition) {
         notePage(from)
         closed = false
-        // Scrubbing the seek bar changes no place (★3): nothing to store for those jumps.
+        undo = false
         if (state.jumped(from, onScreen)) save()
         pinChipHidden = false
+        // With the menu up, the row waits for the new page's bindChrome: bound now, it would change over the old page
+        // (two e-ink updates for one seek when the page shows later). The chip is under the menu, and a jump leaves
+        // the pin as it is (its origin is pushed, or it is the top already).
+        if (host.chromeVisible) return
         host.onReturnChanged()
         refresh()
     }
@@ -150,6 +160,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     fun onPinPressed() {
         val here = host.currentPosition()
         notePage(here)
+        undo = false
         state.pin(here, onScreen)
         pinChipHidden = false
         save()
@@ -174,7 +185,29 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
      */
     fun bind() {
         closed = false
+        // A page shown with no jump on its way: a return jump landed (or was replaced), nothing left to undo.
+        if (undo && !host.navigating) undo = false
         refresh()
+    }
+
+    /**
+     * The jump the reader was making could not lay its page out (the old page stays): a use of the row or the chip
+     * made for it is undone, so its place is not lost. The host binds the views afterwards.
+     */
+    fun onJumpFailed() {
+        if (!undo) return
+        undo = false
+        state.copyFrom(before)
+        save()
+    }
+
+    /**
+     * [section] was just laid out (BookSession's onSectionStored): its places note their exact page now, so their
+     * labels stay exact once it leaves the layout cache (restored places, places after a relayout). Main thread.
+     */
+    fun onSectionLaidOut(section: Int) {
+        notePlaces(state.back, section)
+        notePlaces(state.forward, section)
     }
 
     /**
@@ -184,6 +217,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     fun restore(saved: String?) {
         if (closed || loaded) return
         loaded = true
+        undo = false
         var relocated = false
         val h = ReturnHistoryCodec.decode(saved)
         if (h != null) {
@@ -193,7 +227,9 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
                 if (relocate) relocated = true
                 host.clampPosition(if (relocate) host.locateFraction(p.fraction) else p.pos)
             }
-            state.restore(h.back.map(place), h.forward.map(place))
+            state.restore(h.back.map(place), h.forward.map(place), h.pinTop)
+            notePlaces(state.back, -1)
+            notePlaces(state.forward, -1)
         }
         // This session's changes, and places found by fraction (stored again: the next open is exact), go with it.
         if (dirty || relocated) save()
@@ -214,6 +250,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
      * section count keeps them as they are); a place without one is dropped.
      */
     fun reparsed(fractions: FloatArray, exact: Boolean) {
+        undo = false
         state.reparsed { i, p ->
             val f = fractions.getOrElse(i) { Float.NaN }
             when {
@@ -230,6 +267,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     /** The book closes: everything is forgotten and both views hide. */
     fun reset() {
         state.clear()
+        undo = false
         loaded = false
         dirty = false
         pinChipHidden = false
@@ -245,33 +283,39 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
 
     // ------------------------------------------------------------------ actions
 
-    /** The row's left item or the chip: back's top; the place left becomes the nearest one forward. */
-    private fun useBack() {
-        val here = host.currentPosition()
-        notePage(here)
-        val t = state.goBack(here, onScreen) ?: return
-        save()
-        jump(t)
-    }
+    /** The row's left item: back's newest place off this page; the place left becomes the nearest one forward. */
+    private fun useBack() = use { here -> state.goBack(here, onScreen) }
 
-    /** The row's right item: forward's top; the place left becomes the newest one back. */
-    private fun useForward() {
+    /** The row's right item: forward's newest place off this page; the place left becomes the newest one back. */
+    private fun useForward() = use { here -> state.goForward(here, onScreen) }
+
+    /** The chip: its place (★3 the chain's first origin), as that many ‹ taps would go. */
+    private fun useChip() = use { here -> state.chipBack(here, onScreen) }
+
+    /**
+     * One use of the history from this page, then the jump. Ignored while a jump is on its way: the views still
+     * describe the page on screen, and a second tap would take another place before the first one is reached.
+     */
+    private inline fun use(step: (DocPosition) -> DocPosition?) {
+        if (host.navigating) return
         val here = host.currentPosition()
         notePage(here)
-        val t = state.goForward(here, onScreen) ?: return
+        before.copyFrom(state)
+        val t = step(here) ?: return
         save()
-        jump(t)
+        undo = !jump(t)
     }
 
     /**
-     * Jumps to [t] and rebinds the views when its page is already up. A jump that shows its page later leaves the
-     * old page up meanwhile: the host binds the chip and the strip with the new page, in its frame (one e-ink update
-     * per tap, not the chip vanishing over the old page first).
+     * Jumps to [t] and rebinds the views when its page is already up (true). A jump that shows its page later leaves
+     * the old page up meanwhile: the host binds the chip and the strip with the new page, in its frame (one e-ink
+     * update per tap, not the chip vanishing over the old page first).
      */
-    private fun jump(t: DocPosition) {
-        if (!host.jumpToReturn(t)) return
+    private fun jump(t: DocPosition): Boolean {
+        if (!host.jumpToReturn(t)) return false
         host.onReturnChanged()
         refresh()
+        return true
     }
 
     /**
@@ -283,9 +327,18 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         host.globalPageOf(pos)
     }
 
+    /** [notePage] for the places of [list] in [section] (-1: all of them). */
+    private fun notePlaces(list: List<DocPosition>, section: Int) {
+        for (i in list.indices) {
+            val p = list[i]
+            if (section < 0 || p.section == section) notePage(p)
+        }
+    }
+
     /** 지우기: both lists empty, also in storage (a stored history still being read is given up). */
     private fun clearAll() {
         state.clear()
+        undo = false
         pinChipHidden = false
         loaded = true
         dirty = false
@@ -317,7 +370,8 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             return
         }
         val sig = host.textSignature()
-        host.saveReturnMark(ReturnHistoryCodec.encode(state.back, state.forward, host::charProgressOf, sig))
+        val text = ReturnHistoryCodec.encode(state.back, state.forward, host::charProgressOf, sig, state.pinTop)
+        host.saveReturnMark(text)
     }
 
     // ------------------------------------------------------------------ dock
@@ -474,11 +528,12 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     // ------------------------------------------------------------------ chip
 
     /**
-     * ★5: the chip shows iff the last remembered jump offers back's top ([ReturnHistory.offer]), the chrome is hidden
-     * and that place is off screen; with [PIN_FLOATS], also whenever there is a place to go back to, until ✕.
+     * ★5: the chip shows iff the last remembered jump offers its way back ([ReturnHistory.offer]: the chain's first
+     * origin, [ReturnHistory.chipPlace]), the chrome is hidden and that place is off screen; with [PIN_FLOATS], also
+     * whenever there is a place to go back to, until ✕.
      */
     private fun updateChip(chromeVisible: Boolean) {
-        val target = state.back.lastOrNull()
+        val target = state.chipPlace()
         val offered = state.offer || (PIN_FLOATS && !pinChipHidden)
         if (target == null || !ReturnHistory.chipVisible(offered, chromeVisible, host.isOnCurrentPage(target))) {
             setChipShown(false)
@@ -514,7 +569,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             gravity = Gravity.CENTER_VERTICAL
             compoundDrawablePadding = ctx.dp(2)
             setPaddingRelative(ctx.dp(12), 0, ctx.dp(14), 0)
-            setOnClickListener { useBack() }
+            setOnClickListener { useChip() }
         }
         box.addView(lbl, LinearLayout.LayoutParams(WRAP_CONTENT, ctx.dp(48)))
         val line = View(ctx)
@@ -583,11 +638,14 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
 /**
  * The return history (U §3.2), browser-style like ReadEra's row "‹ 1 페이지로 | 지우기 | 150 페이지로 ›": [back] holds the
  * places to go back to, the most recent last; [forward] the places gone back from, the nearest last. Both keep [MAX]
- * places (the oldest go first). A remembered jump pushes its origin on [back] and empties [forward]; going back or
- * forward moves the place left to the other list. [offer] = the chip offers back's top (the last jump's way back);
- * [landed] = "only passing through" from a remembered jump until the next manual turn, use, pin or clear (★3).
+ * places (the oldest go first). Every remembered jump pushes its origin on [back] and empties [forward]; going back or
+ * forward moves the place left to the other list. The row offers each list's newest place that is not on this page
+ * ([leftPlace], [rightPlace]), so a pin or a jump origin on this page never hides an older place. [offer] = the chip
+ * offers [chipPlace]; [landed] = a chain of remembered jumps is open (from a jump until the next manual turn, use, pin
+ * or clear): ★3 the chip keeps offering the chain's first origin, while the row steps back one place at a time.
  * Pure; positions are offsets, so page anchors don't matter. "The same page" is the host's question: [here] = "is on
  * the current page", and every place pushed is the current one, so a push is skipped when the list's top is [here].
+ * The queries the row asks on every page shown allocate nothing.
  */
 internal class ReturnHistory {
     private val backList = ArrayList<DocPosition>()
@@ -595,75 +653,99 @@ internal class ReturnHistory {
     val back: List<DocPosition> get() = backList
     val forward: List<DocPosition> get() = forwardList
     var offer = false; var turns = 0; var landed = false
+    /** ★3 The index in [back] of the open chain's first origin (the chip's place while [offer]); -1 = none. */
+    private var chainBase = -1
+    /** back's top was saved by the pin and has not been replaced since: the icon fills on its page ([pinnedHere]). */
+    var pinTop = false
+        private set
 
     /**
      * A remembered jump (TOC, search, bookmark, go-to, seek bar, link, note) from [from], still the current page: it
-     * becomes back's top and the forward list is cut, as in a browser. ★3 A jump before any manual turn since the last
-     * one (scrubbing the seek bar) keeps the chain's first origin: nothing is pushed. Either way the chip offers the
-     * way back again (also after ✕) and counts its turns from here. True when a list changed.
+     * becomes back's top (unless the top is on this page already) and the forward list is cut, as in a browser. The
+     * first jump since the last manual turn, use, pin or clear starts a chain, whose origin the chip offers until it
+     * hides (★3); the chip is offered again (also after ✕) and counts its turns from here. True when a list changed.
      */
     fun jumped(from: DocPosition, here: (DocPosition) -> Boolean): Boolean {
-        var changed = false
-        if (!landed || backList.isEmpty()) {
-            changed = push(backList, from, here) || forwardList.isNotEmpty()
-            forwardList.clear()
-            landed = true
-        }
+        val changed = push(backList, from, here) || forwardList.isNotEmpty()
+        forwardList.clear()
+        if (!landed || chainBase < 0 || chainBase >= backList.size) chainBase = backList.size - 1
+        landed = true
         offer = true
         turns = 0
         return changed
     }
 
-    /** The left item (or the chip) at [at]: back's top, null when there is none; [at] becomes forward's top. */
+    /**
+     * The left item at [at]: back's newest place not on this page ([leftPlace]), null when there is none. The places
+     * above it are on this page (a pin, a jump's origin): they go with [at], which becomes forward's top.
+     */
     fun goBack(at: DocPosition, here: (DocPosition) -> Boolean): DocPosition? {
-        if (backList.isEmpty()) return null
-        val t = backList.removeAt(backList.size - 1)
-        push(forwardList, at, here)
-        offer = false
-        landed = false
-        return t
+        val i = lastOff(backList, here)
+        return if (i < 0) null else backTo(i, at, here)
     }
 
-    /** The right item at [at]: forward's top, null when there is none; [at] becomes back's top. */
+    /**
+     * The chip at [at]: back to [chipPlace] as that many ‹ taps would ([at] and the places passed become the places
+     * ahead, the nearest last); null when there is none.
+     */
+    fun chipBack(at: DocPosition, here: (DocPosition) -> Boolean): DocPosition? {
+        val i = chipIndex()
+        return if (i < 0) null else backTo(i, at, here)
+    }
+
+    /** The right item at [at]: forward's newest place off this page, null when there is none; [at] becomes back's top. */
     fun goForward(at: DocPosition, here: (DocPosition) -> Boolean): DocPosition? {
-        if (forwardList.isEmpty()) return null
-        val t = forwardList.removeAt(forwardList.size - 1)
+        val i = lastOff(forwardList, here)
+        if (i < 0) return null
+        val t = forwardList[i]
+        cut(forwardList, i)
         push(backList, at, here)
-        offer = false
-        landed = false
+        endChain()
         return t
     }
 
     /**
-     * The chrome's pin at [at] (this page): saved as back's top, the forward list kept. When back's top already is this
-     * page ([pinnedHere]: the filled pin), that place is removed instead (고정 해제).
+     * The chrome's pin at [at] (this page): saved as back's top, the forward list kept (less its places on this page,
+     * which the pin stands for now). A jump's origin already on top here becomes the pin. When the pin is filled
+     * ([pinnedHere]), that place is removed instead (고정 해제).
      */
     fun pin(at: DocPosition, here: (DocPosition) -> Boolean) {
-        if (pinnedHere(here)) backList.removeAt(backList.size - 1) else push(backList, at, here)
-        offer = false
-        landed = false
+        if (pinnedHere(here)) {
+            backList.removeAt(backList.size - 1)
+            pinTop = false
+        } else {
+            push(backList, at, here)
+            pinTop = true
+            while (forwardList.isNotEmpty() && here(forwardList[forwardList.size - 1])) {
+                forwardList.removeAt(forwardList.size - 1)
+            }
+        }
+        endChain()
     }
 
-    /** The pin icon's state: back's top is on this page. */
-    fun pinnedHere(here: (DocPosition) -> Boolean): Boolean {
-        val top = backList.lastOrNull() ?: return false
-        return here(top)
-    }
+    /** The pin icon's state: back's top was saved by the pin and is on this page. */
+    fun pinnedHere(here: (DocPosition) -> Boolean): Boolean =
+        pinTop && backList.isNotEmpty() && here(backList[backList.size - 1])
 
-    /** The row's left item: back's top unless it is on this page (the row never offers where you are). */
-    fun leftPlace(here: (DocPosition) -> Boolean): DocPosition? = backList.lastOrNull()?.takeUnless(here)
+    /** The row's left item: back's newest place not on this page (the row never offers where you are). */
+    fun leftPlace(here: (DocPosition) -> Boolean): DocPosition? = backList.getOrNull(lastOff(backList, here))
 
-    /** The row's right item: forward's top unless it is on this page. */
-    fun rightPlace(here: (DocPosition) -> Boolean): DocPosition? = forwardList.lastOrNull()?.takeUnless(here)
+    /** The row's right item: forward's newest place not on this page. */
+    fun rightPlace(here: (DocPosition) -> Boolean): DocPosition? = forwardList.getOrNull(lastOff(forwardList, here))
 
     /** The row shows (with the menu) iff one of its sides does; 지우기 alone is never shown. */
     fun rowShown(here: (DocPosition) -> Boolean): Boolean = leftPlace(here) != null || rightPlace(here) != null
+
+    /** ★3 The chip's place: while it is offered, the open chain's first origin; otherwise back's top. */
+    fun chipPlace(): DocPosition? = backList.getOrNull(chipIndex())
 
     /** 지우기: both lists empty, the chip hides. */
     fun clear() {
         backList.clear()
         forwardList.clear()
-        offer = false; turns = 0; landed = false
+        pinTop = false
+        turns = 0
+        endChain()
     }
 
     /** A manual turn; true when the chip must hide now (the second turn since the jump). */
@@ -682,47 +764,102 @@ internal class ReturnHistory {
     }
 
     /**
-     * The stored lists, loaded after the first page. Places saved or jumped from before they arrived stay on top: the
-     * stored back list goes under them, and the stored forward list is kept only while this session has no places
-     * yet (a jump made meanwhile would have cut it).
+     * The stored lists, loaded after the first page ([storedPin]: the stored back's top is a pin). Places saved or
+     * jumped from before they arrived stay on top: the stored back list goes under them, and the stored forward list is
+     * kept only while this session has no places yet (a jump made meanwhile would have cut it).
      */
-    fun restore(storedBack: List<DocPosition>, storedForward: List<DocPosition>) {
+    fun restore(storedBack: List<DocPosition>, storedForward: List<DocPosition>, storedPin: Boolean = false) {
         val session = backList.isNotEmpty() || forwardList.isNotEmpty()
+        val sessionBack = backList.size
         // The place this session first jumped from may be the stored top already (reopened there): kept once.
         val dup = storedBack.isNotEmpty() && storedBack.last() == backList.firstOrNull()
-        backList.addAll(0, if (dup) storedBack.subList(0, storedBack.size - 1) else storedBack)
+        val under = if (dup) storedBack.subList(0, storedBack.size - 1) else storedBack
+        backList.addAll(0, under)
+        if (chainBase >= 0) chainBase += under.size
+        if (sessionBack == 0 || (dup && sessionBack == 1)) pinTop = pinTop || storedPin
         if (!session) forwardList.addAll(storedForward)
-        trim(backList)
+        trimBack()
         trim(forwardList)
     }
 
     /**
      * After a re-parse: each place goes where [map] puts it, by its index in back then forward order (null drops it);
-     * a place that lands on the one before it is dropped too. The chip's offer goes, as the chain does.
+     * a place that lands on the one before it is dropped too. The chip's offer goes, as the chain does; the pin stays
+     * while its place does.
      */
     fun reparsed(map: (Int, DocPosition) -> DocPosition?) {
         val n = backList.size
-        remap(backList, 0, map)
+        if (!remap(backList, 0, map)) pinTop = false
         remap(forwardList, n, map)
-        offer = false; turns = 0; landed = false
+        turns = 0
+        endChain()
+    }
+
+    /** This history becomes a copy of [o] (a use is undone when its page could not be shown). */
+    fun copyFrom(o: ReturnHistory) {
+        backList.clear()
+        backList.addAll(o.backList)
+        forwardList.clear()
+        forwardList.addAll(o.forwardList)
+        offer = o.offer; turns = o.turns; landed = o.landed; chainBase = o.chainBase; pinTop = o.pinTop
+    }
+
+    private fun chipIndex(): Int =
+        if (offer && chainBase >= 0 && chainBase < backList.size) chainBase else backList.size - 1
+
+    /** Back to back's place [i]: [at] and the places above it (less those on this page) go ahead, the nearest last. */
+    private fun backTo(i: Int, at: DocPosition, here: (DocPosition) -> Boolean): DocPosition {
+        val t = backList[i]
+        push(forwardList, at, here)
+        for (k in backList.size - 1 downTo i + 1) {
+            val p = backList[k]
+            if (!here(p) && forwardList.lastOrNull() != p) forwardList.add(p)
+        }
+        trim(forwardList)
+        cut(backList, i)
+        pinTop = false
+        endChain()
+        return t
+    }
+
+    private fun endChain() {
+        offer = false
+        landed = false
+        chainBase = -1
     }
 
     /** Pushes [p] (the current place) unless the list's top is on this page already; true when it did. */
     private fun push(list: ArrayList<DocPosition>, p: DocPosition, here: (DocPosition) -> Boolean): Boolean {
-        val top = list.lastOrNull()
-        if (top != null && here(top)) return false
+        if (list.isNotEmpty() && here(list[list.size - 1])) return false
         list.add(p)
-        trim(list)
+        if (list === backList) {
+            pinTop = false
+            trimBack()
+        } else {
+            trim(list)
+        }
         return true
     }
 
-    private fun remap(list: ArrayList<DocPosition>, base: Int, map: (Int, DocPosition) -> DocPosition?) {
+    /** The oldest go first; the chain's origin, once gone, is its oldest place still kept. */
+    private fun trimBack() {
+        while (backList.size > MAX) {
+            backList.removeAt(0)
+            if (chainBase > 0) chainBase--
+        }
+    }
+
+    /** True when the list's last place was kept (mapped, possibly onto the one before it). */
+    private fun remap(list: ArrayList<DocPosition>, base: Int, map: (Int, DocPosition) -> DocPosition?): Boolean {
         val old = ArrayList(list)
         list.clear()
+        var lastKept = false
         for (i in old.indices) {
-            val q = map(base + i, old[i]) ?: continue
-            if (list.lastOrNull() != q) list.add(q)
+            val q = map(base + i, old[i])
+            lastKept = q != null
+            if (q != null && list.lastOrNull() != q) list.add(q)
         }
+        return lastKept
     }
 
     companion object {
@@ -736,6 +873,18 @@ internal class ReturnHistory {
         /** "3쪽으로" (the row and the chip add the chevron; style guide 6: the unit after a number is 쪽, attached). */
         fun label(page: Int): String = "${page}쪽으로"
 
+        /** The index of the list's newest place off this page, -1 when there is none (no iterator: asked per page). */
+        private fun lastOff(list: List<DocPosition>, here: (DocPosition) -> Boolean): Int {
+            var i = list.size - 1
+            while (i >= 0 && here(list[i])) i--
+            return i
+        }
+
+        /** Drops the list's places from [i] on. */
+        private fun cut(list: ArrayList<DocPosition>, i: Int) {
+            while (list.size > i) list.removeAt(list.size - 1)
+        }
+
         private fun trim(list: ArrayList<DocPosition>) {
             while (list.size > MAX) list.removeAt(0)
         }
@@ -744,11 +893,12 @@ internal class ReturnHistory {
 
 /**
  * Exact in-section page indexes of the return places, per layout generation ([ReturnHost.globalPageOf]). BookSession
- * keeps only [BookSession.MAX_CACHED] sections laid out; once a place's section has left that cache its index would be a
- * char-proportional estimate, which lands a page short right after a chapter's heading page (CI 29 13g: page 3 =
- * s:1 o:210 read "2쪽으로" after two far seeks). Each place is remembered while its section is laid out and kept
- * until the layout changes. [SLOTS] places, least recently asked replaced first (the strip asks for the tops of both
- * lists on every bind, the chip for back's top, so the live ones stay). Pure; allocates nothing.
+ * keeps only [BookSession.MAX_CACHED] sections laid out; once a place's section has left that cache its index would be
+ * a char-proportional estimate, which lands a page short right after a chapter's heading page (CI 29 13g: page 3 =
+ * s:1 o:210 read "2쪽으로" after two far seeks). Each place is remembered while its section is laid out (on screen
+ * before it becomes a place, when restored, and whenever its section is laid out again: [ReturnNav.onSectionLaidOut])
+ * and kept until the layout changes. [SLOTS] covers every place of both lists plus the page being left; the least
+ * recently asked is replaced first. Pure; allocates nothing (a linear scan of [SLOTS]).
  */
 internal class ReturnPageMemo {
     private val sec = IntArray(SLOTS) { -1 }
@@ -787,7 +937,7 @@ internal class ReturnPageMemo {
     }
 
     companion object {
-        const val SLOTS = 4
+        const val SLOTS = 2 * ReturnHistory.MAX + 2
     }
 }
 
@@ -812,13 +962,16 @@ internal object ReturnWrites {
 /**
  * The persisted history (U §3.3), the text of `book_prefs.return_mark`: `"h1|<back>|<forward>|<textSignature or
  * empty>"`, each list oldest first (back: the most recent last; forward: the nearest last) as `;`-joined places
- * `<section>,<offset>,<char fraction in millionths>`. The fraction places a TXT entry again after a re-parse with other
- * options. An old single pin, `"m1|<section>|<offset>|<charFraction>|<textSignature or empty>"`, reads as a back list
- * of that one place. Pure.
+ * `<section>,<offset>,<char fraction in millionths>`; back's top ends in `,p` when the pin saved it. The fraction
+ * places a TXT entry again after a re-parse with other options. An old single pin, `"m1|<section>|<offset>|<charFraction>|
+ * <textSignature or empty>"`, reads as a back list of that one pinned place. Pure.
  */
 internal object ReturnHistoryCodec {
-    class Place(val pos: DocPosition, val fraction: Float)
-    class Saved(val back: List<Place>, val forward: List<Place>, val sig: String?)
+    class Place(val pos: DocPosition, val fraction: Float, val pin: Boolean = false)
+    class Saved(val back: List<Place>, val forward: List<Place>, val sig: String?) {
+        /** Back's top was saved by the pin (ReturnHistory.pinTop). */
+        val pinTop: Boolean get() = back.lastOrNull()?.pin == true
+    }
 
     private const val PREFIX = "h1"
     private const val OLD_PREFIX = "m1"
@@ -826,14 +979,19 @@ internal object ReturnHistoryCodec {
     /** The longest value `book_prefs.return_mark` takes; the oldest places are left out until the text fits. */
     const val MAX_CHARS = BookPrefs.MAX_RETURN_MARK
 
-    /** The text of both lists ([fraction] = the char progress of a place), or null when both are empty (clears it). */
+    /**
+     * The text of both lists ([fraction] = the char progress of a place; [pinTop] marks back's top as the pin's), or
+     * null when both are empty (clears it).
+     */
     fun encode(
         back: List<DocPosition>,
         forward: List<DocPosition>,
         fraction: (DocPosition) -> Float,
         sig: String?,
+        pinTop: Boolean = false,
     ): String? {
         val b = back.mapTo(ArrayList()) { place(it, fraction(it)) }
+        if (pinTop && b.isNotEmpty()) b[b.size - 1] += ",p"
         val f = forward.mapTo(ArrayList()) { place(it, fraction(it)) }
         val fixed = PREFIX.length + 3 + sig.orEmpty().length
         while (b.isNotEmpty() || f.isNotEmpty()) {
@@ -846,8 +1004,9 @@ internal object ReturnHistoryCodec {
 
     /**
      * Tolerant: null for null, a bad prefix or shape, or no valid place; a malformed place (bad numbers, a negative
-     * section or offset) is skipped; fractions are clamped to 0..1, each list to its newest [ReturnHistory.MAX]. The
-     * signature is everything after the 3rd bar (empty = none, EPUB). "m1" text is an old single pin.
+     * section or offset, a 4th field other than the pin's `p`) is skipped; fractions are clamped to 0..1, each list to
+     * its newest [ReturnHistory.MAX]. The signature is everything after the 3rd bar (empty = none, EPUB). "m1" text is
+     * an old single pin.
      */
     fun decode(text: String?): Saved? {
         if (text == null) return null
@@ -874,12 +1033,12 @@ internal object ReturnHistoryCodec {
         val out = ArrayList<Place>()
         for (item in list.split(';')) {
             val parts = item.split(',')
-            if (parts.size != 3) continue
+            if (parts.size != 3 && !(parts.size == 4 && parts[3] == "p")) continue
             val section = parts[0].toIntOrNull() ?: continue
             val offset = parts[1].toIntOrNull() ?: continue
             val ppm = parts[2].toIntOrNull() ?: continue
             if (section < 0 || offset < 0) continue
-            out.add(Place(DocPosition(section, offset), ppm.coerceIn(0, PPM) / PPM.toFloat()))
+            out.add(Place(DocPosition(section, offset), ppm.coerceIn(0, PPM) / PPM.toFloat(), parts.size == 4))
         }
         return if (out.size > ReturnHistory.MAX) out.subList(out.size - ReturnHistory.MAX, out.size).toList() else out
     }
@@ -901,6 +1060,7 @@ internal object ReturnHistoryCodec {
         val fraction = text.substring(b3 + 1, b4).toFloatOrNull() ?: return null
         if (section < 0 || offset < 0 || fraction.isNaN()) return null
         val sig = text.substring(b4 + 1).takeIf { it.isNotEmpty() }
-        return Saved(listOf(Place(DocPosition(section, offset), fraction.coerceIn(0f, 1f))), emptyList(), sig)
+        val pin = Place(DocPosition(section, offset), fraction.coerceIn(0f, 1f), pin = true)
+        return Saved(listOf(pin), emptyList(), sig)
     }
 }
