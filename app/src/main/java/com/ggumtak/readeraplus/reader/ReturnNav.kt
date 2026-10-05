@@ -455,13 +455,15 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
      * The row: three fixed columns (weight 1 each), each holding its label at its own width and the row's full 48 dp
      * height, so a touch target and a pressed rect hug the words (지우기 is never a third of the row). The side glyphs
      * sit on the bars' icon columns (a 16 dp glyph 20 dp from the edge: centred 28 dp in, like ← and ⏮), 지우기 on the
-     * page label's axis.
+     * page label's axis. The text sits low in the box ([ChromeMath.HISTORY_TEXT_TOP_DP] of top padding): 19 dp above
+     * the panel, as ReadEra's; the box, the touch target, keeps its 48 dp.
      */
     private fun ensureDock() {
         if (left != null) return
         val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val drop = ctx.dp(ChromeMath.HISTORY_TEXT_TOP_DP)
         val l = stripText().apply {
-            setPaddingRelative(ctx.dp(20), 0, ctx.dp(4), 0)
+            setPaddingRelative(ctx.dp(20), drop, ctx.dp(4), 0)
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             setOnClickListener { useBack() }
         }
@@ -470,12 +472,12 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             text = CLEAR
             gravity = Gravity.CENTER
             minWidth = ctx.dp(72)
-            setPadding(ctx.dp(16), 0, ctx.dp(16), 0)
+            setPadding(ctx.dp(16), drop, ctx.dp(16), 0)
             setOnClickListener { clearAll() }
         }
         row.addView(column(c, Gravity.CENTER), LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         val r = stripText().apply {
-            setPaddingRelative(ctx.dp(4), 0, ctx.dp(20), 0)
+            setPaddingRelative(ctx.dp(4), drop, ctx.dp(20), 0)
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
             setOnClickListener { useForward() }
         }
@@ -516,9 +518,11 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         } else {
             ColorDrawable(k.page)
         }
+        // The pressed rect starts where the text's padding does, so it stays centred on the words.
+        val drop = ctx.dp(ChromeMath.HISTORY_TEXT_TOP_DP)
         for (t in listOf(left!!, centre!!, right!!)) {
             t.setTextColor(k.hist)
-            t.background = ctx.chromePressed(k, 8f)
+            t.background = ctx.chromePressed(k, 8f, drop)
         }
         val ink = ColorStateList.valueOf(k.hist)
         leftChevron?.setTintList(ink)

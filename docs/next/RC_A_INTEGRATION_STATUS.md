@@ -726,3 +726,24 @@ S25 분할 화면에서 ReadEra와 나란히: "하단에 … 바가 훨씬 위�
 - 테스트: `ChromeMathTest`(ReadEra 오프셋, 두 줄 터치 겹침 = 아이콘 사이, S25 전체 화면 · 분할 위 창 · 아래 창, 코멧),
   `ChromePaletteTest`(밝기 줄 = 본문 색, 본문 위 대비). CI 13t(`13t_bright` · `_title` · `_edge` · `_under` · `_panel_edge` · `_rows`),
   13u(`_on_panel` 50 px, 그림자 행), 13v(패널 위 끝 = 쪽 표시 가운데 − 50). 점검표 §11f-14–11f-18, UI_SPEC §2.1 · §2.2 · §2.4 · §8.2.
+
+### 리뷰 반영 (2026-10-05)
+- 이동 기록 줄 글자: 48 dp 칸 가운데라 패널 위 24 dp(72 px)로 ReadEra(≈ 55–56.5 px)보다 6 dp 높았다. 세 글자 칸에 위 여백 10 dp
+  (`ChromeMath.HISTORY_TEXT_TOP_DP`)를 주어 글자 · 화살표 가운데가 패널 위 19 dp(57 px), 글자와 그림자 사이 ≈ 9 dp(ReadEra 8.3 dp).
+  칸 · 터치 영역 · 막대 높이는 48 dp 그대로, 눌림 표시는 같은 10 dp 아래에서 시작한다(`chromePressed`의 레이어 인셋: `InsetDrawable`은
+  패딩으로 잡혀 칸의 여백을 덮어쓴다).
+- 위 막대 제목: 아이콘 줄(56 dp)의 빈 아래쪽으로 9 dp 올렸다(`ChromeMath.TITLE_LIFT_DP`, 음수 위 여백). 제목 글자 가운데 ≈ 59.7 dp,
+  패널 색 끝 ≈ 83 dp로 ReadEra(59.8 · 83.7 dp)와 같고 닫힌 위 막대는 140 → 131 dp. 제목은 눌리지 않아 그 자리 탭은 아이콘이 받고,
+  제목 글자(≈ 51 dp부터)는 아이콘 눌림 원(8..48 dp)과 겹치지 않는다. 본문 재배치 없음.
+- `ReaderWindow.floatsAboveBottom`: API 30 전에는 늘 false. 그 전에는 창 위치를 모르고, 전체 화면에서 `insetsOf`가 아래 인셋을 0으로
+  주며 제스처 인셋도 없어(API 29 전) 분할 화면의 아래 창이 떠 있는 창처럼 보여 16 dp가 빠질 수 있었다(위 창은 쓸데없는 16 dp를
+  갖지만 안전한 쪽). `ChromeMathTest.aWindowOfUnknownPositionKeepsTheGap`.
+- 문구: 85 dp는 ReadEra가 분할 화면의 **아래** 창에서 자기 내비게이션 띠(15 dp) 위에 둔 패널 내용이다(사진 네 장 모두 ReadEra가 아래
+  창). 우리 위 창에는 시스템 띠가 없어서 0을 쓰는 것이다(`ChromeMath.PANEL_DP` · `bottomGap`, 테스트, UI_SPEC §2.4, PLAN).
+- 문서: 두 줄 터치가 겹치는 12 dp 띠는 위 줄이 받으므로 그 아래의 ⏭와 쪽 표시 · 회전 밑의 막대는 49 dp부터 36 dp만 제 것(UI_SPEC
+  §2.4, PLAN, 점검표 11f-17). `ReaderChrome` init의 지역 변수 `rows` → `panelRows`(속성 `rows`를 가리지 않게). 테스트 KDoc에 뷰 쪽
+  확인은 CI 13t · 13u와 점검표라고 적었다.
+- 점검표: 11f-14에 이동 기록 글자 위치와 위 막대 제목 · 패널 끝(px), 11f-15에 ReadEra 아래 창의 내비게이션 띠, 11f-16에 흰 바탕 제목 칸과
+  밝기 줄이 붙어 보이는지(그림자 20 % 대 ReadEra ≈ 40 %, 붙어 보이면 0x66)와 밝기 줄 끝에 걸친 본문 줄, 11f-18에 같은 본문 줄(e-ink).
+- 그대로 둔 것: 흰 바탕 그림자 0x33(리뷰도 기기에서 붙어 보일 때만 0x66을 권했다: 11f-16), 자동 밝기 손잡이(16 dp 빈 원, 명세가 고른
+  크기; 사용자가 무겁다고 하면 테두리를 `hist`로, 휴대폰 손잡이 12 dp를 검토).

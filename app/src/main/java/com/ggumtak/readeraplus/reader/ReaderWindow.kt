@@ -107,14 +107,15 @@ internal object ReaderWindow {
 
     /**
      * The window ends above the display's bottom edge: the upper window of a split screen, a pop-up window. Only in
-     * multi-window mode (a full-screen window always reaches the edge, the Comet's too); API 30+ from the window's
-     * bounds on the display, before that every multi-window window counts (`ChromeMath.bottomGap` also asks for no
-     * bottom inset at all: a window at the bottom of a phone always has the navigation bar's or the gesture strip's,
-     * since multi-window never hides the system bars).
+     * multi-window mode (a full-screen window always reaches the edge, the Comet's too), and only from the window's
+     * bounds on the display (API 30+). Before API 30 the position is unknown and the insets cannot tell either: in full
+     * screen [insetsOf] reports no bottom bar inset there although multi-window keeps the navigation bar, and there is
+     * no gesture inset before API 29, so a lower split window would look like a floating one. It counts as reaching the
+     * bottom: the 16 dp minimum stays (`ChromeMath.bottomGap`; an upper window there keeps a gap it does not need).
      */
     fun floatsAboveBottom(activity: Activity): Boolean {
         if (!activity.isInMultiWindowMode) return false
-        if (Build.VERSION.SDK_INT < 30) return true
+        if (Build.VERSION.SDK_INT < 30) return false
         val wm = activity.windowManager
         return wm.currentWindowMetrics.bounds.bottom < wm.maximumWindowMetrics.bounds.bottom
     }

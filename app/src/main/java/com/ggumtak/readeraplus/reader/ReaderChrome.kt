@@ -172,7 +172,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     init {
         top = ChromeBar(ctx, edgeAtTop = false)
         val actionsRow = ctx.horizontal {
-            minimumHeight = ctx.dp(56)
+            minimumHeight = ctx.dp(ChromeMath.ACTIONS_ROW_DP)
             setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
         }
         actionsRow.addView(plainIcon(R.drawable.ic_arrow_back, "뒤로") { actions.onBack() })
@@ -190,11 +190,13 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         top.addView(actionsRow, lp())
 
         // One line, so the bar height never depends on the title; text on the 20 dp keyline (polish 10). The top of the
-        // type scale (U §2.1): 18 sp bold, above the page label's 17 and the history row's 14, as in ReadEra.
+        // type scale (U §2.1): 18 sp bold, above the page label's 17 and the history row's 14, as in ReadEra. Its box
+        // starts inside the action row's empty foot (ChromeMath.TITLE_LIFT_DP): the title block as short as ReadEra's.
+        // Not clickable, so a tap there still reaches the buttons.
         title = ctx.label("", 18f, bold = true, maxLines = 1).apply {
             setPadding(ctx.dp(20), 0, ctx.dp(16), ctx.dp(12))
         }
-        top.addView(title, lp())
+        top.addView(title, lp().apply { topMargin = -ctx.dp(ChromeMath.TITLE_LIFT_DP) })
 
         // The panel ends under the title (its edge there, no rule): the brightness row and its options sit on the page
         // colour itself, with nothing under the row, as in ReadEra (the user, 2026-10-05: "밝기 부분도 … 색을 아예 똑같이").
@@ -248,7 +250,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         // The panel's two rows as low as ReadEra's (ChromeMath.PANEL_DP): the seek row starts 12 dp inside the label row,
         // so their 48 dp touch areas overlap in the empty space between the glyphs, and the label row, added last, takes
         // the touch there (a near miss of the pin or the label never jumps to another chapter or page).
-        val rows = FrameLayout(ctx)
+        val panelRows = FrameLayout(ctx)
         val labelRow = FrameLayout(ctx)
         // Centred on the FULL width with a fixed width (rowW − 2·108 dp, set in setVisible): autosize is unreliable
         // with wrap_content, and the fixed box can never run under the right cluster. No underline (polish 1). The
@@ -309,11 +311,11 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         seekRow.addView(plainIcon(R.drawable.ic_skip_previous, "이전 챕터") { actions.onChapter(false) })
         seekRow.addView(seek, lp(0, ctx.dp(48), 1f))
         seekRow.addView(plainIcon(R.drawable.ic_skip_next, "다음 챕터") { actions.onChapter(true) })
-        rows.addView(seekRow, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+        panelRows.addView(seekRow, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
             topMargin = ctx.dp(ChromeMath.SEEK_TOP_DP)
         })
-        rows.addView(labelRow, FrameLayout.LayoutParams(MATCH_PARENT, ctx.dp(ChromeMath.LABEL_ROW_DP)))
-        bottom.addView(rows, lp())
+        panelRows.addView(labelRow, FrameLayout.LayoutParams(MATCH_PARENT, ctx.dp(ChromeMath.LABEL_ROW_DP)))
+        bottom.addView(panelRows, lp())
         top.visibility = View.GONE
         bottom.visibility = View.GONE
         paint()
@@ -710,7 +712,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
      * bar sits above the strip, and at least [ChromeMath.BOTTOM_GAP_DP] above the screen edge (ReadEra's gap, the user's
      * reference, 2026-10-05; fullscreen hides the navigation bar, so its inset is 0 while the handle still shows): a
      * swipe that starts at the edge never lands on the page bar or the chapter buttons. A floating window without any
-     * bottom inset ends its panel at its own edge, as ReadEra's ([ChromeMath.bottomGap]).
+     * bottom inset ends its panel at its own edge, with ReadEra's 85 dp of rows ([ChromeMath.bottomGap]).
      */
     fun setGestureBottom(px: Int, floats: Boolean) {
         if (gestureBottom == px && floating == floats) return

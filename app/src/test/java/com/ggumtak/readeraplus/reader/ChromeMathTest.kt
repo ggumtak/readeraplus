@@ -52,10 +52,17 @@ class ChromeMathTest {
         assertEquals(48, ChromeMath.HISTORY_ROW_DP)
     }
 
+    /**
+     * The px helpers mirror the views' arithmetic; ReaderChrome builds the label and seek rows' LayoutParams from the
+     * same constants (LABEL_ROW_DP, SEEK_TOP_DP, TOUCH_DP), ReturnNav the history labels' padding from
+     * HISTORY_TEXT_TOP_DP, and the title's margin from TITLE_LIFT_DP. The views themselves are checked by CI 13t / 13u
+     * and the device checklist (11f-14 to 11f-18).
+     */
     @Test
     fun theBottomPanelIsAsLowAsReadEras() {
-        // The user's S25 split screen beside ReadEra (2026-10-05): its page label 25 dp under the panel's top, its seek
-        // track 61 dp (36 dp apart; ours were 47), 24 dp from the track to the panel's content bottom: 85 dp.
+        // The user's S25 split screen beside ReadEra (2026-10-05; ReadEra in the lower window, above its own navigation
+        // strip): its page label 25 dp under the panel's top, its seek track 61 dp (36 dp apart; ours were 47), 24 dp
+        // from the track to the panel's content bottom: 85 dp.
         for (density in listOf(2f, 3f)) {
             assertEquals(Math.round(25 * density), ChromeMath.labelCentre(density))
             assertEquals(Math.round(61 * density), ChromeMath.seekCentre(density))
@@ -98,7 +105,8 @@ class ChromeMathTest {
 
     @Test
     fun s25SplitScreenUpperWindowEndsAtItsEdge() {
-        // The upper window has no bottom inset at all (the system's strip is under the lower window): ReadEra's 85 dp.
+        // Our upper window has no bottom inset at all (the system's strip is under the lower window): no gap, 85 dp of
+        // rows (ReadEra's panel content, measured in the lower window above its own 15 dp navigation strip).
         val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 48, floats = true)
         assertEquals(0, gap)
         assertEquals(255, ChromeMath.panelHeight(3f, gap))       // 85 dp
@@ -107,6 +115,45 @@ class ChromeMathTest {
         assertEquals(48, ChromeMath.bottomGap(barInset = 48, gestureInset = 48, minGap = 48, floats = false))
         // A floating window that still has a bottom inset (a pop-up over the strip) keeps it.
         assertEquals(48, ChromeMath.bottomGap(barInset = 0, gestureInset = 48, minGap = 48, floats = true))
+    }
+
+    @Test
+    fun aWindowOfUnknownPositionKeepsTheGap() {
+        // Before API 30 ReaderWindow.floatsAboveBottom answers false for every window: a lower split window in full
+        // screen reports no bottom inset there (insetsOf zeroes the bars, no gesture inset before API 29), so taken as
+        // floating it would lose the 16 dp and end its seek row on the navigation bar.
+        assertEquals(48, ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 48, floats = false))
+        assertEquals(0, ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 48, floats = true))
+    }
+
+    @Test
+    fun theHistoryRowTextSitsAsLowAsReadEras() {
+        // ReadEra in the user's S25 split screen (2026-10-05): its history text's centre 55–56.5 px (≈ 18.5 dp) above its
+        // panel, the glyphs ≈ 25 px (8.3 dp) above the shadow. Ours, centred in the 48 dp box, sat 72 px (24 dp) above.
+        val fromTop = (ChromeMath.HISTORY_ROW_DP + ChromeMath.HISTORY_TEXT_TOP_DP) / 2
+        val abovePanel = ChromeMath.HISTORY_ROW_DP - fromTop
+        assertEquals(29, fromTop)
+        assertEquals(19, abovePanel)
+        assertEquals(56.5f, abovePanel * 3f, 1f)                 // 57 px on the S25
+        // A 14 sp line's glyphs reach ≈ 6 dp under their centre: ≈ 9 dp clear of the 4 dp shadow over the row's foot.
+        assertTrue(ChromeMath.HISTORY_ROW_DP - 4 - (fromTop + 6) in 8..10)
+        // The box keeps the bars' 48 dp touch target.
+        assertEquals(ChromeMath.TOUCH_DP, ChromeMath.HISTORY_ROW_DP)
+    }
+
+    @Test
+    fun theTitleStartsInTheActionRowsEmptyFoot() {
+        // ReadEra (the user's S25 split screen, 2026-10-05): the title's glyph centre ≈ 59.8 dp under the bar's top, the
+        // surface's end ≈ 83.7 dp; ours were 68.8 / 91.7 dp, the action icons at the same 28 dp. At 18 sp the title's
+        // glyphs start ≈ 4 dp (13 px) under its box's top and centre ≈ 12.7 dp (38 px) into it; the box is ≈ 36 dp.
+        val titleTop = ChromeMath.ACTIONS_ROW_DP - ChromeMath.TITLE_LIFT_DP
+        assertEquals(47, titleTop)
+        assertEquals(59.8f, titleTop + 38 / 3f, 1f)
+        assertEquals(83.7f, titleTop + 36f, 1f)
+        // The buttons' 40 dp pressed circle ends at 48 dp: the glyphs stay under it; the title takes no touch.
+        val circleBottom = (ChromeMath.ACTIONS_ROW_DP + 40) / 2
+        assertEquals(48, circleBottom)
+        assertTrue(titleTop + 4 > circleBottom)
     }
 
     @Test

@@ -37,6 +37,11 @@ class ChromePaletteTest {
         }
     }
 
+    /**
+     * The token only: that ChromeBar fills the top bar's rows from `pageFrom` (the brightness row) with this token is
+     * checked on the emulator's phone looks by CI 13t_bright / 13t_under, and on the S25 and the Comet (e-ink) by
+     * checklist 11f-16 and 11f-18.
+     */
     @Test
     fun theBrightnessRowIsThePageColourItself() {
         // The user (2026-10-05, beside ReadEra): "색 조절하는 부분만이라도 색을 아예 똑같이". The row is filled with the

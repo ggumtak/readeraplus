@@ -207,13 +207,19 @@ internal fun Context.chromeIconBackground(look: ChromePalette, active: Boolean):
     return LayerDrawable(arrayOf(on, press)).apply { paddingMode = LayerDrawable.PADDING_MODE_STACK }
 }
 
-/** A text cell's or a row's pressed overlay in [look], with corners of [radiusDp]; null on e-ink. */
-internal fun Context.chromePressed(look: ChromePalette, radiusDp: Float): Drawable? {
+/**
+ * A text cell's or a row's pressed overlay in [look], with corners of [radiusDp], starting [topInset] px under the
+ * view's top (a cell whose text sits low in its box: the rect still hugs the words); null on e-ink.
+ */
+internal fun Context.chromePressed(look: ChromePalette, radiusDp: Float, topInset: Int = 0): Drawable? {
     if (look.pressed == 0) return null
-    return PressedList(GradientDrawable().apply {
+    val rect = GradientDrawable().apply {
         setColor(look.pressed)
         cornerRadius = dpF(radiusDp)
-    })
+    }
+    // A layer inset, not an InsetDrawable: an inset counts as the drawable's padding, which would replace the view's own.
+    val inner: Drawable = if (topInset > 0) LayerDrawable(arrayOf(rect)).apply { setLayerInsetTop(0, topInset) } else rect
+    return PressedList(inner)
 }
 
 /** [d] while pressed, else nothing; fading out in [PRESS_FADE_MS], or at once while the system's animations are off. */
