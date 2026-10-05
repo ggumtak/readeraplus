@@ -1566,7 +1566,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         ownerHighlights.clear()
         // The pin and the jump origins belong to this book; a pin load still in flight is dropped (U §3.3).
         returnNav.reset()
-        backlog.clear()
+        clearBacklog()
         pendingJump = null
         handler.removeCallbacks(cadenceRefresh)
         cadenceRefreshPending = false
@@ -1854,7 +1854,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             putJumpMark(found.section, found.offset, oj.jump, foundLength)
             // Not a user jump: no return point, the peek goes on (the page is still the note's).
             peek.on(PeekRule.Event.ANCHOR_MOVE)
-            backlog.clear()
+            clearBacklog()
             navigateTo(found.section, found.offset, -1, Nav.JUMP)
             toast("노트 위치를 다시 찾았습니다")
         }
@@ -2187,7 +2187,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             if (l == null && !s.isClosed) {
                 // The viewport keeps the last known line; queued steps toward the failed section are dropped.
                 scroll?.stopMotion()
-                backlog.clear()
+                clearBacklog()
                 toast("이 부분을 표시하지 못했습니다")
             }
         }
@@ -2429,7 +2429,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /** A foreground layout returned nothing although the session is still current. */
     private fun layoutFailed(s: BookSession) {
-        backlog.clear()
+        clearBacklog()
         pendingJump = null
         cancelLoadingText()
         if (s.isClosed) return
@@ -2486,6 +2486,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     /** RAPerf: the turns a flush applies count from the first of them queued, unless an earlier turn still waits. */
+    /** Drops the queued turns and their RAPerf start ([perfQueuedFrom]), so a later flush never times from them. */
+    private fun clearBacklog() {
+        backlog.clear()
+        perfQueuedFrom = 0L
+    }
+
     private fun startQueuedPerf() {
         val q = perfQueuedFrom
         if (q == 0L) return
@@ -2645,7 +2651,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val s = session
         val l = curLayout
         if (s == null || l == null) {
-            backlog.clear()
+            clearBacklog()
             return
         }
         if (navJob?.isActive == true || layoutStale()) return
@@ -2677,6 +2683,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 return
             }
             if (walk.pageIndex != curPageIdx) showPage(curSection, l, walk.pageIndex, Nav.TURN)
+            else perfTurnFrom = 0L // nothing shown (+1 −1, or every turn past the edge): no stale turn start
         } else {
             navigateTo(walk.section, 0, walk.pageIndex, Nav.TURN)
         }
@@ -2742,7 +2749,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // N §6.2 / §6.4: the user went elsewhere (a remembered jump, the return point): reading resumes normally.
         endPeek(PeekRule.Event.USER_JUMP)
         anchorJob?.cancel()
-        backlog.clear()
+        clearBacklog()
         navigateTo(section, offset, pageIndex, Nav.JUMP, fraction)
     }
 
@@ -3422,7 +3429,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 safely { ReaderPanels.closeSearchBar(this@ReaderActivity) }
                 ownerHighlights.clear()
                 returnNav.reparsed(markF, exact = d.format == BookFormat.EPUB && s.sectionCount == oldCount)
-                backlog.clear()
+                clearBacklog()
                 lastChapterIdx = Int.MIN_VALUE
                 // Where the needle was found again (the anchored break), else the estimate.
                 val off = if (l.anchorBreak >= 0) l.anchorBreak else target.offset.coerceIn(0, l.content.length)
@@ -3667,7 +3674,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 scrollCloseAtSettle = false
                 // This touch stops a step waiting for its section (PageView's stopMotion): the turns queued
                 // behind that step go with it.
-                if (sc.pending) backlog.clear()
+                if (sc.pending) clearBacklog()
             }
         }
 

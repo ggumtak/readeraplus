@@ -231,6 +231,9 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
      * [kind] ([PerfLines]). The reader calls it only with RAPerf DEBUG on.
      */
     fun traceTurn(inputAt: Long, downAt: Long = 0L, waitMs: Long = -1L, kind: Int = PerfLines.INPUT_NONE) {
+        // Two shows before one frame (a waited-for page, then the queued turns' flush in the same message): the frame
+        // is timed from the earliest input it answers, with that input's contact, wait and kind.
+        if (turnTraceFrom != 0L && turnTraceFrom <= inputAt) return
         turnTraceFrom = inputAt
         turnTraceDown = downAt
         turnTraceWait = waitMs

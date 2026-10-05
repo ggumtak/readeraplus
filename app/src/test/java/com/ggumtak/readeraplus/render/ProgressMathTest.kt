@@ -122,7 +122,9 @@ class ProgressMathTest {
             }
         }
         repeat(3) { loop() }
-        val bytes = AllocCounter.measure(loop)!!
+        // The least of three runs: a per-frame allocation would cost ≥ 10 000 bytes every time, while a one-off
+        // (a JIT deoptimisation re-creating an eliminated object, seen once as 48 bytes in a full suite run) does not.
+        val bytes = (1..3).minOf { AllocCounter.measure(loop)!! }
         assertEquals("10 000 frames' geometry allocated $bytes bytes", 0L, bytes)
         assertTrue(sink != 0f)
     }
