@@ -165,7 +165,11 @@ internal class PagePalette private constructor(
          * 최대한 똑같게"): the status gold is #FFD387, not ≈ #F0D096 (the JPEG copies agree once their 4:2:0 chroma
          * is modelled: a luma plateau of 215 and a chroma fit of #FFD387 on four screenshots, text and battery icon
          * alike, where our own #F0D096 comes back as #F1D097), and the shadow is opaque black, not 88 % (its darkest
-         * pixels: luma 4–6 against our 10–12 at 0xE0, the 1st percentile 11 against 14); offset and blur unchanged.
+         * pixels: luma 4–6 against our 10–12 at 0xE0, the 1st percentile 11 against 14; 0xE0 cannot go below 6.1);
+         * offset and blur unchanged. A least-squares fit on the shadow-only pixels returns 0.87–0.88 on our own page
+         * (0xE0 = 0.878) and ≈ 0.92 to ≥ 1 on MaruViewer's four, so 0xFF is the top of that range (0xF0–0xF4 the middle,
+         * if the S25 side by side reads ours heavier). On e-ink the shadow is drawn as before: ≈ 5–7 % of its pixels sit
+         * one panel level darker than at 0xE0, none two.
          * Its status line has no shadow: no pixel around those glyphs or the battery icon is more than 2 levels darker
          * than the page (the darker-looking ones are chroma fringes at the page's luma), nor its white page's status
          * (#323232), so [status] stays flat.
