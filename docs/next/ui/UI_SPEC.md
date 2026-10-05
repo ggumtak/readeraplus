@@ -431,13 +431,13 @@ The accent is the page's own status colour. E-ink sets are the old `Ink` colours
 | page (the history row; **[2026-10-05, later]** the brightness row and its options: the page's own pixels) | #FFFFFF | #323232 | #000000 | the page |
 | surface | #F5F5F5 | #3C3C3C | #1A1A1A | the page |
 | text / text2 | #1A1A1A / #5E5E5E | #DDDDDD / #A8A8A8 | #FFFFFF / #B3B3B3 | grey(0) / grey(0x55): #000/#555, #DDD/#A4A4A4, #FFF/#AAA |
-| accent | #000000 | #F0D096 | #FFFFFF | the page's status colour |
+| accent | #000000 | #FFD387 (**[2026-10-05, later]** MaruViewer's status gold re-measured on its PNGs; was #F0D096) | #FFFFFF | the page's status colour |
 | divider = rule | #DDDDDD | #4E4E4E | #333333 | divider grey(0xCC), rule grey(0) |
 | edge | none | none | #333333 | grey(0) |
 | track (also, on a phone, the 1 px border of the chip and the seek preview) | #C8C8C8 | #606060 | #4A4A4A | grey(0x99) |
 | hist (also the brightness row's icons and its NONE link) | #5E5E5E | #A8A8A8 | #B3B3B3 | grey(0) |
 | shadow | #33000000 | #80000000 | none | none |
-| pressed / active | #14000000 / #38000000 | #1AFFFFFF / #4DF0D096 | #1AFFFFFF / #42FFFFFF | none |
+| pressed / active | #14000000 / #38000000 | #1AFFFFFF / #4DFFD387 | #1AFFFFFF / #42FFFFFF | none |
 
 Contrast floors (`ChromePaletteTest`): text on surface ≥ 7, text2 ≥ 4.5, history row on the page ≥ 4.5, accent ≥ 3;
 **[2026-10-05, later]** on the page colour too, for the brightness row and its options: `hist` ≥ 4.5, text ≥ 7, text2 ≥ 4.5,

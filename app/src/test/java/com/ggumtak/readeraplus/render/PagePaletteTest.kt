@@ -55,19 +55,44 @@ class PagePaletteTest {
         val m = PagePalette.MARU
         assertEquals(0xFF323232.toInt(), m.background)
         assertEquals(0xFFDDDDDD.toInt(), m.text)
-        assertEquals(0xFFF0D096.toInt(), m.status)
-        // A short, nearly black shadow toward the lower right, fitted to the screenshot: ≈ 2.2 px right, 1.1 px down,
-        // sigma ≈ 1.25 px, 88 % black (at ≈ 2.75 px per dp).
+        // The status gold of MaruViewer's original PNG screenshots (2026-10-05; was ≈ #F0D096 from a JPEG copy),
+        // for the texts and the battery icon alike: ≈ 9.1 : 1 on the page, a gold (red > green > blue).
+        assertEquals(0xFFFFD387.toInt(), m.status)
+        assertEquals(9.1, contrast(m.status, m.background), 0.05)
+        val r = m.status shr 16 and 0xFF
+        val g = m.status shr 8 and 0xFF
+        assertTrue(r > g && g > (m.status and 0xFF))
+        // A short, opaque black shadow toward the lower right: ≈ 2.0 px right, 1.2 px down, sigma ≈ 1.35 px on the S25
+        // (3 px per dp); MaruViewer's darkest shadow pixels are darker than our 88 % black gave (2026-10-05).
         assertTrue(m.hasShadow)
         assertEquals(0.67f, m.shadowDxDp, 0f)
         assertEquals(0.4f, m.shadowDyDp, 0f)
         assertEquals(0.45f, m.shadowSigmaDp, 0f)
-        assertEquals(0xE0000000.toInt(), m.shadowColor)
+        assertEquals(0xFF000000.toInt(), m.shadowColor)
         // A dark page (night quote fills, the night e-ink cadence) whose pictures keep their colours.
         assertTrue(m.dark)
         assertFalse(m.invertImages)
         // ≈ 9.4 : 1, like the screenshot.
         assertEquals(9.4, contrast(m.text, m.background), 0.1)
+    }
+
+    @Test
+    fun onlyTheMaruViewerPageChangedWithItsPngColours() {
+        // 흰 바탕 and 흑백 반전 keep their status colour and stay shadowless (MaruViewer's white page has a #323232 status
+        // line; ours stays the black of before). The shadow is only ever the body text's: no look has another one.
+        assertEquals(rgb(0), PagePalette.PAPER.status)
+        assertEquals(rgb(255), PagePalette.NIGHT.status)
+        for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT)) {
+            assertEquals(0, p.shadowColor)
+            assertEquals(0f, p.shadowRadiusPx(3f), 0f)
+        }
+        // 흑백 반전 over the MaruViewer page is still the black page, without the gold or the shadow.
+        val n = PagePalette.of(PageTheme.MARU, true)
+        assertSame(PagePalette.NIGHT, n)
+        assertFalse(n.hasShadow)
+        // The shadow is opaque but the blur keeps it soft: Android's radius for sigma 1.35 px on the S25.
+        assertEquals(1.47f, PagePalette.MARU.shadowRadiusPx(3f), 0.01f)
+        assertEquals(0xFF, PagePalette.MARU.shadowColor ushr 24)
     }
 
     @Test
@@ -180,7 +205,7 @@ class PagePaletteTest {
         // User (2026-10-05): "25때는 약간 빨간색으로 바뀌고". The status colour 65 % of the way to #E53935 on each look.
         assertEquals(0xFF952522.toInt(), PagePalette.PAPER.batteryLow)
         assertEquals(0xFFEE7E7C.toInt(), PagePalette.NIGHT.batteryLow)
-        assertEquals(0xFFE96E57.toInt(), PagePalette.MARU.batteryLow)
+        assertEquals(0xFFEE6F52.toInt(), PagePalette.MARU.batteryLow)
         for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT, PagePalette.MARU)) {
             val low = p.batteryLow
             // Redder than the status colour: more red than green and blue, and still clear on the page (a graphic at

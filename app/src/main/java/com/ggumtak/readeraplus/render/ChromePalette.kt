@@ -66,9 +66,9 @@ internal class ChromePalette private constructor(
 
         private val MARU = ChromePalette(
             page = rgb(0x323232), surface = rgb(0x3C3C3C), text = rgb(0xDDDDDD), text2 = rgb(0xA8A8A8),
-            accent = rgb(0xF0D096), divider = rgb(0x4E4E4E), rule = rgb(0x4E4E4E), edge = 0, track = rgb(0x606060),
+            accent = rgb(0xFFD387), divider = rgb(0x4E4E4E), rule = rgb(0x4E4E4E), edge = 0, track = rgb(0x606060),
             hist = rgb(0xA8A8A8), shadow = 0x80000000.toInt(), pressed = 0x1AFFFFFF,
-            active = 0x4DF0D096, motion = true, eink = false, dark = true,
+            active = 0x4DFFD387, motion = true, eink = false, dark = true,
         )
 
         /** 흑백 반전: a shadow is invisible on black, so the bars get a 1 px line instead. */

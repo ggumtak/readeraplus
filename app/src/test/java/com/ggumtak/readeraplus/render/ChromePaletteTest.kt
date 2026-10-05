@@ -78,7 +78,9 @@ class ChromePaletteTest {
             assertEquals(p.status, ChromePalette.of(p, false).accent)
             assertEquals(p.status, ChromePalette.of(p, true).accent)
         }
-        assertEquals(0xFFF0D096.toInt(), ChromePalette.of(PagePalette.MARU, false).accent)
+        // MaruViewer's status gold as measured on its PNG screenshots (2026-10-05), and the active circle in it.
+        assertEquals(0xFFFFD387.toInt(), ChromePalette.of(PagePalette.MARU, false).accent)
+        assertEquals(0x4DFFD387, ChromePalette.of(PagePalette.MARU, false).active)
     }
 
     @Test

@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * Draws a laid-out page. The page's content box is placed at (contentLeft, contentTop) in canvas coordinates.
  * Colours come from the settings' [PagePalette]: black text on white, white on black when settings.invert (pictures
- * then drawn inverted too), or a theme's own (마루뷰어: light text with a short shadow on dark grey, gold status lines);
+ * then drawn inverted too), or a theme's own (마루뷰어: light text with a short shadow on dark grey, flat gold status lines);
  * the progress line in its own faint greys ([PagePalette.progressLine], whole e-ink levels on e-ink).
  *
  * Glyph positions come exclusively from [LineGeometry.charPositions]; text is drawn in segments split at
@@ -58,7 +58,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
 
     /**
      * Both status lines in the phone's own UI font (Typeface.DEFAULT: Samsung's on the S25, as MaruViewer draws its status
-     * line), never the book's.
+     * line), never the book's. Flat, never the body's text shadow: MaruViewer draws its status line without one (its glyph
+     * shapes, stroke weight and 13 sp ink match ours on the S25 screenshots, 2026-10-05; [PagePalette.MARU]).
      */
     private val statusPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
         typeface = Typeface.DEFAULT

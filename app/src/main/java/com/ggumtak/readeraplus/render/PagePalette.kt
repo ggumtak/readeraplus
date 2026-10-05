@@ -13,7 +13,10 @@ import com.ggumtak.readeraplus.settings.ReaderSettings
 internal class PagePalette private constructor(
     val background: Int,
     val text: Int,
-    /** Status lines: their texts and the battery icon (the progress line has its own greys: [progressLine]). */
+    /**
+     * Status lines: their texts and the battery icon (the progress line has its own greys: [progressLine]). Drawn flat,
+     * without the text shadow on every look: MaruViewer's own status line has none (measured 2026-10-05, [MARU]).
+     */
     val status: Int,
     /** Text shadow toward the lower right, in dp; a [shadowSigmaDp] of 0 is no shadow. */
     val shadowDxDp: Float,
@@ -59,8 +62,8 @@ internal class PagePalette private constructor(
     /**
      * MaruViewer's battery icon at one bar (≤ 25 %), on phones (user, 2026-10-05: "25때는 약간 빨간색으로 바뀌고"): the
      * [status] colour [LOW_SHARE] of the way to [LOW_RED], per channel, so it stays this look's colour, only redder:
-     * 흰 바탕 #952522 (dark red on white, 8.2:1), 흑백 반전 #EE7E7C (light red on black, 7.9:1), MARU #E96E57 (salmon beside
-     * the gold on #323232, 4.2:1 against the gold's 8.7:1). E-ink keeps [status] (the renderer).
+     * 흰 바탕 #952522 (dark red on white, 8.2:1), 흑백 반전 #EE7E7C (light red on black, 7.9:1), MARU #EE6F52 (salmon beside
+     * the gold on #323232, 4.3:1 against the gold's 9.1:1). E-ink keeps [status] (the renderer).
      */
     val batteryLow: Int = blend(status, LOW_RED, LOW_SHARE)
 
@@ -158,10 +161,18 @@ internal class PagePalette private constructor(
          * Re-checked 2026-10-05 against our own page beside MaruViewer on the same phone (S25, 3 px per dp; the mean
          * darkening around the glyphs, fitted with the same model): our shadow reached ≈ 0.4 px further right; MaruViewer
          * is ≈ 2.0 px right, 1.2 px down, same blur and strength, so dx is 0.67 dp (fit residual at the noise floor).
+         * Colours re-measured 2026-10-05 on the original 1080 × 2340 PNGs (user: "위에 상태표시 글꼴과 색상도
+         * 최대한 똑같게"): the status gold is #FFD387, not ≈ #F0D096 (the JPEG copies agree once their 4:2:0 chroma
+         * is modelled: a luma plateau of 215 and a chroma fit of #FFD387 on four screenshots, text and battery icon
+         * alike, where our own #F0D096 comes back as #F1D097), and the shadow is opaque black, not 88 % (its darkest
+         * pixels: luma 4–6 against our 10–12 at 0xE0, the 1st percentile 11 against 14); offset and blur unchanged.
+         * Its status line has no shadow: no pixel around those glyphs or the battery icon is more than 2 levels darker
+         * than the page (the darker-looking ones are chroma fringes at the page's luma), nor its white page's status
+         * (#323232), so [status] stays flat.
          */
         val MARU = PagePalette(
-            background = 0xFF323232.toInt(), text = 0xFFDDDDDD.toInt(), status = 0xFFF0D096.toInt(),
-            shadowDxDp = 0.67f, shadowDyDp = 0.4f, shadowSigmaDp = 0.45f, shadowColor = 0xE0000000.toInt(),
+            background = 0xFF323232.toInt(), text = 0xFFDDDDDD.toInt(), status = 0xFFFFD387.toInt(),
+            shadowDxDp = 0.67f, shadowDyDp = 0.4f, shadowSigmaDp = 0.45f, shadowColor = 0xFF000000.toInt(),
             dark = true, invertImages = false,
         )
 
