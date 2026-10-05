@@ -41,6 +41,36 @@ internal object EpubTestUtil {
             "<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\">\n" +
             "<head><title>T</title>$head</head>\n<body>\n$body\n</body>\n</html>\n"
 
+    /**
+     * A whole-book XHTML item as TXT→EPUB converters write it, of about [utf8Bytes]: a class on every `<p>`, an id
+     * on each chapter heading, some classed `<span>`s and no '&' anywhere. With [wordPis] every 4th paragraph also
+     * starts with the `<?xml:namespace … />` that Word-made HTML repeats (no "?>" after it).
+     */
+    fun converterItem(utf8Bytes: Int, wordPis: Boolean = false): String {
+        val sb = StringBuilder(utf8Bytes / 2)
+        var bytes = 0
+        fun add(s: String) {
+            sb.append(s)
+            bytes += s.toByteArray(Charsets.UTF_8).size
+        }
+        add("<?xml version='1.0' encoding='utf-8'?>\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\n<head><title>통짜 소설</title>")
+        add("<link href=\"../Styles/stylesheet.css\" rel=\"stylesheet\" type=\"text/css\"/></head>\n<body class=\"calibre\">\n")
+        var p = 0
+        while (bytes < utf8Bytes) {
+            if (p % 200 == 0) add("<h2 class=\"calibre3\" id=\"toc_${p / 200}\">제${p / 200 + 1}화</h2>\n")
+            add("<p class=\"calibre1\">")
+            if (wordPis && p % 4 == 0) add("<?xml:namespace prefix = o ns = \"urn:schemas-microsoft-com:office:office\" />")
+            if (p % 5 == 0) add("<span class=\"calibre2\">${SENTENCES[p % SENTENCES.size]}</span> ")
+            add(SENTENCES[p * 3 % SENTENCES.size])
+            add(" ")
+            add(SENTENCES[(p * 5 + 1) % SENTENCES.size])
+            add("</p>\n")
+            p++
+        }
+        add("</body>\n</html>\n")
+        return sb.toString()
+    }
+
     /** Paragraph/image/rule texts of a section, in order ("" for empty paragraphs, "[img:src]", "[hr]"). */
     fun blockTexts(c: SectionContent): List<String> = c.blocks.map { b ->
         when (b) {
