@@ -36,6 +36,17 @@ class ParseTest(unittest.TestCase):
         self.assertIsNone(perf_log.parse_show(OPEN_LINE))
         self.assertIsNone(perf_log.parse_show("--------- beginning of main"))
 
+    def test_ignores_the_measuring_lines(self):
+        # The DEBUG lines of PerfLines (DEVICE_CHECKLIST §15b) share the tag but are never show lines.
+        pre = "     41.000  4242  4242 D RAPerf  : "
+        for text in ("turn #3 tap: contact 96 ms, wait 2 ms, up+18 ms, down+114 ms, onDraw 4.2 ms",
+                     "frame #3: total 21.3 ms (delay 0.4, draw 4.1, sync 0.6), done up+25 ms, down+121 ms",
+                     "open doc TXT index 4.1 ms, 15204352 bytes, 7480012 chars, 312 sections",
+                     "open layout s:12 g:1 load 3.0 ms 24011 chars, typeset 19.2 ms 11 pages",
+                     "open 7: onDraw 5.1 ms"):
+            self.assertIsNone(perf_log.parse_show(pre + text))
+            self.assertEqual(perf_log.log_lines(pre + text), [pre + text])
+
     def test_log_lines_keeps_only_raperf(self):
         text = "--------- beginning of main\r\n" + line(1, "OPEN", 0, 0, 0) + "\r\n\n" + OPEN_LINE + "\n"
         self.assertEqual(perf_log.log_lines(text), [line(1, "OPEN", 0, 0, 0), OPEN_LINE])

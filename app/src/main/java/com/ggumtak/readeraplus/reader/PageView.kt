@@ -91,11 +91,25 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     /** Event time (uptime ms) of the last tap, swipe or wheel notch delivered to [cb]: where a turn's time starts. */
     var lastInputAt = 0L
         private set
+    /** Down time of the touch behind [lastInputAt] (0 = none: wheel, accessibility) and what it was ([PerfLines]). */
+    var lastInputDownAt = 0L
+        private set
+    var lastInputKind = PerfLines.INPUT_NONE
+        private set
     /** Open being timed: book id and start (uptime ms) until the next draw ends (0 = none). See [ReaderPerf]. */
     private var openTraceId = 0L
     private var openTraceFrom = 0L
     /** Turn being timed: its input event time until the next draw ends (0 = none). See [ReaderPerf]. */
     private var turnTraceFrom = 0L
+    /** That turn's down time, event wait (ms, -1 = unknown) and input kind for its "turn #n" line ([traceTurn]). */
+    private var turnTraceDown = 0L
+    private var turnTraceWait = -1L
+    private var turnTraceKind = PerfLines.INPUT_NONE
+    /** Turns logged so far: the n of "turn #n" and "frame #n". */
+    private var turnSeq = 0
+    private var perfText: StringBuilder? = null
+    /** RAPerf DEBUG only: traced frames waiting for their FrameMetrics ([FrameWatch]); null otherwise. */
+    internal var frameTrace: FrameTrace? = null
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private val swipeMin = 60f * resources.displayMetrics.density
@@ -169,6 +183,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
+        // RAPerf DEBUG: the draw of a traced open or turn is timed too (one static read on such a frame only).
+        val drawFrom = if ((openTraceFrom != 0L || turnTraceFrom != 0L) && ReaderPerf.turns) System.nanoTime() else 0L
         val scrolling = scroll
         if (scrolling != null) {
             val painted = try {
@@ -182,7 +198,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                 false
             }
             if (painted) finishFirstFrame()
-        if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces()
+            if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces(drawFrom)
             return
         }
         val f = frame
@@ -200,7 +216,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
             canvas.drawText("페이지를 그리지 못했습니다: ${t.javaClass.simpleName}", f.left, f.top + errorPaint.textSize * 2, errorPaint)
         }
         finishFirstFrame()
-        if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces()
+        if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces(drawFrom)
     }
 
     /** The first page of a book is set: log how long the open took once it has been drawn ([ReaderPerf]). */
@@ -209,22 +225,43 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         openTraceFrom = startedAt
     }
 
-    /** A turned page is set: log the time from [inputAt] (its input event) once it has been drawn ([ReaderPerf]). */
-    fun traceTurn(inputAt: Long) {
+    /**
+     * A turned page is set: log the time from [inputAt] (its input event) once it has been drawn ([ReaderPerf]), with
+     * the touch's or key's [downAt] (0 = none), how long the event waited before the reader took it ([waitMs]) and its
+     * [kind] ([PerfLines]). The reader calls it only with RAPerf DEBUG on.
+     */
+    fun traceTurn(inputAt: Long, downAt: Long = 0L, waitMs: Long = -1L, kind: Int = PerfLines.INPUT_NONE) {
         turnTraceFrom = inputAt
+        turnTraceDown = downAt
+        turnTraceWait = waitMs
+        turnTraceKind = kind
     }
 
-    private fun logTraces() {
+    /** [drawFrom]: System.nanoTime when this onDraw began (RAPerf DEBUG), else 0. */
+    private fun logTraces(drawFrom: Long) {
         val now = SystemClock.uptimeMillis()
+        val drawNs = if (drawFrom != 0L) System.nanoTime() - drawFrom else -1L
         if (openTraceFrom != 0L) {
             // Timed here, written after this frame (once per open): the first page is not kept waiting for the log.
             val id = openTraceId
-            val ms = now - openTraceFrom
+            val from = openTraceFrom
+            val ms = now - from
             openTraceFrom = 0L
-            post { Log.i(ReaderPerf.TAG, "open $id: first page $ms ms") }
+            if (drawNs >= 0L) frameTrace?.expect(drawingTime, 0, PerfLines.INPUT_NONE, from, 0L)
+            post {
+                if (drawNs >= 0L) Log.d(ReaderPerf.TAG, PerfLines.openDrawLine(StringBuilder(40), id, drawNs).toString())
+                Log.i(ReaderPerf.TAG, "open $id: first page $ms ms")
+            }
         }
         if (turnTraceFrom != 0L) {
             Log.d(ReaderPerf.TAG, "turn ${now - turnTraceFrom} ms")
+            // The same turn in detail ([traceTurn] is only called with RAPerf DEBUG); "frame #n" comes from FrameWatch.
+            val n = ++turnSeq
+            val sb = perfText ?: StringBuilder(160).also { perfText = it }
+            sb.setLength(0)
+            PerfLines.turnLine(sb, n, turnTraceKind, turnTraceFrom, turnTraceDown, turnTraceWait, now, drawNs)
+            Log.d(ReaderPerf.TAG, sb.toString())
+            frameTrace?.expect(drawingTime, n, turnTraceKind, turnTraceFrom, turnTraceDown)
             turnTraceFrom = 0L
         }
     }
@@ -421,15 +458,15 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                     if (input.live) input.dragBy(scrollLastY - y)
                     val tracker = velocityTracker
                     tracker?.computeCurrentVelocity(1000, maxFling)
-                    lastInputAt = ev.eventTime
+                    noteInput(PerfLines.INPUT_SWIPE, primaryDownAt, ev.eventTime)
                     input.release(downY - y, -(tracker?.getYVelocity(primaryId) ?: 0f))
                 } else if (!scrollStopper && !longPressFired) {
                     val dx = x - downX; val dy = y - downY
                     maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
                     when (Gestures.end(dx, dy, maxDist, tapSlop, swipeMin, swipeToTurn, false)) {
-                        GestureEnd.NEXT -> swipe(SwipeDir.NEXT, ev.eventTime)
-                        GestureEnd.PREV -> swipe(SwipeDir.PREV, ev.eventTime)
-                        GestureEnd.TAP -> deliverTap(downX, downY, ev.eventTime)
+                        GestureEnd.NEXT -> swipe(SwipeDir.NEXT, primaryDownAt, ev.eventTime)
+                        GestureEnd.PREV -> swipe(SwipeDir.PREV, primaryDownAt, ev.eventTime)
+                        GestureEnd.TAP -> deliverTap(downX, downY, primaryDownAt, ev.eventTime)
                         GestureEnd.NONE -> {}
                     }
                 }
@@ -466,7 +503,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
 
     /** Use the same reader command as a tap/remote, including manual-turn and auto-turn bookkeeping. */
     internal fun accessibilityStep(next: Boolean): Boolean {
-        lastInputAt = SystemClock.uptimeMillis()
+        noteInput(PerfLines.INPUT_NONE, 0L, SystemClock.uptimeMillis())
         cb.onWheel(next)
         return true
     }
@@ -486,13 +523,15 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
         if (multi) {
             // Another finger touched meanwhile: only a short, still touch counts (a tap), never a swipe.
-            if (maxDist <= tapSlop && ev.eventTime - primaryDownAt < longPressMs) deliverTap(downX, downY, ev.eventTime)
+            if (maxDist <= tapSlop && ev.eventTime - primaryDownAt < longPressMs) {
+                deliverTap(downX, downY, primaryDownAt, ev.eventTime)
+            }
             return
         }
         when (Gestures.end(dx, dy, maxDist, tapSlop, swipeMin, swipeToTurn, verticalSwipe)) {
-            GestureEnd.NEXT -> swipe(SwipeDir.NEXT, ev.eventTime)
-            GestureEnd.PREV -> swipe(SwipeDir.PREV, ev.eventTime)
-            GestureEnd.TAP -> deliverTap(downX, downY, ev.eventTime)
+            GestureEnd.NEXT -> swipe(SwipeDir.NEXT, primaryDownAt, ev.eventTime)
+            GestureEnd.PREV -> swipe(SwipeDir.PREV, primaryDownAt, ev.eventTime)
+            GestureEnd.TAP -> deliverTap(downX, downY, primaryDownAt, ev.eventTime)
             GestureEnd.NONE -> {}
         }
     }
@@ -503,7 +542,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         if (k < 0) return
         val t = extraTaps.removeAt(k)
         val d = maxOf(t.maxDist, Math.abs(ev.getX(i) - t.x), Math.abs(ev.getY(i) - t.y))
-        if (d <= tapSlop && ev.eventTime - t.downAt < longPressMs) deliverTap(t.x, t.y, ev.eventTime)
+        if (d <= tapSlop && ev.eventTime - t.downAt < longPressMs) deliverTap(t.x, t.y, t.downAt, ev.eventTime)
     }
 
     private fun trackExtraTaps(ev: MotionEvent) {
@@ -514,16 +553,23 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         }
     }
 
-    private fun swipe(dir: SwipeDir, upTime: Long) {
-        lastInputAt = upTime
+    private fun swipe(dir: SwipeDir, downTime: Long, upTime: Long) {
+        noteInput(PerfLines.INPUT_SWIPE, downTime, upTime)
         cb.onSwipe(dir)
     }
 
     /** Every tap reaches the reader, however fast; only a duplicate report of the same touch is dropped. */
-    private fun deliverTap(x: Float, y: Float, upTime: Long) {
+    private fun deliverTap(x: Float, y: Float, downTime: Long, upTime: Long) {
         if (!tapDedup.accept(x, y, upTime, tapSlop)) return
-        lastInputAt = upTime
+        noteInput(PerfLines.INPUT_TAP, downTime, upTime)
         cb.onTap(x, y)
+    }
+
+    /** The input about to reach [cb] (a turn's time starts at [at]; [downTime] = its finger's, 0 = none). */
+    private fun noteInput(kind: Int, downTime: Long, at: Long) {
+        lastInputAt = at
+        lastInputDownAt = downTime
+        lastInputKind = kind
     }
 
     override fun onGenericMotionEvent(ev: MotionEvent): Boolean {
@@ -534,7 +580,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                 // a wheel-emulating page-turner remote keeps up with fast clicks.
                 if (ev.eventTime - lastWheelAt >= WHEEL_INTERVAL_MS) {
                     lastWheelAt = ev.eventTime
-                    lastInputAt = ev.eventTime
+                    noteInput(PerfLines.INPUT_WHEEL, 0L, ev.eventTime)
                     cb.onWheel(v < 0f)
                 }
                 return true
@@ -579,7 +625,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
  * Timing logs for comparing builds on the device (`adb logcat -s RAPerf`): "open <id>: first page N ms" (from
  * startOpen to the end of the first page's draw) always, at INFO; "turn N ms" (from the input event to the end of the
  * turned page's draw) only when `adb shell setprop log.tag.RAPerf DEBUG` was set before the app started, so a normal
- * turn pays one static read and allocates nothing.
+ * turn pays one static read and allocates nothing. The same switch adds the Comet measuring lines of [PerfLines] (the
+ * finger's contact time, a key's system hold, the turn frame's FrameMetrics via [FrameWatch], the open's steps).
  */
 internal object ReaderPerf {
     const val TAG = "RAPerf"

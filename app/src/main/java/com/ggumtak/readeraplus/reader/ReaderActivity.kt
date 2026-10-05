@@ -48,6 +48,8 @@ import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.format.DocumentException
 import com.ggumtak.readeraplus.format.Documents
+import com.ggumtak.readeraplus.format.epub.EpubBook
+import com.ggumtak.readeraplus.format.txt.TxtBook
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.reader.extras.BookInsightsHost
 import com.ggumtak.readeraplus.reader.extras.Episodes
@@ -246,9 +248,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var afterOpenPending = false
     /** Runs [afterOpen] after the first successful body draw ([PageView.afterFirstFrame]). */
     private val afterFirstPage = Runnable {
+        if (isDestroyed) return@Runnable
+        // The first page has been drawn: the system's "Fully drawn" launch time ends here, not at the blank frame
+        // before it. Once per reader (a later book or re-parse opens in the same activity).
+        if (fullyDrawn.take()) safely { reportFullyDrawn() }
         val s = session
         val b = bookRef
-        if (isDestroyed || !afterOpenPending || s == null || b == null) return@Runnable
+        if (!afterOpenPending || s == null || b == null) return@Runnable
         afterOpenPending = false
         writeTextPosition(b, s, anchor)
         afterOpen()
@@ -392,6 +398,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var openStartedAt = 0L
     /** Event time of the last key press (uptime ms): where a key turn's "turn N ms" starts. */
     private var keyInputAt = 0L
+    /** Down time of that key (its first KEY_DOWN: earlier than [keyInputAt] on a held key's repeats). */
+    private var keyDownAt = 0L
     /** Input event time of a user turn whose page is not shown yet (0 = none; only with [ReaderPerf.turns]). */
     private var perfTurnFrom = 0L
     /**
@@ -399,7 +407,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      * page the flush shows logs its "turn" from there, and the waited-for page keeps its own start ([perfTurnFrom]).
      */
     private var perfQueuedFrom = 0L
+    /** That turn's down time (0 = none), its event's wait before [userTurn] (ms) and its kind ([PerfLines]). */
+    private var perfTurnDown = 0L
+    private var perfTurnWait = -1L
+    private var perfTurnKind = PerfLines.INPUT_NONE
     private var perfRequestAt = 0L
+    /** RAPerf DEBUG only: FrameMetrics of the traced frames ("frame #n"); null otherwise. */
+    private var frameWatch: FrameWatch? = null
+    private val fullyDrawn = OnceGate()
     private val insetsGate = InsetsGate()
     private var focusSince = 0L
     private var insetsFullscreen: Boolean? = null
@@ -491,6 +506,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         ReaderWindow.setup(this)
         keeper = ScreenOnKeeper(this)
         buildViews()
+        // RAPerf DEBUG only: the frames that show a traced turn or first page report their FrameMetrics.
+        if (ReaderPerf.turns) frameWatch = FrameWatch.start(window)?.also { page.frameTrace = it.trace }
         // The window's brightness override only (no IO): the device light waits for the first page.
         light.onCreate()
         applyReaderColors(Settings.reader)
@@ -735,6 +752,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         thumbs?.close(); thumbs = null
         page.afterFirstFrame = null
         afterOpenPending = false
+        frameWatch?.stop(window)
+        frameWatch = null
         session?.close()
         session = null
         scope.cancel()
@@ -1213,8 +1232,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     val eff = settings.withTxt(over)
                     openingBytes = b.sizeBytes
                     openingPath = b.path
+                    val docFrom = if (ReaderPerf.turns) System.nanoTime() else 0L
                     val d = Documents.open(f, eff.parseOptions(b.encoding))
                     doc = d
+                    if (docFrom != 0L) traceDoc(d, f, System.nanoTime() - docFrom)
                     if (d.sections.isEmpty()) throw DocumentException("내용이 없는 책입니다")
                     parsing = null
                     // A12-2: a user font's catalogue (a folder scan) is read here rather than by the renderer on the
@@ -1359,6 +1380,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         } catch (t: Throwable) {
             Log.w(TAG, "user font lookup failed", t)
         }
+    }
+
+    /** RAPerf DEBUG: what [Documents.open] did for [d] in [nanos], and how big the book is (IO thread). */
+    private fun traceDoc(d: BookDocument, f: File, nanos: Long) {
+        val how = when (d) {
+            is TxtBook -> if (d.parsed) "parse" else "index"
+            is EpubBook -> if (d.planFromCache) "plan" else "scan"
+            else -> "-"
+        }
+        var chars = 0L
+        for (info in d.sections) chars += info.approxChars
+        val line = PerfLines.docLine(StringBuilder(96), d.format.label, how, nanos, f.length(), chars,
+            d.format == BookFormat.TXT, d.sections.size)
+        Log.d(ReaderPerf.TAG, line.toString())
     }
 
     /** Everything the first page did not wait for (spec rule 2: after the first page, never before it). */
@@ -1952,7 +1987,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             Log.d(ReaderPerf.TAG, "show $kind s:$section o:${p?.start ?: 0} a:${anchor.offset} g:${gen.id} ${elapsed}ms")
         }
         if (perfTurnFrom != 0L) {
-            if (kind == Nav.TURN) page.traceTurn(perfTurnFrom)
+            if (kind == Nav.TURN) page.traceTurn(perfTurnFrom, perfTurnDown, perfTurnWait, perfTurnKind)
             perfTurnFrom = 0L
         }
         safely { selection?.onPageChanged() }
@@ -2076,7 +2111,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             dropSearchHighlight()
         }
         if (perfTurnFrom != 0L) {
-            if (kind == SettleKind.STEP) page.traceTurn(perfTurnFrom)
+            if (kind == SettleKind.STEP) page.traceTurn(perfTurnFrom, perfTurnDown, perfTurnWait, perfTurnKind)
             perfTurnFrom = 0L
         }
         val p = l.pages.getOrNull(idx)
@@ -2453,7 +2488,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val q = perfQueuedFrom
         if (q == 0L) return
         perfQueuedFrom = 0L
-        if (perfTurnFrom == 0L) perfTurnFrom = q
+        if (perfTurnFrom == 0L) {
+            perfTurnFrom = q
+            perfTurnDown = 0L
+            perfTurnWait = -1L
+            perfTurnKind = PerfLines.INPUT_NONE
+        }
     }
 
     /**
@@ -2754,9 +2794,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // "turn N ms" starts at the input event that asked for this turn (the latest one: all run on this thread).
         // A turn queued behind a wait leaves the waited-for page's start alone and starts the flushed page's.
         if (ReaderPerf.turns) {
-            val inAt = maxOf(page.lastInputAt, keyInputAt)
-            if (navJob?.isActive != true) perfTurnFrom = inAt
-            else if (backlog.isEmpty || perfQueuedFrom == 0L) perfQueuedFrom = inAt
+            val key = keyInputAt > page.lastInputAt
+            val inAt = if (key) keyInputAt else page.lastInputAt
+            if (navJob?.isActive != true) {
+                perfTurnFrom = inAt
+                perfTurnDown = if (key) keyDownAt else page.lastInputDownAt
+                perfTurnKind = if (key) PerfLines.INPUT_KEY else page.lastInputKind
+                // How long the event took to get here: for a volume key, the system's hold before it reaches the app.
+                perfTurnWait = SystemClock.uptimeMillis() - inAt
+            } else if (backlog.isEmpty || perfQueuedFrom == 0L) perfQueuedFrom = inAt
         }
         // A key, tap or remote turn is no drag: flags left by a STEP release that hit the book's edge (no settle) must
         // not make this step's settle count as a gesture. A finger still dragging (or its step waiting) keeps them.
@@ -3867,6 +3913,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 val fresh = event.repeatCount == 0
                 if (fresh) rememberHoldAnchor()
                 keyInputAt = event.eventTime
+                keyDownAt = event.downTime
                 val turned = userTurn(next)
                 if (fresh) holdTurned = turned
             }

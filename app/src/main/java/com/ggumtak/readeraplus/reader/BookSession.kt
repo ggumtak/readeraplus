@@ -184,6 +184,8 @@ class BookSession(
     // Confined to the layout thread.
     private var layoutGenId = -1
     private var layoutMeasurer: AndroidTextMeasurer? = null
+    /** A layout of this session was logged already ([traceLayout], RAPerf DEBUG). */
+    private var layoutTraced = false
     // Confined to the count thread.
     private var countGenId = -1
     private var countMeasurer: AndroidTextMeasurer? = null
@@ -343,7 +345,7 @@ class BookSession(
             try {
                 result = withContext(layoutDispatcher) {
                     p.started = true
-                    layoutOnThread(gen, section)
+                    layoutOnThread(gen, section, foreground)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -396,16 +398,18 @@ class BookSession(
 
     // ------------------------------------------------------------------ worker-thread code
 
-    private fun layoutOnThread(gen: Generation, section: Int): SectionLayout {
+    private fun layoutOnThread(gen: Generation, section: Int, foreground: Boolean): SectionLayout {
         if (layoutGenId != gen.id || layoutMeasurer == null) {
             layoutMeasurer = AndroidTextMeasurer(context, gen.settings) { images.size(it) }
             layoutGenId = gen.id
         }
         val m = StaleCheck(layoutMeasurer!!, gen.id)
         m.check()
+        val t0 = if (ReaderPerf.turns) System.nanoTime() else 0L
         val loaded = loadContent(section)
+        val t1 = if (t0 != 0L) System.nanoTime() else 0L
         val content = loaded.content
-        return try {
+        val layout = try {
             Typesetter(m, gen.config).layout(content, if (loaded.failed) -1 else gen.anchorFor(section, content))
         } catch (e: CancellationException) {
             throw e
@@ -414,6 +418,18 @@ class BookSession(
             failedSections.add(section)
             Typesetter(m, gen.config).layout(errorContent(t))
         }
+        if (t0 != 0L) traceLayout(gen.id, section, !foreground, t1 - t0, System.nanoTime() - t1, content.length, layout)
+        return layout
+    }
+
+    /** RAPerf DEBUG: one line per finished layout; the session's first is the open's ("open layout …"). Layout thread. */
+    private fun traceLayout(gen: Int, section: Int, prefetch: Boolean, loadNs: Long, typesetNs: Long, chars: Int,
+                            layout: SectionLayout) {
+        val open = !layoutTraced
+        layoutTraced = true
+        val line = PerfLines.layoutLine(StringBuilder(112), open, section, gen, loadNs, chars, typesetNs,
+            layout.pageCount, prefetch)
+        Log.d(ReaderPerf.TAG, line.toString())
     }
 
     /**

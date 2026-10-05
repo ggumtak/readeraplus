@@ -66,7 +66,7 @@ object TxtDocuments {
         } finally {
             building.computeIfPresent(path) { _, n -> if (n > 1) n - 1 else null }
         }
-        return TxtBook(file, index, options)
+        return TxtBook(file, index, options, parsed = true)
     }
 
     /**

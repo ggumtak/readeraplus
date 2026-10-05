@@ -762,6 +762,12 @@ adb logcat -s RAPerf
 The release gates compare these numbers with the Wave 0 baseline recorded on the Comet: the cached reopen of the
 14.8 MB TXT within +10 ms, page-turn time unchanged, library cold start (`am start -W`) within +5 %.
 
+The same switch adds the measuring lines of `reader/PerfTrace.kt` `PerfLines` (DEVICE_CHECKLIST §15b): per turn
+"turn #n tap: contact … ms, wait … ms, up+… ms, down+… ms, onDraw … ms" (a key shows the system's hold as `wait`) and
+the FrameMetrics of its frame, "frame #n: total … ms (…), done up+… ms" (`reader/FrameWatch.kt`, registered only with
+the tag on); per open "open doc …", "open layout s: …" (BookSession, every layout logs a "layout s: …" line) and
+"open <id>: onDraw … ms". `reportFullyDrawn()` runs once per reader after the first page is drawn (always on).
+
 
 ## Contract revision R3 (2026-10-02)
 

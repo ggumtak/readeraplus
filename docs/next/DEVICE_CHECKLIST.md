@@ -439,6 +439,105 @@ TXT→EPUB 변환기로 만든 책처럼 본문이 XHTML 파일 하나에 다 �
 | 15b-12 | 스크롤 모드에서 그림이 화면 맨 위에 오게 두고 ⋮ › 페이지로 보기 | 그림이 빈 상자 없이 한 번에 나온다. `draw skip` · `draw decode` 줄이 없다 | |
 | 15b-13 | 그림 쪽에서 홈으로 나가 `adb shell am send-trim-memory $P BACKGROUND`, 6분 기다렸다가 돌아와서 앞뒤로 넘기기 | 돌아올 때 화면이 한 번에 나온다. 돌아올 때 지금 쪽을 다시 그리면서 `draw decode` 한 줄은 정상이다(그림을 비웠다). 그 다음 넘김에서는 `draw decode` 줄이 없다. (선택) `adb shell dumpsys meminfo $P`의 `Native Heap`이 나가기 전보다 줄어 있다 | ___ MB → ___ MB |
 
+## 15b. 속도 측정 (코멧, 2026-10-05)
+
+체감 속도는 영상으로 재고, 그중 앱이 쓰는 몫은 RAPerf 줄로 나눠 본다. 앱이 한 쪽을 그리는 데는 몇 ms면 되고, 체감 시간은
+대부분 손가락이 닿아 있는 시간과 e-ink 패널 갱신이 차지한다(성능 검토, 2026-10-05). 여기서 나온 숫자로 다음 작업을 정한다:
+누르는 순간 넘기기(옵션), 열 때 첫 그리기 보류, 다시 열 때 조판 캐시, 다음 쪽 미리 그리기.
+
+**준비**
+- 리더플러스 설정 › e-ink 새로고침 › 화면 모드를 "기기 설정 따름"으로 둔다.
+- E-ink Center에서 리더플러스와 마루뷰어에 같은 프로필을 준다: HD256, 잔상 방지 · 대비(글자 강화) · 자동 클린 · 전체 새로고침
+  주기까지 같게. 자동 클린이 번쩍인 넘김은 기록에서 뺀다.
+- 마루뷰어의 넘김 효과를 끈다(애니메이션은 넘김 한 번에 갱신 여러 번이다).
+- 두 앱에 같은 TXT, 같은 장, 같은 글꼴 · 크기 · 줄 간격 · 여백 · 정렬, 흰 바탕. 마루뷰어 화면 색(어두운 바탕, 글자 그림자)은
+  따로 잰다.
+- 설정을 바꿀 때마다 두 앱을 강제 종료한다(`adb shell am force-stop <패키지>`). 앱 안의 화면 모드는 열린 페이지 뷰에 남아서,
+  종료하지 않으면 앞 설정과 섞인다.
+- 기기를 깨운 뒤 한 번 넘겨 두고, 같은 방에서 두 앱을 A B A B 순서로 번갈아 잰다(패널 파형은 온도에 따라 달라진다).
+
+**촬영**
+- 휴대폰 슬로모션 240 fps(1프레임 ≈ 4.2 ms), 없으면 120 fps(≈ 8.3 ms). 휴대폰은 거치하고, 빛은 옆에서. 손가락과 글 영역이 한
+  화면에 보이게 찍는다.
+- 넘길 때마다 네 장면의 프레임 번호를 적는다.
+
+  | 표시 | 장면 |
+  |---|---|
+  | F0 | 손가락이 화면에 닿은 순간 (볼륨 키는 키를 누른 순간, 열기는 서재에서 책을 누른 순간) |
+  | F1 | 손가락을 뗀 순간 |
+  | F2 | 글자가 처음 바뀐 순간 |
+  | F3 | 옛 글자가 다 사라지고 더 이상 바뀌지 않는 순간 |
+
+- 계산(프레임 수 × 4.2 ms): F2−F0 = 체감 시간, F2−F1 = 손을 뗀 뒤 앱과 화면 처리, F3−F2 = 패널 파형이 안정되는 시간(화면
+  모드가 정한다).
+- 조건마다 15~20회 찍고 중앙값과 최악값을 적는다. 조건:
+  1. 보통 넘김
+  2. 장 경계 넘김 (`show TURN` 줄의 `s:`가 바뀐 넘김)
+  3. 그림 EPUB의 그림 쪽 (빠르게 연속으로)
+  4. 다른 앱에 갔다 와서 첫 넘김
+  5. 처음 열기와 다시 열기. 글자가 나오기 전에 빈(흰) 화면이 한 번 보이는지도 본다
+  6. 볼륨 키
+- 마루뷰어에서 다음 쪽 영역을 꾹 누르고 있어 본다. 떼기 전에 넘어가면 누르는 순간 넘기는 방식이다.
+- 기기 쪽 빠른 모드로도 한 번 더 찍고, 10쪽 · 30쪽 넘긴 뒤 화면 사진을 남긴다(잔상을 보고 모드를 정한다).
+
+**adb (선택: 숫자를 나눠 보기)**
+
+```sh
+P=com.ggumtak.readeraplus
+adb shell setprop log.tag.RAPerf DEBUG       # 앱이 시작될 때 한 번 읽는다: 다음 줄(강제 종료)까지 해야 한다
+adb shell am force-stop $P
+adb logcat -c
+adb logcat -v time -s RAPerf | tee speed_log.txt
+# 열기 전체(시스템 기준, 서재에서 누른 순간부터): "Displayed"는 리더의 첫 프레임, "Fully drawn"은 첫 페이지
+adb logcat -d | grep -E "Displayed|Fully drawn"
+# 넘김 프레임: reset 뒤 한 번 넘기고 framestats. 넘김 한 번 = 프레임 1개
+adb shell dumpsys gfxinfo $P reset
+adb shell dumpsys gfxinfo $P framestats
+# 손가락 접촉 시간(커널 시각): 같은 탭의 BTN_TOUCH DOWN 줄과 UP 줄의 시각 차이. 20번 탭
+adb shell getevent -lt
+# 볼륨 키 대기: 각각 10번, 아래 표의 `wait` 비교
+adb shell input keyevent 25                  # VOLUME_DOWN
+adb shell input keyevent 93                  # PAGE_DOWN
+```
+
+**어느 줄을 읽나** (로그를 켜면 넘김 한 번, 열기 한 번마다 이 줄들이 차례로 나온다)
+
+| 숫자 | RAPerf 줄 | 뜻 |
+|---|---|---|
+| 손가락 접촉 시간 | `turn #n tap: contact C ms, …` | 넘긴 탭이 닿아 있던 시간(뗀 시각 − 닿은 시각). 영상의 F1−F0, getevent의 DOWN→UP과 같아야 한다. 스와이프는 `swipe:` |
+| 볼륨 키 대기 | `turn #n key: held 0 ms, wait W ms, …` | W = 입력 이벤트 시각부터 리더가 넘김을 시작할 때까지(탭은 보통 몇 ms). 볼륨 키는 안드로이드가 ≈ 150 ms 붙잡는다(앱에서 못 없앤다). PAGE_DOWN의 W가 몇 ms면 그 차이가 대기다. `held`는 키를 누르고 있을 때의 반복 넘김에서만 0보다 크다 |
+| 손 뗀 뒤 앱 | `turn N ms` 다음 줄 `turn #n …, up+U ms, down+D ms, onDraw X ms` | U = 손 뗀 순간부터 새 쪽을 다 그릴 때까지(앞 줄의 N과 같다), D = 닿은 순간부터, X = 그중 onDraw. 아직 화면에 나오기 전이다 |
+| 넘김 프레임 | `frame #n: total T ms (delay …, input …, anim …, layout …, draw …, sync …, cmd …, swap …, gpu …), done up+U ms, down+D ms` | 같은 n의 넘김을 그린 프레임(FrameMetrics). T = vsync부터 화면 버퍼를 시스템에 넘길 때까지, done = 그 시각을 손 뗀 순간 · 닿은 순간부터 잰 값. 패널 갱신은 이 뒤에 시작한다: 영상의 F2−F1에서 done의 U를 빼면 버퍼를 넘긴 뒤 패널이 글자를 바꾸기 시작하기까지 걸린 시간이다 |
+| 열기: 파일 | `open doc TXT index … ms, B bytes, C chars, S sections` | Documents.open. TXT `index` = 저장된 색인만 읽음(다시 열기), `parse` = 파일 전체 해석(처음 열기, TXT 옵션을 바꾼 뒤). EPUB은 `plan`(저장된 구간 나누기) 또는 `scan`(큰 항목을 훑음), 글자 수 앞 `~`는 추정 |
+| 열기: 첫 구간 | `open layout s:N g:G load L ms C chars, typeset T ms P pages` | 첫 구간 불러오기(loadSection: 큰 EPUB 항목은 변환 포함)와 조판(Typesetter.layout) |
+| 다른 구간 | `layout s:N g:G …` / `…, prefetch` | 장 경계 넘김이 기다린 조판 / 미리 준비한 이웃 구간 |
+| 열기: 첫 그리기 | `open <id>: onDraw X ms` | 첫 페이지의 onDraw |
+| 열기: 전체 | `open <id>: first page N ms`, `frame open: … done open+N ms`, 시스템 `Fully drawn …: +N ms` | 리더가 열기를 시작한 뒤 첫 페이지를 다 그릴 때까지 / 그 버퍼를 넘길 때까지 / 서재에서 누른 뒤 첫 페이지까지(리더 실행 포함) |
+
+- `turn N ms`, `show …`, `open … first page` 줄은 예전 그대로다. 새 줄은 이 로그를 켰을 때만 나오고, 끄면 하는 일이 없다.
+  "Fully drawn"만 늘 나온다(첫 페이지 뒤 리더 하나에 한 번, 시스템 기록).
+- `frame` 줄이 하나도 없으면 이 기기의 창이 FrameMetrics를 주지 않는 것이다(하드웨어 가속 꺼짐 등). 그때는 `turn #n`의 onDraw와
+  gfxinfo framestats(마지막 줄의 FrameCompleted − IntendedVsync)로 본다.
+- 이 줄들은 모두 화면에 보이기 *전*까지다. 패널이 바뀌고 안정되는 시간(F2, F3)은 영상으로만 잴 수 있다.
+
+**성공 기준** (제안값. 중앙값과 최악값을 둘 다 본다)
+
+| # | 항목 | 합격 / 적을 값 | 결과 |
+|---|---|---|---|
+| 15b-1 | 갱신 횟수 | 넘김 한 번에 패널 갱신 한 번. 영상에서 두 번 바뀌면 ✕ | |
+| 15b-2 | 보통 넘김 F2−F0 | 중앙값이 마루뷰어 이하, 최악값은 중앙값 + 100 ms 이내 | 우리 __/__ ms, 마루 __/__ ms |
+| 15b-3 | 그림 쪽 넘김 | 최악값이 텍스트 넘김과 같은 수준 | |
+| 15b-4 | 장 경계 넘김 | 중앙값이 보통 넘김 + 50 ms 이내 | |
+| 15b-5 | 열기 | 빈 화면 단계 없이 바로 글자가 나온다. 다시 열기는 처음 열기보다 빠르거나 같다 | |
+| 15b-6 | 손가락 접촉 시간 | `contact` 중앙값(20번)과 getevent DOWN→UP. 80 ms 이상이거나 15b-8이 "예"면 다음 묶음에 "누르는 순간 넘기기"(옵션, 기본은 지금처럼) | __ ms |
+| 15b-7 | 볼륨 키 대기 | VOLUME_DOWN과 PAGE_DOWN의 `wait` 중앙값 | __ / __ ms |
+| 15b-8 | 마루뷰어 누르기 | 다음 쪽 영역을 누르고 있을 때 떼기 전에 넘어가는가 | 예 / 아니오 |
+| 15b-9 | 넘김 프레임 | `frame #n`의 total 중앙값과 p95(20번). p95가 40 ms 이상일 때만 다음 쪽 미리 그리기를 검토한다 | __ / __ ms |
+| 15b-10 | 열기 나눠 보기 | 큰 TXT와 변환기 EPUB 하나씩, 처음 열기와 다시 열기: `open doc`, `open layout`의 load · typeset, `onDraw`, `first page`, `Fully drawn`. 다시 열 때 typeset ≥ 80 ms면 조판 캐시, 큰 EPUB의 load ≥ 150 ms면 변환 캐시를 검토한다 | |
+| 15b-11 | 빠른 모드 잔상 | 기기 쪽 빠른 모드로 10쪽 · 30쪽 넘긴 뒤 사진 | 사진 |
+
+- 보낼 것: 이 표, `speed_log.txt`, 영상마다 적은 F0–F3 프레임 번호(되도록 영상도).
+
 ## 16. 결과 보내기
 
 - 결과 칸을 채운 이 파일, `comet_log.txt`, 사진(§4, 10-3, 11-1), adb 출력.

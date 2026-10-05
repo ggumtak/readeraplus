@@ -587,3 +587,28 @@ tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci
   요청하면 디코드는 1번이고 40 ms 기다린다(예전에는 UI 스레드에서 60 ms를 다시 디코드). 실제 디코드 시간과 우선순위 효과는 JVM에서 잴
   수 없다(BitmapFactory는 네이티브, 스케줄 그룹은 안드로이드).
 - 검사: `tools/typecheck.sh` 0, `tools/unittest.sh` OK (1632 tests), CI Python 46개 OK, `bash -n` 통과. 기기 확인은 점검표 §15b.
+
+## 속도 측정용 디버그 계측 (2026-10-05, 성능 검토 첫 묶음 3)
+- 코멧에서 숫자를 나눠 보기 위한 RAPerf DEBUG 줄. `setprop log.tag.RAPerf DEBUG` 뒤 강제 종료했을 때만 동작한다. 끄면 넘김 ·
+  그리기마다 하던 대로 정적 값 한 번 읽기뿐이고, 할당 · 그리기 · invalidate가 늘지 않는다. 기존 `turn N ms`, `show …`,
+  `open … first page` 줄은 형식 그대로라 CI `perf_log.py`도 그대로다(새 줄이 show 줄로 읽히지 않음을 JVM 테스트로 확인).
+- 탭 접촉 시간: PageView가 넘김을 부른 입력의 DOWN 시각과 종류를 같이 기억한다(`lastInputDownAt`, `lastInputKind`; 두 번째
+  손가락의 탭은 그 손가락의 DOWN). 넘김마다 `turn N ms` 다음에 `turn #n tap: contact C ms, wait W ms, up+U ms, down+D ms,
+  onDraw X ms`. 키는 `held`(누르고 있을 때의 반복 넘김만 0보다 큼)와 `wait`(키 이벤트 시각부터 리더가 받을 때까지 = 볼륨 키의
+  시스템 대기). 키 DOWN의 eventTime − downTime은 첫 누름에서 늘 0이라 대기를 보여 주지 못해서, 받은 시각 − eventTime을 쓴다.
+- 넘김 프레임: `FrameWatch`가 창의 FrameMetrics를 별도 스레드("reader-frames")에서 받는다. 넘김 · 첫 페이지를 그린 프레임만
+  vsync 시각(그 onDraw의 drawingTime, ±1 ms, `FrameTrace` 네 칸)으로 찾아 `frame #n: total T ms (delay, input, anim, layout,
+  draw, sync, cmd, swap, gpu), done up+U ms, down+D ms`, 첫 페이지는 `frame open: … done open+N ms`. 로그를 켰을 때만 등록한다.
+- 열기 나눠 보기: `open doc TXT index|parse` / `EPUB plan|scan` `… ms, B bytes, C chars, S sections`(`TxtBook.parsed` 추가),
+  조판마다 `[open ]layout s: g: load … ms … chars, typeset … ms … pages[, prefetch]`(세션의 첫 조판 = 열기), `open <id>:
+  onDraw … ms`, 그리고 기존 `open <id>: first page N ms`(전체).
+- `reportFullyDrawn()`: 첫 페이지가 실제로 그려진 뒤(afterFirstFrame) 리더 하나에 한 번(`OnceGate`). 항상 켜져 있다. 시스템
+  "Fully drawn"이 빈 화면이 아니라 첫 페이지까지를 잰다. 그리기 · 갱신은 늘지 않는다.
+- 점검표 §15b 속도 측정(코멧): 슬로모션 영상 F0–F3, 조건, 마루뷰어 비교 준비, adb 명령, 숫자마다 읽을 줄, 성공 기준.
+- 테스트 `PerfTraceTest` 17개: 줄 형식, 0.1 ms 반올림, 빌더에 쓸 때 할당 0, FrameTrace 짝 찾기 · 덮어쓰기 · 할당 0, OnceGate,
+  TXT parse / index 표시, 새 줄이 show 줄로 읽히지 않음.
+- JVM 측정(개발 PC, 코멧 아님, 로그를 켰을 때의 비용): turn 줄 ≈ 40–50 ns, frame 줄 ≈ 150 ns(빌더에 할당 0), 문자열로 만들기까지
+  ≈ 60 ns · 96 B, FrameTrace 기록 + 찾기 두 번 ≈ 40 ns · 0 B. 꺼져 있을 때는 정적 값 읽기뿐이다.
+- 하지 않은 것: TXT 옵션을 바꾼 뒤의 다시 해석(reopenDocument)에는 `open doc` 줄을 넣지 않았다(조판 줄은 나온다). Choreographer
+  콜백은 FrameMetrics로 대신했다. 열 때의 빈 화면 단계는 재기만 하고 막지 않았다(영상으로 확인한 뒤 결정).
+- 검사: `tools/typecheck.sh` 0, `tools/unittest.sh` OK (1627 tests), CI Python 47개 OK(새 줄 무시 확인 1개 추가), `bash -n` 통과.
