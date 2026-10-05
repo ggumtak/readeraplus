@@ -37,7 +37,7 @@ class ParseTest(unittest.TestCase):
         self.assertIsNone(perf_log.parse_show("--------- beginning of main"))
 
     def test_ignores_the_measuring_lines(self):
-        # The DEBUG lines of PerfLines (DEVICE_CHECKLIST §15b) share the tag but are never show lines.
+        # The DEBUG lines of PerfLines (DEVICE_CHECKLIST §15d) share the tag but are never show lines.
         pre = "     41.000  4242  4242 D RAPerf  : "
         for text in ("turn #3 tap: contact 96 ms, wait 2 ms, up+18 ms, down+114 ms, onDraw 4.2 ms",
                      "frame #3: total 21.3 ms (delay 0.4, draw 4.1, sync 0.6), done up+25 ms, down+121 ms",

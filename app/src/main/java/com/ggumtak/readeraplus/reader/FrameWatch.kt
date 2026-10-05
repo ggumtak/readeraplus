@@ -64,7 +64,7 @@ internal class FrameWatch private constructor(
             return try {
                 FrameWatch(thread).also { window.addOnFrameMetricsAvailableListener(it, Handler(thread.looper)) }
             } catch (t: Throwable) {
-                // Under the RAPerf tag, so `adb logcat -s RAPerf` shows why no "frame" line comes (DEVICE_CHECKLIST 15b).
+                // Under the RAPerf tag, so `adb logcat -s RAPerf` shows why no "frame" line comes (DEVICE_CHECKLIST 15d).
                 Log.w(ReaderPerf.TAG, "frame metrics unavailable", t)
                 thread.quitSafely()
                 null

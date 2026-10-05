@@ -586,7 +586,7 @@ tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci
   남기면 80 ns. 바쁜 키에서 그리기는 38 ns 만에 돌아온다. 묶음 도착 쪽 계산 18 ns. 디코드 60 ms를 흉내 내고 20 ms 뒤에 같은 그림을
   요청하면 디코드는 1번이고 40 ms 기다린다(예전에는 UI 스레드에서 60 ms를 다시 디코드). 실제 디코드 시간과 우선순위 효과는 JVM에서 잴
   수 없다(BitmapFactory는 네이티브, 스케줄 그룹은 안드로이드).
-- 검사: `tools/typecheck.sh` 0, `tools/unittest.sh` OK (1632 tests), CI Python 46개 OK, `bash -n` 통과. 기기 확인은 점검표 §15b.
+- 검사: `tools/typecheck.sh` 0, `tools/unittest.sh` OK (1632 tests), CI Python 46개 OK, `bash -n` 통과. 기기 확인은 점검표 §15c.
 
 ## 속도 측정용 디버그 계측 (2026-10-05, 성능 검토 첫 묶음 3)
 - 코멧에서 숫자를 나눠 보기 위한 RAPerf DEBUG 줄. `setprop log.tag.RAPerf DEBUG` 뒤 강제 종료했을 때만 동작한다. 끄면 넘김 ·
@@ -604,7 +604,7 @@ tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci
   onDraw … ms`, 그리고 기존 `open <id>: first page N ms`(전체).
 - `reportFullyDrawn()`: 첫 페이지가 실제로 그려진 뒤(afterFirstFrame) 리더 하나에 한 번(`OnceGate`), 로그를 켰을 때만(아래
   리뷰 수정). 시스템 "Fully drawn"이 빈 화면이 아니라 첫 페이지까지를 잰다. 그리기 · 갱신은 늘지 않는다.
-- 점검표 §15b 속도 측정(코멧): 슬로모션 영상 F0–F3, 조건, 마루뷰어 비교 준비, adb 명령, 숫자마다 읽을 줄, 성공 기준.
+- 점검표 §15d 속도 측정(코멧): 슬로모션 영상 F0–F3, 조건, 마루뷰어 비교 준비, adb 명령, 숫자마다 읽을 줄, 성공 기준.
 - 테스트 `PerfTraceTest` 17개: 줄 형식, 0.1 ms 반올림, 빌더에 쓸 때 할당 0, FrameTrace 짝 찾기 · 덮어쓰기 · 할당 0, OnceGate,
   TXT parse / index 표시, 새 줄이 show 줄로 읽히지 않음.
 - JVM 측정(개발 PC, 코멧 아님, 로그를 켰을 때의 비용): turn 줄 ≈ 40–50 ns, frame 줄 ≈ 150 ns(빌더에 할당 0), 문자열로 만들기까지
@@ -615,7 +615,7 @@ tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci
 ## 속도 측정 계측 리뷰 수정 (2026-10-05, 성능 검토 첫 묶음 3)
 - `reportFullyDrawn()`도 RAPerf 로그를 켰을 때만 부른다. 안드로이드 10부터 이 호출은 시스템 기록만이 아니라 ART의 시작 단계
   마무리(VMRuntime.notifyStartupCompleted: 모든 스레드를 잠깐 세우는 정리 + 바인더 호출)도 한다. 평소에는 ART가 실행 5초쯤
-  뒤에 스스로 하므로, 첫 페이지 직후(afterOpen 앞, UI 스레드)로 당기지 않는다. 열기 동작은 이 계측 전과 같다. 점검표 §15b는
+  뒤에 스스로 하므로, 첫 페이지 직후(afterOpen 앞, UI 스레드)로 당기지 않는다. 열기 동작은 이 계측 전과 같다. 점검표 §15d는
   늘 로그를 켜므로 `Fully drawn` 줄은 그대로 나온다.
 - EPUB `open doc` 표시: `plan`(저장된 구간 나누기), `scan`(192 KB가 넘는 항목을 실제로 훑음), `small`(그런 항목이 없음: 훑지도
   저장하지도 않으니 다시 열어도 `small`). 전에는 캐시가 아니면 모두 `scan`이라, 보통 EPUB을 다시 열어도 `scan`으로 보였다

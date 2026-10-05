@@ -185,7 +185,7 @@ class EpubPlanCacheTest {
         assertEquals(2, planFiles().size)
     }
 
-    /** What the reader's RAPerf "open doc EPUB plan|scan|small" line reports (DEVICE_CHECKLIST 15b). */
+    /** What the reader's RAPerf "open doc EPUB plan|scan|small" line reports (DEVICE_CHECKLIST 15d). */
     @Test
     fun scannedItemsCountsOnlyWhatThisOpenScanned() = withCache {
         val f = wholeBookEpub(60, "scanned.epub")
