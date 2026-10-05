@@ -755,15 +755,19 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
      */
     /**
      * The page label and the seek bar. [shown] (when not null) is drawn instead of [label], small and grey: "쪽수 계산
-     * 중" while the pages are counted; the description keeps [label].
+     * 중" while the pages are counted; the description reads it too.
      */
     fun setPage(label: String, max: Int, progress: Int, shown: String? = null) {
         if (isSeeking) return
         if (label != boundLabel || shown != boundShown) {
+            // While [shown] stays, a changed estimate redraws nothing (no e-ink update without a visible change).
+            val redraw = shown == null || shown != boundShown
             boundLabel = label
             boundShown = shown
-            pageLabel.text = if (shown == null) pageLabelText(label) else pendingText(shown)
-            pageLabel.contentDescription = "$PAGE_LABEL, $label"
+            if (redraw) {
+                pageLabel.text = if (shown == null) pageLabelText(label) else pendingText(shown)
+                pageLabel.contentDescription = "$PAGE_LABEL, ${shown ?: label}"
+            }
         }
         val m = max.coerceAtLeast(1)
         if (seek.max != m) seek.max = m

@@ -244,7 +244,8 @@ internal object InfoDialogs {
 
         fun show() {
             val box = ctx.vertical { setPadding(ctx.dp(20), ctx.dp(8), ctx.dp(20), 0) }
-            box.addView(ctx.label(GoToText.info(parsed.page, total, fraction, pagesKnown), 14f, color = Ink.GRAY).apply {
+            val pending = runCatching { host.pagesPending() }.getOrNull() ?: ReaderFormat.PAGES_COUNTING
+            box.addView(ctx.label(GoToText.info(parsed.page, total, fraction, pagesKnown, pending), 14f, color = Ink.GRAY).apply {
                 setLineSpacing(0f, 1.2f)
                 setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
             }, lp())

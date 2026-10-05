@@ -281,10 +281,13 @@ internal object GoToText {
     /** Percent exactly as the reader footer prints it for [fraction] (0..1). */
     fun percent(fraction: Float): String = "${ReaderFormat.percent(if (fraction.isNaN()) 0f else fraction)}%"
 
-    /** "현재 12 / 3259쪽 · 34%" (+ a note while the page count is still running). */
-    fun info(page: Int, total: Int, fraction: Float, pagesKnown: Boolean): String {
-        val where = if (page > 0) "현재 $page${if (total > 0) " / $total" else ""}쪽 · " else "현재 "
-        val note = if (!pagesKnown) "\n쪽수 계산 중 · %로 이동하세요" else ""
+    /**
+     * "현재 12 / 3259쪽 · 34%"; until the pages are counted only "현재 34%" and a note ([pending]: 쪽수 계산 중, or 쪽수 확인
+     * 불가 when counting stopped), never the estimated page.
+     */
+    fun info(page: Int, total: Int, fraction: Float, pagesKnown: Boolean, pending: String = ReaderFormat.PAGES_COUNTING): String {
+        val where = if (pagesKnown && page > 0) "현재 $page${if (total > 0) " / $total" else ""}쪽 · " else "현재 "
+        val note = if (!pagesKnown) "\n$pending · %로 이동하세요" else ""
         return where + percent(fraction) + note
     }
 }

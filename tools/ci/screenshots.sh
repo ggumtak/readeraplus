@@ -126,7 +126,7 @@ dump_all() { # every window on screen into /tmp/ui.xml (uiautomator dump --windo
 xy_of() { python3 tools/ci/find_node.py /tmp/ui.xml "$1" "${2:-exact}" "${3:-0}"; } # "x y" in the last dump
 box_of() { python3 tools/ci/find_node.py /tmp/ui.xml "$1" "${2:-exact}" "${3:-0}" --box; } # "x1 y1 x2 y2"
 has() { [ -n "$(xy_of "$@")" ]; }
-page_label() { # the reader's page label in the last dump: its description "페이지 이동, N / M" (U §8.2)
+page_label_once() { # the reader's page label in the last dump: its description "페이지 이동, N / M" (U §8.2)
   python3 - <<'PY'
 import xml.etree.ElementTree as ET
 try:
@@ -137,6 +137,17 @@ for n in nodes:
   d=n.get('content-desc') or ''
   if d.startswith('페이지 이동'): print(d); break
 PY
+}
+page_label() { # page_label_once, once the pages are counted: until then the label (and its description) reads
+  # "페이지 이동, 쪽수 계산 중" (2026-10-05: no estimated page numbers), so it re-dumps for up to 15 s for "N / M".
+  local l i
+  for i in $(seq 1 15); do
+    l=$(page_label_once)
+    case "$l" in *"쪽수 계산 중"*) ;; *) break;; esac
+    sleep 1; dump >/dev/null 2>&1
+  done
+  case "$l" in *"쪽수 계산 중"*) log "page_label: still counting after 15 s ('$l')";; esac
+  echo "$l"
 }
 page_no() { local l n; l=$(page_label); n=${l#*, }; n=${n%% /*}; case "$n" in ''|*[!0-9]*) echo "";; *) echo "$n";; esac; }
 stepper_value() { # stepper_value "상하 여백": the value text between its 줄이기 and 늘리기 buttons in the last dump

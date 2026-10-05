@@ -48,6 +48,13 @@ interface ReaderHost {
     fun pageLabel(pos: DocPosition): String
     fun totalPagesKnown(): Boolean
 
+    /**
+     * What to show instead of a page number while the pages are not counted ([ReaderFormat.PAGES_COUNTING], or
+     * [ReaderFormat.PAGES_FAILED] when counting stopped); null once the numbers are exact. Displays only: navigation
+     * may still use [pageLabel]'s estimate.
+     */
+    fun pagesPending(): String? = if (totalPagesKnown()) null else ReaderFormat.PAGES_COUNTING
+
     /** Replaces highlights of a given owner key (e.g. "tts", "search", "selection", "quotes") and redraws. */
     fun setHighlights(owner: String, section: Int, highlights: List<Highlight>)
 

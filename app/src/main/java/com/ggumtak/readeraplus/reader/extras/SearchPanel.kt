@@ -126,9 +126,13 @@ internal object SearchPanel {
         return sp
     }
 
-    fun pageOf(host: ReaderHost, h: Hit): String =
-        h.page ?: PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(h.section, h.start)) }.getOrNull())
+    /** A hit's page; empty (and not remembered) while the pages are counted, so it never keeps an estimate. */
+    fun pageOf(host: ReaderHost, h: Hit): String {
+        h.page?.let { return it }
+        if (runCatching { host.pagesPending() }.getOrNull() != null) return ""
+        return PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(h.section, h.start)) }.getOrNull())
             .also { h.page = it }
+    }
 
     // ------------------------------------------------------------------ highlight / navigation
 

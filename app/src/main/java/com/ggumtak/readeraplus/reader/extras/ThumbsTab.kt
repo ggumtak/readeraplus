@@ -167,7 +167,7 @@ internal class ThumbsTab(private val host: ReaderHost, private val close: () -> 
     private fun updateBar() {
         val pages = ThumbGridMath.gridPages(total, perPage)
         bar.show(shown + 1, pages, canPrev = shown > 0, canNext = shown + 1 < pages)
-        val text = "${shown + 1} / $pages · ${current}쪽"
+        val text = "${shown + 1} / $pages · " + (runCatching { host.pagesPending() }.getOrNull() ?: "${current}쪽")
         if (bar.label.text.toString() != text) bar.label.text = text
     }
 

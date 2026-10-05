@@ -69,8 +69,11 @@ class CompactSettingsTest {
         assertEquals("현재 12 / 3259쪽 · $pct", GoToText.info(12, 3259, 0.52f, pagesKnown = true))
         assertEquals("현재 $pct", GoToText.info(-1, -1, 0.52f, pagesKnown = true))
         val counting = GoToText.info(12, 3260, 0.52f, pagesKnown = false)
-        assertEquals("현재 12 / 3260쪽 · $pct\n쪽수 계산 중 · %로 이동하세요", counting)
+        // No estimated page while counting (2026-10-05): only the percent and the note.
+        assertEquals("현재 $pct\n쪽수 계산 중 · %로 이동하세요", counting)
         assertFalse(counting.contains('~'))
+        assertEquals("현재 $pct\n쪽수 확인 불가 · %로 이동하세요",
+            GoToText.info(12, 3260, 0.52f, pagesKnown = false, pending = "쪽수 확인 불가"))
     }
 
     // popup size maths: PopupGeometryTest

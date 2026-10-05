@@ -652,8 +652,10 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         setPadding(ctx.dp(16), 0, ctx.dp(16), 0)
     }
 
+    /** A TOC row's page: empty while the pages are counted (no estimate shown as a page number). */
     private fun tocPageLabel(section: Int, offset: Int): String =
-        PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull())
+        if (runCatching { host.pagesPending() }.getOrNull() != null) ""
+        else PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull())
 
     private fun tocRow(): LinearLayout = ctx.horizontal {
         minimumHeight = ctx.dp(52)
@@ -1029,7 +1031,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     }
 
     private fun pageOf(section: Int, offset: Int): String =
-        PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull()).ifEmpty { "-" }
+        if (runCatching { host.pagesPending() }.getOrNull() != null) "-"
+        else PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull()).ifEmpty { "-" }
 
     companion object {
         /**

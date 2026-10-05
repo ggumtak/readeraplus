@@ -391,7 +391,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             val page = host.globalPageOf(back)
             if (page != leftPage) {
                 leftPage = page
-                leftFull = ReturnHistory.label(page)
+                leftFull = if (page > 0) ReturnHistory.label(page) else ReturnHistory.BACK_UNCOUNTED
                 l.contentDescription = leftFull
                 labelsChanged = true
             }
@@ -401,7 +401,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             val page = host.globalPageOf(forward)
             if (page != rightPage) {
                 rightPage = page
-                rightFull = ReturnHistory.label(page)
+                rightFull = if (page > 0) ReturnHistory.label(page) else ReturnHistory.FORWARD_UNCOUNTED
                 r.contentDescription = rightFull
                 labelsChanged = true
             }
@@ -427,7 +427,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     /** A side label: "N쪽으로", or "N" in the short form (its content description keeps the full label). */
     private fun applyText(v: TextView, page: Int, full: String) {
         if (page < 0) return
-        val text = if (shortForm) page.toString() else full
+        val text = if (shortForm && page > 0) page.toString() else full
         if (v.text.toString() != text) v.text = text
     }
 
@@ -548,7 +548,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         if (page != chipPage) {
             chipPage = page
             val lbl = chipLabel!!
-            val text = ReturnHistory.label(page)
+            val text = if (page > 0) ReturnHistory.label(page) else ReturnHistory.BACK_UNCOUNTED
             lbl.text = text
             lbl.contentDescription = text
         }
@@ -875,6 +875,11 @@ internal class ReturnHistory {
             offer && !chromeVisible && !targetOnScreen
 
         /** "3쪽으로" (the row and the chip add the chevron; style guide 6: the unit after a number is 쪽, attached). */
+        /** The left label and the chip while the pages are counted (no estimated page number). */
+        const val BACK_UNCOUNTED = "돌아가기"
+        /** The right label while the pages are counted. */
+        const val FORWARD_UNCOUNTED = "앞으로"
+
         fun label(page: Int): String = "${page}쪽으로"
 
         /** The index of the list's newest place off this page, -1 when there is none (no iterator: asked per page). */

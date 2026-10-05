@@ -41,6 +41,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
@@ -254,6 +255,7 @@ class BookSession(
     }
 
     private fun invalidateJobs() {
+        cacheRead.complete(Unit)
         genJob.cancel()
         genJob = SupervisorJob(scope.coroutineContext[Job])
         countJob = null
@@ -395,6 +397,7 @@ class BookSession(
             lru.remove(victim)
             cache.remove(victim)
         }
+        val wasComplete = counts.isComplete
         counts.set(section, layout.pageCount, layout.content.length)
         if (generation?.anchor?.section == section) anchorShifted = layout.anchorShifted
         resolveAnchors(section, layout.content.anchors)
@@ -405,6 +408,9 @@ class BookSession(
                 Log.w(TAG, "stored listener failed", t)
             }
         }
+        // A layout (the page shown, a prefetch) can count the last section itself: the page numbers replace
+        // 쪽수 계산 중 then too, not only when the background counter finishes.
+        if (!wasComplete && counts.isComplete) notifyCounts(true)
     }
 
     // ------------------------------------------------------------------ worker-thread code
@@ -532,10 +538,13 @@ class BookSession(
         if (closed) return
         countJob?.cancel()
         countFailed = false
+        cacheRead.complete(Unit)
         val gen = generation ?: return
+        val read = CompletableDeferred<Unit>()
+        cacheRead = read
         countJob = scope.launch(genJob) {
             try {
-                countAll(gen, countDelayMs)
+                countAll(gen, countDelayMs, read)
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
@@ -545,8 +554,23 @@ class BookSession(
                     countFailed = true
                     notifyCounts(false)
                 }
+            } finally {
+                read.complete(Unit)
             }
         }
+    }
+
+    /** Completed once [startCounting]'s cached counts are read (or there are none, or counting ended). */
+    private var cacheRead = CompletableDeferred(Unit)
+
+    /**
+     * Waits up to [maxMs] for this layout's cached page counts (the key and one database read), so a book counted
+     * before shows its page numbers on the first page instead of 쪽수 계산 중 (main thread; reading is never held
+     * longer than [maxMs]).
+     */
+    suspend fun awaitCachedCounts(maxMs: Long) {
+        val d = cacheRead
+        if (!d.isCompleted) withTimeoutOrNull(maxMs) { d.await() }
     }
 
     /**
@@ -562,7 +586,7 @@ class BookSession(
      * The counts are saved every [SAVE_EVERY] counted sections, when complete, and on [close] (partial arrays only
      * for a settled layout, see [saveCounts]).
      */
-    private suspend fun countAll(gen: Generation, countDelayMs: Long) {
+    private suspend fun countAll(gen: Generation, countDelayMs: Long, read: CompletableDeferred<Unit>) {
         val started = if (ReaderPerf.turns) SystemClock.uptimeMillis() else 0L
         var counted = 0
         var cached = 0
@@ -585,7 +609,15 @@ class BookSession(
         if (gen !== generation) return
         if (saved != null && saved.size == sectionCount && saved.all { it >= 1 || it == -1 }) {
             anchorCached = gen.anchor?.let { saved[it.section] } ?: -1
-            counts.setKnown(saved)
+            // The cache holds the anchor section's un-anchored count; this layout's is anchored and may differ by a
+            // page. Leave it to the anchored layout or count (never a total that changes after it was shown as final).
+            val a = gen.anchor?.section ?: -1
+            val load = if (a in 0 until sectionCount && !counts.isKnown(a) && saved[a] >= 1) {
+                saved.copyOf().also { it[a] = -1 }
+            } else {
+                saved
+            }
+            counts.setKnown(load)
             savedKnown = PageCounts.countedIn(saved)
             cached = savedKnown
             if (counts.isComplete) {
@@ -597,6 +629,7 @@ class BookSession(
                 }
             } else if (savedKnown > 0) notifyCounts(false)
         }
+        read.complete(Unit)
         // The one extra un-anchored count also waits: it never competes with the first page.
         if (countDelayMs > 0) delay(countDelayMs)
         if (gen !== generation || closed) return

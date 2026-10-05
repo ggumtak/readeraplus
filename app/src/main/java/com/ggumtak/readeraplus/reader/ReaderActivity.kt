@@ -143,6 +143,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         private const val GLYPH_SLOP_DP = 4f
         private const val SAVE_DELAY_MS = 1000L
         private const val COUNT_DELAY_MS = 800L
+        /** At most this long the first page of an open or relayout waits for cached page counts (usually ≈ 10–50 ms). */
+        private const val CACHE_WAIT_MS = 150L
         private const val OWNER_QUOTES = "quotes"
         private const val OWNER_SEARCH = "search"
         /** N §6.1: the note an open / a new intent jumped to, marked until the first manual turn. */
@@ -1327,6 +1329,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                         sec to listOf(Highlight(off, minOf(jump.end, l.content.length), HighlightKind.SEARCH))
                 }
                 preloadImages(s, l, idx)
+                // A book counted before shows its page numbers on the first page (not 쪽수 계산 중 for a moment).
+                s.awaitCachedCounts(CACHE_WAIT_MS)
                 if (session !== s) return@launch
                 // Paged: a note opens at its page start (A's JUMP rule). Scroll (attached by this show when wanted):
                 // the exact offset, with CONTEXT placement for a mid-line note (S §1.10 JUMP rule, [openedAtNote]).
@@ -1888,15 +1892,18 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private val sessionListener = object : BookSession.Listener {
         override fun onCountsChanged(complete: Boolean) {
-            if (curLayout == null) return
+            // While a relayout is under way the page on screen belongs to the old layout: its showPage binds both.
+            if (curLayout == null || layoutStale()) return
             // A stopped count shows 쪽수 확인 불가 the same way the exact numbers show.
             if (complete || session?.countFailed == true) {
                 // The exact page numbers (the default header's 쪽 번호 since 2026-10-05) show at once on a phone. On
                 // e-ink they wait for the next redraw (a turn, a scroll step, any other refresh), like the clock: no
                 // screen update seconds after the open without a user action.
                 if (DeviceClass.cached(this@ReaderActivity) != true) refreshDecor(onlyIfChanged = true)
-                // The page label and the return strip's page numbers become exact (bindChrome binds the strip).
-                if (chromeVisible) bindChrome() else returnNav.bind()
+                // The page label and the return strip's page numbers become exact (bindChrome binds the strip). A return
+                // chip over the page relabels with the next page on e-ink, like the status line.
+                if (chromeVisible) bindChrome()
+                else if (DeviceClass.cached(this@ReaderActivity) != true) returnNav.bind()
                 return
             }
             val now = SystemClock.uptimeMillis()
@@ -2579,6 +2586,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             val idx = AnchorMath.pageFor(l, off)
             // New image sizes after a font / size change: decode them here, not in onDraw.
             preloadImages(s, l, idx)
+            // Back to a layout counted before (rotation, a font size tried earlier): its numbers at once.
+            s.awaitCachedCounts(CACHE_WAIT_MS)
             if (session !== s) return@launch
             endNavJob(coroutineContext[Job])
             showPage(sec, l, idx, Nav.RELAYOUT, anchorOffset = off)
@@ -3282,6 +3291,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     override fun totalPagesKnown(): Boolean = session?.counts?.isComplete == true
 
+    override fun pagesPending(): String? {
+        val s = session ?: return null
+        return when (pagesState(s)) {
+            StatusInputs.PAGES_EXACT -> null
+            StatusInputs.PAGES_FAILED -> ReaderFormat.PAGES_FAILED
+            else -> ReaderFormat.PAGES_COUNTING
+        }
+    }
+
     override fun setHighlights(owner: String, section: Int, highlights: List<Highlight>) {
         if (owner == OWNER_QUOTES) {
             // A quote was added, recoloured or deleted. The contents dialog / selection send the section's quotes by
@@ -3485,8 +3503,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     anchor = DocPosition(sec, off)
                     relayout()
                 } else {
-                    showPage(sec, l, AnchorMath.pageFor(l, off), Nav.JUMP, anchorOffset = off)
                     s.startCounting(COUNT_DELAY_MS)
+                    s.awaitCachedCounts(CACHE_WAIT_MS)
+                    if (session !== s) return@launch
+                    showPage(sec, l, AnchorMath.pageFor(l, off), Nav.JUMP, anchorOffset = off)
                 }
                 if (s.settings.shows(com.ggumtak.readeraplus.settings.StatusItem.EPISODE)) scheduleEpisodes()
                 val done = ArrayList(reopenDone)
@@ -4059,9 +4079,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (c.isComplete) {
             chrome.setPage(label, c.total() - 1, c.globalPage(curSection, curPageIdx) - 1)
         } else {
-            // No estimated number on screen while counting (its description keeps one, for TalkBack and CI).
+            // No estimated number on screen (nor in its description) while counting.
             val shown = if (s.countFailed) ReaderFormat.PAGES_FAILED else ReaderFormat.PAGES_COUNTING
-            chrome.setPage(label, 1000, Math.round(progress() * 1000f), shown)
+            // Floored like ReaderFormat.percent, so the seek preview at touch reads the footer's percent.
+            chrome.setPage(label, 1000, (progress() * 1000f + 1e-4f).toInt(), shown)
         }
         val p = l.pages.getOrNull(curPageIdx)
         chrome.setBookmarked(p != null && isBookmarked(l, p))
@@ -4101,6 +4122,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             val sec = pos.section.coerceIn(0, s.sectionCount - 1)
             val l = s.peek(sec)
             val idx = pages.resolve(s.generation, sec, pos.offset, if (l != null) l.pageForOffset(pos.offset) else -1)
+            // No estimated page on the return labels while counting: 0 = "돌아가기" / "앞으로" until the count is done.
+            if (!s.counts.isComplete) return 0
             return s.counts.globalPage(sec, if (idx >= 0) idx else s.counts.estimatePageIndex(sec, pos.offset))
         }
 
@@ -4201,7 +4224,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
         override fun onSeekDone(progress: Int) {
             val s = session ?: return
-            if (progress == seekStartProgress) return
+            if (progress == seekStartProgress) {
+                // Counts that completed (or failed) while the finger was down were not bound (setPage skips while
+                // seeking): bind now, on the finger-up, so the label switches and the bar takes the page scale.
+                if (chromeVisible) bindChrome()
+                return
+            }
             val c = s.counts
             when {
                 seekExact && c.isComplete && c.total() == seekTotal -> {

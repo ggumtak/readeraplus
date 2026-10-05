@@ -959,7 +959,8 @@ class TtsController(private val host: ReaderHost) {
             playButton?.setImageResource(icon)
             lastPlayIcon = icon
         }
-        val page = PageLabel.clean(runCatching { host.pageLabel(host.currentPosition()) }.getOrNull())
+        val page = runCatching { host.pagesPending() }.getOrNull()
+            ?: PageLabel.clean(runCatching { host.pageLabel(host.currentPosition()) }.getOrNull())
         val remaining = if (sleepDeadline > 0L) (sleepDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(1L) else 0L
         val note = SleepChoice.barNote(remaining, if (sleepFrom != null && sleepStop() != null) sleepLeft.coerceAtLeast(1) else 0)
         val text = if (note.isEmpty()) page else "$page · $note"
