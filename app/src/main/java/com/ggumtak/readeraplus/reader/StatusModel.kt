@@ -9,6 +9,7 @@ import com.ggumtak.readeraplus.settings.StatusItem
 /** Inputs of one status update for the page on screen. Reused, primitives and existing references only. */
 internal class StatusInputs {
     @JvmField var page = 0; @JvmField var total = 0              // globalPage / counts.total()
+    @JvmField var pages = PAGES_EXACT                             // PAGES_*: the page numbers are shown only when exact
     @JvmField var percent = 0                                     // ReaderFormat.percent(progress())
     @JvmField var bar = -1f                                       // char progress of the page start; last page = 1; -1 = off
     @JvmField var chapterTitle: String? = null; @JvmField var bookTitle: String? = null
@@ -28,6 +29,15 @@ internal class StatusInputs {
     fun setChapterPage(cur: Int, first: Int, next: Int) {
         chapterPage = (cur - first + 1).coerceAtLeast(1)
         chapterPages = (next - first).coerceAtLeast(chapterPage)
+    }
+
+    companion object {
+        /** The pages are counted: 쪽 번호 and 챕터 쪽 번호 show their numbers. */
+        const val PAGES_EXACT = 0
+        /** Still counting: both read [ReaderFormat.PAGES_COUNTING] instead of an estimate. */
+        const val PAGES_COUNTING = 1
+        /** Counting stopped on an error: [ReaderFormat.PAGES_FAILED]. */
+        const val PAGES_FAILED = 2
     }
 }
 
@@ -105,9 +115,17 @@ internal class StatusModel {
 
     /** Characters of a numeric [item] into [b] from 0; returns the length, 0 when its input is unknown. */
     private fun chars(b: CharArray, item: StatusItem, inp: StatusInputs): Int = when (item) {
-        StatusItem.PAGE -> if (inp.page <= 0) 0 else StatusText.page(b, 0, inp.page, inp.total)
+        StatusItem.PAGE -> when {
+            inp.pages != StatusInputs.PAGES_EXACT -> StatusText.pagesPending(b, 0, inp.pages)
+            inp.page <= 0 -> 0
+            else -> StatusText.page(b, 0, inp.page, inp.total)
+        }
         StatusItem.PERCENT -> if (inp.percent < 0) 0 else StatusText.percent(b, 0, inp.percent)
-        StatusItem.CHAPTER_PAGES_LEFT -> if (inp.chapterPage <= 0) 0 else StatusText.chapterPage(b, 0, inp.chapterPage, inp.chapterPages)
+        StatusItem.CHAPTER_PAGES_LEFT -> when {
+            inp.chapterPage <= 0 -> 0
+            inp.pages != StatusInputs.PAGES_EXACT -> StatusText.pagesPending(b, 0, inp.pages)
+            else -> StatusText.chapterPage(b, 0, inp.chapterPage, inp.chapterPages)
+        }
         StatusItem.EPISODE ->
             if ((inp.epNumbered && inp.epNumber > 0) || inp.tocIndex >= 0) {
                 StatusText.episode(b, 0, inp.epNumbered, inp.epNumber, inp.epMax, inp.tocIndex, inp.tocCount)
@@ -161,6 +179,10 @@ internal object StatusText {
     }
 
     fun percent(buf: CharArray, at: Int, p: Int): Int = put(buf, int(buf, at, p), '%')   // "34%"
+
+    /** "쪽수 계산 중" / "쪽수 확인 불가" for [StatusInputs.pages] (not exact). */
+    fun pagesPending(buf: CharArray, at: Int, state: Int): Int =
+        put(buf, at, if (state == StatusInputs.PAGES_FAILED) ReaderFormat.PAGES_FAILED else ReaderFormat.PAGES_COUNTING)
 
     fun clock(buf: CharArray, at: Int, minuteOfDay: Int, is24: Boolean): Int {   // "14:05" / "2:05"
         val m = Math.floorMod(minuteOfDay, 1440)

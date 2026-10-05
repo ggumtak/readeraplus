@@ -531,6 +531,7 @@ class BookSession(
     fun startCounting(countDelayMs: Long = 0) {
         if (closed) return
         countJob?.cancel()
+        countFailed = false
         val gen = generation ?: return
         countJob = scope.launch(genJob) {
             try {
@@ -538,11 +539,22 @@ class BookSession(
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                // Counting is an optimisation: never let it take the reader down (totals stay estimated).
+                // Counting is an optimisation: never let it take the reader down (the page numbers read 쪽수 확인 불가).
                 Log.w(TAG, "page counting failed", t)
+                if (gen === generation && !closed) {
+                    countFailed = true
+                    notifyCounts(false)
+                }
             }
         }
     }
+
+    /**
+     * True when the last [startCounting] stopped on an error before the counts were complete (main thread): the
+     * reader shows "쪽수 확인 불가" instead of page numbers; a new layout (another [startCounting]) clears it.
+     */
+    var countFailed = false
+        private set
 
     /**
      * A2: the cache may hold a partial array (-1 = not counted yet), so counting resumes where the last session

@@ -11,8 +11,9 @@ import java.util.zip.ZipException
 
 /**
  * Pure string formatting for the reader's chrome, panels and toasts (unit-tested; the page's status slots are
- * formatted without allocation by [StatusText]). Page numbers are shown as plain numbers even while the counts are
- * still estimates (no "~"): the estimate only settles into the exact number.
+ * formatted without allocation by [StatusText]). The page numbers of the status line and the chrome's page label
+ * show only once the pages are counted: until then they read [PAGES_COUNTING] ([PAGES_FAILED] if counting stopped),
+ * never an estimate that would settle into another number (user, 2026-10-05).
  */
 object ReaderFormat {
     const val SEP = " · "
@@ -25,6 +26,11 @@ object ReaderFormat {
 
     /** The error panel's message when nothing in [openError]'s list matches. */
     const val OPEN_FAILED = "책을 열지 못했습니다"
+
+    /** The status line's and the chrome's page numbers while the pages are being counted. */
+    const val PAGES_COUNTING = "쪽수 계산 중"
+    /** The same when counting stopped on an error (reading goes on; only the numbers are missing). */
+    const val PAGES_FAILED = "쪽수 확인 불가"
 
     /** "12 / 3259" (a total below the page, possible while estimating, shows the page as the total). */
     fun pageLabel(page: Int, total: Int): String = "$page / ${total.coerceAtLeast(page)}"
@@ -120,6 +126,12 @@ object ReaderFormat {
         var out = sb.toString().trim()
         if (out.length > max) out = out.substring(0, max).trimEnd() + "…"
         return out
+    }
+
+    /** Seekbar drag preview while the pages are counted: "34% · 제3장 …" (no estimated page number). */
+    fun previewPercent(percent: Int, chapter: String?): String {
+        val p = "$percent%"
+        return if (chapter.isNullOrBlank()) p else "$p · ${chapter.trim()}"
     }
 
     /** Seekbar drag preview: "1234쪽 · 제3장 …" (U polish 17). */

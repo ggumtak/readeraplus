@@ -109,6 +109,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     private val pageLabel: TextView
     /** The page label's text as last bound ("3 / 183"; the view holds it with spans). */
     private var boundLabel = ""
+    /** The text drawn instead of [boundLabel] while the pages are counted ([setPage]); null = the label itself. */
+    private var boundShown: String? = null
     private val rotation: ImageButton
     private val pin: ImageButton
     private val seek: SeekBar
@@ -480,7 +482,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         autoDot?.let { paintDot(it, hollow = true) }
         pageLabel.setTextColor(k.text)
         pageLabel.background = ctx.chromePressed(k, 8f)
-        if (boundLabel.isNotEmpty()) pageLabel.text = pageLabelText(boundLabel)
+        boundShown?.let { pageLabel.text = pendingText(it) }
+            ?: run { if (boundLabel.isNotEmpty()) pageLabel.text = pageLabelText(boundLabel) }
         seekInfo.setTextColor(k.text)
         seekInfo.background = previewBox()
         unavailableLink?.let { paintLink(it) }
@@ -521,6 +524,14 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     }
 
     /** "3 / 183": the current page bold, the total after it at [TOTAL_SCALE] in the secondary colour (U §2.4). */
+    /** [pageLabelText]'s total style (smaller, grey) over the whole of [text]. */
+    private fun pendingText(text: String): CharSequence {
+        val s = SpannableString(text)
+        s.setSpan(RelativeSizeSpan(TOTAL_SCALE), 0, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        s.setSpan(ForegroundColorSpan(look.text2), 0, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return s
+    }
+
     private fun pageLabelText(label: String): CharSequence {
         val cut = ReaderFormat.pageLabelCut(label)
         val head = if (cut < 0) label.length else cut
@@ -742,11 +753,16 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
      * Page label and seek position (ignored while the user drags the seek bar). The label's content description
      * carries the page ("페이지 이동, 3 / 167"); it is set with the text, so it costs nothing while the chrome is hidden.
      */
-    fun setPage(label: String, max: Int, progress: Int) {
+    /**
+     * The page label and the seek bar. [shown] (when not null) is drawn instead of [label], small and grey: "쪽수 계산
+     * 중" while the pages are counted; the description keeps [label].
+     */
+    fun setPage(label: String, max: Int, progress: Int, shown: String? = null) {
         if (isSeeking) return
-        if (label != boundLabel) {
+        if (label != boundLabel || shown != boundShown) {
             boundLabel = label
-            pageLabel.text = pageLabelText(label)
+            boundShown = shown
+            pageLabel.text = if (shown == null) pageLabelText(label) else pendingText(shown)
             pageLabel.contentDescription = "$PAGE_LABEL, $label"
         }
         val m = max.coerceAtLeast(1)

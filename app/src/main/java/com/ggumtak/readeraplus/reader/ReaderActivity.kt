@@ -1889,7 +1889,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private val sessionListener = object : BookSession.Listener {
         override fun onCountsChanged(complete: Boolean) {
             if (curLayout == null) return
-            if (complete) {
+            // A stopped count shows 쪽수 확인 불가 the same way the exact numbers show.
+            if (complete || session?.countFailed == true) {
                 // The exact page numbers (the default header's 쪽 번호 since 2026-10-05) show at once on a phone. On
                 // e-ink they wait for the next redraw (a turn, a scroll step, any other refresh), like the clock: no
                 // screen update seconds after the open without a user action.
@@ -3019,6 +3020,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
         }
         val lastOfBook = if (sc != null) sc.atBookEnd() else curSection == s.sectionCount - 1 && curPageIdx == l.pageCount - 1
+        inp.pages = pagesState(s)
         if (all || st.shows(StatusItem.PAGE)) {
             inp.page = c.globalPage(sec, pageIdx)
             inp.total = c.total()
@@ -3218,6 +3220,17 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (c.isComplete) return PageProgress.of(c.globalPage(curSection, curPageIdx), c.total())
         val p = l.pages.getOrNull(curPageIdx)
         return c.charProgress(curSection, p?.start ?: anchor.offset)
+    }
+
+    /**
+     * Whether page numbers may show (user, 2026-10-05: "계산 중인 추정 숫자를 확정된 쪽수처럼 보여주지 마"): exact once
+     * every section is counted (a cached count shows at once), else counting, or failed when counting stopped on an
+     * error. The status line's 쪽 번호 / 챕터 쪽 번호 and the chrome's page label follow it.
+     */
+    private fun pagesState(s: BookSession): Int = when {
+        s.counts.isComplete -> StatusInputs.PAGES_EXACT
+        s.countFailed -> StatusInputs.PAGES_FAILED
+        else -> StatusInputs.PAGES_COUNTING
     }
 
     /** "page / total" of (section, pageIndex): plain numbers, estimated until the counts are complete. */
@@ -4046,7 +4059,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (c.isComplete) {
             chrome.setPage(label, c.total() - 1, c.globalPage(curSection, curPageIdx) - 1)
         } else {
-            chrome.setPage(label, 1000, Math.round(progress() * 1000f))
+            // No estimated number on screen while counting (its description keeps one, for TalkBack and CI).
+            val shown = if (s.countFailed) ReaderFormat.PAGES_FAILED else ReaderFormat.PAGES_COUNTING
+            chrome.setPage(label, 1000, Math.round(progress() * 1000f), shown)
         }
         val p = l.pages.getOrNull(curPageIdx)
         chrome.setBookmarked(p != null && isBookmarked(l, p))
@@ -4180,7 +4195,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 ReaderFormat.previewLabel(progress + 1, chapterTitle(sec, off))
             } else {
                 val pos = c.locateProgress(progress / 1000f)
-                ReaderFormat.previewLabel(globalPageOf(pos), chapterTitle(pos.section, pos.offset))
+                ReaderFormat.previewPercent(ReaderFormat.percent(progress / 1000f), chapterTitle(pos.section, pos.offset))
             }
         }
 

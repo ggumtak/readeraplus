@@ -273,6 +273,33 @@ class StatusModelTest {
     }
 
     @Test
+    fun pageNumbersWaitForTheCount() {
+        val m = StatusModel()
+        val inp = inputs().apply { pages = StatusInputs.PAGES_COUNTING }
+        assertEquals("쪽수 계산 중", m.sample(StatusItem.PAGE, inp))
+        assertEquals("쪽수 계산 중", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
+        // Not page numbers: unchanged while counting.
+        assertEquals("34%", m.sample(StatusItem.PERCENT, inp))
+        assertEquals("123/540화", m.sample(StatusItem.EPISODE, inp))
+        inp.pages = StatusInputs.PAGES_FAILED
+        assertEquals("쪽수 확인 불가", m.sample(StatusItem.PAGE, inp))
+        inp.pages = StatusInputs.PAGES_EXACT
+        assertEquals("12 / 3259", m.sample(StatusItem.PAGE, inp))
+        assertEquals("2 / 32", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
+        // Without a TOC the chapter page stays empty, counted or not.
+        inp.pages = StatusInputs.PAGES_COUNTING
+        inp.chapterPage = -1
+        assertNull(m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
+        // The status line changes once, when the count completes.
+        val s = ReaderSettings(headerCenter = StatusItem.PAGE)
+        m.update(s, inp, track)
+        inp.page = 13
+        assertFalse(m.update(s, inp, track))
+        inp.pages = StatusInputs.PAGES_EXACT
+        assertTrue(m.update(s, inp, track))
+    }
+
+    @Test
     fun chapterPageNeedsATocPage() {
         val m = StatusModel()
         val inp = inputs().apply { chapterPage = -1; chapterPages = -1 }
