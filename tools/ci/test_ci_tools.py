@@ -452,6 +452,57 @@ class RawEqualTest(unittest.TestCase):
             self.assertEqual(raw_equal.compare(a, b, 1, 5), "DIFF 1 bbox 2,3-2,3")
             self.assertEqual(raw_equal.compare(a, b, 0, 3), "EQUAL")
 
+    def test_pixel_reads_one_colour(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = (os.path.join(d, n) for n in ("a.raw", "b.raw"))
+            raw_image(a, 4, 6, [0, 0x32, 0x3C, 0xF5, 0xFF, 0x1A])
+            raw_image(b, 4, 6, [0, 0x32, 0x3C, 0xF5, 0xFF, 0x1A], header=12)
+            data = bytearray(open(a, "rb").read())
+            data[16 + (2 * 4 + 1) * 4:16 + (2 * 4 + 1) * 4 + 3] = bytes([0xF0, 0xD0, 0x96])  # (x 1, y 2): the gold
+            with open(a, "wb") as f:
+                f.write(bytes(data))
+            self.assertEqual(raw_equal.pixel(a, 0, 1), "#323232")
+            self.assertEqual(raw_equal.pixel(a, 1, 2), "#F0D096")
+            self.assertEqual(raw_equal.pixel(a, 3, 5), "#1A1A1A")
+            self.assertEqual(raw_equal.pixel(b, 1, 3), "#F5F5F5")  # the 12-byte header
+            self.assertEqual(raw_equal.pixel(a, 4, 0), "BADSIZE")
+            self.assertEqual(raw_equal.pixel(a, 0, 6), "BADSIZE")
+            self.assertEqual(raw_equal.main(["pixel", a, "1", "2"]), "#F0D096")
+            self.assertEqual(raw_equal.main(["pixel", a, "x", "2"]), "BADSIZE")
+            self.assertEqual(raw_equal.main(["pixel", os.path.join(d, "none.raw"), "0", "0"]), "BADSIZE")
+
+    def test_near_and_darker(self):
+        self.assertTrue(raw_equal.near("#3C3C3C", "#3C3C3C", 0))
+        self.assertTrue(raw_equal.near("#3E3A3C", "3C3C3C", 2))
+        self.assertFalse(raw_equal.near("#3F3C3C", "#3C3C3C", 2))
+        # A 30 % shadow on white is far darker; one grey level of noise is not a shadow.
+        self.assertTrue(raw_equal.darker("#B3B3B3", "#FFFFFF", 12))
+        self.assertFalse(raw_equal.darker("#FEFEFE", "#FFFFFF", 12))
+        self.assertFalse(raw_equal.darker("#FFFFFF", "#B3B3B3", 12))
+        self.assertTrue(raw_equal.darker("#262626", "#323232", 12))
+        self.assertEqual(raw_equal.main(["near", "#333333", "#343434", "2"]), "PASS")
+        self.assertEqual(raw_equal.main(["near", "#333333", "#000000", "2"]), "FAIL")
+        self.assertEqual(raw_equal.main(["darker", "#C0C0C0", "#FFFFFF", "12"]), "PASS")
+        self.assertEqual(raw_equal.main(["darker", "#FFFFFF", "#FFFFFF", "12"]), "FAIL")
+        # A missing or broken colour (a pixel read that failed) is a FAIL, never a crash.
+        self.assertEqual(raw_equal.main(["near", "BADSIZE", "#FFFFFF", "2"]), "FAIL")
+        self.assertEqual(raw_equal.main(["darker", "", "#FFFFFF", "12"]), "FAIL")
+        self.assertEqual(raw_equal.main(["near"]), "FAIL")
+
+    def test_cli_keeps_the_row_compare(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = (os.path.join(d, n) for n in ("a.raw", "b.raw"))
+            raw_image(a, 4, 6, [0, 10, 20, 30, 40, 50])
+            raw_image(b, 4, 6, [99, 10, 20, 30, 40, 99])
+            out = subprocess.run([sys.executable, os.path.join(HERE, "raw_equal.py"), a, b, "1", "5"],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.stdout.strip(), "EQUAL")
+            out = subprocess.run([sys.executable, os.path.join(HERE, "raw_equal.py"), "pixel", b, "0", "0"],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.stdout.strip(), "#636363")
+            self.assertEqual(raw_equal.main([a, b, "0", "6"]), "DIFF 8 bbox 0,0-3,5")
+            self.assertEqual(raw_equal.main([a]), "BADSIZE")
+
 
 class RestoreBackupTest(unittest.TestCase):
     def test_crafted_backup(self):

@@ -22,6 +22,17 @@ class ReaderFormatTest {
     }
 
     @Test
+    fun pageLabelCutSplitsThePageFromTheTotal() {
+        // The chrome draws the current page bold and " / total" smaller in the secondary colour.
+        assertEquals(1, ReaderFormat.pageLabelCut("3 / 183"))
+        assertEquals(5, ReaderFormat.pageLabelCut("12345 / 23259"))
+        assertEquals(3, ReaderFormat.pageLabelCut(ReaderFormat.pageLabel(545, 1037)))
+        // No total: the whole label is the page.
+        assertEquals(-1, ReaderFormat.pageLabelCut("545"))
+        assertEquals(-1, ReaderFormat.pageLabelCut(""))
+    }
+
+    @Test
     fun percent() {
         assertEquals(0, ReaderFormat.percent(0f))
         assertEquals(34, ReaderFormat.percent(0.345f))

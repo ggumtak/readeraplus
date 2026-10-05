@@ -29,6 +29,12 @@ object ReaderFormat {
     /** "12 / 3259" (a total below the page, possible while estimating, shows the page as the total). */
     fun pageLabel(page: Int, total: Int): String = "$page / ${total.coerceAtLeast(page)}"
 
+    /**
+     * Where the chrome's page label stops being the current page: the index of " / " in a [pageLabel] (the total
+     * after it is shown smaller and grey), or -1 when the whole label is the primary part.
+     */
+    fun pageLabelCut(label: String): Int = label.indexOf(" / ")
+
     /** Percent 0..100 (floor; the last page shows 100). */
     fun percent(progress: Float): Int = (progress * 100f + 1e-4f).toInt().coerceIn(0, 100)
 

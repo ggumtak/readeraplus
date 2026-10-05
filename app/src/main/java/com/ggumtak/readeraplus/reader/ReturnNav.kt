@@ -3,23 +3,25 @@ package com.ggumtak.readeraplus.reader
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.format.DocPosition
-import com.ggumtak.readeraplus.ui.kit.Ink
-import com.ggumtak.readeraplus.ui.kit.borderBox
+import com.ggumtak.readeraplus.render.ChromePalette
+import com.ggumtak.readeraplus.render.PagePalette
 import com.ggumtak.readeraplus.ui.kit.dp
-import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.iconButton
 import com.ggumtak.readeraplus.ui.kit.label
-import com.ggumtak.readeraplus.ui.kit.pressableBackground
 
 internal interface ReturnHost {                       // implemented by ReaderActivity (READER_A)
     val chromeVisible: Boolean
@@ -40,11 +42,12 @@ internal interface ReturnHost {                       // implemented by ReaderAc
 }
 
 /**
- * The pin = the book's return point (U §3): the state ([ReturnPoints]), the strip docked in the chrome's bottom bar
- * ([dock]) and the floating chip shown over the page after a remembered jump ([chip]). Both views start as empty
- * `GONE` frames; their contents are built on first use, so opening a book inflates nothing here before the first
- * page. Main thread only. Labels are rebuilt only when a page number changes: [bind] on an unchanged state allocates
- * nothing.
+ * The pin = the book's return point (U §3): the state ([ReturnPoints]), the history row docked in the chrome's bottom
+ * bar right above its panel ([dock]: on the page colour, three equal columns — the mark, 지우기, the other place — so
+ * hiding one side never moves the rest) and the floating chip shown over the page after a remembered jump ([chip]).
+ * Both views start as empty `GONE` frames; their contents are built on first use, so opening a book inflates nothing
+ * here before the first page. Colours follow the chrome's look ([setLook]). Main thread only. Labels are rebuilt only
+ * when a page number changes: [bind] on an unchanged state allocates nothing.
  */
 internal class ReturnNav(private val ctx: Context, private val host: ReturnHost) {
     val dock: View = FrameLayout(ctx).apply { visibility = View.GONE }
@@ -54,7 +57,11 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     private val state = ReturnPoints()
     val pinned: Boolean get() = state.pinned
 
+    /** The chrome's colours ([ChromePalette]): the dock on the page colour, the chip on the surface. */
+    private var look = ChromePalette.DEFAULT
+
     // Dock views (built on the first bind with a non-empty state).
+    private var dockRow: LinearLayout? = null
     private var left: TextView? = null
     private var centre: TextView? = null
     private var right: TextView? = null
@@ -73,6 +80,9 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     private var rightFull = ""
 
     // Chip views (built on the first show).
+    private var chipBox: LinearLayout? = null
+    private var chipLine: View? = null
+    private var chipClose: ImageButton? = null
     private var chipLabel: TextView? = null
     private var chipPage = -1
     private var chipOther = false
@@ -82,8 +92,22 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
     // Compound drawables, one instance per view (a drawable has one callback); created with their views.
     private var pinIcon: Drawable? = null
     private var leftChevron: Drawable? = null
+    private var rightChevron: Drawable? = null
     private var chipChevronLeft: Drawable? = null
     private var chipChevronRight: Drawable? = null
+
+    /**
+     * The chrome's colours for [page] on a device of class [eink] (as `ReaderChrome.setLook`). Views built so far are
+     * recoloured at once (the dock is only drawn with the chrome up; the chip only shows over a page that is being
+     * redrawn for the same change); views built later take the look themselves.
+     */
+    fun setLook(page: PagePalette, eink: Boolean?) {
+        val k = ChromePalette.of(page, eink)
+        if (k === look) return
+        look = k
+        if (left != null) paintDock()
+        if (chipLabel != null) paintChip()
+    }
 
     /** The pinned mark is on the current page (pin icon state). */
     fun markOnScreen(): Boolean {
@@ -289,7 +313,7 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
                 leftOnMark = onMark
                 labelsChanged = true
                 l.isClickable = !onMark
-                l.setTextColor(if (onMark) Ink.GRAY else Ink.BLACK)
+                l.setTextColor(if (onMark) look.histOff else look.hist)
                 l.contentDescription = if (onMark) ON_MARK_DESCRIPTION else leftLink
             }
             show(l, true)
@@ -341,18 +365,16 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         if (r.text.toString() != text) r.text = text
     }
 
-    /** U §3.4 fit rule: both side labels at their full width (text + paddings + glyph) against the row. */
+    /** U §3.4 fit rule: each side label at its full width (text + paddings + glyph) against its third of the row. */
     private fun fitsShort(rowW: Int): Boolean {
         val l = left!!
         val r = right!!
-        val glyph = ctx.dp(18) + ctx.dp(2)
+        val glyph = ctx.dp(GLYPH_DP) + ctx.dp(2)
         val lw = if (leftPage < 0 || l.visibility != View.VISIBLE) 0f
         else l.paint.measureText(if (leftOnMark) leftFull else leftLink) + l.paddingStart + l.paddingEnd + glyph
         val rw = if (rightPage < 0 || r.visibility != View.VISIBLE) 0f
         else r.paint.measureText(rightFull) + r.paddingStart + r.paddingEnd + glyph
-        val c = centre!!
-        val cw = maxOf(c.paint.measureText(CLEAR) + c.paddingStart + c.paddingEnd, ctx.dp(72).toFloat())
-        return ChromeMath.stripShort(lw, cw, rw, rowW.toFloat(), ctx.dp(8).toFloat())
+        return ChromeMath.stripShort(lw, rw, rowW.toFloat())
     }
 
     /** The bar's width: the dock's own once laid out, else the window's. */
@@ -363,49 +385,74 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         return if (root > 0) root else ctx.resources.displayMetrics.widthPixels
     }
 
+    /**
+     * The row: three equal columns, each its own 44 dp touch target. The side glyphs sit on the bars' icon columns
+     * (a 16 dp glyph 20 dp from the edge: centred 28 dp in, like ← and ⏮), 지우기 on the page label's axis.
+     */
     private fun ensureDock() {
         if (left != null) return
-        val strip = FrameLayout(ctx)
+        val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         val l = stripText().apply {
-            setPaddingRelative(ctx.dp(14), 0, ctx.dp(12), 0)
+            setPaddingRelative(ctx.dp(20), 0, ctx.dp(4), 0)
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             setOnClickListener { useMark() }
         }
-        strip.addView(l, FrameLayout.LayoutParams(WRAP_CONTENT, MATCH_PARENT, Gravity.START or Gravity.CENTER_VERTICAL))
+        row.addView(l, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         val c = stripText().apply {
             text = CLEAR
             gravity = Gravity.CENTER
-            minWidth = ctx.dp(72)
-            setPaddingRelative(ctx.dp(16), 0, ctx.dp(16), 0)
             setOnClickListener { clearAll() }
         }
-        strip.addView(c, FrameLayout.LayoutParams(WRAP_CONTENT, MATCH_PARENT, Gravity.CENTER))
+        row.addView(c, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
         val r = stripText().apply {
-            setPaddingRelative(ctx.dp(12), 0, ctx.dp(14), 0)
+            setPaddingRelative(ctx.dp(4), 0, ctx.dp(20), 0)
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
-            setCompoundDrawablesRelative(null, null, icon(R.drawable.ic_chevron_right, 18, Ink.BLACK), null)
             setOnClickListener { useOther() }
         }
-        strip.addView(r, FrameLayout.LayoutParams(WRAP_CONTENT, MATCH_PARENT, Gravity.END or Gravity.CENTER_VERTICAL))
-        val column = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        column.addView(strip, LinearLayout.LayoutParams(MATCH_PARENT, ctx.dp(48)))
-        column.addView(View(ctx).apply { setBackgroundColor(Ink.LINE_LIGHT) }, LinearLayout.LayoutParams(MATCH_PARENT, 1).apply {
-            marginStart = ctx.dp(20)
-            marginEnd = ctx.dp(16)
-        })
-        dockFrame.addView(column, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        pinIcon = icon(R.drawable.ic_push_pin_fill, 16, Ink.GRAY)
-        leftChevron = icon(R.drawable.ic_chevron_left, 18, Ink.BLACK)
+        row.addView(r, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
+        dockFrame.addView(row, FrameLayout.LayoutParams(MATCH_PARENT, ctx.dp(ChromeMath.HISTORY_ROW_DP)))
+        pinIcon = icon(R.drawable.ic_push_pin_fill, GLYPH_DP)
+        leftChevron = icon(R.drawable.ic_chevron_left, GLYPH_DP)
+        rightChevron = icon(R.drawable.ic_chevron_right, GLYPH_DP)
+        r.setCompoundDrawablesRelative(null, null, rightChevron, null)
+        dockRow = row
         left = l
         centre = c
         right = r
+        paintDock()
     }
 
-    private fun stripText(): TextView = ctx.label("", 15f, maxLines = 1).apply {
+    /** 14 sp regular, tabular digits: below the page label (18 sp bold) in the type scale, U §2.1. */
+    private fun stripText(): TextView = ctx.label("", 14f, maxLines = 1).apply {
         typeface = Typeface.DEFAULT
         fontFeatureSettings = "tnum"
         compoundDrawablePadding = ctx.dp(2)
-        background = pressableBackground()
+    }
+
+    /**
+     * The row on the page colour (on e-ink with a light 1 px line on top, where no shadow sets it off), its texts in
+     * the history colour, "N쪽" of the pinned page on screen in the dimmer one.
+     */
+    private fun paintDock() {
+        val k = look
+        val row = dockRow ?: return
+        row.background = if (k.eink) {
+            LayerDrawable(arrayOf(ColorDrawable(k.page), ColorDrawable(k.divider))).apply {
+                setLayerGravity(1, Gravity.TOP or Gravity.FILL_HORIZONTAL)
+                setLayerHeight(1, 1)
+            }
+        } else {
+            ColorDrawable(k.page)
+        }
+        for (t in listOf(left!!, centre!!, right!!)) {
+            t.setTextColor(k.hist)
+            t.background = ctx.chromePressed(k, 8f)
+        }
+        if (leftOnMark) left!!.setTextColor(k.histOff)
+        pinIcon?.setTintList(ColorStateList.valueOf(k.histOff))
+        val ink = ColorStateList.valueOf(k.hist)
+        leftChevron?.setTintList(ink)
+        rightChevron?.setTintList(ink)
     }
 
     // ------------------------------------------------------------------ chip
@@ -454,7 +501,6 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = ctx.borderBox(strokeDp = 0f, radiusDp = 0f)   // 1 physical px (borderBox keeps ≥ 1 px)
             isClickable = true
         }
         val lbl = ctx.label("", 15f, maxLines = 1).apply {
@@ -463,31 +509,58 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
             gravity = Gravity.CENTER_VERTICAL
             compoundDrawablePadding = ctx.dp(2)
             setPaddingRelative(ctx.dp(12), 0, ctx.dp(14), 0)
-            background = pressableBackground()
             setOnClickListener { if (state.offer == ReturnPoints.Chip.OTHER) useOther() else useMark() }
         }
         box.addView(lbl, LinearLayout.LayoutParams(WRAP_CONTENT, ctx.dp(48)))
-        box.addView(ctx.hairline(vertical = true))
+        val line = View(ctx)
+        box.addView(line, LinearLayout.LayoutParams(1, MATCH_PARENT))
         val close = ctx.iconButton(R.drawable.ic_close, CLOSE, sizeDp = 48) { closeChip() }
         box.addView(close)
         chipFrame.addView(box, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
-        chipChevronLeft = icon(R.drawable.ic_chevron_left, 18, Ink.BLACK)
-        chipChevronRight = icon(R.drawable.ic_chevron_right, 18, Ink.BLACK)
+        chipChevronLeft = icon(R.drawable.ic_chevron_left, 18)
+        chipChevronRight = icon(R.drawable.ic_chevron_right, 18)
+        chipBox = box
+        chipLine = line
+        chipClose = close
         chipLabel = lbl
+        paintChip()
+    }
+
+    /** The chip on the bars' surface: a 1 px box (the edge on e-ink, the light divider on a phone), text-coloured. */
+    private fun paintChip() {
+        val k = look
+        val stroke = if (k.eink) k.edge else k.divider
+        chipBox?.background = GradientDrawable().apply {
+            setColor(k.surface)
+            setStroke(1, stroke)   // 1 physical px
+        }
+        chipLine?.setBackgroundColor(stroke)
+        chipLabel?.let {
+            it.setTextColor(k.text)
+            it.background = ctx.chromePressed(k, 0f)
+        }
+        chipClose?.let {
+            it.imageTintList = ColorStateList.valueOf(k.text)
+            it.background = ctx.chromeIconBackground(k, false)
+        }
+        val ink = ColorStateList.valueOf(k.text)
+        chipChevronLeft?.setTintList(ink)
+        chipChevronRight?.setTintList(ink)
     }
 
     // ------------------------------------------------------------------ helpers
 
+    /** A side column of the row: INVISIBLE, not GONE, when it has no place, so 지우기 and the other side stay put. */
     private fun show(v: View, shown: Boolean) {
-        val vis = if (shown) View.VISIBLE else View.GONE
+        val vis = if (shown) View.VISIBLE else View.INVISIBLE
         if (v.visibility != vis) v.visibility = vis
     }
 
-    private fun icon(res: Int, sizeDp: Int, tint: Int): Drawable {
+    /** A compound drawable of [sizeDp]; [paintDock] / [paintChip] tint it. */
+    private fun icon(res: Int, sizeDp: Int): Drawable {
         val d = ctx.getDrawable(res)!!.mutate()
         val s = ctx.dp(sizeDp)
         d.setBounds(0, 0, s, s)
-        d.setTintList(ColorStateList.valueOf(tint))
         return d
     }
 
@@ -500,6 +573,8 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         private const val CLEAR = "지우기"
         private const val CLOSE = "닫기"
         private const val ON_MARK_DESCRIPTION = "지금 보는 페이지가 고정한 페이지입니다"
+        /** The row's chevrons and pin (the bars' icons are 24 dp: the row reads below the panel). */
+        private const val GLYPH_DP = 16
     }
 }
 

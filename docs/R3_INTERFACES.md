@@ -786,6 +786,26 @@ fun thumbGrey(style: Int): Int = inkGrey(style).let
 ```
 
 
+### `render/ChromePalette.kt` — RU (2026-10-05)
+
+```kotlin
+internal class ChromePalette   // page, surface, text, text2, accent, divider, rule, edge, track, hist, histOff,
+                               // shadow, pressed, active: Int; motion, eink, dark: Boolean
+const val SHADOW_DP = 4
+val DEFAULT: ChromePalette     // the e-ink 흰 바탕 set = the chrome of before
+fun of(page: PagePalette, eink: Boolean?): ChromePalette   // six shared sets; eink null → the e-ink set
+```
+
+
+### `reader/ReaderWindow.kt`, `reader/ReaderFormat.kt`, `ui/kit/Toggle.kt` — additions (2026-10-05)
+
+```kotlin
+fun applyBarLook(activity: Activity, dark: Boolean)        // API 30+: transparent system bars, light icons on dark
+fun pageLabelCut(label: String): Int                        // index of " / " in a page label, -1 = none
+fun InkToggle.setColors(ink: Int, paper: Int, on: Int)      // defaults black, white, black
+```
+
+
 ### `render/QuoteLook.kt` — E2
 
 ```kotlin
@@ -1174,6 +1194,7 @@ fun restore(saved: String?)
 fun markFraction(): Float = Float.NaN
 fun reparsed(fraction: Float, exact: Boolean)
 fun reset()
+fun setLook(page: PagePalette, eink: Boolean?)    // 2026-10-05: the history row and the chip in the chrome's colours
 internal class ReturnPoints
 enum class Chip
 fun pin(here: DocPosition, onMark: Boolean)
@@ -1269,9 +1290,25 @@ fun report(ctx: Context): List<String> = emptyList()
 
 ```kotlin
 internal object ChromeMath
+const val HISTORY_ROW_DP = 44                     // 2026-10-05
+const val SHOW_MS = 180L; const val HIDE_MS = 150L; const val SLIDE_DP = 12
 fun labelMaxWidth(rowW: Int, density: Float): Int
-fun stripShort(left: Float, centre: Float, right: Float, rowW: Float, gap: Float): Boolean
+fun stripShort(left: Float, right: Float, rowW: Float): Boolean   // 2026-10-05: a side label wider than its third
 fun bookmarkFits(rowW: Int, density: Float): Boolean
+fun animates(motion: Boolean, durationScale: Float): Boolean      // motion && scale > 0
+```
+
+
+### `reader/ChromeBar.kt` — RU (2026-10-05)
+
+```kotlin
+internal class ChromeBar(ctx: Context, private val edgeAtTop: Boolean) : LinearLayout(ctx)
+var inert: Boolean                                // touches pass to the page while the bar fades out
+var panelFrom: Int                                // first child on the panel (the bottom bar's history row is 0)
+val edgeArea: Int                                 // 4 dp shadow band, 1 px line, or 0; the owner pads the bar by it
+fun setLook(look: ChromePalette): Boolean         // true when edgeArea changed
+internal fun Context.chromeIconBackground(look: ChromePalette, active: Boolean): Drawable?
+internal fun Context.chromePressed(look: ChromePalette, radiusDp: Float): Drawable?
 ```
 
 
@@ -1312,6 +1349,8 @@ fun setLightAsk(kind: Int)
 fun setLightDevice(on: Boolean, subtitle: String, enabled: Boolean)
 fun setBrightnessUnavailable(unavailable: Boolean)
 fun setLightPanelRow(visible: Boolean, subtitle: String)
+fun setLook(page: PagePalette, eink: Boolean?)    // 2026-10-05: stored while hidden, applied when the bars show
+val top: ChromeBar; val bottom: ChromeBar         // 2026-10-05: were LinearLayout (ChromeBar is one)
 ```
 
 

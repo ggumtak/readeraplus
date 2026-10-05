@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.reader
 
 import android.app.Activity
+import android.graphics.Color
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -58,6 +59,25 @@ internal object ReaderWindow {
                 w.decorView.systemUiVisibility = flags
             }
         }
+    }
+
+    /**
+     * API 30+: the status and navigation bars (shown when 전체 화면 is off, or swiped in over it) let the reader show
+     * through: the page colour, or the chrome's surface while it is open, so a dark page never gets white system bars
+     * (U §2.1, 2026-10-05). Dark icons over a light page, light ones over a dark page ([dark]). Before API 30 the bars
+     * keep the theme's colours and [applyFullscreen]'s light-status-bar flag.
+     */
+    fun applyBarLook(activity: Activity, dark: Boolean) {
+        if (Build.VERSION.SDK_INT < 30) return
+        val w = activity.window
+        w.statusBarColor = Color.TRANSPARENT
+        w.navigationBarColor = Color.TRANSPARENT
+        // No system scrim behind a transparent navigation bar: the chrome's bottom bar reaches the screen edge.
+        w.isNavigationBarContrastEnforced = false
+        val c = w.insetsController ?: return
+        val mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+            WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+        c.setSystemBarsAppearance(if (dark) 0 else mask, mask)
     }
 
     /** [value] 0..1, or < 0 for the system brightness. */

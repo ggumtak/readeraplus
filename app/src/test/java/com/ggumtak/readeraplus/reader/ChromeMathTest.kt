@@ -27,17 +27,50 @@ class ChromeMathTest {
     }
 
     @Test
-    fun stripUsesTheShortFormOnlyWhenTheLabelsCollide() {
-        // Comet, density 2, 15 sp: "‹ 10쪽으로" (≈ 222 px with paddings and the chevron) + "지우기" (144 px min).
-        assertFalse(ChromeMath.stripShort(222f, 154f, 0f, 720f, 16f))
-        assertFalse(ChromeMath.stripShort(222f, 154f, 222f, 720f, 16f))
-        // 1.3× font scale with 5-digit pages: "‹ 12345쪽으로" + "23259쪽으로 ›" ≈ 326 px each.
-        assertTrue(ChromeMath.stripShort(326f, 181f, 326f, 720f, 16f))
-        // A side that reaches the centred box alone is enough.
-        assertTrue(ChromeMath.stripShort(300f, 154f, 0f, 720f, 16f))
-        assertTrue(ChromeMath.stripShort(0f, 154f, 300f, 720f, 16f))
-        // The total alone overflows a narrow row.
-        assertTrue(ChromeMath.stripShort(100f, 100f, 100f, 300f, 16f))
+    fun historyRowUsesTheShortFormOnlyWhenASideOverflowsItsThird() {
+        // Comet, density 2, 14 sp: "‹ 10쪽으로" ≈ 199 px with paddings and the chevron, in a 240 px third.
+        assertFalse(ChromeMath.stripShort(199f, 0f, 720f))
+        assertFalse(ChromeMath.stripShort(199f, 199f, 720f))
+        // 1.3× font scale with 5-digit pages: "‹ 12345쪽으로" ≈ 293 px; one side is enough, whichever it is.
+        assertTrue(ChromeMath.stripShort(293f, 0f, 720f))
+        assertTrue(ChromeMath.stripShort(0f, 293f, 720f))
+        // Exactly a third still fits.
+        assertFalse(ChromeMath.stripShort(240f, 240f, 720f))
+        assertTrue(ChromeMath.stripShort(240.5f, 0f, 720f))
+        // Hidden sides measure 0: an empty side never shortens the other.
+        assertFalse(ChromeMath.stripShort(0f, 0f, 720f))
+    }
+
+    @Test
+    fun historyRowThirdsFollowTheRowWidth() {
+        // Three equal columns (a hidden side is INVISIBLE, so its column stays): the S25's third is 360 px, the
+        // Comet's 240 px, so the same label is short on the Comet only.
+        assertTrue(ChromeMath.stripShort(293f, 0f, 720f))
+        assertFalse(ChromeMath.stripShort(293f, 0f, 1080f))
+        assertFalse(ChromeMath.stripShort(360f, 360f, 1080f))
+        // The row sits right above the panel and is a 44 dp touch target.
+        assertEquals(44, ChromeMath.HISTORY_ROW_DP)
+    }
+
+    @Test
+    fun barsFadeOnlyWithMotionAndSystemAnimations() {
+        assertTrue(ChromeMath.animates(motion = true, durationScale = 1f))
+        assertTrue(ChromeMath.animates(motion = true, durationScale = 0.5f))
+        assertTrue(ChromeMath.animates(motion = true, durationScale = 10f))
+        // 개발자 옵션 "애니메이션 꺼짐" or 접근성 "애니메이션 제거": the scale is 0, the bars switch at once.
+        assertFalse(ChromeMath.animates(motion = true, durationScale = 0f))
+        // E-ink (or a device class not probed yet): never, whatever the system says.
+        assertFalse(ChromeMath.animates(motion = false, durationScale = 1f))
+        assertFalse(ChromeMath.animates(motion = false, durationScale = 0f))
+    }
+
+    @Test
+    fun showAndHideAreShort() {
+        // The user's 150–200 ms.
+        assertTrue(ChromeMath.SHOW_MS in 150L..200L)
+        assertTrue(ChromeMath.HIDE_MS in 150L..200L)
+        assertTrue(ChromeMath.HIDE_MS <= ChromeMath.SHOW_MS)
+        assertTrue(ChromeMath.SLIDE_DP in 1..24)
     }
 
     @Test

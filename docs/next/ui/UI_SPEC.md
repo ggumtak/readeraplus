@@ -414,19 +414,42 @@ Both specs edit `ReaderSettings.kt`, `Settings.kt`, `SettingsJson.kt`, `ReaderHo
 |---|---|
 | Keylines | **Text** starts 20 dp from the left: the stroke of the back arrow (the 48 dp button at 4 dp row padding centres its 24 dp glyph at 16..40 dp, and `ic_arrow_back`'s ink starts at 4/24). **Trailing** content ends 16 dp from the right: icon glyph boxes and toggle tracks. |
 | Bands | Actions 56 · title ≈ 32 (17 sp line + 10 dp bottom) · brightness 48 · option rows ≥ 56 · return strip 44 · label 52 · seek 48 dp. Every tap target is ≥ 44 dp. |
-| Lines | Bar edges and band breaks: 1 **physical px** `Ink.LINE` (black). Inside a band group (strip → label row, between option rows): 1 px `Ink.LINE_LIGHT`, inset 20 dp on the left and 16 dp on the right. |
-| Type | **Primary** 17 sp bold (title, page label). **Secondary** 15 sp regular (strip items, option titles, question). **Tertiary** 13 sp regular `Ink.GRAY` (subtitles). **Disabled** `Ink.DISABLED`. Only two weights (§0.2). |
+| Colours **[2026-10-05]** | From `render/ChromePalette` (table below), never `Ink` constants: the bars follow the page's theme (흰 바탕, 마루뷰어, 흑백 반전). |
+| Lines **[2026-10-05]** | **Phone:** where a bar meets the page, a 4 dp shadow (`ChromeBar`, linear, `shadow` → transparent; 흑백 반전: a 1 px `edge` line instead); the title rule and the options rule 1 px `rule`, inset 20 / 16 dp; option rows 1 px `divider`, inset 20 / 16 dp. The dock's own line and the bars' black hairlines are gone. **E-ink:** solid 1 px lines only: the bar edges `edge` (black on 흰 바탕), the rules `rule` across the full width as before, option rows `divider`, and a 1 px `divider` on top of the history row. |
+| Type **[2026-10-05]** | **Page label** 18 sp: the current page bold `text`, " / total" ×0.78 regular `text2`. **Title** 16 sp bold. **History row** 14 sp regular `hist`. **Option titles, question** 15 sp regular. **Subtitles** 13 sp regular `text2`. **Seek preview** 16 sp bold. Disabled titles `text2`. Only two weights (§0.2). |
 | Digits | Page label and strip labels: `fontFeatureSettings = "tnum"` (set once) |
-| State | **Icon swap only**. `isSelected` is never used for looks. Bookmark: `ic_bookmark` ↔ `ic_bookmark_fill`. Rotation: `ic_screen_rotation` ↔ `ic_screen_lock_rotation`. Pin: `ic_push_pin` ↔ `ic_push_pin_fill`. Brightness: `ic_brightness_auto` (auto) ↔ `ic_brightness_medium` (manual). Options: `ic_expand_more` (closed) ↔ `ic_expand_less` (open). **[Δ]** Return strip, mark page on screen: `ic_chevron_left` ↔ a 16 dp `ic_push_pin_fill` and "N 페이지로" ↔ "N 페이지" (§3.4), so grey is never the only signal. |
-| Motion | None: no ripples (`pressableBackground`), `animationStyle = 0`, and no autosize steps (autosize is computed per text change, not animated) |
+| Icons **[2026-10-05]** | Every chrome icon is a 24 dp Material Symbols glyph (2 dp strokes) in a 48 × 48 dp target; the history row's chevrons and pin are 16 dp. Left icons centre at 28 dp, right icons at W − 28 (rotation W − 76); the text keyline is 20 dp; both slider tracks run from 64 dp to W − 64. |
+| State | **Icon swap**, plus **[2026-10-05]** on a phone the accent on a state that stays (bookmark, pin, rotation lock: icon tinted `accent` over a 40 dp `active` circle) and a pressed overlay (`pressed`: a 40 dp circle behind icons, an 8 dp rounded rect behind text cells, a full-width rect on option rows, fading out in 120 ms). **E-ink: icon swap only, no pressed state** (one update per action). `isSelected` is never used for looks. Bookmark: `ic_bookmark` ↔ `ic_bookmark_fill`. Rotation: `ic_screen_rotation` ↔ `ic_screen_lock_rotation`. Pin: `ic_push_pin` ↔ `ic_push_pin_fill`. Brightness: `ic_brightness_auto` (auto) ↔ `ic_brightness_medium` (manual). Options: `ic_expand_more` (closed) ↔ `ic_expand_less` (open). **[Δ]** Return strip, mark page on screen: `ic_chevron_left` ↔ a 16 dp `ic_push_pin_fill` and "N 페이지로" ↔ "N 페이지" (§3.4), so grey is never the only signal. |
+| Motion **[2026-10-05]** | **Phone:** the bars fade and slide 12 dp from their edge, 180 ms in (`PathInterpolator(0, 0, 0.2, 1)`) and 150 ms out (`(0.4, 0, 1, 1)`), alpha and translation only (the page never re-lays out); touches pass to the page while they leave; instant when the system's animator duration scale is 0 (개발자 옵션, 접근성 "애니메이션 제거": `ChromeMath.animates`). **E-ink and an unprobed device:** none, the bars switch in one frame. No ripples, `animationStyle = 0`, no autosize steps. Page turns stay instant everywhere (PLAN 2026-10-02). |
+
+**[2026-10-05] Tokens** (`render/ChromePalette.of(page, eink)`; six shared instances; `eink == null` → the e-ink set).
+The accent is the page's own status colour. E-ink sets are the old `Ink` colours as the page's greys
+(`PagePalette.grey`): 흰 바탕 on e-ink is exactly the chrome of before.
+
+| token | 흰 바탕 phone | 마루뷰어 phone | 흑백 반전 phone | e-ink (흰 바탕 / 마루뷰어 / 흑백 반전) |
+|---|---|---|---|---|
+| page | #FFFFFF | #323232 | #000000 | the page |
+| surface | #F5F5F5 | #3C3C3C | #1A1A1A | the page |
+| text / text2 | #1A1A1A / #5E5E5E | #DDDDDD / #A8A8A8 | #FFFFFF / #B3B3B3 | grey(0) / grey(0x55): #000/#555, #DDD/#A4A4A4, #FFF/#AAA |
+| accent | #000000 | #F0D096 | #FFFFFF | the page's status colour |
+| divider = rule | #DDDDDD | #4E4E4E | #333333 | divider grey(0xCC), rule grey(0) |
+| edge | none | none | #333333 | grey(0) |
+| track | #C8C8C8 | #606060 | #4A4A4A | grey(0x99) |
+| hist / histOff | #5E5E5E / #8C8C8C | #A8A8A8 / #7A7A7A | #B3B3B3 / #6E6E6E | grey(0) / grey(0x55) |
+| shadow | #4D000000 | #80000000 | none | none |
+| pressed / active | #1F000000 / #24000000 | #24FFFFFF / #33F0D096 | #24FFFFFF / #2EFFFFFF | none |
+
+Contrast floors (`ChromePaletteTest`): text on surface ≥ 7, text2 ≥ 4.5, history row on the page ≥ 4.5, accent ≥ 3;
+a phone's surface is within 1.3 : 1 of its page. API 30+: the system bars are transparent over the page (or the open
+bar's surface), with light icons on a dark page (`ReaderWindow.applyBarLook`); full-screen dialogs keep white bars.
 
 ### 2.2 Top bar (`ReaderChrome.top`, a vertical `LinearLayout`, white, clickable, top inset as padding)
 
 ```
 ┌──────────────────────────────────────────────┐
 │ ←                  🔖  🔊  🔍  ☰  ⚙  ⋮       │ actions 56dp, row padding 4dp h
-│ 배드 본 블러드 1-353 완                         │ title row: 17sp bold, 1 line, END ellipsis
-├──────────────────────────────────────────────┤ 1px black
+│ 배드 본 블러드 1-353 완                         │ title row: 16sp bold, 1 line, END ellipsis
+├──────────────────────────────────────────────┤ 1px rule (phone: inset 20/16 dp)
 │ Ⓐ  ━━━━━━━━●───────────────────────   ⌄     │ brightness row 48dp
 ├──────────────────────────────────────────────┤ 1px black (only while the options panel is open)
 │ [question row, only while asked, §4.4]        │
@@ -436,20 +459,22 @@ Both specs edit `ReaderSettings.kt`, `Settings.kt`, `SettingsJson.kt`, `ReaderHo
 │ 기기 밝기 직접 조절                      (●  ) │ option row (§4.4)
 │ 전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다 │
 │ [기기 조명 설정 열기 ›, conditional, §4.4]      │
-└──────────────────────────────────────────────┘ 1px black (bar edge)
+└──────────────────────────────────────────────┘ bar edge: 4 dp shadow (phone) / 1px edge (e-ink, 흑백 반전)
 ```
 
 | View | Spec |
 |---|---|
+| bar **[2026-10-05]** | `ChromeBar(edgeAtTop = false)`: fills the surface from the screen's top through the inset padding, draws its edge band in its own bottom padding (`edgeArea`: 4 dp with a shadow, 1 px with a line) over the page. |
 | actions row | `horizontal`, `minimumHeight 56dp`, padding `(4, 0, 4, 0)` dp. Contents: `[back 48]` `[spacer weight 1]` `[bookmark 48][tts 48][search 48][toc 48][gear 48][more 48]`. Content descriptions: "뒤로", "북마크 추가"/"북마크 삭제", "TTS 읽기", "검색", "목차", "읽기 설정", "더보기". On the Comet: 8 + 7·48 = 344 dp, spacer 16 dp. **Width guard [Δ]:** `bookmark` is `GONE` when the bar is under 352 dp wide. It is decided in `setVisible(true)` from `root.width − left − right insets` (cached; recomputed only when that width changes), **never inside an `OnLayoutChangeListener`**: changing visibility or sizes during a layout pass forces a second layout and draw, i.e. a second e-ink update on the first show. While it is hidden, the ⋮ menu gains "북마크 추가" / "북마크 삭제" (READER_CORE, `ReaderMenus`), so the action is never lost on a narrow phone. |
-| title row | Padding `(20, 0, 16, 10)` dp. `label("", 17f, bold = true, maxLines = 1)`, END ellipsis. One line, so the bar height never depends on the title. `setTitle` sets it only on change (existing guard). |
-| hairline | `ctx.hairline()` |
+| title row | Padding `(20, 0, 16, 12)` dp. `label("", 16f, bold = true, maxLines = 1)` **[2026-10-05]**, END ellipsis. One line, so the bar height never depends on the title. `setTitle` sets it only on change (existing guard). |
+| rule | 1 px `rule` (phone: inset 20 / 16 dp; e-ink: full width, black on 흰 바탕) |
 | brightness row | Padding `(4, 0, 4, 0)` dp. Contents: `[auto 48]` `[SeekBar weight 1]` `[options 48]`. The auto button's content description is "시스템 밝기 따르기" (manual) or "직접 밝기 조절" (auto). The options button's is **"밝기 옵션"**. Verdict NONE (§4.4) replaces the auto button and the SeekBar with one 15 sp link "기기 조명 설정에서 조절 ›". |
-| SeekBar (`einkSeekBar`, shared with the seek row) | Thumb 16 dp (was 20), `thumbOffset 8dp`, padding `(12, 16, 12, 16)` dp, `minimumHeight 48dp`. Progress tint black, background tint `Ink.DISABLED`, `splitTrack = false`. **Auto look:** progress tint `Ink.DISABLED` and a hollow 16 dp ring thumb (white fill, 1.5 dp black stroke). **Manual look:** solid black thumb. Both thumb drawables are cached and swapped only when the look changes. The first `onProgressChanged(fromUser)` switches to the manual look immediately, so the icon never says "auto" mid-drag. **[Δ]** Content descriptions: "밝기" (brightness bar) and "페이지 위치" (seek bar). A bare SeekBar is read only as a percentage. |
+| SeekBar (`chromeSeekBar`, shared with the seek row; **[2026-10-05]**) | A 3 dp rounded track (`LayerDrawable`: background + `ClipDrawable` progress, `setLayerHeight(3dp)`, centred), inactive part `track`, progress `accent`. Thumb an 18 dp `accent` dot, `thumbOffset 9dp`, padding `(12, 15, 12, 15)` dp, fixed 48 dp height (the drag area), `splitTrack = false`, still a `SwipeSafeSeekBar`. **Auto look:** progress `track` and a hollow 18 dp ring thumb (`surface` fill, 1.5 dp `text` stroke). **Manual look:** solid accent thumb. Both thumb drawables are cached and swapped only when the look changes. The first `onProgressChanged(fromUser)` switches to the manual look immediately, so the icon never says "auto" mid-drag. **[Δ]** Content descriptions: "밝기" (brightness bar) and "페이지 위치" (seek bar). A bare SeekBar is read only as a percentage. |
 | options panel | A vertical `LinearLayout`, `GONE` by default, preceded by a black hairline that is visible with it. **[Δ] Built lazily:** the constructor adds only the empty container; its rows (question, two toggles, the panel link) are created on the first `setBrightnessOptionsOpen(true)`, so opening a book inflates nothing new before the first page. The `setLight*` / `setSwipeOption` setters only cache their values until the rows exist. It is **closed by `setVisible(false)`**. `LightController.bind()` reopens it while a question is pending. Rows are built by the private `optionRow(title, subtitle, trailing)`: `minHeight 56dp`, padding `(20, 8, 16, 8)` dp, title 15 sp, subtitle 13 sp GRAY `keepAll`, max 2 lines, tapping anywhere toggles; the trailing `InkToggle` ends at W − 16 dp. A light hairline separates rows. **[Δ] Accessibility:** the row is the one focusable unit. The toggle gets `importantForAccessibility = NO`, and the row's `AccessibilityDelegate` reports `isCheckable = true`, `isChecked` = the toggle's state, and the title and subtitle as its text. Otherwise TalkBack announces an unlabelled switch next to a clickable text block. |
-| bottom hairline | Black, the bar edge |
+| bar edge | Drawn by `ChromeBar` (no view): a 4 dp shadow on a phone, 1 px `edge` on e-ink and 흑백 반전 |
 
-Heights: 56 + ≈32 + 1 + 48 + 1 ≈ **138 dp** closed, plus the top inset. About 252 dp with two option rows open.
+Heights: 56 + ≈31 + 1 + 48 + 4 ≈ **140 dp** closed on a phone (1 px edge on e-ink), plus the top inset. About 252 dp
+with two option rows open.
 
 ### 2.3 Brightness row behaviour (item 5)
 
@@ -471,24 +496,25 @@ Heights: 56 + ≈32 + 1 + 48 + 1 ≈ **138 dp** closed, plus the top inset. Abou
 ### 2.4 Bottom bar (`ReaderChrome.bottom`, a vertical `LinearLayout`, white, clickable, bottom inset as padding)
 
 ```
-├──────────────────────────────────────────────┤ 1px black (bar edge)
-│ ‹ 10 페이지로            지우기          512 페이지로 › │ return strip 44dp — GONE when empty (§3)
-│ ─────────────────────────────── (light)       │ part of the strip
-│                  10 / 3614             ⟳  📌  │ label row 52dp (FrameLayout)
+  ‹ 10쪽으로          지우기          512쪽으로 ›    history row 44dp on the PAGE colour, 3 equal columns — GONE when empty (§3)
+├──────────────────────────────────────────────┤ panel edge: 4 dp shadow over the row's foot (phone) / 1px edge (e-ink)
+│                  10 / 3614             ⟳  📌  │ label row 48dp (FrameLayout): "10" 18sp bold, " / 3614" ×0.78 text2
 │ ⏮  ━━━━━━●──────────────────────────────  ⏭  │ seek row 48dp
-└──────────────────────────────────────────────┘ (bottom inset)
+└──────────────────────────────────────────────┘ (bottom: max(nav inset, gesture strip, 16 dp), surface to the edge)
 ```
 
 | View | Spec |
 |---|---|
-| return strip | `ReturnNav.dock` (§3.4), inserted at index 1 by the constructor |
-| label row | `FrameLayout`, `minimumHeight 52dp`. |
-| ↳ `pageLabel` | `label("", 17f, bold = true, maxLines = 1)`. **[Δ]** `FrameLayout.LayoutParams(labelW, 48dp, Gravity.CENTER)` with a **fixed** width `labelW = rowW − 2·RESERVE` (`RESERVE = 4 + 48 + 48 + 8 = 108 dp`; `ChromeMath.labelMaxWidth`), not `WRAP_CONTENT`. Android documents autosize as unreliable with `wrap_content` (it can re-measure on every text change), and a fixed box also gives a steady, larger tap target. `labelW` is computed in `setVisible(true)` from `root.width − insets` and applied only when it changes, never in a layout listener (see the width guard in §2.2). `gravity = CENTER`, padding 12 dp on each side, `fontFeatureSettings = "tnum"`, `pressableBackground()`, tap → `actions.onPageLabel()`. **No underline**: delete the working tree's `Paint.UNDERLINE_TEXT_FLAG`. On the Comet `labelW` is 144 dp: "12345 / 23259" at 17 sp bold tnum measures about 110 dp plus 24 dp of padding. `setAutoSizeTextTypeUniformWithConfiguration(14, 17, 1, SP)` (API 26) covers large font scales. The label stays centred on the **full width** and can never run under an icon. **[Δ] Accessibility:** the content description is "페이지 이동, 3 / 167", set together with the text in `setPage` (chrome visible only, so the String is not a per-turn cost while reading). A fixed "페이지 이동" would hide the page number from TalkBack. CI taps it with `tap_label "페이지 이동" contains`. |
+| bar **[2026-10-05]** | `ChromeBar(edgeAtTop = true)`, `panelFrom = 1`: the panel (surface) starts at the label row and reaches the screen edge; the edge band sits in the bar's top padding (`edgeArea`) or, with the history row shown, over that row's bottom 4 dp, as in ReadEra. |
+| history row | `ReturnNav.dock` (§3.4), **[2026-10-05]** at index 0, right above the panel, on the page colour |
+| label row | `FrameLayout`, `minimumHeight 48dp` **[2026-10-05]** (was 52). |
+| ↳ `pageLabel` | `label("", 17f, bold = true, maxLines = 1)`. **[Δ]** `FrameLayout.LayoutParams(labelW, 48dp, Gravity.CENTER)` with a **fixed** width `labelW = rowW − 2·RESERVE` (`RESERVE = 4 + 48 + 48 + 8 = 108 dp`; `ChromeMath.labelMaxWidth`), not `WRAP_CONTENT`. Android documents autosize as unreliable with `wrap_content` (it can re-measure on every text change), and a fixed box also gives a steady, larger tap target. `labelW` is computed in `setVisible(true)` from `root.width − insets` and applied only when it changes, never in a layout listener (see the width guard in §2.2). `gravity = CENTER`, padding 12 dp on each side, `fontFeatureSettings = "tnum"`, a phone's pressed rect (none on e-ink), tap → `actions.onPageLabel()`. **[2026-10-05]** The text is a `SpannableString` split at `ReaderFormat.pageLabelCut` (" / "): the page bold, the total `RelativeSizeSpan(0.78)` in `text2`; 18 sp base, autosize 14..18 sp. **No underline**: delete the working tree's `Paint.UNDERLINE_TEXT_FLAG`. On the Comet `labelW` is 144 dp: "12345 / 23259" at 17 sp bold tnum measures about 110 dp plus 24 dp of padding. `setAutoSizeTextTypeUniformWithConfiguration(14, 17, 1, SP)` (API 26) covers large font scales. The label stays centred on the **full width** and can never run under an icon. **[Δ] Accessibility:** the content description is "페이지 이동, 3 / 167", set together with the text in `setPage` (chrome visible only, so the String is not a per-turn cost while reading). A fixed "페이지 이동" would hide the page number from TalkBack. CI taps it with `tap_label "페이지 이동" contains`. |
 | ↳ right cluster | `horizontal`, `LayoutParams(WRAP, 48dp, END or CENTER_VERTICAL)`, `marginEnd 4dp`: `[rotation 48][pin 48]`. Rotation: content description "화면 회전 잠금", long-press → `onRotationChooser()`, icon swap only. Pin: content descriptions in §3.1. |
 | seek row | `horizontal`, padding `(4, 0, 4, 0)` dp: `[⏮ 48 "이전 화"][SeekBar weight 1][⏭ 48 "다음 화"]` (the working tree's T1-5 buttons, kept) |
 | seek preview box | Unchanged mechanics. Its text changes to `ReaderFormat.previewLabel(page, chapter)` = **"1234쪽 · 제3장 …"** (was "p. 1234 · …"; READER_A, §6 P1-17). |
 
-Heights: 1 + 52 + 48 = **101 dp**, or 146 dp with the strip.
+Heights **[2026-10-05]**: 4 + 48 + 48 = **100 dp** on a phone (1 px edge on e-ink), 144 dp with the history row,
+plus the bottom padding.
 
 ### 2.5 `ReaderChrome` API (fixed at phase 0)
 
@@ -513,7 +539,8 @@ internal class ReaderChrome(
         fun onSeekStart(); fun onSeekPreview(progress: Int): String; fun onSeekDone(progress: Int)
         // deleted: onPin (메뉴 고정), onBrightnessAuto, onBrightness, onBrightnessCollapsed (→ LightController)
     }
-    val top: LinearLayout; val bottom: LinearLayout; val gear: ImageButton; val more: ImageButton
+    val top: ChromeBar; val bottom: ChromeBar; val gear: ImageButton; val more: ImageButton   // ChromeBar is a LinearLayout
+    fun setLook(page: PagePalette, eink: Boolean?)   // [2026-10-05] stored while hidden, applied at show (or at once)
     val isSeeking: Boolean; val isVisible: Boolean; val bottomHeight: Int
     fun attach(root: FrameLayout)
     fun setVisible(visible: Boolean)          // hiding also closes the options panel and the seek preview
@@ -698,7 +725,16 @@ internal class ReturnNav(ctx: Context, private val host: ReturnHost) {
 }
 ```
 
-**Dock**, a 44 dp `FrameLayout` plus a light hairline under it:
+**[2026-10-05] Dock = the history row** right above the bottom panel, on the page colour (`ChromePalette.page`; on
+e-ink with a 1 px `divider` on top), 44 dp, **three equal columns** (`LinearLayout`, weights 1/1/1): left `START`,
+padding 20 / 4 dp (its 16 dp glyph centred 28 dp in, on the icon column); centre "지우기" `CENTER`; right `END`, padding
+4 / 20 dp. A side without a place is `INVISIBLE`, so 지우기 and the other side never move. 14 sp regular `hist`
+(pinned page on screen: `histOff`), 16 dp chevrons and pin, pressed rect on phones only. Fit rule: `ChromeMath.stripShort
+(left, right, rowW)` = a side label wider than its third → both sides short. The bullets below are the earlier
+(pre-2026-10-05) geometry; the logic, texts and descriptions are unchanged. The chip is only recoloured (surface box,
+1 px `edge` on e-ink or `divider` on a phone, `text` label and icons).
+
+**Dock** (before 2026-10-05), a 44 dp `FrameLayout` plus a light hairline under it:
 - **Left** `TextView`:
   - placement: `START|CENTER_VERTICAL`, height MATCH, `paddingStart 14dp` (so the chevron stroke lands on the 20 dp
     keyline), `paddingEnd 12dp`;
@@ -1413,6 +1449,7 @@ Dependencies across owners in phase 1 are only phase-0 stubs:
 | READER_UI | `reader/ReturnMarkCodecTest` (new) | round trip; malformed, NaN or negative → null; fraction clamped; empty signature = EPUB |
 | READER_UI | `reader/LightCurveTest` (new) | brightness.md §8: monotonic; `level` in 1..255; `level(out(pos(fraction(v)))) == v` for v in 1..255; `isExternal` table; **[Δ]** `stillOurs(current, last)` (equal, ±2, ±last/32 → true; the user's 120 vs our 30 → false); `LightProbe.KEY_RE` matches `ColdValue`, `screen_brightness_warm`, `LastWarmLight`, `screen_cool_brightness` and not `font_scale`; the pure `nextVerdict(ask, yes)` covers all 5 edges |
 | READER_UI | `reader/ChromeMathTest` (new) | `labelMaxWidth(rowW = 720 px, density 2) = 288 px`; the label centre equals the row centre for any label width ≤ max; **[Δ]** `stripShort(left, centre, right, rowW, gap)`: false for "‹ 10 페이지로" at 720 px, true for "‹ 12345 페이지로" + "23259 페이지로 ›" at 1.3× font scale; `bookmarkFits(rowW)` flips at 352 dp |
+| READER_UI **[2026-10-05]** | `render/ChromePaletteTest` (new), `reader/ChromeMathTest` (+), `reader/ReaderFormatTest` (+) | six shared sets, `of(eink = null)` = the e-ink set; `page` = the page background, accent = the status colour; 흰 바탕 on e-ink = the old `Ink` values; every e-ink set has no shadow, pressed, active or motion and opaque colours; dark e-ink sets = `PagePalette.grey` of the old greys; phone 흑백 반전: no shadow, a #333333 edge; contrast floors (text ≥ 7, text2 ≥ 4.5, history ≥ 4.5, accent ≥ 3) and a phone surface within 1.3 of its page. `stripShort(left, right, rowW)` (a side over its third), `animates(motion, scale)`, `SHOW_MS` / `HIDE_MS` in 150..200; `pageLabelCut` |
 | READER_A | `ReaderFormatTest`, `ReaderReviewFixesTest`, `ReaderR2FeaturesTest` (edit) | drop `returnChip`, `footerLeft/Right`; `previewLabel` → "1234쪽 · …" |
 | READER_B | `reader/LayoutKeysTest` (+) | no bands when all NONE; header band iff `hasHeader`; item swap (PAGE→CLOCK, CHAPTER→BOOK_TITLE) is **not** a layout change; NONE→PAGE is; `progressBar` toggle with mb 16 dp gives the same geometry and no layout change; with `pageMargins = false`: box −8 dp and a layout change; `statusFontSizeSp` change with no bands: no layout change; the §5.1 table at density 2 |
 | RENDER | `render/StatusMathTest` (new) | centre exactly centred with fixed sides; elastic centre = `w − 2(side + gap)`; fixed items never shrink; two elastic sides split; an elastic slot below `min(natural, 3em)` hidden; empty-centre cases; overflow of two fixed slots hides the left |
@@ -1447,6 +1484,10 @@ Content descriptions used below are fixed by this spec: "밝기 옵션", "이 �
 | `13e_brightness_opts` | `tap_label "밝기 옵션"`; shot | The brightness row is **still visible**, the icon is now ⌃, and the panel lists "스와이프로 밝기 조절" (switch, off with a filled knob) and "기기 밝기 직접 조절". No question row (the emulator is not e-ink). |
 | `13f_clear` | `tap_label "지우기"`; shot (no `back`: the chrome stays open for today's `14_reading_settings` step) | The strip is gone and the pin is an outline |
 | `13g_seek_chip` **[Δ]** | after `13f` (menu open, no pin, page 3): drag the seek bar thumb to 70 % with `input swipe`, release; drag again to 60 %, release; tap 360 700 (closes the menu); shot. Then volume-down ×2, shot `13h_chip_gone`; tap 360 720 (reopens the menu for `14_reading_settings`) | `13g`: the chip "‹ 3 페이지로 \| ✕" floats bottom-left above the progress line. It offers the **first** origin of both seeks (★3) and appears even though both seeks were made with the menu open (★5). `13h`: the chip is gone after 2 manual turns. |
+| `13d_cols` **[2026-10-05]** | in `13d_return`'s dump | The history row's columns: "지우기" centred at x 358..362, "3쪽" ends at x ≤ 240, "8쪽으로" starts at x ≥ 480 |
+| `13u_<tag>_history`, `13u_<tag>_empty` **[2026-10-05]** (`history_row`, 흰 바탕 then 마루뷰어) | 지우기 if shown; pin the page P (`13u_one`: only "P쪽", 지우기 at the same x); volume-down ×2; "P쪽으로"; shot; 지우기; shot | Both labels in their thirds, 지우기 at the same x as with one label (`13u_still`); the row ends on the label row (0..2 px, `13u_on_panel`); its background at (8, row centre) is the page colour; (8, label top − 2) is ≥ 12 levels darker (the panel's shadow); after 지우기 no row and the label row at the same y. Ends on P with nothing pinned. |
+| `13t_<tag>_open` (+ rawshots closed / open / closed2) **[2026-10-05]** (`chrome_look`: 흰 바탕 #FFFFFF/#F5F5F5 shadow, 마루뷰어 #323232/#3C3C3C shadow, 흑백 반전 #000000/#1A1A1A edge #333333; the look set on 설정 → 읽기 설정 between them) | bars closed, open, closed again | The page at (8, 700); the top bar's surface right of ←; the bottom panel's at the label row's centre; the row under the brightness bar ≥ 12 levels darker than the page (shadow) or the edge colour (±2 levels); closed vs closed2 EQUAL below the header band; no RELAYOUT between the marks. Then 흰 바탕 and 흑백 반전 off again, `10a_pre` retaken. |
+| `13v_*` **[2026-10-05]** (`motion_check`) | references at animator scale 0; `settings put global animator_duration_scale 1`: show, hide; scale 0: show, hide | At 1: RAPerf "chrome show fade" (`13v_fade`), the bars end on the same pixels as the instant ones (`13v_top`, `13v_bottom`), they are gone a second after hiding and the page is EQUAL (`13v_hidden`, `13v_page`). At 0: "chrome show instant" (`13v_instant`). The scale is left at 0. |
 | `14_reading_settings` | as today | The popup is **horizontally centred** (side gaps 16 ± 1 px each), its top 16 px below the status inset, rows 88 px tall, 정렬 and 줄바꿈 on **one row**, no scrollbar, light row lines, black group lines |
 | `14b_status_slots` | in the popup: `tap_label "더보기" contains`, swipe up inside the popup; shot | "상태 표시": 위 [없음(dashed)][챕터 제목][없음(dashed)] / 아래 all dashed; 진행 막대 switch on |
 | `14c_slot_list` | `tap_label "아래 가운데: 없음"`; shot; `tap_label "쪽 번호"` (the list closes); `back` once (closes the popup; a second back would leave the reader) | The list shows 12 items, with live notes on the right ("3 / 167", "1%", "2:39" …) and "없음" checked |

@@ -15,7 +15,7 @@ shot() { sleep "${2:-2}"; adb exec-out screencap -p > "shots/$1.png"; log "shot 
 rawshot() { adb exec-out screencap > "shots/$1.raw"; }
 perf_mark() {
   adb logcat -d -v monotonic -s RAPerf:D '*:S' > "shots/perf_$1.txt"
-  log "PERF $1 $(grep 'show ' "shots/perf_$1.txt" | tail -1)"
+  log "PERF $1 $(grep ': show ' "shots/perf_$1.txt" | tail -1)" # a page's show line, never "chrome show …" (13v)
 }
 
 # ------------------------------------------------------------------ CHECK lines
@@ -67,6 +67,15 @@ raw_check() { # raw_check <n> <raw A> <raw B> <Y0 Y1 | content | pageview | belo
   if [ "$r" = EQUAL ]; then check "$1" 0 "pixels EQUAL $2 vs $3 rows $y0..$y1"
   else check "$1" 1 "pixels ${r:-error} $2 vs $3 rows $y0..$y1"; fi
   [ "$r" = EQUAL ]
+}
+raw_pixel() { python3 tools/ci/raw_equal.py pixel "shots/$1.raw" "$2" "$3"; } # raw_pixel <raw> x y: "#RRGGBB"
+near_check() { # near_check <n> <colour> <expected> <what>: within 2 levels in every channel, as a CHECK
+  local r; r=$(python3 tools/ci/raw_equal.py near "$2" "$3" 2)
+  [ "$r" = PASS ]; check "$1" $? "$4 is $2 (expected $3)"
+}
+darker_check() { # darker_check <n> <colour> <page colour> <levels> <what>: a shadow that much darker, as a CHECK
+  local r; r=$(python3 tools/ci/raw_equal.py darker "$2" "$3" "$4")
+  [ "$r" = PASS ]; check "$1" $? "$5 is $2 against the page $3 (at least $4 levels darker)"
 }
 
 # ------------------------------------------------------------------ UI helpers
@@ -585,6 +594,7 @@ chrome_pin() { # 13 (+rawshot), 13b–13h, then rawshot 10a_pre and the bars ope
   shot 13d_return 2
   dump; if has "8쪽으로" contains && has "3쪽" contains && [ "$(page_no)" = 3 ]; then check 13d_return 0 "back on 3 with '3쪽' · '8쪽으로 ›'"
   else check 13d_return 1 "label '$(page_label)', '3쪽' or '8쪽으로' missing after the return"; fi
+  history_cols 13d_cols "3쪽" "8쪽으로" # the history row's three columns (2026-10-05)
   # 13e: the brightness options (the row stays)
   tap_label "밝기 옵션" || return 1
   shot 13e_brightness_opts 2
@@ -608,6 +618,146 @@ chrome_pin() { # 13 (+rawshot), 13b–13h, then rawshot 10a_pre and the bars ope
   dump; if has "쪽으로" contains; then check 13h 1 "the chip is still shown"; else check 13h 0 "chip gone after 2 turns"; fi
   rawshot 10a_pre; perf_mark 10a_pre # chrome closed: 10b compares against this page
   show_chrome # the bars open again for 14_reading_settings
+}
+
+# ------------------------------------------------------------------ reader steps: bars in the page colours (13t–13v)
+# User feedback 2026-10-05 (PLAN): the bars take the reading theme's colours (흰 바탕, 마루뷰어, 흑백 반전), meet the page
+# with a short shadow (a 1 px line on black), the history row sits on the page colour right above the bottom panel in
+# three fixed columns, and the bars fade in and out unless the system's animations are off. The emulator is a phone:
+# the e-ink looks (solid lines, no fade, no pressed flash) are covered by the JVM tests and the device checklist.
+
+history_cols() { # history_cols <n> <left text> [right text]: the history row's columns in the last dump (U §3.4):
+  # 지우기 centred on the 720 px row (x 358..362), the side labels inside their own thirds, with or without the other
+  local cb lb rb c1 c2 cx l2 r1 ok=0
+  cb=$(box_of "지우기"); lb=$(box_of "$2")
+  read -r c1 _ c2 _ <<<"${cb:-0 0 0 0}"; cx=$(((c1 + c2) / 2))
+  read -r _ _ l2 _ <<<"${lb:-0 0 9999 0}"
+  r1=480
+  if [ -n "${3:-}" ]; then rb=$(box_of "$3"); read -r r1 _ _ _ <<<"${rb:-0 0 0 0}"; fi
+  [ -n "$cb" ] && [ -n "$lb" ] && [ "$cx" -ge 358 ] && [ "$cx" -le 362 ] || ok=1
+  [ "$l2" -le 240 ] && [ "$r1" -ge 480 ] || ok=1
+  check "$1" $ok "지우기 at x = $cx, '$2' ends at $l2${3:+, '$3' starts at $r1}"
+  HIST_CX=$cx
+}
+set_page_look() { # set_page_look "흰 바탕"|마루뷰어 on|off: 화면 색 and 흑백 반전 on 설정 → 읽기 설정 (⚙ → 전체 읽기
+  # 설정) in one visit over the open book; a repaint only, never a relayout (PLAN 2026-10-04). Leaves 설정, bars closed.
+  local rc=0
+  open_reading_page || return 1
+  pick_setting "화면 색" "$1" exact || rc=1
+  set_toggle "흑백 반전" "$2" || rc=1
+  dump && log "읽기 설정: 화면 색 '$(row_value "화면 색")', 흑백 반전 '$(row_checked "흑백 반전")'"
+  leave_settings
+  return $rc
+}
+history_row() { # 13u <tag> <page #RRGGBB>: the history row on the page colour, right on the panel, its columns fixed.
+  # Pins the current page (only its left label: the right column stays empty), turns twice, comes back by the row (both
+  # labels), then 지우기 empties it without moving the panel. Ends on the same page, nothing pinned, the bars open.
+  local t=$1 pg=$2 p cb lb y_label y_row v cx_one
+  show_chrome || return 1
+  has "지우기" && { tap_label "지우기" || return 1; sleep 1; dump; } # a clean row (13g's seeks left a place)
+  p=$(page_no); [ -n "$p" ] || { log "13u_$t: no page label"; return 1; }
+  tap_label "이 페이지 고정" || return 1
+  sleep 1; dump
+  history_cols "13u_${t}_one" "${p}쪽"; cx_one=$HIST_CX
+  ! has "쪽으로" contains; check "13u_${t}_one_side" $? "only '${p}쪽' (pinned, on screen): no '…쪽으로' label"
+  hide_chrome
+  adb shell input keyevent KEYCODE_VOLUME_DOWN; sleep 1; adb shell input keyevent KEYCODE_VOLUME_DOWN; sleep 1
+  show_chrome || return 1
+  tap_label "${p}쪽으로" contains || return 1
+  shot "13u_${t}_history" 2; rawshot "13u_${t}_history"
+  dump; history_cols "13u_${t}_cols" "${p}쪽" "$((p + 2))쪽으로"
+  [ "$HIST_CX" = "$cx_one" ]; check "13u_${t}_still" $? "지우기 at x = $HIST_CX with both labels, $cx_one with one"
+  cb=$(box_of "지우기"); lb=$(box_of "페이지 이동" contains)
+  read -r _ y_row _ v <<<"${cb:-0 0 0 0}"; y_row=$(((y_row + v) / 2))
+  read -r _ y_label _ _ <<<"${lb:-0 0 0 0}"
+  [ -n "$cb" ] && [ -n "$lb" ] && [ $((y_label - v)) -ge 0 ] && [ $((y_label - v)) -le 2 ]
+  check "13u_${t}_on_panel" $? "the row ends at y = $v, the page label row starts at $y_label"
+  near_check "13u_${t}_page" "$(raw_pixel "13u_${t}_history" 8 "$y_row")" "$pg" "the row's background at (8, $y_row)"
+  v=$(raw_pixel "13u_${t}_history" 8 $((y_label - 2)))
+  darker_check "13u_${t}_shadow" "$v" "$pg" 12 "the panel's shadow at (8, $((y_label - 2)))"
+  tap_label "지우기" || return 1
+  shot "13u_${t}_empty" 2
+  dump; lb=$(box_of "페이지 이동" contains); read -r _ v _ _ <<<"${lb:-0 0 0 0}"
+  ! has "지우기" && [ "$v" = "$y_label" ]; check "13u_${t}_empty" $? "no 지우기, the label row at y = $v (was $y_label)"
+}
+chrome_look() { # 13t <tag> <page> <surface> shadow|<edge> (#RRGGBB): the bars in this page's colours. Closed / open /
+  # closed again: the page at (8, 700), the top bar's surface right of ←, the bottom panel's at the label row, the first
+  # row under the brightness bar a shadow (darker than the page) or the 1 px edge; hiding the bars changes no page pixel
+  # (below the header band, where a clock may tick) and lays nothing out
+  local t=$1 pg=$2 sf=$3 ed=$4 b y0 y1 x2 y2 v
+  hide_chrome; sleep 1
+  rawshot "13t_${t}_closed"; perf_mark "13t_${t}_a"
+  show_chrome || return 1
+  shot "13t_${t}_open" 1; rawshot "13t_${t}_open"
+  near_check "13t_${t}_page" "$(raw_pixel "13t_${t}_open" 8 700)" "$pg" "the page at (8, 700)"
+  b=$(box_of "뒤로"); read -r _ y0 x2 y2 <<<"${b:-0 0 0 0}"
+  v=$(raw_pixel "13t_${t}_open" $((x2 + 16)) $(((y0 + y2) / 2)))
+  near_check "13t_${t}_top" "$v" "$sf" "the top bar right of ←"
+  b=$(box_of "페이지 이동" contains); read -r _ y0 _ y2 <<<"${b:-0 0 0 0}"
+  v=$(raw_pixel "13t_${t}_open" 8 $(((y0 + y2) / 2)))
+  near_check "13t_${t}_bottom" "$v" "$sf" "the bottom panel at its label row"
+  b=$(box_of "밝기"); read -r _ _ _ y2 <<<"${b:-0 0 0 0}"
+  v=$(raw_pixel "13t_${t}_open" 8 "$y2")
+  if [ "$ed" = shadow ]; then darker_check "13t_${t}_edge" "$v" "$pg" 12 "the row under the top bar (8, $y2)"
+  else near_check "13t_${t}_edge" "$v" "$ed" "the 1 px edge under the top bar (8, $y2)"; fi
+  hide_chrome; sleep 1
+  rawshot "13t_${t}_closed2"; perf_mark "13t_${t}_b"
+  read -r y0 y1 <<<"$(pv_rows)"
+  raw_check "13t_${t}_hide" "13t_${t}_closed" "13t_${t}_closed2" $((y0 + 48)) "$y1"
+  no_relayout "13t_${t}_norelayout" "13t_${t}_a" "13t_${t}_b"
+}
+chrome_lines() { adb logcat -d -s RAPerf:D "*:S" 2>/dev/null | grep -c "chrome $1"; } # RAPerf "chrome <what>" lines
+motion_check() { # 13v: the bars follow the system's animation scale. At 1 they fade in and out (RAPerf "chrome show
+  # fade"), end where the instant ones do, and leave no trace on the page; at 0 (this run's default, like 접근성
+  # "애니메이션 제거") they switch at once ("chrome show instant")
+  local y0 y1 b top bottom n0 n1
+  hide_chrome; sleep 1; rawshot 13v_closed_ref
+  show_chrome || return 1
+  sleep 1; rawshot 13v_open_ref
+  b=$(box_of "밝기"); read -r _ _ _ top <<<"${b:-0 0 0 0}"
+  b=$(box_of "페이지 이동" contains); read -r _ bottom _ _ <<<"${b:-0 0 0 1440}"
+  hide_chrome; sleep 1
+  adb shell settings put global animator_duration_scale 1; sleep 2
+  n0=$(chrome_lines "show fade")
+  show_chrome || return 1
+  sleep 1; rawshot 13v_open_fade
+  n1=$(chrome_lines "show fade")
+  [ "$n1" -gt "$n0" ]; check 13v_fade $? "RAPerf 'chrome show fade' at animator scale 1 ($n0 → $n1 lines)"
+  raw_check 13v_top 13v_open_ref 13v_open_fade 0 $((top + 8))
+  raw_check 13v_bottom 13v_open_ref 13v_open_fade $((bottom - 8)) 1440
+  hide_chrome; sleep 1
+  dump; ! has "페이지 이동" contains; check 13v_hidden $? "the bars are gone a second after the fade out"
+  rawshot 13v_closed_fade
+  read -r y0 y1 <<<"$(pv_rows)"
+  raw_check 13v_page 13v_closed_ref 13v_closed_fade $((y0 + 48)) "$y1"
+  adb shell settings put global animator_duration_scale 0; sleep 2
+  n0=$(chrome_lines "show instant")
+  show_chrome; hide_chrome
+  n1=$(chrome_lines "show instant")
+  [ "$n1" -gt "$n0" ]; check 13v_instant $? "RAPerf 'chrome show instant' at animator scale 0 ($n0 → $n1 lines)"
+}
+chrome_looks_run() {
+  history_row paper "#FFFFFF"
+  chrome_look paper "#FFFFFF" "#F5F5F5" shadow
+  LOOK_SET=1
+  set_page_look 마루뷰어 off || return 1
+  chrome_look maru "#323232" "#3C3C3C" shadow
+  history_row maru "#323232"
+  set_page_look 마루뷰어 on || return 1
+  chrome_look invert "#000000" "#1A1A1A" "#333333"
+}
+chrome_looks() { # 13t–13v, then as 13 left it: 흰 바탕, 흑백 반전 off, the animation scale at 0, the same page with the
+  # bars open, and 10a_pre taken again (bars closed) for 10b
+  local rc
+  LOOK_SET=0
+  chrome_looks_run; rc=$?
+  if [ "$LOOK_SET" = 1 ]; then set_page_look "흰 바탕" off || log "13t: 흰 바탕 and 흑백 반전 off not restored"; fi
+  motion_check || rc=1
+  adb shell settings put global animator_duration_scale 0
+  hide_chrome; sleep 1
+  rawshot 10a_pre; perf_mark 10a_pre
+  show_chrome
+  return $rc
 }
 reading_settings() { # 14 the quick options (⚙) and 14q their margins; 14s their "전체 읽기 설정" → 설정 → 읽기 설정, and
   # BACK to the same page (14s_back, 14s_same); 14m the margins there; 14b, 14c the status slots on 화면·밝기; then 10b
@@ -1412,6 +1562,8 @@ shot 10_txt_page1 4
 adb shell input keyevent KEYCODE_VOLUME_DOWN; shot 11_txt_page2 2
 adb shell input tap 600 900; shot 12_txt_tap_right 2; rawshot 12b
 step 13_chrome_pin chrome_pin
+# 13t–13v visit 설정 three times and take some 30 shots: more time than the 300 s default
+STEP_TIMEOUT=600 step 13t_chrome_looks chrome_looks
 # 14, 14d, 52 and 53 go to 설정 and back (twice for most): more time than the 300 s default
 STEP_TIMEOUT=480 step 14_reading_settings reading_settings
 STEP_TIMEOUT=480 step 14d_volume_mode volume_mode

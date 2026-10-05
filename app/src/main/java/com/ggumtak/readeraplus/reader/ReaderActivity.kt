@@ -432,6 +432,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var inFront = false
     /** Page colours last set by [applyReaderColors] (null = none yet). */
     private var readerPalette: PagePalette? = null
+    /** The device class as [updateQuoteLook] last got it (null = not known yet): the chrome's look follows it. */
+    private var einkClass: Boolean? = null
     /** The page on screen when the reader paused (-1 = none): TTS may turn pages with the screen off (T1-11). */
     private var pausedSection = -1
     private var pausedPageIdx = -1
@@ -1024,6 +1026,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val before = QuoteLook.generation
         QuoteLook.update(app.highlightLook, eink)
         if (QuoteLook.generation != before) refreshDecor()
+        if (eink != einkClass) {
+            einkClass = eink
+            pushChromeLook()
+        }
     }
 
     /** The refresh cadence for the page's colours: a dark page (밤 모드, the 마루뷰어 theme) has its own (T1-3b). */
@@ -1031,7 +1037,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         cadence.every = EinkCadence.everyFor(app.einkRefreshEvery, app.einkRefreshEveryNight, PagePalette.of(s).dark)
     }
 
-    /** The window and the blank page take the page's background ([PagePalette]: 흑백 반전, else the 화면 색). */
+    /**
+     * The window and the blank page take the page's background ([PagePalette]: 흑백 반전, else the 화면 색); the
+     * chrome and the system bars follow the same colours.
+     */
     private fun applyReaderColors(s: ReaderSettings) {
         val palette = PagePalette.of(s)
         // Unchanged colours: no background reset (it would redraw the window, an e-ink update).
@@ -1040,6 +1049,18 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         readerPalette = palette
         root.setBackgroundColor(palette.background)
         page.blankColor = palette.background
+        ReaderWindow.applyBarLook(this, palette.dark)
+        pushChromeLook()
+    }
+
+    /**
+     * The chrome's colours (`render/ChromePalette`, U §2.1) for the page's colours and the device class. Only stored
+     * while the bars are hidden (they take them in the update that shows them): nothing is drawn for it before a page.
+     */
+    private fun pushChromeLook() {
+        val p = readerPalette ?: PagePalette.PAPER
+        chrome.setLook(p, einkClass)
+        returnNav.setLook(p, einkClass)
     }
 
     /** "목차를 만드는 중…" while a big TXT is parsed in full (A5), else "불러오는 중…". */

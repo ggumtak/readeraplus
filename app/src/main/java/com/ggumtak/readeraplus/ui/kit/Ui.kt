@@ -432,15 +432,21 @@ fun Context.fullScreenDialog(content: View): Dialog {
         window?.let { w ->
             w.setWindowAnimations(0)
             w.setBackgroundDrawable(ColorDrawable(Ink.WHITE))
-            if (owner != null) matchSystemBars(w, owner)
+            if (owner != null) matchSystemBars(w, owner, look = false)
         }
     }
 }
 
-/** Makes [dialog] (not yet shown, decor installed) request [owner]'s current system-bar visibility and look. */
-private fun matchSystemBars(dialog: Window, owner: Window) {
-    dialog.statusBarColor = owner.statusBarColor
-    dialog.navigationBarColor = owner.navigationBarColor
+/**
+ * Makes [dialog] (not yet shown, decor installed) request [owner]'s current system-bar visibility and, with [look], its
+ * bar colours and icon shade. A full-screen dialog is white whatever page the reader shows (the reader's bars take the
+ * page colour): it keeps its theme's white bars with dark icons and copies only which bars are shown.
+ */
+private fun matchSystemBars(dialog: Window, owner: Window, look: Boolean = true) {
+    if (look) {
+        dialog.statusBarColor = owner.statusBarColor
+        dialog.navigationBarColor = owner.navigationBarColor
+    }
     val ownerDecor = owner.peekDecorView() ?: return
     if (Build.VERSION.SDK_INT >= 30) {
         // PhoneWindow.getInsetsController() dereferences the decor, so a dialog without one yet (an AlertDialog
@@ -448,7 +454,7 @@ private fun matchSystemBars(dialog: Window, owner: Window) {
         if (dialog.peekDecorView() == null) return
         val c = dialog.insetsController ?: return
         val oc = owner.insetsController
-        if (oc != null) {
+        if (oc != null && look) {
             val mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
             c.setSystemBarsAppearance(oc.systemBarsAppearance and mask, mask)
         }
