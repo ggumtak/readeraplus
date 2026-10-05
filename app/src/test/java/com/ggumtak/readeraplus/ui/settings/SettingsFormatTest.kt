@@ -271,8 +271,9 @@ class SettingsFormatTest {
         val none = r.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
         assertFalse(R3Rows.hasStatusText(none))
         assertTrue(R3Rows.statusFits(none.copy(marginTopDp = 0, marginBottomDp = 0)))
-        // A header in a 4 dp margin does not fit.
+        // A header in a 4 dp margin does not fit, unless the camera band above it (fullscreen S25) gives it room.
         assertFalse(R3Rows.statusFits(r.copy(marginTopDp = 4)))
+        assertTrue(R3Rows.statusFits(r.copy(marginTopDp = 4), cutoutDp = 37))
         // 페이지 여백 off: bands get 4 dp.
         assertFalse(R3Rows.statusFits(r.copy(pageMargins = false)))
         // Footer text: the progress lane takes 12 dp of the bottom margin.

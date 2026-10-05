@@ -318,7 +318,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     override fun thumbCurrent(): Int = session?.counts?.globalPage(curSection, curPageIdx) ?: 0
     override fun thumbAspect(): Float {
         val g = session?.generation?.geometry ?: return 0f
-        return if (g.viewWidth > 0) g.viewHeight.toFloat() / g.viewWidth else 0f
+        // The page below the camera band (PageThumbs draws that part): no empty strip of paper on top.
+        return if (g.viewWidth > 0) (g.viewHeight - g.cutoutTop).toFloat() / g.viewWidth else 0f
     }
     override fun requestThumbs(first: Int, count: Int, widthPx: Int, heightPx: Int, progressive: Boolean, onBatch: (ThumbBatch) -> Unit) {
         val s = session ?: return
@@ -1775,7 +1776,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         override fun onCountsChanged(complete: Boolean) {
             if (curLayout == null) return
             if (complete) {
-                refreshDecor(onlyIfChanged = true)
+                // The exact page numbers (the default header's 쪽 번호 since 2026-10-05) show at once on a phone. On
+                // e-ink they wait for the next redraw (a turn, a scroll step, any other refresh), like the clock: no
+                // screen update seconds after the open without a user action.
+                if (DeviceClass.cached(this@ReaderActivity) != true) refreshDecor(onlyIfChanged = true)
                 // The page label and the return strip's page numbers become exact (bindChrome binds the strip).
                 if (chromeVisible) bindChrome() else returnNav.bind()
                 return
@@ -3309,19 +3313,27 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun applyPageInsets() {
         val lp = page.layoutParams as? FrameLayout.LayoutParams ?: return
         val cut = insets[4]
-        val t = insets[1] - cut
+        val t = InsetSplit.pageTopMargin(insets[1], cut)
         val b = insets[3]
         val bandMoved = cut != pageCutoutTop
         pageCutoutTop = cut
+        ReaderWindow.lastCutoutTopDp = Math.round(cut / resources.displayMetrics.density)
         if (lp.topMargin != t || lp.bottomMargin != b) {
             lp.topMargin = t
             lp.bottomMargin = b
             page.layoutParams = lp
         } else if (bandMoved) {
-            // The view keeps its size (no onSizeChanged): the text box moves by the band alone.
-            onViewSizeChanged(page.width, page.height)
+            // The text box moves by the band alone. After the layout pass, never with the size measured now: a rotation
+            // (portrait ↔ side cutout) changes the band and the size in one step, and its onSizeChanged lays the new
+            // size out with the new band first; this call then finds that viewport and builds nothing. When the view
+            // keeps its size (no onSizeChanged), this is the one rebuild.
+            handler.removeCallbacks(bandRelayout)
+            handler.post(bandRelayout)
         }
     }
+
+    /** [applyPageInsets]: the band moved; setViewport ignores an unchanged (width, height, band). */
+    private val bandRelayout = Runnable { if (!isDestroyed && page.width > 0) onViewSizeChanged(page.width, page.height) }
 
     /** Size the page view gets at the next layout (its margins may have changed since the last one). */
     private fun pageTargetSize(): Pair<Int, Int> {
@@ -3553,7 +3565,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 return
             }
         }
-        when (TapZones.corner(x, y, page.width, page.height)) {
+        // The zones cover the page below the camera band (fullscreen S25), as when the view started below it: the
+        // bookmark corner and the grid rows stay where they were (a tap in the band counts as the top row).
+        val band = pageCutoutTop
+        val zy = y - band
+        val zh = (page.height - band).coerceAtLeast(1)
+        when (TapZones.corner(x, zy, page.width, zh)) {
             Corner.TOP_RIGHT -> if (app.bookmarkByTouch) {
                 toggleBookmark()
                 return
@@ -3564,7 +3581,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
             Corner.NONE -> {}
         }
-        runTapAction(TapZones.actionAt(app, x, y, page.width, page.height))
+        runTapAction(TapZones.actionAt(app, x, zy, page.width, zh))
     }
 
     /**

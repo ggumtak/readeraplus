@@ -39,7 +39,7 @@ class RibbonMathTest {
         val ribbonH = dp(RibbonMath.HEIGHT_DP)
         val inset = RibbonMath.headerInset(d, contentRight, viewW, ribbonH, glyphTop = dp(15f))
         assertTrue(inset > 0f)
-        // Right end of a centred header of width cw - 2 * inset stays left of the ribbon, with the gap.
+        // The header's right end, inset from the column's, stays left of the ribbon, with the gap.
         assertTrue(contentRight - inset <= RibbonMath.left(viewW, d) - dp(RibbonMath.GAP_DP) + 0.001f)
         // Margins off: more to reserve.
         assertTrue(RibbonMath.headerInset(d, viewW - dp(4f), viewW, ribbonH, dp(10f)) > inset)

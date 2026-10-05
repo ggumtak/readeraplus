@@ -440,11 +440,14 @@ internal object StatusUi {
     /** "상태 글자 크기" shows only while some band has text. */
     fun showsSize(s: ReaderSettings): Boolean = s.hasHeader || s.hasFooterText
 
-    /** The [FIT_NOTE] warning: a band with items whose margin is too small to draw it. Nothing is disabled. */
-    fun showsFitNote(s: ReaderSettings): Boolean {
+    /**
+     * The [FIT_NOTE] warning: a band with items whose margin is too small to draw it. Nothing is disabled. [cutoutDp]:
+     * the camera band above the top margin that the header also uses ([StatusFit.headerFitsDp]).
+     */
+    fun showsFitNote(s: ReaderSettings, cutoutDp: Int = 0): Boolean {
         val top = if (s.pageMargins) s.marginTopDp else TINY_MARGIN_DP
         val bottom = if (s.pageMargins) s.marginBottomDp else TINY_MARGIN_DP
-        val headerHidden = s.hasHeader && !StatusFit.headerFitsDp(s.statusFontSizeSp, top)
+        val headerHidden = s.hasHeader && !StatusFit.headerFitsDp(s.statusFontSizeSp, top, cutoutDp)
         val footerHidden = s.hasFooterText &&
             !StatusFit.footerFitsDp(s.statusFontSizeSp, bottom, s.progressBar)
         return headerHidden || footerHidden

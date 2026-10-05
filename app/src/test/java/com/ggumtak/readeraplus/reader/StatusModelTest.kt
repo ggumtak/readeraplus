@@ -273,6 +273,20 @@ class StatusModelTest {
     }
 
     @Test
+    fun cornerClockOnATwelveHourPhoneReadsLikeMaruViewer() {
+        val m = StatusModel()
+        val inp = inputs().apply { minuteOfDay = 8 * 60 + 53; is24 = false }
+        m.update(ReaderSettings(), inp, track)                    // the default header: icon · clock | title | page
+        val left = m.decor.header.left
+        assertEquals("오전 08:53", chars(left))
+        assertTrue(left.batteryFirst)
+        assertEquals(80, left.battery)
+        assertEquals("오전 08:53", m.sample(StatusItem.CLOCK_BATTERY, inp))
+        // The plain clock keeps its short form.
+        assertEquals("8:53", m.sample(StatusItem.CLOCK, inp))
+    }
+
+    @Test
     fun updatesAllocateNothingAfterWarmUp() {
         if (!AllocCounter.supported) return
         val m = StatusModel()

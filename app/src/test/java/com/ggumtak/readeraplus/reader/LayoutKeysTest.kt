@@ -53,6 +53,10 @@ class LayoutKeysTest {
             assertEquals(below.contentWidth, into.contentWidth)
             assertEquals(below.contentHeight, into.contentHeight)
             assertEquals(2340, into.viewHeight)
+            // The band is kept with the geometry (thumbnails leave it out: the same page as `below`).
+            assertEquals(band, into.cutoutTop)
+            assertEquals(0, below.cutoutTop)
+            assertEquals(below.viewHeight, into.viewHeight - into.cutoutTop)
             // The bottom margin is the same, so the footer and the progress lane stay where they were.
             assertEquals(below.viewHeight - below.contentTop - below.contentHeight, into.viewHeight - into.contentTop - into.contentHeight)
             val parse = t.parseOptions()

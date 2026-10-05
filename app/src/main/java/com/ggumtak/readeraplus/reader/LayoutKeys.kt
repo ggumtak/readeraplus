@@ -18,6 +18,11 @@ data class PageGeometry(
     val contentTop: Int,
     val contentWidth: Int,
     val contentHeight: Int,
+    /**
+     * Px at the view's top that a display cutout covers ([LayoutKeys.geometry]'s extraTop; the S25's camera band in
+     * fullscreen), 0 without one. Only the live page draws there (its header): a thumbnail leaves it out.
+     */
+    val cutoutTop: Int = 0,
 )
 
 /** Pure derivation of page geometry, LayoutConfig and the page-count cache key from settings (unit-tested). */
@@ -75,7 +80,7 @@ object LayoutKeys {
             h = minOf(minBox, below).coerceAtLeast(1)
             top = band + ((below - h) / 2).coerceAtLeast(0)
         }
-        return PageGeometry(viewW, viewH, left, top, w, h)
+        return PageGeometry(viewW, viewH, left, top, w, h, band)
     }
 
     /** [txt]: TXT books always honour their parser's block hints (centred scene breaks, headings). */

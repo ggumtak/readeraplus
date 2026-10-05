@@ -97,12 +97,14 @@ internal object ReaderWindow {
         if (Build.VERSION.SDK_INT >= 30) {
             val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
             val bars = insets.getInsets(WindowInsets.Type.systemBars())
-            return intArrayOf(i.left, i.top, i.right, i.bottom, if (bars.top == 0) i.top else 0)
+            return intArrayOf(i.left, i.top, i.right, i.bottom, InsetSplit.cutoutTop(i.top, bars.top))
         }
         if (fullscreen) {
             if (Build.VERSION.SDK_INT >= 28) {
                 val c = insets.displayCutout
-                if (c != null) return intArrayOf(c.safeInsetLeft, c.safeInsetTop, c.safeInsetRight, c.safeInsetBottom, c.safeInsetTop)
+                // Fullscreen before API 30: no bar shows, the whole top inset is the cutout's.
+                if (c != null) return intArrayOf(c.safeInsetLeft, c.safeInsetTop, c.safeInsetRight, c.safeInsetBottom,
+                    InsetSplit.cutoutTop(c.safeInsetTop, 0))
             }
             return IntArray(INSETS)
         }
@@ -115,6 +117,28 @@ internal object ReaderWindow {
 
     /** Size of [insetsOf]'s array. */
     const val INSETS = 5
+
+    /**
+     * The cutout band (dp) the reader last laid its page out with (0 when the system bars show or there is no cutout):
+     * the settings screen's status fit estimate counts it (`StatusFit.headerFitsDp`). Main thread; this process only.
+     */
+    @JvmStatic var lastCutoutTopDp = 0
+}
+
+/**
+ * How [ReaderWindow.insetsOf] splits a top inset (pure, unit-tested): the part only a display cutout takes, which the
+ * page view reaches into for its header (fullscreen on the S25: the camera band), and the margin the page view keeps.
+ */
+internal object InsetSplit {
+    /**
+     * The cutout-only part of a [top] inset (system bars and cutout together): all of it when no system bar shows there
+     * ([barsTop] 0: fullscreen), none when a bar does (the bar is at least as tall as the cutout and the page goes
+     * below it, as before). 0 for a top without a cutout (the Comet, a side cutout in landscape).
+     */
+    fun cutoutTop(top: Int, barsTop: Int): Int = if (barsTop <= 0) top.coerceAtLeast(0) else 0
+
+    /** The page view's top margin: the inset less the cutout band the view reaches into. */
+    fun pageTopMargin(top: Int, cutoutTop: Int): Int = (top - cutoutTop.coerceIn(0, maxOf(0, top))).coerceAtLeast(0)
 }
 
 /**

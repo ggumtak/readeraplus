@@ -857,8 +857,11 @@ scroll_moves() { # 61–66 in the scroll mode set by 60
   read -r top bot <<<"$(pv_rows)"
   # Both bands stay put while the text scrolls; their live values follow the position and the time: the header's 쪽 번호
   # and clock (MaruViewer's line, the default since 2026-10-05), the footer's 쪽 번호 (14c's 아래 가운데 until 52) and the
-  # progress dot. The header's 80 rows hold its glyphs from row 8 (4 dp below the edge) down to about row 40.
-  band_check 61_header 61a 61b "$top" $((top + 80))
+  # progress dot. The header's glyphs fill rows 8 (4 dp below the edge) to about 40 (11 sp × 1.45 = 32 px): its live
+  # values may change there (band_check). The paper below them down to the text box (rows 48..80, as raw_check's
+  # belowheader) has nothing live, so it must stay EQUAL: scrolled text clipped a few px too high would show there.
+  band_check 61_header 61a 61b "$top" $((top + 48))
+  raw_check 61_header_gap 61a 61b $((top + 48)) $((top + 80))
   band_check 61_footer 61a 61b $((bot - 80)) "$bot"
   local y0 y1 r
   read -r y0 y1 <<<"$(content_rows)"

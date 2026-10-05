@@ -451,11 +451,15 @@ object R3Rows {
     /** "상태 글자 크기" matters only while a band shows text. */
     fun hasStatusText(r: ReaderSettings): Boolean = r.hasHeader || r.hasFooterText
 
-    /** False when a band with items has no room in its margin (anchor §2.7: the warning shows; nothing is disabled). */
-    fun statusFits(r: ReaderSettings): Boolean {
+    /**
+     * False when a band with items has no room in its margin (anchor §2.7: the warning shows; nothing is disabled).
+     * [cutoutDp]: the camera band above the top margin that the header also uses (fullscreen S25), see
+     * [StatusFit.headerFitsDp].
+     */
+    fun statusFits(r: ReaderSettings, cutoutDp: Int = 0): Boolean {
         val top = if (r.pageMargins) r.marginTopDp else NO_MARGIN_DP
         val bottom = if (r.pageMargins) r.marginBottomDp else NO_MARGIN_DP
-        if (r.hasHeader && !StatusFit.headerFitsDp(r.statusFontSizeSp, top)) return false
+        if (r.hasHeader && !StatusFit.headerFitsDp(r.statusFontSizeSp, top, cutoutDp)) return false
         if (r.hasFooterText && !StatusFit.footerFitsDp(r.statusFontSizeSp, bottom, r.progressBar)) return false
         return true
     }
@@ -555,10 +559,10 @@ object R3Rows {
 
 /**
  * "설정 초기화" (MainPage, K12): back to the defaults except what took the user work to set up or is a privacy or
- * device choice. Reader settings go to [ReaderSettings] defaults (40/40/40/40 margins, 줄 단위, the default status
- * slots) but keep the TXT cleanup defaults; app settings keep the scan folders, the assigned keys, the library sort
- * and view, 목록 넘기기, 자동 백업, 찾아본 단어 기록, 기기 밝기 직접 조절, the web search (it may be a typed address)
- * and the voice. [MESSAGE] names every one of them.
+ * device choice. Reader settings go to [ReaderSettings] defaults (20/20 side and 40/40 top/bottom margins, 줄 단위,
+ * the default status slots) but keep the TXT cleanup defaults; app settings keep the scan folders, the assigned keys,
+ * the library sort and view, 목록 넘기기, 자동 백업, 찾아본 단어 기록, 기기 밝기 직접 조절, the web search (it may be a
+ * typed address) and the voice. [MESSAGE] names every one of them.
  */
 object SettingsReset {
     const val MESSAGE = "글자 · 넘기기 · 화면 · 밝기 · e-ink · 듣기 설정을 기본값으로 되돌릴까요?\n\n" +

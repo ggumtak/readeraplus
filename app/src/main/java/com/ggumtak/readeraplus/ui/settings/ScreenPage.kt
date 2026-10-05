@@ -8,6 +8,7 @@ import android.net.Uri
 import android.view.View
 import android.widget.LinearLayout
 import com.ggumtak.readeraplus.reader.DeviceLight
+import com.ggumtak.readeraplus.reader.ReaderWindow
 import com.ggumtak.readeraplus.reader.extras.Fmt
 import com.ggumtak.readeraplus.reader.extras.QuoteSwatch
 import com.ggumtak.readeraplus.reader.extras.StatusUi
@@ -140,14 +141,19 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
     private fun updateStatusUi() {
         val r = Settings.reader
         statusSizeRow?.setShown(R3Rows.hasStatusText(r))
-        fitWarning?.setShown(!R3Rows.statusFits(r))
+        // In fullscreen the header also has the camera band the reader last laid out (S25; 0 on the Comet).
+        val cutout = if (Settings.app.fullscreen) ReaderWindow.lastCutoutTopDp else 0
+        fitWarning?.setShown(!R3Rows.statusFits(r, cutout))
     }
 
     // ---------------------------------------------------------------- 화면
 
     private fun addScreen(body: LinearLayout, app: AppSettings) {
         body.section("화면")
-        body.addView(ctx.toggleRow("전체 화면", "시계 줄과 아래 버튼 줄 숨김", app.fullscreen) { v -> editApp { it.copy(fullscreen = v) } })
+        body.addView(ctx.toggleRow("전체 화면", "시계 줄과 아래 버튼 줄 숨김", app.fullscreen) { v ->
+            editApp { it.copy(fullscreen = v) }
+            updateStatusUi()
+        })
         body.addView(ctx.toggleRow("화면 켜짐 유지", "기기 설정보다 10분 더 켜 둡니다", app.keepScreenOn) { v ->
             editApp { it.copy(keepScreenOn = v) }
         })

@@ -79,10 +79,12 @@ internal object StatusFit {
         marginDp - laneDp >= MIN_SP * GLYPH_EM + 2f * PAD_DP
 
     /**
-     * [fitsDp] for the header ([headerRoom]): the glyph box starts [EDGE_DP] below the top edge. A display cutout
-     * above the margin (the S25's camera band, fullscreen) only adds room, so this is the device without one.
+     * [fitsDp] for the header ([headerRoom]): the glyph box starts [EDGE_DP] below the top edge. [cutoutDp]: a display
+     * cutout band above the margin that the page view reaches into (the S25's camera band in fullscreen, about 37 dp;
+     * 0 without one, as on the Comet): the header draws there too, so it adds room.
      */
-    fun headerFitsDp(statusSp: Float, marginDp: Int): Boolean = fitsDp(statusSp, marginDp, EDGE_DP - PAD_DP)
+    fun headerFitsDp(statusSp: Float, marginDp: Int, cutoutDp: Int = 0): Boolean =
+        fitsDp(statusSp, marginDp + cutoutDp.coerceAtLeast(0), EDGE_DP - PAD_DP)
 
     /** [fitsDp] for the footer: its margin also keeps the [EDGE_DP] gap and, with the progress bar on, the lane. */
     fun footerFitsDp(statusSp: Float, marginDp: Int, progressBar: Boolean): Boolean =

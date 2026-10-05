@@ -96,6 +96,22 @@ class StatusFitTest {
     }
 
     @Test
+    fun theCameraBandCountsForTheHeaderEstimate() {
+        // S25 fullscreen: the page view reaches into the 110 px (≈ 37 dp) camera band and the header draws there, so a
+        // 10 dp top margin holds it; without the band it does not.
+        assertTrue(StatusFit.headerFitsDp(11f, 10, cutoutDp = 37))
+        assertFalse(StatusFit.headerFitsDp(11f, 10))
+        assertFalse(StatusFit.headerFitsDp(11f, 10, cutoutDp = 0))
+        assertTrue(StatusFit.headerFitsDp(11f, 0, cutoutDp = 37))
+        // The pixel rule agrees: the text box starts below band + margin (density 3).
+        val s25 = 3f
+        val room = StatusFit.headerRoom(110f + 10f * s25, s25)
+        assertEquals(11f * s25, StatusFit.size(11f * s25, room, StatusFit.GLYPH_EM, StatusFit.PAD_DP * s25, 7f * s25), 0f)
+        // A negative band is none.
+        assertFalse(StatusFit.headerFitsDp(11f, 10, cutoutDp = -37))
+    }
+
+    @Test
     fun narrowMarginsShrinkThenHideTheText() {
         val fit = StatusFit.size(22f, 30f, 1.45f, pad, min)
         assertTrue(fit in min..22f)

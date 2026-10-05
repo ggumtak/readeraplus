@@ -246,6 +246,8 @@ class PopupGeometryTest {
         // 16 dp does not.
         assertFalse(StatusUi.showsFitNote(d.copy(marginTopDp = 18)))
         assertTrue(StatusUi.showsFitNote(d.copy(marginTopDp = 16)))
+        // In the S25's camera band (fullscreen) the header has room above a small margin: no false note.
+        assertFalse(StatusUi.showsFitNote(d.copy(marginTopDp = 16), cutoutDp = 37))
         // No band with items: never a note.
         val none = d.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
         assertFalse(StatusUi.showsFitNote(none.copy(pageMargins = false)))

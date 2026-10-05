@@ -1138,7 +1138,7 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 18 | `15_toc`, `16_search` | as today | TOC title 20 sp bold | U |
 | 19 | `17_selection` | as today | one row of 5 (복사 · 인용 · 메모 · 사전·번역 · ⋮); the 인용 cell shows a yellow dot with ▾ | U, N |
 | 20 | `20_epub_page1`, `21_epub_page4`, `22_epub_page9` | as today | narrower column (560 px) | S |
-| 21 | `60_scroll_on` … `69_scroll_again` | S §1.15 steps | S §1.15 expectations; **plus:** header, footer, progress line and return strip stay fixed while the text scrolls (61; their live values — 쪽 번호, the clock, the dot — may change: under 1500 px) | S |
+| 21 | `60_scroll_on` … `69_scroll_again` | S §1.15 steps | S §1.15 expectations; **plus:** header, footer, progress line and return strip stay fixed while the text scrolls (61; their live values — 쪽 번호, the clock, the dot — may change: under 1500 px, in the header only over its glyph rows `pv … pv + 48`; the paper between them and the text box, `pv + 48 … pv + 80`, is EQUAL: `61_header_gap`) | S |
 | 22 | `69b_back_to_paged` | ⋮ → "페이지로 보기"; 스크롤 움직임 → 손가락을 따라 (기본) | logged only (restores defaults for later steps) | PLAN |
 | 23 | `30_big_txt`, `31_big_txt_later`, `32_big_txt_reopen` | as today; **[Δ]** `perf_mark 31` before closing, `perf_mark 32` after the reopen | reopen shows the same first line (anchored open): **[Δ]** `first_is 31 32` | A |
 | 24 | `40_library_after` | as today | library (no resume: `am start -n` has no action) | R |
@@ -1155,7 +1155,7 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 35 | `86_notes_quotes`, `87_notes_jump` + CHECK 87 | (before 85: sample-utf8.txt read 3 pages past the quotes, so its saved place is off the quote's page, §1.6.1) 인용문 tab; tap the first row | filter row; the reader at the quote with the mark; the chip "‹ N쪽으로" found | N |
 | 36 | `88_notes_select`, `89_notes_words` | long-press → 선택; 단어장 tab | "1개 선택" bar; word row with 다시 찾기 and the word in bold | N |
 | 37 | `90_highlight_ink` | 설정 → 화면·밝기 → 인용문 색 표시 → 흑백 무늬; open sample-utf8.txt, 3 pages back to the quotes | grey band + thin line / lighter band + dashed; restore 자동 | N |
-| 38 | `52_footer_toggle_same_text` | open sample TXT; ⋮ → 설정 → 화면·밝기 → 아래 가운데 = 없음 (no footer: 10b had set it); back; `rawshot 52a`; the same page → 아래 가운데 = 쪽 번호, 아래 오른쪽 = 배터리 아이콘 · 시계, 위 가운데 = 없음; back; `rawshot 52b` | **`raw_equal 52a 52b` over the content rows: EQUAL**; only the bands differ (header gone, footer shown); **[Δ]** `no_relayout 52a 52b` | A |
+| 38 | `52_footer_toggle_same_text` | open sample TXT; ⋮ → 설정 → 화면·밝기 → 아래 가운데 = 없음 (no footer: 10b had set it); back; `rawshot 52a`; the same page → 아래 가운데 = 쪽 번호, 아래 오른쪽 = 배터리 아이콘 · 시계, 위 가운데 = 없음; back; `rawshot 52b` | **`raw_equal 52a 52b` over the content rows: EQUAL**; only the bands differ (the header loses its title — 배터리 아이콘 · 시계 and 쪽 번호 stay — and the footer is shown); **[Δ]** `no_relayout 52a 52b` | A |
 | 39 | `53_progress_toggle_same_text` | 화면·밝기 → 진행 막대 off; back; rawshot | same crop EQUAL; **[Δ]** `no_relayout`; restore on | A |
 | 40 | `54_margin_v_exact` | **[Δ]** `perf_mark 54a`; ⚙ → 전체 읽기 설정 → 상하 여백 +10; back; `perf_mark 54b`; shot; then 상하 여백 back to 0 | **[Δ]** `first_is 54a 54b` (the exact first char; height-only change) | A |
 | 41 | `55_font_up_down` | 글자 크기 +1, then −1 | `raw_equal` with the shot before the change: EQUAL (content rows valid again: 54 restored "0") | A |

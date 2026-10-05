@@ -45,6 +45,31 @@ class StatusTextTest {
     }
 
     @Test
+    fun koreanCornerClockLikeMaruViewer() {
+        // 12 h: 오전/오후 and a two-digit hour, as MaruViewer's corner ("오전 08:53").
+        assertEquals("오전 08:53", text { b, at -> StatusText.clockKo(b, at, 8 * 60 + 53, false) })
+        assertEquals("오후 12:05", text { b, at -> StatusText.clockKo(b, at, 12 * 60 + 5, false) })
+        assertEquals("오전 12:05", text { b, at -> StatusText.clockKo(b, at, 5, false) })        // past midnight
+        assertEquals("오후 11:59", text { b, at -> StatusText.clockKo(b, at, 23 * 60 + 59, false) })
+        assertEquals("오후 02:05", text(at = 3) { b, at -> StatusText.clockKo(b, at, 14 * 60 + 5, false) })
+        // 24 h: the plain clock.
+        assertEquals("14:05", text { b, at -> StatusText.clockKo(b, at, 14 * 60 + 5, true) })
+        assertEquals("08:53", text { b, at -> StatusText.clockKo(b, at, 8 * 60 + 53, true) })
+        for (m in 0 until 1440) {
+            assertEquals(ReaderFormat.clock(m / 60, m % 60, true), text { b, at -> StatusText.clockKo(b, at, m, true) })
+            assertEquals(8, text { b, at -> StatusText.clockKo(b, at, m, false) }.length)
+        }
+    }
+
+    @Test
+    fun koreanCornerClockAllocatesNothing() {
+        if (!AllocCounter.supported) return
+        val loop = { for (i in 0 until 10_000) StatusText.clockKo(buf, 0, i % 1440, i % 2 == 0) }
+        repeat(3) { loop() }
+        assertEquals(0L, AllocCounter.measure(loop))
+    }
+
+    @Test
     fun chapterPageMatches() {
         for (page in 1..999) {
             for (total in intArrayOf(0, page - 1, page, page + 1, 32, 999)) {

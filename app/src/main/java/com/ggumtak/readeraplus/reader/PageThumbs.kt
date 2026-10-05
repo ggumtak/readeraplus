@@ -390,7 +390,10 @@ class PageThumbs(
             val g = t.gen.geometry
             val viewW = g.viewWidth
             val viewH = g.viewHeight
-            if (viewW <= 0 || viewH <= 0) return null
+            // The page below the camera band (fullscreen S25): the band holds only the header, never drawn here.
+            val band = g.cutoutTop.coerceIn(0, maxOf(0, viewH - 1))
+            val shownH = viewH - band
+            if (viewW <= 0 || shownH <= 0) return null
             val r = rendererFor(t)
             val w = t.key.wPx
             val h = t.key.hPx
@@ -398,11 +401,12 @@ class PageThumbs(
             val c = canvas ?: ThumbCanvas().also { canvas = it }
             c.setBitmap(bmp)
             c.logicalWidth = viewW
-            val s = min(w.toFloat() / viewW, h.toFloat() / viewH)
+            val s = min(w.toFloat() / viewW, h.toFloat() / shownH)
             r.thumbnail = s < THUMB_GREY_SCALE
             val save = c.save()
-            c.translate(((w - viewW * s) / 2f).roundToInt().toFloat(), ((h - viewH * s) / 2f).roundToInt().toFloat())
+            c.translate(((w - viewW * s) / 2f).roundToInt().toFloat(), ((h - shownH * s) / 2f).roundToInt().toFloat())
             c.scale(s, s)
+            if (band > 0) c.translate(0f, -band.toFloat())
             val decor = PageDecor(t.highlights, bookmarked = false, status = null)
             val cl = g.contentLeft.toFloat()
             val ct = g.contentTop.toFloat()

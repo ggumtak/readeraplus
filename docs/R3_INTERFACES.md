@@ -839,12 +839,16 @@ const val NOTCH_FRACTION = 0.25f
 fun left(viewWidth: Int, density: Float): Float = viewWidth - (RIGHT_DP + WIDTH_DP) * density
 fun height(density: Float, contentTop: Float, contentRight: Float, viewWidth: Int): Float
 fun headerInset(density: Float, contentRight: Float, viewWidth: Int, ribbonH: Float, glyphTop: Float): Float
+    // 2026-10-05: kept free at the header's right end on every page (StatusMath.allocate reserveRight)
 internal object BatteryMath
-fun bodyWidth(ts: Float): Float = maxOf(6f, Math.round(0.9f * ts).toFloat())
-fun bodyHeight(ts: Float): Float = maxOf(5f, Math.round(0.5f * ts).toFloat())
-fun nubWidth(ts: Float): Float = maxOf(1f, Math.round(0.08f * ts).toFloat())
+fun bodyWidth(ts: Float, first: Boolean = false): Float     // first (icon before the clock, no number): 1.75 ts
+fun bodyHeight(ts: Float, first: Boolean = false): Float    // first: 0.6 ts
+fun nubWidth(ts: Float, first: Boolean = false): Float      // first: 0.1 ts
 fun nubHeight(ts: Float): Float = maxOf(1f, Math.round(0.25f * ts).toFloat())
+fun firstStroke(density: Float): Float = maxOf(1f, Math.round(0.6f * density).toFloat())
 fun gap(ts: Float): Float = 0.25f * ts
+fun iconWidth(ts: Float, first: Boolean = false): Float
+fun labelGap(ts: Float): Float = 0.5f * ts
 fun fillRight(inLeft: Float, inRight: Float, level: Int): Float
 internal object FooterFit
 internal class LatestTaskRunner(name: String)
@@ -878,6 +882,7 @@ data class PageGeometry(
     val contentTop: Int,
     val contentWidth: Int,
     val contentHeight: Int,
+    val cutoutTop: Int = 0,                 // 2026-10-05: extraTop (camera band); thumbnails leave it out
     )
 object LayoutKeys
 const val VERSION = 3
@@ -885,7 +890,7 @@ const val ALGO_VERSION = 1
 const val GOLDEN_HASH = "071717a86d158ac8"
 const val GOLDEN_HASH_PARAGRAPH = "TBD"
 const val TINY_MARGIN_DP = 4
-fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float): PageGeometry
+fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, extraTop: Int = 0): PageGeometry
 fun px(dp: Int): Int = Math.round((if (s.pageMargins) dp else TINY_MARGIN_DP) * density)
 fun config(s: ReaderSettings, g: PageGeometry, txt: Boolean = false): LayoutConfig = LayoutConfig(
     width = g.contentWidth,

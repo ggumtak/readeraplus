@@ -72,11 +72,11 @@ internal class StatusModel {
             StatusItem.CHAPTER -> if (inp.chapterStartsHere) slot.clear() else slot.setText(inp.chapterTitle)
             StatusItem.BOOK_TITLE -> slot.setText(inp.bookTitle, keepEnd = item.keepsEnd)
             StatusItem.BATTERY -> if (inp.battery < 0) slot.clear() else slot.set(b, 0, inp.battery)
-            // MaruViewer's corner: the battery icon (no number), then the time.
+            // MaruViewer's corner: the battery icon (no number), then the time as the phone shows it ("오전 08:53").
             StatusItem.CLOCK_BATTERY -> when {
                 inp.minuteOfDay < 0 && inp.battery < 0 -> slot.clear()
                 inp.minuteOfDay < 0 -> slot.set(b, 0, inp.battery, batteryFirst = true)
-                else -> slot.set(b, StatusText.clock(b, 0, inp.minuteOfDay, inp.is24), inp.battery, batteryFirst = true)
+                else -> slot.set(b, StatusText.clockKo(b, 0, inp.minuteOfDay, inp.is24), inp.battery, batteryFirst = true)
             }
             else -> {
                 val n = chars(b, item, inp)
@@ -113,9 +113,9 @@ internal class StatusModel {
             StatusItem.CHAPTER -> inp.chapterTitle?.takeIf { it.isNotEmpty() }
             StatusItem.BOOK_TITLE -> inp.bookTitle?.takeIf { it.isNotEmpty() }
             StatusItem.BATTERY -> if (inp.battery < 0) null else inp.battery.coerceAtMost(100).toString()
-            // The icon has no text: the time, as [StatusItem.CLOCK_BATTERY]'s example shows ("14:05").
+            // The icon has no text: the time, as the slot draws it ("오전 08:53"; 24 h "14:05" like the example).
             StatusItem.CLOCK_BATTERY ->
-                if (inp.minuteOfDay < 0) null else String(b, 0, StatusText.clock(b, 0, inp.minuteOfDay, inp.is24))
+                if (inp.minuteOfDay < 0) null else String(b, 0, StatusText.clockKo(b, 0, inp.minuteOfDay, inp.is24))
             else -> {
                 val n = chars(b, item, inp)
                 if (n <= 0) null else String(b, 0, n)
@@ -133,6 +133,8 @@ internal object StatusText {
     private const val UNDER_MINUTE = "1분 미만"
     private const val MINUTES = "분"
     private const val HOURS = "시간"
+    private const val AM = "오전 "
+    private const val PM = "오후 "
 
     fun page(buf: CharArray, at: Int, page: Int, total: Int): Int {        // "12 / 3259" (total ≥ page)
         var n = int(buf, at, page)
@@ -151,6 +153,24 @@ internal object StatusText {
         if (is24 && h < 10) n = put(buf, n, '0')
         n = int(buf, n, h)
         n = put(buf, n, ':')
+        if (minute < 10) n = put(buf, n, '0')
+        return int(buf, n, minute)
+    }
+
+    /**
+     * MaruViewer's corner clock ([StatusItem.CLOCK_BATTERY]), as a Korean phone's status bar shows it: 12 h "오전 08:53" /
+     * "오후 12:05" (midnight "오전 12:05"), the hour always two digits; 24 h as [clock] ("14:05", "08:53"). No ReaderFormat
+     * twin: only this slot uses it.
+     */
+    fun clockKo(buf: CharArray, at: Int, minuteOfDay: Int, is24: Boolean): Int {
+        if (is24) return clock(buf, at, minuteOfDay, true)
+        val m = Math.floorMod(minuteOfDay, 1440)
+        var n = put(buf, at, if (m < 720) AM else PM)
+        val h = ((m / 60 + 11) % 12) + 1
+        if (h < 10) n = put(buf, n, '0')
+        n = int(buf, n, h)
+        n = put(buf, n, ':')
+        val minute = m % 60
         if (minute < 10) n = put(buf, n, '0')
         return int(buf, n, minute)
     }
