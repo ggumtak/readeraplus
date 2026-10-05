@@ -59,7 +59,7 @@ class PagePaletteTest {
         // A short, nearly black shadow toward the lower right, fitted to the screenshot: ≈ 2.2 px right, 1.1 px down,
         // sigma ≈ 1.25 px, 88 % black (at ≈ 2.75 px per dp).
         assertTrue(m.hasShadow)
-        assertEquals(0.8f, m.shadowDxDp, 0f)
+        assertEquals(0.67f, m.shadowDxDp, 0f)
         assertEquals(0.4f, m.shadowDyDp, 0f)
         assertEquals(0.45f, m.shadowSigmaDp, 0f)
         assertEquals(0xE0000000.toInt(), m.shadowColor)

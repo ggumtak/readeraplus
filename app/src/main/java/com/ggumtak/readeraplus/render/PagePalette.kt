@@ -70,10 +70,13 @@ internal class PagePalette private constructor(
          * of the glyphs to five text blocks (residual ≈ 1 grey level): ≈ 2.2 px right, ≈ 1.1 px down, sigma ≈ 1.25 px,
          * black at ≈ 88 %; at ≈ 2.6–3 px per dp that is 0.8 / 0.4 / 0.45 dp. Pictures keep their colours (a colour
          * theme, not a night mode); a transparent one shows the page through it.
+         * Re-checked 2026-10-05 against our own page beside MaruViewer on the same phone (S25, 3 px per dp; the mean
+         * darkening around the glyphs, fitted with the same model): our shadow reached ≈ 0.4 px further right; MaruViewer
+         * is ≈ 2.0 px right, 1.2 px down, same blur and strength, so dx is 0.67 dp (fit residual at the noise floor).
          */
         val MARU = PagePalette(
             background = 0xFF323232.toInt(), text = 0xFFDDDDDD.toInt(), status = 0xFFF0D096.toInt(),
-            shadowDxDp = 0.8f, shadowDyDp = 0.4f, shadowSigmaDp = 0.45f, shadowColor = 0xE0000000.toInt(),
+            shadowDxDp = 0.67f, shadowDyDp = 0.4f, shadowSigmaDp = 0.45f, shadowColor = 0xE0000000.toInt(),
             dark = true, invertImages = false,
         )
 
