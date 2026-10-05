@@ -276,7 +276,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         bottom.addView(seekRow, lp())
     }
 
-    private fun einkSeekBar(): SeekBar = SeekBar(ctx).apply {
+    /** Vertical swipes over the bars belong to the system (home, recents, notifications): [SwipeSafeSeekBar]. */
+    private fun einkSeekBar(): SeekBar = SwipeSafeSeekBar(ctx).apply {
         progressTintList = ColorStateList.valueOf(Ink.BLACK)
         progressBackgroundTintList = ColorStateList.valueOf(Ink.DISABLED)
         // The platform thumb is an animated selector (grows on press = several e-ink updates): use a plain dot.
@@ -409,12 +410,33 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         if (top.paddingLeft != left || top.paddingTop != topInset || top.paddingRight != right) {
             top.setPadding(left, topInset, right, 0)
         }
-        if (bottom.paddingLeft != left || bottom.paddingRight != right || bottom.paddingBottom != bottomInset) {
-            bottom.setPadding(left, 0, right, bottomInset)
-        }
+        barInsetBottom = bottomInset
         insetLeft = left
         insetRight = right
+        padBottom()
         if (isVisible) sizeForWidth()   // returns at once when the row width is unchanged (also after a rotation)
+    }
+
+    /**
+     * The bottom strip the system keeps for its own swipes (home, recents: the mandatory gesture inset). The bottom
+     * bar sits above it, and at least [BOTTOM_GAP_DP] above the screen edge (ReadEra's gap, the user's reference,
+     * 2026-10-05; fullscreen hides the navigation bar, so its inset is 0 while the handle still shows): a swipe that
+     * starts at the edge never lands on the page bar or the chapter buttons.
+     */
+    fun setGestureBottom(px: Int) {
+        if (gestureBottom == px) return
+        gestureBottom = px
+        padBottom()
+    }
+
+    private var barInsetBottom = 0
+    private var gestureBottom = 0
+
+    private fun padBottom() {
+        val b = maxOf(barInsetBottom, gestureBottom, ctx.dp(BOTTOM_GAP_DP))
+        if (bottom.paddingLeft != insetLeft || bottom.paddingRight != insetRight || bottom.paddingBottom != b) {
+            bottom.setPadding(insetLeft, 0, insetRight, b)
+        }
     }
 
     fun setTitle(text: CharSequence) {
@@ -743,6 +765,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         const val UNAVAILABLE_LINK = "기기 조명 설정에서 조절"
         const val SWIPE_TITLE = "스와이프로 밝기 조절"
         const val DEVICE_TITLE = "기기 밝기 직접 조절"
+        /** Least space under the bottom bar (the page bar's centre then sits ≈ 40 dp above the edge, as in ReadEra). */
+        const val BOTTOM_GAP_DP = 16
         const val PANEL_TITLE = "기기 조명 설정 열기"
         const val ROTATION_LOCK = "화면 회전 잠금"
         const val ROTATION_UNLOCK = "화면 회전 잠금 해제"

@@ -833,6 +833,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             configChanged = false
             insetsFullscreen = app.fullscreen
             insetsGate.offer(ReaderWindow.insetsOf(wi, app.fullscreen), settled, forced)?.let(::applyInsets)
+            // The bars only (never the page): the bottom bar stays above the system's swipe strip.
+            chrome.setGestureBottom(ReaderWindow.gestureBottom(wi))
             wi
         }
         // Bars the extras add over the page (search results, TTS): the return chip moves above them. The chrome's own

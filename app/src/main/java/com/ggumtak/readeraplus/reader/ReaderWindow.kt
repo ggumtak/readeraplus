@@ -84,6 +84,13 @@ internal object ReaderWindow {
      * count as 0), so asking for system bars even in fullscreen costs nothing, and keeps the page clear of a
      * navigation bar that a vendor firmware refuses to hide (the Comet cut-off-bottom-bar problem).
      */
+    /** Height of the bottom strip the system keeps for its swipes (home, recents); 0 before API 29. */
+    fun gestureBottom(insets: WindowInsets): Int = when {
+        Build.VERSION.SDK_INT >= 30 -> insets.getInsets(WindowInsets.Type.mandatorySystemGestures()).bottom
+        Build.VERSION.SDK_INT >= 29 -> @Suppress("DEPRECATION") insets.mandatorySystemGestureInsets.bottom
+        else -> 0
+    }
+
     fun insetsOf(insets: WindowInsets, fullscreen: Boolean): IntArray {
         if (Build.VERSION.SDK_INT >= 30) {
             val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
