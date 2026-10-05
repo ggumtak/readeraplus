@@ -62,13 +62,21 @@ class PagePaletteTest {
         val r = m.status shr 16 and 0xFF
         val g = m.status shr 8 and 0xFF
         assertTrue(r > g && g > (m.status and 0xFF))
-        // A short, opaque black shadow toward the lower right: ≈ 2.0 px right, 1.2 px down, sigma ≈ 1.35 px on the S25
-        // (3 px per dp); MaruViewer's darkest shadow pixels are darker than our 88 % black gave (2026-10-05).
+        // A short, opaque black shadow toward the lower right: MaruViewer's (2, 1) px, sigma ≈ 1.38 px on the S25 (2.8125 px
+        // per dp; re-fitted 2026-10-05 with its hinted glyphs as the source); MaruViewer's darkest shadow pixels are darker
+        // than our 88 % black gave.
         assertTrue(m.hasShadow)
-        assertEquals(0.67f, m.shadowDxDp, 0f)
-        assertEquals(0.4f, m.shadowDyDp, 0f)
-        assertEquals(0.45f, m.shadowSigmaDp, 0f)
+        assertEquals(0.71f, m.shadowDxDp, 0f)
+        assertEquals(0.36f, m.shadowDyDp, 0f)
+        assertEquals(0.49f, m.shadowSigmaDp, 0f)
         assertEquals(0xFF000000.toInt(), m.shadowColor)
+        // Drawn in whole px (CrispText.shadowOffsetPx): (2, 1) on the S25 at 2.8125 and at 3 px per dp, (1, 1) on the Comet.
+        for (d in listOf(2.8125f, 3f)) {
+            assertEquals(2f, CrispText.shadowOffsetPx(m.shadowDxDp, d), 0f)
+            assertEquals(1f, CrispText.shadowOffsetPx(m.shadowDyDp, d), 0f)
+        }
+        assertEquals(1f, CrispText.shadowOffsetPx(m.shadowDxDp, 2f), 0f)
+        assertEquals(1f, CrispText.shadowOffsetPx(m.shadowDyDp, 2f), 0f)
         // A dark page (night quote fills, the night e-ink cadence) whose pictures keep their colours.
         assertTrue(m.dark)
         assertFalse(m.invertImages)
@@ -90,8 +98,11 @@ class PagePaletteTest {
         val n = PagePalette.of(PageTheme.MARU, true)
         assertSame(PagePalette.NIGHT, n)
         assertFalse(n.hasShadow)
-        // The shadow is opaque but the blur keeps it soft: Android's radius for sigma 1.35 px on the S25.
-        assertEquals(1.47f, PagePalette.MARU.shadowRadiusPx(3f), 0.01f)
+        // The shadow is opaque but the blur keeps it soft: Android's radius for sigma 1.38 px on the S25 (2.8125 px per dp),
+        // 1.47 px at 3 px per dp; the Comet's sigma 0.98 px.
+        assertEquals(1.52f, PagePalette.MARU.shadowRadiusPx(2.8125f), 0.01f)
+        assertEquals(1.68f, PagePalette.MARU.shadowRadiusPx(3f), 0.01f)
+        assertEquals(0.83f, PagePalette.MARU.shadowRadiusPx(2f), 0.01f)
         assertEquals(0xFF, PagePalette.MARU.shadowColor ushr 24)
     }
 
@@ -104,9 +115,9 @@ class PagePaletteTest {
         // 0.5 px is the sharpest Android draws; a radius of 0 would draw no shadow at all.
         assertEquals(0.01f, PagePalette.radiusForSigma(0.5f), 0f)
         assertEquals(0.01f, PagePalette.radiusForSigma(0.2f), 0f)
-        // On a 2.75 density phone the 마루뷰어 blur (sigma 1.24 px) is a radius of ≈ 1.28 px, not the sigma itself.
+        // On a 2.75 density phone the 마루뷰어 blur (sigma 1.35 px) is a radius of ≈ 1.47 px, not the sigma itself.
         val m = PagePalette.MARU
-        assertEquals(1.28f, m.shadowRadiusPx(2.75f), 0.01f)
+        assertEquals(1.47f, m.shadowRadiusPx(2.75f), 0.01f)
         assertTrue(m.shadowRadiusPx(1f) > 0f)
         assertEquals(0f, PagePalette.PAPER.shadowRadiusPx(2.75f), 0f)
         assertEquals(0f, PagePalette.NIGHT.shadowRadiusPx(2.75f), 0f)

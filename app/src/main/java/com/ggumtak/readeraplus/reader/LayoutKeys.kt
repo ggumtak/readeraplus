@@ -51,8 +51,12 @@ object LayoutKeys {
      * 바른바탕) change the widths of the repaired fonts only, so the font identity carries `FontManager.layoutTag`
      * (`|hg<rules>:<files>`, "" without a repair) and 나눔명조's own key changed with its file (OTF → TTF), while the
      * system faces, Pretendard and every other font without blank glyphs keep their counts.
+     * 2 (2026-10-05, 마루뷰어만큼 선명하게): the body paints are hinted (`CrispText`: no LINEAR_TEXT_FLAG) at a whole-px
+     * size, so every font measures whole-px hinted advances (나눔명조 at 17 sp on the S25: a Hangul syllable 45 px, not
+     * 45.43; a space 14, not 14.33) and its metrics at that size. Every cached page count is counted once again; an open
+     * book keeps its first character (the reopen is an anchored layout).
      */
-    const val ALGO_VERSION = 1
+    const val ALGO_VERSION = 2
 
     /** Hash of `LayoutGoldenTest`'s layouts at [ALGO_VERSION]; see there. */
     const val GOLDEN_HASH = "071717a86d158ac8"

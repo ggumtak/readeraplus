@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for the pure CI helpers: perf_log.py, find_node.py, ui_rows.py, hub_rows.py, raw_equal.py (with
---uniform and ink), the glyph samples and the crafted restore backup of make_samples.py. Run from the repository root:
+--uniform, ink and crisp), the glyph and crisp samples and the crafted restore backup of make_samples.py. Run from the repository root:
 python3 -m unittest tools/ci/test_ci_tools.py"""
 import json
 import os
@@ -581,6 +581,95 @@ class RawEqualTest(unittest.TestCase):
             self.assertEqual(raw_equal.main(["ink", b, "0"]), "BADSIZE")
 
 
+def raw_grid(path, grid):
+    """A screencap raw file of grid[y][x] greys (16-byte header)."""
+    h, w = len(grid), len(grid[0])
+    with open(path, "wb") as f:
+        f.write(struct.pack("<IIII", w, h, 1, 0))
+        for row in grid:
+            f.write(b"".join(bytes([v, v, v, 255]) for v in row))
+
+
+GLYPH = [[0, 128, 0], [64, 255, 64], [0, 200, 30]]  # ink (0 = paper) of one 3 x 3 "glyph"
+
+
+def crisp_page(w=70, h=30, lines=(5, 15), period=9, copies=6, x0=4, phase=None, edit=None):
+    """A white page with text lines of `copies` glyphs `period` px apart from x0; phase(k, line) shifts copy k right by
+    a pixel (a quarter-pixel glyph drawn at another phase), edit(grid) changes pixels afterwards."""
+    grid = [[255] * w for _ in range(h)]
+    for n, top in enumerate(lines):
+        for k in range(copies):
+            dx = phase(k, n) if phase else 0
+            for y, row in enumerate(GLYPH):
+                for x, ink in enumerate(row):
+                    grid[top + y][x0 + k * period + x + dx] = 255 - ink
+    if edit:
+        edit(grid)
+    return grid
+
+
+class CrispTest(unittest.TestCase):
+    # CI 100: hinted text on whole pixels repeats a repeated pattern pixel for pixel; unhinted quarter-pixel text does not.
+    def crisp(self, grid, y0=0, y1=None):
+        with tempfile.TemporaryDirectory() as d:
+            a = os.path.join(d, "a.raw")
+            raw_grid(a, grid)
+            return raw_equal.crisp(a, y0, len(grid) if y1 is None else y1)
+
+    def test_identical_copies_at_a_whole_pixel_period(self):
+        r = self.crisp(crisp_page())
+        self.assertTrue(r.startswith("CRISP lines 2 period 9 full/lit "), r)
+        # Full (ink >= 200 of 255) over lit (>= 20): 255 and 200 of the six lit pixels per copy.
+        self.assertEqual(r.split()[-1], "0.333")
+        # The first and the last copy may differ (no neighbour's shadow or overhang there).
+        def ends(g):
+            for top in (5, 15):
+                g[top][4 + 0] = 0
+                g[top + 2][4 + 5 * 9 + 2] = 10
+        self.assertTrue(self.crisp(crisp_page(edit=ends)).startswith("CRISP lines 2 period 9"))
+
+    def test_copies_at_other_phases_are_soft(self):
+        # The linear paint: fractional advances on quarter pixels draw some copies at another phase.
+        r = self.crisp(crisp_page(phase=lambda k, n: 1 if k in (2, 3) else 0))
+        self.assertTrue(r.startswith("SOFT lines 2 line 1 rows 5..7"), r)
+        # One interior copy that differs in a single pixel is enough.
+        r = self.crisp(crisp_page(edit=lambda g: g[6].__setitem__(4 + 2 * 9 + 1, 1)))
+        self.assertTrue(r.startswith("SOFT lines 2 line 1"), r)
+
+    def test_every_line_the_same_pixels(self):
+        # Periodic lines that sit differently (a line drawn a pixel further right: another row profile or start) differ.
+        r = self.crisp(crisp_page(phase=lambda k, n: n))
+        self.assertEqual(r, "UNEVEN lines 2 line 2 rows 15..17 differs from line 1")
+        # A different period in another line is soft (another advance).
+        def other(g):
+            for x in range(70):
+                g[15][x] = g[16][x] = g[17][x] = 255
+            for k in range(6):
+                for y, row in enumerate(GLYPH):
+                    for x, ink in enumerate(row):
+                        g[15 + y][4 + k * 10 + x] = 255 - ink
+        r = self.crisp(crisp_page(edit=other))
+        self.assertTrue(r.startswith("SOFT lines 2 line 2"), r)
+
+    def test_lines_cut_by_the_rows_do_not_count(self):
+        self.assertEqual(self.crisp(crisp_page(), y0=6), "NOLINES 1")
+        self.assertEqual(self.crisp(crisp_page(), y0=0, y1=17), "NOLINES 1")
+        self.assertEqual(self.crisp(crisp_page(lines=(5,))), "NOLINES 1")
+        self.assertEqual(self.crisp(crisp_page(), y0=0, y1=40), "BADSIZE")
+        # Too few copies for four periods: no period found.
+        r = self.crisp(crisp_page(copies=3))
+        self.assertTrue(r.startswith("SOFT lines 2 line 1"), r)
+
+    def test_command_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = os.path.join(d, "a.raw")
+            raw_grid(a, crisp_page())
+            out = subprocess.run([sys.executable, os.path.join(HERE, "raw_equal.py"), "crisp", a, "0", "30"],
+                                 capture_output=True, text=True)
+            self.assertTrue(out.stdout.startswith("CRISP lines 2 period 9"), out.stdout)
+            self.assertEqual(raw_equal.main(["crisp", a, "0"]), "BADSIZE")
+
+
 class GlyphSamplesTest(unittest.TestCase):
     def test_glyph_samples_start_with_only_those_characters(self):
         # CI 99 checks ink in the top rows of the first page: they must hold nothing but the characters under test.
@@ -607,6 +696,10 @@ class GlyphSamplesTest(unittest.TestCase):
                 page = z.read("OEBPS/Text/ch1.xhtml").decode("utf-8")
             body = page[page.index("<body>") + 6:]
             self.assertTrue(body.startswith("<p>" + hanja[0] + "</p>"), body[:60])
+            # CI 100: one-line paragraphs of one pattern (six "가o"), blank lines between, so no TXT option joins them.
+            with open(os.path.join(d, "crisp.txt"), encoding="utf-8", newline="") as f:
+                crisp = f.read()
+            self.assertEqual(crisp, "\r\n\r\n".join(["가o" * 6] * 12) + "\r\n")
 
 
 class RestoreBackupTest(unittest.TestCase):

@@ -319,9 +319,12 @@ as you like, same package & signatures).
     `00 01 00 00` / `OTTO` / `true` / `ttcf`), register, return. `deleteUserFont` only for files under
     `filesDir/fonts`.
 - **AndroidTextMeasurer**: `emPx = TypedValue.applyDimension(SP, settings.fontSizeSp)`. `paintFor(style)`
-  cached per `RunStyle`: `TextPaint(ANTI_ALIAS_FLAG or SUBPIXEL_TEXT_FLAG or LINEAR_TEXT_FLAG)`, typeface from
-  FontManager (bold → weight+300 capped at 900; monospace → `Typeface.MONOSPACE`), `textSize = emPx *
-  sizeScale` (×0.75 for super/sub — the parser already sets sizeScale; don't double apply),
+  cached per `RunStyle`: `TextPaint(CrispText.PAINT_FLAGS)` = `ANTI_ALIAS_FLAG` only (since 2026-10-05, MaruViewer's
+  look: no `LINEAR_TEXT_FLAG`, which makes hwui draw unhinted, and no `SUBPIXEL_TEXT_FLAG`, so glyphs sit on whole
+  pixels; measuring and drawing share the paint, so advances are the hinted whole-px ones; `LayoutKeys.ALGO_VERSION` 2),
+  typeface from FontManager (bold → weight+300 capped at 900; monospace → `Typeface.MONOSPACE`), `textSize =
+  CrispText.textPx(emPx * sizeScale)` (whole px, rounded down as minikin does for a non-linear paint; `emPx` itself,
+  the layout's em, stays unrounded; ×0.75 for super/sub — the parser already sets sizeScale; don't double apply),
   `letterSpacing = settings.letterSpacingPm / 1000f`, synthetic stroke via `Style.FILL_AND_STROKE` +
   `strokeWidth`, italic skew `-0.2f` when the typeface isn't italic, underline/strike flags, color black.
   `measure` uses `paint.getTextWidths(String, start, end, FloatArray)` into a reusable temp array, then
@@ -337,7 +340,9 @@ as you like, same package & signatures).
   underline 2px + `#E0E0E0` fill (inverted variants when `invert`). Text lines: use
   `LineGeometry.charPositions` (reusable FloatArray) and draw **segments** — split at style changes and at
   expansion points — with `canvas.drawText(text, s, e, x, baseline + shift, paint)`; skip whitespace-only
-  segments; superscript shift `-0.35 em`, subscript `+0.2 em`; underline/strike/link underline as lines.
+  segments; superscript shift `-0.35 em`, subscript `+0.2 em`; underline/strike/link underline as lines. The
+  baseline (with its shift) is rounded to a whole row and a page look's text shadow offset to whole px
+  (`CrispText.baselineY`, `CrispText.shadowOffsetPx`; 2026-10-05), so every glyph's shadow lies the same distance away.
   Images: `drawBitmap(src, null, dstRect, filterPaint)`. Rules: centred line 25% of width, 1dp.
   Bookmarked: a black ribbon (small pentagon) at the view's top-right corner. No allocations per draw beyond
   first use (reuse Paint/RectF/arrays). Night mode draws images through one shared inverting `ColorMatrixColorFilter`.

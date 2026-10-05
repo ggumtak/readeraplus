@@ -1685,6 +1685,24 @@ glyph_fallback() { # 99: characters a font maps to blank glyphs are drawn by the
   pick_font "나눔명조"
 }
 
+# ------------------------------------------------------------------ 100 crisp body text (2026-10-05, 마루뷰어만큼 선명하게)
+
+crisp_text() { # 100: the body text is hinted on whole pixels (CrispText: no LINEAR_TEXT_FLAG, no SUBPIXEL_TEXT_FLAG), as
+  # MaruViewer draws it. crisp.txt (make_samples.py) is one-line paragraphs of "가o" × 6: hinted advances are whole px,
+  # so each line repeats its pattern pixel for pixel at a whole-px period and every line is the same pixels, the same row
+  # profile (raw_equal.py crisp). The linear paint of before drew the copies at other quarter-pixel phases (1548/1024 em
+  # = 60.47 px at 40 px): SOFT. Any font, theme or size: only the advances and origins count. The full/lit ratio of the
+  # first line is in the CHECK line for the record (at the default weight 500 the synthetic stroke hides the hinting's
+  # gain in it, so it is not a pass condition).
+  adb push samples/crisp.txt /sdcard/Download/ >/dev/null
+  local y0 y1 r
+  fresh_reader crisp.txt text/plain
+  read -r y0 y1 <<<"$(top_rows)"
+  shot 100_crisp 0; rawshot 100
+  r=$(python3 tools/ci/raw_equal.py crisp "shots/100.raw" "$y0" "$y1")
+  [ "${r%% *}" = CRISP ]; check 100 $? "hinted text on whole pixels: ${r:-error} rows $y0..$y1"
+}
+
 # ------------------------------------------------------------------ U1 helpers (R §7)
 
 top_is() { # top_is <Activity> <step>: the resumed activity, from dumpsys
@@ -1926,6 +1944,9 @@ sleep 5; shot 78_closed_then_recents 0; top_is LibraryActivity 78_closed_then_re
 
 log "glyph fallback: Hanja and blank syllables drawn by the system font (2026-10-05)"
 step 99_glyph_fallback glyph_fallback
+
+log "crisp body text: hinted, whole-px advances and origins (2026-10-05)"
+step 100_crisp crisp_text
 
 log "restore offer (S §3.9), last: pm clear wipes everything"
 STEPS_UNTIL=$((${STEPS_UNTIL:-3000} + 600)) step 95_98_restore restore_offer

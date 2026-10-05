@@ -18,7 +18,10 @@ internal class PagePalette private constructor(
      * without the text shadow on every look: MaruViewer's own status line has none (measured 2026-10-05, [MARU]).
      */
     val status: Int,
-    /** Text shadow toward the lower right, in dp; a [shadowSigmaDp] of 0 is no shadow. */
+    /**
+     * Text shadow toward the lower right, in dp; a [shadowSigmaDp] of 0 is no shadow. The renderer draws the offset in
+     * whole px (`CrispText.shadowOffsetPx`).
+     */
     val shadowDxDp: Float,
     val shadowDyDp: Float,
     /**
@@ -173,10 +176,20 @@ internal class PagePalette private constructor(
          * Its status line has no shadow: no pixel around those glyphs or the battery icon is more than 2 levels darker
          * than the page (the darker-looking ones are chroma fringes at the page's luma), nor its white page's status
          * (#323232), so [status] stays flat.
+         * Re-fitted 2026-10-05 on lossless PNG pairs of the same page (user: "글씨의 선명도, 그림자 크기 이런 것들 똑같이"),
+         * with each app's own glyphs as the shadow's source (MaruViewer's hinted 47 px, ours unhinted 47.81 px): the S25
+         * runs at 2.8125 px per dp, not 3 (our em is 17 sp × 2.8125, our text origins whole dp at 2.8125). MaruViewer's
+         * shadow is a constant (2, 1) px, opaque, sigma ≈ 1.37–1.38 px: 8 % wider than our 0.45 dp (1.27 px), its
+         * darkening of the page 6 % more in sum. Ours varied 1.75–2.25 px right and 1–2 px down with the glyph's
+         * quarter-pixel phase and the line's fractional baseline. Now 0.71 / 0.36 dp (2.0 / 1.0 px, drawn in whole px:
+         * `CrispText.shadowOffsetPx`) and sigma 0.49 dp (1.38 px; radius 1.52 px); simulated with the hinted glyphs its
+         * shadow sum is within 1 % of MaruViewer's on two lines. Its white page has no shadow (a fit gives alpha 0, its
+         * extra faint pixels are the hinting), so [PAPER] stays without one. On the Comet (2 px per dp) the shadow is
+         * (1, 1) px (was ≈ 1.25 / 1 px) with sigma 0.98 px (was 0.90).
          */
         val MARU = PagePalette(
             background = 0xFF323232.toInt(), text = 0xFFDDDDDD.toInt(), status = 0xFFFFD387.toInt(),
-            shadowDxDp = 0.67f, shadowDyDp = 0.4f, shadowSigmaDp = 0.45f, shadowColor = 0xFF000000.toInt(),
+            shadowDxDp = 0.71f, shadowDyDp = 0.36f, shadowSigmaDp = 0.49f, shadowColor = 0xFF000000.toInt(),
             dark = true, invertImages = false,
         )
 

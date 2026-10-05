@@ -38,6 +38,8 @@ import java.util.concurrent.atomic.AtomicReference
  * style changes and justification points, so selection/search/TTS geometry and drawing always agree.
  * Each line is copied once into a reusable char buffer and drawn with the char[] `drawTextRun`: the String
  * overload makes JNI copy (or pin) the whole section String for every segment.
+ * Body text is hinted, at a whole-px size, on whole pixels, as MaruViewer draws it ([CrispText]): the measurer's paints, a
+ * whole-px baseline per run and a whole-px shadow offset.
  * After the first draw, drawing allocates nothing (paints, rects, position and char arrays, paths are reused).
  * Pages next to the drawn one get their images decoded on a background thread (see [preload]).
  * Use from one thread (the UI thread for the page view).
@@ -49,10 +51,13 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val palette = PagePalette.of(settings)
     private val fg = palette.text
     private val bg = palette.background
-    /** Text shadow in px (radius 0 = none); the radius is Paint.setShadowLayer's, not the blur ([PagePalette.radiusForSigma]). */
+    /**
+     * Text shadow in px (radius 0 = none); the radius is Paint.setShadowLayer's, not the blur ([PagePalette.radiusForSigma]).
+     * The offset is whole px ([CrispText.shadowOffsetPx]), so every glyph's shadow lies the same distance from it.
+     */
     private val shadowRadius = palette.shadowRadiusPx(density)
-    private val shadowDx = palette.shadowDxDp * density
-    private val shadowDy = palette.shadowDyDp * density
+    private val shadowDx = CrispText.shadowOffsetPx(palette.shadowDxDp, density)
+    private val shadowDy = CrispText.shadowOffsetPx(palette.shadowDyDp, density)
     private val onePx = 1f
     private val em = measurer.emPx
 
@@ -713,7 +718,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             style.baselineShift < 0 -> 0.2f * em
             else -> 0f
         }
-        val y = baseY + shift
+        // On a whole pixel row (CrispText.baselineY): the shadow then lies the same distance below every line.
+        val y = CrispText.baselineY(baseY + shift)
         var p = a
         while (p < b) {
             val q = TextSegments.segmentEnd(text, adv, xs, lineStart, p, b)

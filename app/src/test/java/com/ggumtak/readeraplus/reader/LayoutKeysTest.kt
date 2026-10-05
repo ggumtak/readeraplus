@@ -247,7 +247,10 @@ class LayoutKeysTest {
         assertEquals(LayoutKeys.keyFor(s, BookFormat.TXT, "", g, density, font, LayoutKeys.ALGO_VERSION), k)
         assertNotEquals(LayoutKeys.keyFor(s, BookFormat.TXT, "", g, density, font, LayoutKeys.ALGO_VERSION + 1), k)
         assertEquals(LayoutKeys.key(s, s.parseOptions(""), g, density, font), LayoutKeys.key(s, s.parseOptions(""), g, density, font, LayoutKeys.ALGO_VERSION))
-        assertTrue(LayoutKeys.ALGO_VERSION >= 1)
+        // 2: the hinted body paints (CrispText, 2026-10-05) measure whole-px advances in every font, so no count made
+        // with the linear ones may be reused.
+        assertTrue(LayoutKeys.ALGO_VERSION >= 2)
+        assertNotEquals(LayoutKeys.keyFor(s, BookFormat.TXT, "", g, density, font, 1), k)
         assertTrue(LayoutKeys.VERSION >= 3)
         // LayoutGoldenTest compares its 64-bit digest with this.
         assertTrue(LayoutKeys.GOLDEN_HASH.matches(Regex("[0-9a-f]{16}")))

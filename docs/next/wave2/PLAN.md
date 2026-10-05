@@ -1,5 +1,17 @@
 # PLAN.md — wave 2 build plan: R3 = scroll + UI + NOTES + user addendum U1–U6
 
+> **사용자 지적 2026-10-05: "뭔가 아직도 마루뷰어가 더 선명한 느낌이야", 흰 바탕 한 쌍과 함께 "딱 글씨의 선명도, 그림자 크기
+> 이런 것들 똑같이 맞춰줬으면 좋겠어"(여백 · 줄 간격 · 장 제목 · 쪽 번호는 상관없다).**
+> - 원인: 본문 페인트의 `LINEAR_TEXT_FLAG`. hwui는 선형 메트릭 페인트를 힌팅 없이 그려, 우리 나눔명조는 47.81 px 윤곽 그대로
+>   1/4 픽셀 자리에, 마루뷰어는 같은 TTF를 힌팅해 47 px로 정수 픽셀에 그렸다(가로 획 진한 두 줄, 머리가 줄 경계에).
+> - 본문 페인트는 `CrispText.PAINT_FLAGS` = `ANTI_ALIAS_FLAG`만, 크기는 정수 픽셀로 내림(em은 그대로: 줄 간격 불변), 기준선 ·
+>   그림자 오프셋은 정수 픽셀. 측정이 바뀌므로 `LayoutKeys.ALGO_VERSION` 2(모든 책 쪽 수 한 번 다시 세기, 첫 글자는 앵커로
+>   그대로; 줄이 ≈ 1 % 좁아져 마루뷰어 폭과 같다).
+> - 마루 그림자: S25는 2.8125 px/dp. 마루뷰어 (2, 1) px · 시그마 ≈ 1.38 px에 맞춰 0.71 / 0.36 / 0.49 dp. 흰 바탕은 마루뷰어도
+>   그림자가 없어 그대로. 시뮬레이션: 흰 바탕 full/lit 0.51–0.53 → 0.57–0.60(마루뷰어 0.57–0.60), 마루 0.59–0.60 → 0.67(마루뷰어
+>   0.67), 그림자 합 마루뷰어와 1 % 안(RC_A 절).
+> - 코멧: 힌팅만 켜진다(크기가 이미 정수), 웹소설 그림자 (1, 1) px · 시그마 0.98 px. CI 100(§5.3 45c), 점검표 §11k.
+>
 > **사용자 지시 2026-10-05: 위 상태 줄 글꼴 · 색 · 그림자 마루뷰어처럼.**
 > "위에 상태표시 글꼴과 색상도 최대한 똑같게 좀 해줘 그리고 그림자라거나 글에 효과가 들어간게 있으면 따라해주고", 그리고 원본
 > 1080 × 2340 PNG로 잰 분석(상태 금색 #FFD387, 본문 그림자는 ≈ 88 %보다 진한 거의 불투명 검정; 본문 굵기 400 · 본문 색 #DDDDDD
@@ -1346,6 +1358,7 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 44 | `92_thumbs`, `93_thumbs_next` (W2) | ⋮ → 페이지 미리보기 (페이지 썸네일 until the 2026-10-04 review); swipe | 4×3 (or 5×3) grid, current page framed, labels = footer numbers, marks; next grid page | N |
 | 45 | `70_before` … `78_closed_then_recents` | R §7 block (kill, force-stop, history intent `-f 0x10100000`, `install -r`, second book + kill, don't-keep-activities, Back control) | `top_is ReaderActivity` + `same` PASS for 71–77; 78: `top_is LibraryActivity` | R (H1) |
 | 45b | `99a_hanja_txt`, `99b_hanja_epub`, `99c_hanja_epub_bareon`, `99d_hangul_bareon` (2026-10-05) | push the glyph samples (make_samples.py: 4 paragraphs of only KS X 1001 Hanja / only syllables outside KS X 1001, then "성(聖)과 속(俗)" and "漢字 𠀀"); open glyphs-hanja.txt, glyphs-hanja.epub (나눔명조); ⚙ › 글꼴 › 학교안심 바른바탕; glyphs-hangul.txt; back to 나눔명조. After the U1 block: the samples join the library | **CHECK 99a–d: ink in `top_rows` (`pv + 80 … pv + 680`, `raw_equal.py ink`: 2000+ px off the paper in a box 300+ px wide)**; a page of blank glyphs (the old 나눔명조 OTF's Hanja, 바른바탕's 똠 before the repaired copy) is paper only | user |
+| 45c | `100_crisp` (2026-10-05) | push crisp.txt (make_samples.py: 12 one-line paragraphs of "가o" × 6, blank lines between) and open it. After 99 | **CHECK 100: `raw_equal.py crisp` over `top_rows`: every whole text line repeats its pattern pixel for pixel at one whole-px period and every line is the same pixels (hinted text, whole-px advances and origins, baselines on whole rows)**; the linear paint of before (60.47 px pattern at 40 px, quarter-pixel phases) is SOFT. full/lit of the first line is logged, not checked (weight 500's stroke hides the gain) | user |
 | 46 | `95_restore_offer`, `96_restored`, `97_restored_margins`, `98_backup_page` | S §3.9 (crafted backup, `pm clear`, appops) — **last** | the offer dialog; 96: 8 s after 복원, drawer → 읽고 있는 책 shelf: toolbar title 읽고 있는 책, drawer closed, 샘플 EPUB listed; "좌우 여백 0" and "상하 여백 0" from a legacy 18/16 backup; the 자동 백업 section (설정 from the library → 백업·복원: the list 설정 shows over a book has no 백업·복원) | S, A |
 
 Every shot: `logcat -b crash` is empty and there is no "draw failed".

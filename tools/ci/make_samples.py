@@ -176,6 +176,19 @@ def write_glyph_epub(name, chars):
         z.writestr("OEBPS/Text/ch1.xhtml", page)
 
 
+# CI 100 (2026-10-05, 마루뷰어만큼 선명하게: body text hinted on whole pixels). Short one-line paragraphs of one pattern:
+# hinted text draws its copies at a whole-px period, pixel for pixel, and every line the same (raw_equal.py crisp). "가o"
+# is 1548/1024 em, a fractional advance at the CI's sizes (60.47 px at 40 px, 51.4 at 34): the linear paint of before
+# drew the copies at other quarter-pixel phases. Six copies: four periods for the check, one line at any CI size.
+CRISP_PATTERN = "가o" * 6
+CRISP_LINES = 12
+
+
+def write_crisp_txt(name):
+    with open(os.path.join(OUT, name), "w", encoding="utf-8", newline="") as f:
+        f.write("\r\n\r\n".join([CRISP_PATTERN] * CRISP_LINES) + "\r\n")
+
+
 print("sample-cp949.txt", write_txt("sample-cp949.txt", 12, 40, "cp949"))
 print("sample-utf8.txt", write_txt("sample-utf8.txt", 3, 20, "utf-8"))
 print("big-cp949.txt", write_txt("big-cp949.txt", 900, 110, "cp949"))
@@ -185,6 +198,8 @@ write_glyph_txt("glyphs-hanja.txt", HANJA)
 write_glyph_epub("glyphs-hanja.epub", HANJA)
 write_glyph_txt("glyphs-hangul.txt", RARE_HANGUL)
 print("glyphs-hanja.txt glyphs-hanja.epub glyphs-hangul.txt")
+write_crisp_txt("crisp.txt")
+print("crisp.txt")
 
 
 def restore_backup(epub_size):
