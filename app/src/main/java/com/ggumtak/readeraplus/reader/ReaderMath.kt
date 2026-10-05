@@ -229,6 +229,13 @@ object TurnMath {
         }
         return TurnWalk(sec, idx, 0, false)
     }
+
+    /**
+     * [walk] that knows only [section]'s own [pageCount] (every other section unknown): where a burst of [delta] turns
+     * from [pageIndex] lands while it stays inside [section] (another section in the result = it leaves it).
+     */
+    fun walkInSection(section: Int, pageIndex: Int, delta: Int, sectionCount: Int, pageCount: Int): TurnWalk =
+        walk(section, pageIndex, delta, sectionCount) { if (it == section) pageCount else -1 }
 }
 
 /**

@@ -127,9 +127,11 @@ class ImageCacheTest {
         assertTrue(System.nanoTime() - t0 < TimeUnit.SECONDS.toNanos(1))
         assertEquals(1, doc.loads.get())
         assertEquals(0, cache.drawDecodes)
+        assertEquals(1, cache.drawSkips)
         gate.countDown()
         prefetch.join(5000)
         assertEquals(1, doc.loads.get())
+        assertEquals(1, cache.drawSkips)
     }
 
     /** The last resort: a picture nobody preloaded is decoded inside the draw, and counted (RAPerf "draw decode"). */
@@ -140,6 +142,7 @@ class ImageCacheTest {
         assertNull(cache.getForDraw("img/a.jpg", 300, 400))
         assertEquals(1, doc.loads.get())
         assertEquals(1, cache.drawDecodes)
+        assertEquals(0, cache.drawSkips)
         // Known failure from now on: later draws touch neither the file nor the counter.
         repeat(3) { assertNull(cache.getForDraw("img/a.jpg", 300, 400)) }
         assertEquals(1, doc.loads.get())

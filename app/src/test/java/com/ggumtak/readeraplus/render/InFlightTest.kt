@@ -6,6 +6,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -78,6 +80,73 @@ class InFlightTest {
         assertEquals(0, drawRuns.get())
         gate.release.countDown()
         a.join(5000)
+        assertEquals(1, gate.runs.get())
+    }
+
+    /**
+     * The draw's busy key is reported from the same decision as the claim (RAPerf "draw skip" never misses one), and
+     * only when the key is busy.
+     */
+    @Test
+    fun noWaitCallerReportsABusyKeyOnly() {
+        val f = InFlight<String, Any>()
+        val busy = AtomicInteger()
+        val free = Any()
+        assertSame(free, f.run("k", wait = false, onBusy = { busy.incrementAndGet() }) { free })
+        assertEquals(0, busy.get())
+        val gate = Gate(Any())
+        val a = thread { f.run("k", wait = true, work = gate.work) }
+        assertTrue(gate.started.await(5, TimeUnit.SECONDS))
+        assertNull(f.run("k", wait = false, onBusy = { busy.incrementAndGet() }) { Any() })
+        assertEquals(1, busy.get())
+        gate.release.countDown()
+        a.join(5000)
+        // A waiting caller is never "busy": it gets the result.
+        assertEquals(1, busy.get())
+    }
+
+    /**
+     * A caller about to wait hands the working thread's id to onWait first (the image cache raises a background
+     * prefetcher there); the work's own thread, a no-wait caller and an uncontended call never do.
+     */
+    @Test
+    fun waiterRaisesTheOwnerBeforeWaiting() {
+        val ids = ConcurrentHashMap<Thread, Int>()
+        val next = AtomicInteger(100)
+        val raised = CopyOnWriteArrayList<Int>()
+        val idOf = { ids.getOrPut(Thread.currentThread()) { next.incrementAndGet() } }
+        val f = InFlight<String, Any>(idOf, { raised.add(it) })
+        f.run("free", wait = true) { Any() }
+        assertTrue(raised.isEmpty())
+        val gate = Gate(Any())
+        val a = thread { f.run("k", wait = true, work = gate.work) }
+        assertTrue(gate.started.await(5, TimeUnit.SECONDS))
+        assertNull(f.run("k", wait = false) { Any() })
+        assertTrue(raised.isEmpty())
+        val b = thread { f.run("k", wait = true, work = gate.work) }
+        awaitWaiting(b)
+        assertEquals(listOf(ids.getValue(a)), raised.toList())
+        gate.release.countDown()
+        a.join(5000)
+        b.join(5000)
+        assertEquals(1, gate.runs.get())
+    }
+
+    /** A failing onWait only loses the speed-up: the waiter still gets the shared result. */
+    @Test
+    fun failingOnWaitStillWaits() {
+        val f = InFlight<String, Any>(onWait = { throw IllegalStateException("no such thread") })
+        val bitmap = Any()
+        val gate = Gate(bitmap)
+        val got = AtomicReference<Any?>()
+        val a = thread { f.run("k", wait = true, work = gate.work) }
+        assertTrue(gate.started.await(5, TimeUnit.SECONDS))
+        val b = thread { got.set(f.run("k", wait = true, work = gate.work)) }
+        awaitWaiting(b)
+        gate.release.countDown()
+        a.join(5000)
+        b.join(5000)
+        assertSame(bitmap, got.get())
         assertEquals(1, gate.runs.get())
     }
 

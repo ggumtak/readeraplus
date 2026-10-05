@@ -69,6 +69,29 @@ class BookSessionHelpersTest {
         assertFalse(dropsImagesOnTrim(0))
     }
 
+    /**
+     * Android 14+ sends only UI_HIDDEN and BACKGROUND: pictures kept on BACKGROUND go after a longer stay away (the
+     * reader cancels that on coming back), so the cache is not held as long as the book stays open behind other apps.
+     */
+    @Suppress("DEPRECATION")
+    @Test
+    fun picturesKeptInTheBackgroundAreDroppedLater() {
+        assertTrue(dropsImagesLater(ComponentCallbacks2.TRIM_MEMORY_BACKGROUND))
+        assertTrue(dropsImagesLater(ComponentCallbacks2.TRIM_MEMORY_MODERATE))
+        // Hidden only (the reader may come straight back) and while reading: no timer.
+        assertFalse(dropsImagesLater(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN))
+        assertFalse(dropsImagesLater(ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE))
+        // Dropped at once instead.
+        assertFalse(dropsImagesLater(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW))
+        assertFalse(dropsImagesLater(ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL))
+        assertFalse(dropsImagesLater(ComponentCallbacks2.TRIM_MEMORY_COMPLETE))
+        assertFalse(dropsImagesLater(0))
+        // Every level is either kept, dropped later or dropped now, never both.
+        for (level in 0..100) assertFalse("$level", dropsImagesLater(level) && dropsImagesOnTrim(level))
+        // Long enough for a quick look at another app, short enough not to hold 32 MB for the evening.
+        assertTrue(IMAGE_DROP_DELAY_MS in 60_000L..15 * 60_000L)
+    }
+
     @Test
     fun evictionProtectsEveryVisibleSectionEvenWhenTheCacheMustGrow() {
         assertEquals(0, pickVictim(listOf(0, 1, 2, 3), 1, 3))

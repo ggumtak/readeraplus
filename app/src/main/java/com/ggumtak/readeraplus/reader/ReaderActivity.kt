@@ -394,6 +394,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var keyInputAt = 0L
     /** Input event time of a user turn whose page is not shown yet (0 = none; only with [ReaderPerf.turns]). */
     private var perfTurnFrom = 0L
+    /**
+     * Input event time of the first user turn queued in [backlog] behind a wait (0 = none; [ReaderPerf.turns]): the
+     * page the flush shows logs its "turn" from there, and the waited-for page keeps its own start ([perfTurnFrom]).
+     */
+    private var perfQueuedFrom = 0L
     private var perfRequestAt = 0L
     private val insetsGate = InsetsGate()
     private var focusSince = 0L
@@ -641,6 +646,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // The library's periodic auto-scan yields while a book is in front.
         ReaderPresence.inFront = true
         inFront = true
+        if (imageDropPosted) {
+            imageDropPosted = false
+            handler.removeCallbacks(dropImagesLater)
+        }
         applyAppSettings()
         light.onResume()
         // The clock's zone / 12-24 h and the battery may have changed while away: sampled again by the refresh below
@@ -765,10 +774,22 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         chrome.onConfigurationChanged()
     }
 
+    /** Drops the decoded pictures a while after the reader went behind other apps ([dropsImagesLater]). */
+    private val dropImagesLater = Runnable {
+        imageDropPosted = false
+        session?.dropImages()
+    }
+    private var imageDropPosted = false
+
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        // Decoded pictures stay when the reader only went behind another app (see dropsImagesOnTrim).
+        // Decoded pictures stay when the reader only went behind another app (see dropsImagesOnTrim), for a quick
+        // return; a longer stay away releases them ([IMAGE_DROP_DELAY_MS], cancelled by onResume).
         session?.trimMemory(level)
+        if (dropsImagesLater(level) && !inFront && !imageDropPosted) {
+            imageDropPosted = true
+            handler.postDelayed(dropImagesLater, IMAGE_DROP_DELAY_MS)
+        }
         if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND ||
             level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
             level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
@@ -965,13 +986,33 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 val la = if (a.section == curSection) l else session?.peek(a.section)
                 if (la != null) {
                     val off = a.offset.coerceIn(0, la.content.length)
-                    showPage(a.section, la, AnchorMath.pageFor(la, off), Nav.RELAYOUT, anchorOffset = off)
+                    showPaged(a.section, la, AnchorMath.pageFor(la, off), off)
                 } else {
-                    showPage(curSection, l, curPageIdx, Nav.RELAYOUT)
+                    showPaged(curSection, l, curPageIdx, -1)
                 }
             }
         } finally {
             switchingMode = false
+        }
+    }
+
+    /**
+     * Scroll → paged ([switchMode]): the page at once, or, when it has a picture the scroll view had not decoded (or
+     * was still decoding on its prefetch thread), after decoding it, the scroll frame staying up meanwhile: the page
+     * never shows an empty picture box that nothing redraws.
+     */
+    private fun showPaged(sec: Int, l: SectionLayout, idx: Int, anchorOffset: Int) {
+        val s = session ?: return
+        if (!needsPreload(s, l, idx)) {
+            showPage(sec, l, idx, Nav.RELAYOUT, anchorOffset = anchorOffset)
+            return
+        }
+        navJob = scope.launch {
+            preloadImages(s, l, idx)
+            if (session !== s) return@launch
+            endNavJob(coroutineContext[Job])
+            showPage(sec, l, idx, Nav.RELAYOUT, anchorOffset = anchorOffset)
+            flushTurns()
         }
     }
 
@@ -2218,9 +2259,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /**
      * Shows the page containing [offset] of [section] ([pageIndex] ≥ 0 selects a page directly, -2 = last page).
      * Uses the cached layout when present; otherwise lays the section out (the old page stays visible, and
-     * "불러오는 중…" only appears after 300 ms).
+     * "불러오는 중…" only appears after 300 ms). [quiet]: a turn waiting only for its page's pictures shows no
+     * "불러오는 중…" (that box and then the page would be two e-ink updates for one turn); a box still pending from the
+     * layout wait before it is dropped too, one already up stays until the page shows.
      */
-    private fun navigateTo(section: Int, offset: Int, pageIndex: Int, kind: Nav, fraction: Float = Float.NaN) {
+    private fun navigateTo(
+        section: Int, offset: Int, pageIndex: Int, kind: Nav, fraction: Float = Float.NaN, quiet: Boolean = false,
+    ) {
         val s = session ?: return
         if (ReaderPerf.turns) perfRequestAt = SystemClock.uptimeMillis()
         val sec = section.coerceIn(0, s.sectionCount - 1)
@@ -2236,13 +2281,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
             // Cached layout, but its images are not decoded yet: decode them on the IO pool first, so onDraw never
             // decodes on the UI thread (the old page stays up meanwhile).
-            scheduleLoadingText()
+            if (quiet) handler.removeCallbacks(loadingRunnable) else scheduleLoadingText()
             navJob = scope.launch {
                 preloadImages(s, cached, tp)
                 if (session !== s) return@launch
                 endNavJob(coroutineContext[Job])
                 if (layoutStale() || s.peek(sec) !== cached) {
-                    navigateTo(sec, offset, pageIndex, kind, fraction)
+                    navigateTo(sec, offset, pageIndex, kind, fraction, quiet)
                     return@launch
                 }
                 display(sec, cached, offset, pageIndex, kind, fraction)
@@ -2288,15 +2333,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         return if (p.start < off && idx + 1 < l.pageCount) idx + 1 else idx
     }
 
-    /** Decodes the images of the page about to be shown on the IO pool so onDraw never decodes them. */
+    /**
+     * Decodes the images of the page about to be shown on the IO pool so onDraw never decodes them. A picture another
+     * thread is decoding already (a boundary or neighbour prefetch) is waited for there, picture by picture
+     * ([ImageCache.get]); a prefetch of some other page is not.
+     */
     private suspend fun preloadImages(s: BookSession, l: SectionLayout, pageIndex: Int) {
         if (scrollWanted) {
             preloadScrollImages(s, l, pageIndex)
             return
         }
-        if (!needsImageDecode(s, l, pageIndex)) return
-        // A boundary prefetch may be decoding this very page: wait for it rather than decode the image twice.
-        imagePrefetch?.let { if (it.isActive) it.join() }
         if (!needsImageDecode(s, l, pageIndex)) return
         val r = safely { s.renderer() } ?: return
         withContext(Dispatchers.IO) { runCatching { r.preload(l, pageIndex) } }
@@ -2310,7 +2356,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (!needsPreload(s, l, pageIndex)) return
         val from = (pageIndex - 1).coerceAtLeast(0)
         val to = (pageIndex + 1).coerceAtMost(l.pageCount - 1)
-        imagePrefetch?.let { if (it.isActive) it.join() }
         // Decided on the main thread (like the paged check); only the decoding runs on IO.
         val due = (from..to).filter { needsImageDecode(s, l, it) }
         if (due.isEmpty()) return
@@ -2363,6 +2408,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private fun display(sec: Int, l: SectionLayout, offset: Int, pageIndex: Int, kind: Nav, fraction: Float = Float.NaN) {
         pendingJump = null
+        if (kind == Nav.TURN && pageIndex != PAGE_AT_OR_AFTER) {
+            if (pictureBurst(sec, l, targetPage(l, offset, pageIndex))) return
+        }
         when {
             pageIndex == -2 -> showPage(sec, l, l.pageCount - 1, kind)
             pageIndex >= 0 -> showPage(sec, l, pageIndex, kind)
@@ -2377,6 +2425,35 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
         }
         flushTurns()
+    }
+
+    /**
+     * Turns queued while page [idx] of [l] was on its way (a section layout, a picture decode) that end on a page of
+     * the same section with a picture still to decode: they go on to that page through one more quiet wait
+     * ([navigateTo]) without drawing [idx] first, so the whole burst is one e-ink update, as when that page's picture
+     * was decoded inside its draw. True when it did; false leaves the turns to [flushTurns] after [idx] shows (text
+     * pages, pictures decoded already, a walk into another section). An edge reached keeps one turn queued, as there.
+     */
+    private fun pictureBurst(sec: Int, l: SectionLayout, idx: Int): Boolean {
+        if (backlog.isEmpty) return false
+        val s = session ?: return false
+        if (scroll != null || scrollWanted || layoutStale()) return false
+        val n = backlog.net
+        val walk = TurnMath.walkInSection(sec, idx, n, s.sectionCount, l.pageCount)
+        if (walk.section != sec || walk.pageIndex == idx || !needsPreload(s, l, walk.pageIndex)) return false
+        startQueuedPerf()
+        backlog.take()
+        if (walk.hitEdge) backlog.restore(if (n > 0) 1 else -1)
+        navigateTo(sec, 0, walk.pageIndex, Nav.TURN, quiet = true)
+        return true
+    }
+
+    /** RAPerf: the turns a flush applies count from the first of them queued, unless an earlier turn still waits. */
+    private fun startQueuedPerf() {
+        val q = perfQueuedFrom
+        if (q == 0L) return
+        perfQueuedFrom = 0L
+        if (perfTurnFrom == 0L) perfTurnFrom = q
     }
 
     /**
@@ -2445,13 +2522,18 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     // While the finger moves or a scroll settles, TTS (the only extra calling these) never moves the text (S §1.10).
+    // While a page is on its way (a picture being decoded, a section being laid out) nothing is queued: TTS asks on
+    // every spoken word and would overshoot the page it reads (it asks again with the next word), and the auto turn
+    // simply waits for its next tick. A user's turn (userTurn → turn) still queues.
     override fun nextPage(): Boolean {
         if (scroll?.userMoving() == true) return true
+        if (navJob?.isActive == true) return false
         return turn(true).also { if (it && !inFront) turnedInBackground = true }
     }
 
     override fun prevPage(): Boolean {
         if (scroll?.userMoving() == true) return true
+        if (navJob?.isActive == true) return false
         return turn(false).also { if (it && !inFront) turnedInBackground = true }
     }
 
@@ -2497,7 +2579,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      * never decodes it (that held the UI thread inside the draw of the turn that reached the picture).
      */
     private fun turnTo(s: BookSession, l: SectionLayout, pageIndex: Int) {
-        if (needsPreload(s, l, pageIndex)) navigateTo(curSection, 0, pageIndex, Nav.TURN)
+        if (needsPreload(s, l, pageIndex)) navigateTo(curSection, 0, pageIndex, Nav.TURN, quiet = true)
         else showPage(curSection, l, pageIndex, Nav.TURN)
     }
 
@@ -2527,9 +2609,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (navJob?.isActive == true || layoutStale()) return
         scroll?.let {
             // A step waiting for its section keeps the turns queued: its settle flushes them ([onScrollSettled]).
-            if (!it.pending) flushScrollTurns(it, backlog.take())
+            if (!it.pending) {
+                startQueuedPerf()
+                flushScrollTurns(it, backlog.take())
+            }
             return
         }
+        startQueuedPerf()
         val n = backlog.take()
         val walk = TurnMath.walk(curSection, curPageIdx, n, s.sectionCount) { sec ->
             when {
@@ -2541,10 +2627,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         backlog.restore(walk.remaining)
         if (walk.section == curSection) {
             if (walk.pageIndex != curPageIdx && needsPreload(s, l, walk.pageIndex)) {
-                // A picture to decode first ([turnTo]). A turn past the book's edge waits for that page in the backlog,
-                // so the end panel (or the first-page toast) still comes from it once it shows.
+                // A picture to decode first ([turnTo]; a flush after a show, e.g. the relayout's, or the ten-page key
+                // hold). A turn past the book's edge waits for that page in the backlog, so the end panel (or the
+                // first-page toast) still comes from it once it shows.
                 if (walk.hitEdge) backlog.restore(if (n > 0) 1 else -1)
-                navigateTo(curSection, 0, walk.pageIndex, Nav.TURN)
+                navigateTo(curSection, 0, walk.pageIndex, Nav.TURN, quiet = true)
                 return
             }
             if (walk.pageIndex != curPageIdx) showPage(curSection, l, walk.pageIndex, Nav.TURN)
@@ -2665,7 +2752,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         clearJumpMark()
         anchorJob?.cancel()
         // "turn N ms" starts at the input event that asked for this turn (the latest one: all run on this thread).
-        if (ReaderPerf.turns) perfTurnFrom = maxOf(page.lastInputAt, keyInputAt)
+        // A turn queued behind a wait leaves the waited-for page's start alone and starts the flushed page's.
+        if (ReaderPerf.turns) {
+            val inAt = maxOf(page.lastInputAt, keyInputAt)
+            if (navJob?.isActive != true) perfTurnFrom = inAt
+            else if (backlog.isEmpty || perfQueuedFrom == 0L) perfQueuedFrom = inAt
+        }
         // A key, tap or remote turn is no drag: flags left by a STEP release that hit the book's edge (no settle) must
         // not make this step's settle count as a gesture. A finger still dragging (or its step waiting) keeps them.
         scroll?.let { sc ->
@@ -2680,7 +2772,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val ok = turn(next)
         if (!ok) perfTurnFrom = 0L
         if (ok) endPeek(PeekRule.Event.MANUAL_TURN)
-        if (ok) onManualTurn()
+        // A page still on its way (a picture, a section) binds the return chip in its own frame (showPage): hiding the
+        // chip over the old page now would be a second e-ink update.
+        if (ok) onManualTurn(deferView = navJob?.isActive == true)
         if (ttsSpeaking()) safely { tts?.onUserNavigated() }
         if (!ok && navJob?.isActive != true && !layoutStale()) edgeReached(next)
         return ok
@@ -2723,7 +2817,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     /** A page turn the reader made (not auto turn / TTS): two of them after a jump retire the return chip. */
-    private fun onManualTurn() = returnNav.onManualTurn()
+    private fun onManualTurn(deferView: Boolean = false) = returnNav.onManualTurn(deferView)
 
     private fun imageCoverage(layout: SectionLayout, pageIndex: Int): Float = try {
         ImageCoverage.of(layout, pageIndex)

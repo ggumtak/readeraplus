@@ -126,8 +126,14 @@ internal class ReturnNav(private val ctx: Context, private val host: ReturnHost)
         refresh()
     }
 
-    fun onManualTurn() {
-        if (state.manualTurn()) setChipShown(false)
+    /**
+     * A manual turn (two after a jump retire the chip). [deferView]: the turn's page shows later (a picture being
+     * decoded, a section laid out); the views then follow in that page's own frame, through the host's [bind].
+     */
+    fun onManualTurn(deferView: Boolean = false) {
+        val retired = state.manualTurn()
+        if (deferView) return
+        if (retired) setChipShown(false)
         refresh()
     }
 

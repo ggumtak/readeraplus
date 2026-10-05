@@ -170,6 +170,26 @@ class ReaderBuild9FixesTest {
         assertEquals(TurnWalk(2, 3, 0, true), TurnMath.walk(2, 3, 1, 3, p))
     }
 
+    /**
+     * The picture burst (ReaderActivity.pictureBurst): turns queued while a page was on its way land inside that page's
+     * section, or report leaving it (another section in the result), whatever the neighbours' page counts are.
+     */
+    @Test
+    fun walkInSectionKnowsOnlyThatSection() {
+        // section 1 of 3, 6 pages: inside, either way
+        assertEquals(TurnWalk(1, 4, 0, false), TurnMath.walkInSection(1, 1, 3, 3, 6))
+        assertEquals(TurnWalk(1, 0, 0, false), TurnMath.walkInSection(1, 3, -3, 3, 6))
+        assertEquals(TurnWalk(1, 5, 0, false), TurnMath.walkInSection(1, 0, 5, 3, 6))
+        // past its last / first page: the next section's first page / the previous one's last, the rest kept
+        assertEquals(TurnWalk(2, 0, 1, false), TurnMath.walkInSection(1, 3, 4, 3, 6))
+        assertEquals(TurnWalk(0, TurnMath.LAST_PAGE, -1, false), TurnMath.walkInSection(1, 1, -3, 3, 6))
+        // the book's last / first section: the edge page, reported as the edge
+        assertEquals(TurnWalk(2, 5, 0, true), TurnMath.walkInSection(2, 3, 9, 3, 6))
+        assertEquals(TurnWalk(0, 0, 0, true), TurnMath.walkInSection(0, 2, -4, 3, 6))
+        // no net turn: the same page (nothing to wait for)
+        assertEquals(TurnWalk(1, 2, 0, false), TurnMath.walkInSection(1, 2, 0, 3, 6))
+    }
+
     @Test
     fun tapDedupDropsOnlyDuplicateReports() {
         val d = TapDedup()

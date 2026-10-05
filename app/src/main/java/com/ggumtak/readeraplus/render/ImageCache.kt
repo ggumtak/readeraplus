@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
+import android.os.Process
 import android.util.Log
 import android.util.LruCache
 import com.ggumtak.readeraplus.engine.IntSize
@@ -42,10 +43,14 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
     /** "src|w|h" of decodes that failed (not OOM): drawing them again must not re-decode on every frame. */
     private val failed = HashSet<String>()
 
-    /** "src|w|h" of the decodes running now. */
-    private val decoding = InFlight<String, Bitmap>()
+    /**
+     * "src|w|h" of the decodes running now. A thread that waits for one raises its owner to the default priority
+     * ([DecodeBoost]): the neighbour prefetch runs in the background (nice 10, Android's background group).
+     */
+    private val decoding = InFlight<String, Bitmap>(DecodeBoost::myTid, DecodeBoost::raise)
 
     private val drawDecodeCount = AtomicInteger()
+    private val drawSkipCount = AtomicInteger()
 
     /** Bumped by [clear]: a renderer then prefetches the neighbours of the page it draws again, even the same page. */
     @Volatile
@@ -54,6 +59,9 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
 
     /** Pictures [getForDraw] decoded on the drawing thread so far (its last resort: stays 0 while turns preload). */
     val drawDecodes: Int get() = drawDecodeCount.get()
+
+    /** Pictures [getForDraw] left as an empty box because another thread was decoding them (0 expected on turns). */
+    val drawSkips: Int get() = drawSkipCount.get()
 
     /**
      * Log tag for one line per picture [getForDraw] decodes, or leaves to another thread's decode (null = off; the
@@ -83,12 +91,13 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
         if (maxW <= 0 || maxH <= 0) return null
         peek(src, maxW, maxH)?.let { return it }
         if (isKnownFailure(src, maxW, maxH)) return null
-        val key = failKey(src, maxW, maxH)
-        if (decoding.isRunning(key)) {
-            drawTraceTag?.let { Log.d(it, "draw skip $src ${maxW}x$maxH: decoding on another thread") }
-            return null
-        }
-        return decoding.run(key, wait = false) { decodeOnce(src, maxW, maxH, inDraw = true) }
+        return decoding.run(
+            failKey(src, maxW, maxH), wait = false,
+            onBusy = {
+                val n = drawSkipCount.incrementAndGet()
+                drawTraceTag?.let { Log.d(it, "draw skip $n: $src ${maxW}x$maxH decoding on another thread") }
+            },
+        ) { decodeOnce(src, maxW, maxH, inDraw = true) }
     }
 
     /**
@@ -232,31 +241,45 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
  * Work running now, by key (unit-tested): a caller asking for a key another thread is working on gets that work's
  * result instead of doing it a second time. No lock is held while working or waiting, and the key is free again as
  * soon as its work returns or throws, so a failure can be tried again. A work must not ask for its own key.
+ * [ownerId] names the calling thread (0 = unknown); a caller about to wait passes the working thread's id to [onWait]
+ * first (the image cache raises a background-priority decoder there).
  */
-internal class InFlight<K : Any, V : Any> {
-    private class Call<V : Any> {
+internal class InFlight<K : Any, V : Any>(
+    private val ownerId: () -> Int = { 0 },
+    private val onWait: (Int) -> Unit = {},
+) {
+    private class Call<V : Any>(val owner: Int) {
         val done = CountDownLatch(1)
         @Volatile var result: V? = null
     }
 
     private val calls = HashMap<K, Call<V>>()
 
-    /** True while some thread runs the work of [key]. */
+    /** True while some thread runs the work of [key] (tests; [run] decides in its own lock). */
     fun isRunning(key: K): Boolean = synchronized(calls) { calls.containsKey(key) }
 
     /**
      * Runs [work] for [key], unless another thread is running it already: then waits for it and returns its result
-     * (null when it failed or threw), or with [wait] = false returns null at once without working.
+     * (null when it failed or threw), or with [wait] = false calls [onBusy] and returns null at once without working
+     * (decided in the same lock as the claim, so a busy key is always reported).
      */
-    fun run(key: K, wait: Boolean, work: () -> V?): V? {
-        val mine = Call<V>()
+    fun run(key: K, wait: Boolean, onBusy: (() -> Unit)? = null, work: () -> V?): V? {
+        val mine = Call<V>(ownerId())
         val running = synchronized(calls) {
             val other = calls[key]
             if (other == null) calls[key] = mine
             other
         }
         if (running != null) {
-            if (!wait) return null
+            if (!wait) {
+                onBusy?.invoke()
+                return null
+            }
+            try {
+                onWait(running.owner)
+            } catch (t: Throwable) {
+                // only a speed-up
+            }
             try {
                 running.done.await()
             } catch (e: InterruptedException) {
@@ -272,6 +295,31 @@ internal class InFlight<K : Any, V : Any> {
         } finally {
             synchronized(calls) { calls.remove(key) }
             mine.done.countDown()
+        }
+    }
+}
+
+/**
+ * Priority of a decode a turn waits for (Android). The neighbour prefetch decodes at THREAD_PRIORITY_BACKGROUND, which
+ * on Android also moves the thread into the background scheduling group (low CPU share, low IO priority): a turn that
+ * waits for that decode would wait at that pace. [raise] lifts such a thread to the default priority, never lowers one
+ * (the UI thread runs above the default), and the prefetcher goes back to the background before its next task.
+ */
+internal object DecodeBoost {
+    fun myTid(): Int = try {
+        Process.myTid()
+    } catch (t: Throwable) {
+        0 // JVM tests
+    }
+
+    fun raise(tid: Int) {
+        if (tid == 0) return
+        try {
+            if (Process.getThreadPriority(tid) > Process.THREAD_PRIORITY_DEFAULT) {
+                Process.setThreadPriority(tid, Process.THREAD_PRIORITY_DEFAULT)
+            }
+        } catch (t: Throwable) {
+            // the thread is gone, or not allowed: the wait only takes longer
         }
     }
 }

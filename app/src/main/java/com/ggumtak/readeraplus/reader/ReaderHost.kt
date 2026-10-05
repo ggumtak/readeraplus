@@ -37,6 +37,7 @@ interface ReaderHost {
      */
     fun goTo(pos: DocPosition, remember: Boolean = true)
 
+    /** One page on (TTS, auto turn). False when nothing turned: the book's edge, or a page already on its way. */
     fun nextPage(): Boolean
     fun prevPage(): Boolean
 

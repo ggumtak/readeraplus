@@ -766,7 +766,11 @@ class BookSession(
      * then prefetches the neighbours of the page it draws next again ([ImageCache.clears]).
      */
     fun trimMemory(level: Int) {
-        if (!dropsImagesOnTrim(level)) return
+        if (dropsImagesOnTrim(level)) dropImages()
+    }
+
+    /** Drops the decoded pictures (and their bytes); the next page drawn prefetches its neighbours again. */
+    fun dropImages() {
         try {
             images.clear()
         } catch (t: Throwable) {
@@ -857,6 +861,18 @@ internal fun dropsImagesOnTrim(level: Int): Boolean =
     level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
         level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
         level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE
+
+/**
+ * Whether onTrimMemory([level]) drops the decoded pictures [IMAGE_DROP_DELAY_MS] later, unless the reader comes back
+ * first: BACKGROUND and MODERATE (the reader went behind other apps; levels [dropsImagesOnTrim] drops at once are not
+ * delayed). On Android 14+ this is the only release the cache gets while the book stays open, as RUNNING_LOW,
+ * RUNNING_CRITICAL and COMPLETE are no longer sent there.
+ */
+internal fun dropsImagesLater(level: Int): Boolean =
+    level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND && !dropsImagesOnTrim(level)
+
+/** How long decoded pictures outlive the reader going behind other apps ([dropsImagesLater]). */
+internal const val IMAGE_DROP_DELAY_MS = 5 * 60_000L
 
 /** Lazy chapter/spine maps. Invalid split metadata never invents boundaries or sampleable sections. */
 internal object UnitStarts {

@@ -830,13 +830,15 @@ internal class LatestTaskRunner(name: String) {
     }
 
     private fun drain() {
-        try {
-            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
-        } catch (t: Throwable) {
-            // not fatal (and unavailable in JVM tests)
-        }
         while (true) {
             val t = pending.getAndSet(null) ?: return
+            // Before each task: a turn waiting for this thread's decode raises it to the default priority
+            // (ImageCache's DecodeBoost), for the rest of that task only. A no-op syscall when unchanged.
+            try {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            } catch (e: Throwable) {
+                // not fatal (and unavailable in JVM tests)
+            }
             try {
                 t.run()
             } catch (e: Throwable) {
