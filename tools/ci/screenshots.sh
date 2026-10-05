@@ -216,12 +216,34 @@ fresh_reader() { # fresh_reader file mime: the app cold-started on that book (no
   restart_app -a android.intent.action.VIEW -t "$2" -d "file:///sdcard/Download/$1" -n $PKG/.reader.ReaderActivity
   sleep 4
 }
+system_dialog() { # system_dialog: closes another app's "isn't responding" / "keeps stopping" dialog left on screen
+  # (CI 53: "Pixel Launcher isn't responding" covered the library, so 41 and 13 lost their taps). True when it closed
+  # one. A dialog about this app is a real failure: logged as CHECK anr FAIL and only answered with "Wait".
+  dump || return 1
+  local what
+  what=$(grep -oE "[^\"]*(responding|keeps stopping)[^\"]*" /tmp/ui.xml | head -1) # "isn't" may be escaped
+  [ -n "$what" ] || return 1
+  if printf '%s' "$what" | grep -q "리더플러스"; then
+    log "CHECK anr FAIL system dialog about this app: $what"
+    tap_label "Wait" exact
+    return 1
+  fi
+  log "system dialog over the run: $what; closing it"
+  tap_label "Close app" exact || tap_label "Wait" exact || adb shell input keyevent KEYCODE_BACK
+  sleep 3
+  return 0
+}
 step() { # step name function: one best-effort UI step in its own shell (STEP_TIMEOUT s, 300 by default); never fails the job
   # No new step after STEPS_UNTIL seconds of this script, so a stuck emulator can't run the job into its time limit.
   if [ "$SECONDS" -gt "${STEPS_UNTIL:-3000}" ]; then log "step $1 skipped (out of time)"; return 0; fi
   log "step $1"
   local rc
   if command -v timeout >/dev/null; then timeout "${STEP_TIMEOUT:-300}" bash -c "$2"; rc=$?; else ( "$2" ); rc=$?; fi
+  # Another app's system dialog over the screen is the emulator's, not this app's: close it and run the step once more.
+  if [ "$rc" -ne 0 ] && system_dialog; then
+    log "step $1: once more after closing the system dialog"
+    if command -v timeout >/dev/null; then timeout "${STEP_TIMEOUT:-300}" bash -c "$2"; rc=$?; else ( "$2" ); rc=$?; fi
+  fi
   if [ "$rc" -eq 0 ]; then log "step $1 done"; else
     log "step $1 incomplete (exit $rc), continuing"
     log "CHECK $1 FAIL step incomplete (exit $rc): its later expectations were not reached"
