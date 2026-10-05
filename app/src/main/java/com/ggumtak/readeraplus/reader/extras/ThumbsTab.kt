@@ -274,7 +274,7 @@ internal class ThumbGridView(context: Context) : View(context) {
     private val eink = DeviceClass.cached(context) != false
     private val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = if (eink) Ink.BLACK else RibbonMath.COLOR
+        color = RibbonMath.color(eink, Ink.BLACK)
     }
     private val ribbonEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f; color = Ink.WHITE }
     private val labelBaseline: Float

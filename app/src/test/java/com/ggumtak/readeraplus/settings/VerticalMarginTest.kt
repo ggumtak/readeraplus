@@ -73,6 +73,16 @@ class VerticalMarginTest {
         assertEquals(listOf(13, 0), VerticalMargin.step(15, 1, 0, -2).toList())
         assertEquals(listOf(6, 6), VerticalMargin.step(4, 4, -11, -9).toList())
         assertEquals(listOf(16, 20), VerticalMargin.step(18, 22, 3, 1).toList())
+        // That chosen size's "+3" stepped down (the stepper snaps +1 to +2, Fmt.stepFloat) reaches "0" at 15/19, not the
+        // defaults 15/22: off the line both sides keep moving together. At the stepper's end both stop at 0, which is on
+        // the line, so from there "0" is the defaults again (documented: RC_A, checklist 11i-1).
+        val atZero = VerticalMargin.step(18, 22, 3, 2).let { VerticalMargin.step(it[0], it[1], 2, 0) }
+        assertEquals(listOf(15, 19), atZero.toList())
+        var tb = atZero
+        for (ui in 0 downTo VerticalMargin.UI_MIN + 2 step VerticalMargin.UI_STEP) tb = VerticalMargin.step(tb[0], tb[1], ui, ui - 2)
+        assertEquals(listOf(0, 0), tb.toList())
+        for (ui in VerticalMargin.UI_MIN until 0 step VerticalMargin.UI_STEP) tb = VerticalMargin.step(tb[0], tb[1], ui, ui + 2)
+        assertEquals(listOf(15, 22), tb.toList())
         // Each within 0..80.
         assertEquals(listOf(14, 0), VerticalMargin.step(16, 0, -2, -4).toList())
         assertEquals(listOf(80, 72), VerticalMargin.step(80, 70, 65, 67).toList())

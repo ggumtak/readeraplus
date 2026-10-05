@@ -78,9 +78,12 @@ object MaruHeader {
  * where this app's 11 sp line in the same font measured 29 and 24.5 px; 13 sp scales those to 34 and 29). Prefs saved
  * before it ([KEY] absent) that still hold the old default [OLD_SP] load with the new default; a size the user chose
  * stays. The larger size makes the bands taller, so margins counted from the bands lose that growth ([keepBox]) and the
- * text box stays on the same pixels. Like [MaruHeader], loading never writes ([KEY] is stored by every
- * `Settings.saveReader`) and [KEY] never travels with a backup (`SettingsJson` drops it): a restore keeps the backup's
- * size and margins as they are. A saved style carries [STYLE_KEY]: its margins count from the 13 sp default bands.
+ * text box stays on the same pixels. With 여백 사용 off the page uses a fixed minimal margin ([applyTo]), which cannot give
+ * that growth back: those settings keep [OLD_SP], so their text box stays too (13 sp is one choice away). Like
+ * [MaruHeader], loading never writes ([KEY] is stored by every `Settings.saveReader`, so an 11 sp kept now stays a
+ * choice) and [KEY] never travels with a backup (`SettingsJson` drops it): a restore keeps the backup's size and margins
+ * as they are. A saved style carries [STYLE_KEY]: its margins count from the bands at the size it is applied with; one
+ * without it counts from the 11 sp bands (`UserStyle.elevenSpBands`).
  */
 object MaruSize {
     const val KEY = "status.maruSize.v1"
@@ -89,9 +92,12 @@ object MaruSize {
     /** The default status size before MaruViewer's. */
     const val OLD_SP = 11f
 
-    /** [s] at the new default size when it holds the old default [OLD_SP] (else [s] itself). */
+    /**
+     * [s] at the new default size when it holds the old default [OLD_SP] and uses its margins (else [s] itself): with
+     * 여백 사용 off the bands' growth would move the text box down (its minimal margin is fixed), so the size stays.
+     */
     fun applyTo(s: ReaderSettings): ReaderSettings =
-        if (s.statusFontSizeSp == OLD_SP) s.copy(statusFontSizeSp = StatusBands.DEFAULT_SP) else s
+        if (s.statusFontSizeSp == OLD_SP && s.pageMargins) s.copy(statusFontSizeSp = StatusBands.DEFAULT_SP) else s
 
     /**
      * [now] with its top/bottom margins less what its bands grew over [before]'s (the same settings at the old size), never

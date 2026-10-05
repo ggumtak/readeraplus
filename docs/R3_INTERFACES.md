@@ -26,7 +26,9 @@ This is an intermediate contract commit: named stubs are replaced in W1, then W2
   the very top inside that band (ink ≈ 15–49 px; `StatusFit.INK_TOP_DP`), spans the page view less its own side insets
   (`StatusFit.sideInset`: 15 dp or the display's rounded corner, `InsetSplit.pageCorners`), and the bookmark ribbon is
   ReadEra's from the view's top (`RibbonMath`: 42 × 62 px at x 987 on the S25, blue on phones). Prefs at the old 11 sp
-  default become 13 sp once with margins less the bands' growth (`MaruSize`).
+  default become 13 sp once with margins less the bands' growth (`MaruSize`; not while 여백 사용 is off, whose fixed
+  minimal margin could not give it back). Saved styles without `statusSizeV` keep their 11 sp-band margins and lose the
+  growth only when applied at 13 sp (`UserStyle.elevenSpBands`).
 - No probe, database write, counting, backfill, brightness-device initialization or auto-backup before the first page.
 - Main thread owns Views, `BookSession` state, scroll positions and decor. Its IO and layout work are dispatched.
 - Engine/math/migration/export helpers are pure; database APIs and `DeviceLight`/`LightProbe` IO are blocking off-main.

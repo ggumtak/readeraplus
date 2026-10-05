@@ -102,6 +102,38 @@ class BatteryMathTest {
     }
 
     @Test
+    fun theIconFirstTurnsRedOnlyOnPhonesAtOneBar() {
+        val status = 0xFFD7BC86.toInt()
+        val low = 0xFFE96E57.toInt()
+        for (lv in -1..100) {
+            // E-ink: greys only, never the red.
+            assertEquals(status, BatteryMath.firstColor(eink = true, level = lv, statusColor = status, lowColor = low))
+            assertEquals("$lv %", if (lv in 0..25) low else status,
+                BatteryMath.firstColor(eink = false, level = lv, statusColor = status, lowColor = low))
+        }
+    }
+
+    @Test
+    fun theIconFirstStandsWhereMaruViewersDoes() {
+        // The S25 in fullscreen, 13 sp = 39 px in the phone's font: the line's ink (Hangul, parenthesis) from −31.3 px,
+        // so its top on row 15 puts the baseline at 46.3; digits −29 .. −0.6 px around it (rows ≈ 17–46). MaruViewer's
+        // icon body is on rows 15–44 beside its digits on 16–45: slightly high, its top level with the Hangul's. Ours too.
+        val ts = 39f
+        val baseline = StatusFit.headerBaseline(87f, 80.4f, -31.3f, 7.7f, 57f, 3f)
+        assertEquals(46.3f, baseline, 0.001f)
+        val top = BatteryMath.firstTop(baseline, (-29f - 0.6f) / 2f, ts)
+        assertEquals(15f, top, 0f)
+        assertEquals(44f, top + BatteryMath.bodyHeight(ts, first = true) - 1f, 0f)
+        // At every size its middle is FIRST_RAISE above the digits' middle (within the whole-px rounding).
+        for (t in 16..80) {
+            val size = t.toFloat()
+            val digitMiddle = -0.37f * size
+            val middle = BatteryMath.firstTop(100f, digitMiddle, size) + BatteryMath.bodyHeight(size, true) / 2f
+            assertEquals("$t px", 100f + digitMiddle - BatteryMath.FIRST_RAISE * size, middle, 0.501f)
+        }
+    }
+
+    @Test
     fun fillIsProportionalToTheLevel() {
         val l = 102f
         val r = 118f // 16 px inside

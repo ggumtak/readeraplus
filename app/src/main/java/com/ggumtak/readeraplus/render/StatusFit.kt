@@ -124,6 +124,14 @@ internal object StatusFit {
         else maxOf(px(SIDE_DP, density).toFloat(), cornerClearance(radius, centreIn, centreY, y))
 
     /**
+     * The header's width in a page view [viewWidth] px wide, from x = [insetLeft] ([sideInset] of each side): the view
+     * less its own insets, never the text column, so the body's side margins never move it (MaruViewer's line). The
+     * footer keeps the text column.
+     */
+    fun headerWidth(viewWidth: Int, insetLeft: Float, insetRight: Float): Float =
+        maxOf(0f, viewWidth - insetLeft - insetRight)
+
+    /**
      * Footer baseline in a page view whose bottom is [viewBottom]: the glyph box's bottom [PAD_DP] above the progress
      * lane while [lane] is on, else on the [EDGE_DP] gap; the font's descent above the box's bottom, the ink kept inside
      * the box (as in [headerBaseline]).

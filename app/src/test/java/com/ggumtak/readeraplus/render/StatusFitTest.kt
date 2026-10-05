@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.render
 
+import com.ggumtak.readeraplus.reader.LayoutKeys
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.StatusBands
 import com.ggumtak.readeraplus.settings.StatusItem
@@ -142,6 +143,26 @@ class StatusFitTest {
         // Over a camera band too: never above the glyph box's top.
         val overBand = StatusFit.headerBaseline(87f, 30f, -60f, 10f, 57f, s25)
         assertEquals(12f, overBand - 60f, 0.001f)
+    }
+
+    @Test
+    fun theHeaderSpansThePageViewNotTheTextColumn() {
+        // User (2026-10-05): "윗줄은 좌우여백에 영향을 받지 않고": side margins of 0 and 80 dp move the text column, never
+        // the header, which runs from its own inset to the view's width less the other (S25 45..1035, Comet 30..690).
+        for ((viewW, density) in listOf(1080 to s25, 720 to comet)) {
+            val inset = StatusFit.sideInset(0f, 0f, 0f, 30f, density)
+            val narrow = LayoutKeys.geometry(d.copy(marginLeftDp = 0, marginRightDp = 0), viewW, 1440, density)
+            val wide = LayoutKeys.geometry(d.copy(marginLeftDp = 80, marginRightDp = 80), viewW, 1440, density)
+            assertTrue(narrow.contentLeft != wide.contentLeft && narrow.contentWidth != wide.contentWidth)
+            val w = StatusFit.headerWidth(viewW, inset, inset)
+            assertEquals(viewW - 2f * inset, w, 0f)
+            assertTrue(w != narrow.contentWidth.toFloat() && w != wide.contentWidth.toFloat())
+        }
+        assertEquals(990f, StatusFit.headerWidth(1080, 45f, 45f), 0f)
+        assertEquals(660f, StatusFit.headerWidth(720, 30f, 30f), 0f)
+        // A corner that needs more on one side takes only that side's room; never below 0.
+        assertEquals(981f, StatusFit.headerWidth(1080, 45f, 54f), 0f)
+        assertEquals(0f, StatusFit.headerWidth(80, 45f, 45f), 0f)
     }
 
     @Test

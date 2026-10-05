@@ -230,7 +230,8 @@ object Settings {
             epubPublisherStyles = p.getBoolean("r.epubPublisherStyles", d.epubPublisherStyles),
         ).let { if (p.contains(MaruHeader.KEY)) it else MaruHeader.applyTo(it) } // saved before MaruViewer's header
             .let { before ->
-                // MaruViewer's status size for an untouched 11 sp. Then top/bottom saved from the screen's edge are
+                // MaruViewer's status size for an untouched 11 sp (not while 여백 사용 is off: its minimal margin could not
+                // give the bands' growth back, MaruSize.applyTo). Then top/bottom saved from the screen's edge are
                 // counted from the bands the page now has (MaruViewer's header and size included), and those counted from
                 // the 11 sp bands lose what the 13 sp bands add: either way the text box stays. Read only: the next
                 // saveReader writes VerticalMargin.BANDS and MaruSize.KEY.

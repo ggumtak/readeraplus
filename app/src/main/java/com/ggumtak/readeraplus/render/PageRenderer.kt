@@ -178,10 +178,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         digitMiddle = if (digit.height() > 0) (digit.top + digit.bottom) / 2f else -0.36f * statusPaint.textSize
         outline.color = fg
         line.color = fg
-        // ReadEra's blue on phones. E-ink: the page's text colour, as before (its blue would be a mid grey, ≈ #7E7E7E,
-        // which a binary fast update (A2) turns black or white by the panel's threshold, and which stands only about 4:1
-        // off the white page).
-        ribbonPaint.color = if (eink) fg else RibbonMath.COLOR
+        // ReadEra's blue on phones; e-ink: the page's text colour, as before (RibbonMath.color).
+        ribbonPaint.color = RibbonMath.color(eink, fg)
         ribbonHalo.color = bg
         statusLine.color = palette.status
         statusOutline.color = palette.status
@@ -355,7 +353,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
                 statusGlyphPx, density)
             updateHeaderInsets(st, baseline + (statusInkTop + statusInkBottom) / 2f)
             val x = headerInsetLeft
-            val w = maxOf(0f, viewWidth - headerInsetLeft - headerInsetRight)
+            val w = StatusFit.headerWidth(viewWidth, headerInsetLeft, headerInsetRight)
             // The ribbon's place at the header's right end is kept on every page (bookmarked or not), so toggling the
             // bookmark moves only the right slot, by that much, and never re-fits the slots (or the title). The ribbon
             // may cover the header's band ("좀 가려도 되니까"), never its glyphs.
@@ -478,14 +476,14 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
      */
     private fun drawFirstBattery(canvas: Canvas, level: Int, x: Float, baseline: Float, ts: Float) {
         val p = batteryFirst
-        p.color = if (!eink && BatteryMath.low(level)) palette.batteryLow else palette.status
+        p.color = BatteryMath.firstColor(eink, level, palette.status, palette.batteryLow)
         val s = BatteryMath.firstStroke(ts)
         val bodyH = BatteryMath.bodyHeight(ts, true)
         val nubH = BatteryMath.firstNubHeight(ts)
         val left = Math.round(x).toFloat()
         val bodyLeft = left + BatteryMath.nubWidth(ts, true)
         val bodyRight = bodyLeft + BatteryMath.bodyWidth(ts, true)
-        val bodyTop = Math.round(baseline + digitMiddle * ts / statusPaint.textSize - bodyH / 2f).toFloat()
+        val bodyTop = BatteryMath.firstTop(baseline, digitMiddle * ts / statusPaint.textSize, ts)
         val bodyBottom = bodyTop + bodyH
         val nubTop = bodyTop + (bodyH - nubH) / 2f
         canvas.drawRect(left, nubTop, bodyLeft, nubTop + nubH, p)
@@ -778,7 +776,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             ribbonForWidth = viewWidth
             ribbonForHeight = h
         }
-        if (eink) canvas.drawPath(ribbon, ribbonHalo)
+        if (RibbonMath.halo(eink)) canvas.drawPath(ribbon, ribbonHalo)
         canvas.drawPath(ribbon, ribbonPaint)
     }
 }
@@ -804,8 +802,17 @@ internal object RibbonMath {
     const val GAP_DP = 3f
     /** The V notch cut up from the bottom's middle, a share of the height (ReadEra's ≈ 12 of 62 px). */
     const val NOTCH_FRACTION = 0.2f
-    /** ReadEra's blue, on phones on every page look; e-ink panels draw the page's text colour (`PageRenderer`). */
+    /** ReadEra's blue, on phones on every page look; e-ink panels draw the page's text colour ([color]). */
     const val COLOR = 0xFF4286F5.toInt()
+
+    /**
+     * The ribbon's colour: [COLOR] on phones, the page's [text] colour on e-ink (the blue would be a mid grey, ≈ #7E7E7E,
+     * which a binary fast update turns black or white by the panel's threshold, and only about 4:1 off the white page).
+     */
+    fun color(eink: Boolean, text: Int): Int = if (eink) text else COLOR
+
+    /** Only e-ink's text-coloured ribbon gets the page-coloured edge that keeps it apart from glyphs it touches. */
+    fun halo(eink: Boolean): Boolean = eink
     /** The thumbnails' mark: this wide, the ribbon's proportions otherwise (`ThumbGridView`). */
     const val THUMB_WIDTH_DP = 8f
 
@@ -891,6 +898,27 @@ internal object BatteryMath {
 
     /** One bar left (≤ 25 %): on phones the first icon turns slightly red (`PagePalette.batteryLow`). */
     fun low(level: Int): Boolean = bars(level) == 1
+
+    /**
+     * The first icon's colour for [level]: [lowColor] at one bar on phones, else [statusColor]; e-ink panels keep the
+     * status colour (greys only: no red).
+     */
+    fun firstColor(eink: Boolean, level: Int, statusColor: Int, lowColor: Int): Int =
+        if (!eink && low(level)) lowColor else statusColor
+
+    /**
+     * How far the first icon's middle sits above the digits' middle, per px of text: MaruViewer's icon on the S25 (rows
+     * 15–44 beside digits on 16–45 and Hangul from 14) stands slightly high, its top level with the Hangul's.
+     */
+    const val FIRST_RAISE = 0.04f
+
+    /**
+     * The first icon's body top (whole px) on a line at [baseline] whose digits' middle is [digitMiddle] px from it
+     * (negative: above): [FIRST_RAISE] above the digits' middle. The S25 at 13 sp (39 px; the phone font's ink from row 15,
+     * digits −29 .. −0.6 px around the baseline): rows 15–44, MaruViewer's.
+     */
+    fun firstTop(baseline: Float, digitMiddle: Float, ts: Float): Float =
+        Math.round(baseline + digitMiddle - FIRST_RAISE * ts - bodyHeight(ts, true) / 2f).toFloat()
 
     fun gap(ts: Float): Float = 0.25f * ts
 

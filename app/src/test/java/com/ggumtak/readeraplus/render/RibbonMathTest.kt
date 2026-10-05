@@ -3,6 +3,7 @@ package com.ggumtak.readeraplus.render
 import com.ggumtak.readeraplus.reader.Corner
 import com.ggumtak.readeraplus.reader.TapZones
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -29,6 +30,18 @@ class RibbonMathTest {
         // Smaller than before (14 × 24 dp, 14 dp from the edge) and blue on phones.
         assertTrue(RibbonMath.HEIGHT_DP < 24f)
         assertEquals(0xFF4286F5.toInt(), RibbonMath.COLOR)
+    }
+
+    @Test
+    fun blueOnlyOnPhonesTheEdgeOnlyOnEink() {
+        // Phones: ReadEra's blue on every page look (white, MARU's gold on grey, inverted), no edge. E-ink: never the blue
+        // (a mid grey a fast update splits), the page's text colour with a page-coloured edge.
+        for (text in listOf(0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 0xFFD7BC86.toInt())) {
+            assertEquals(RibbonMath.COLOR, RibbonMath.color(eink = false, text = text))
+            assertEquals(text, RibbonMath.color(eink = true, text = text))
+        }
+        assertFalse(RibbonMath.halo(eink = false))
+        assertTrue(RibbonMath.halo(eink = true))
     }
 
     @Test

@@ -30,9 +30,22 @@ data class UserStyle(
     val pageMargins: Boolean,
     /** 화면 색. A style saved before the themes has none and reads [PageTheme.PAPER], the page it was saved on. */
     val pageTheme: PageTheme = PageTheme.PAPER,
+    /**
+     * Saved before MaruViewer's status size (no [MaruSize.STYLE_KEY]): [marginTopDp] / [marginBottomDp] count from the
+     * 11 sp bands. [applyTo] takes the 13 sp bands' growth off them only on settings at that default size (as the prefs'
+     * one-time move did), never at another size (one the user chose, an 11 sp kept with 여백 사용 off or restored from a
+     * backup): the text box stays where the style put it before. Kept when written again, so nothing moves twice.
+     */
+    val elevenSpBands: Boolean = false,
 ) {
     /** [s] with this style's fields; everything else of [s] is kept. */
-    fun applyTo(s: ReaderSettings): ReaderSettings = s.copy(
+    fun applyTo(s: ReaderSettings): ReaderSettings {
+        val out = fields(s)
+        return if (elevenSpBands && out.statusFontSizeSp == StatusBands.DEFAULT_SP)
+            MaruSize.keepBox(out.copy(statusFontSizeSp = MaruSize.OLD_SP), out) else out
+    }
+
+    private fun fields(s: ReaderSettings): ReaderSettings = s.copy(
         fontId = fontId,
         fontSizeSp = fontSizeSp,
         fontWeight = fontWeight,
@@ -115,7 +128,7 @@ object UserStyles {
     fun toJson(u: UserStyle): JSONObject = JSONObject()
         .put(SideMargin.STYLE_KEY, SideMargin.ZERO_DP)
         .put(VerticalMargin.STYLE_KEY, VerticalMargin.BANDS)
-        .put(MaruSize.STYLE_KEY, true)
+        .apply { if (!u.elevenSpBands) put(MaruSize.STYLE_KEY, true) }
         .put("name", u.name)
         .put("fontId", u.fontId)
         .put("fontSizeSp", u.fontSizeSp.toDouble())
@@ -166,23 +179,19 @@ object UserStyles {
         val sideLegacy = SideMargin.isLegacyDefault(sideBase, int(o, "marginLeftDp", d.marginLeftDp), int(o, "marginRightDp", d.marginRightDp))
         val verticalBase = if (o.has(VerticalMargin.STYLE_KEY)) int(o, VerticalMargin.STYLE_KEY, -1) else null
         val verticalLegacy = VerticalMargin.isLegacyDefault(verticalBase != null, int(o, "marginTopDp", d.marginTopDp), int(o, "marginBottomDp", d.marginBottomDp))
-        // Top/bottom saved from the screen's edge: a style carries no status bar, so they are counted from the default
-        // bands (the user's own on both devices: MaruViewer's header, the progress line), where the text box stays put.
-        // Saved from the bands before MaruViewer's status size: those were the 11 sp default bands, and lose what the
-        // 13 sp ones add (MaruSize.keepBox), as the settings saved with them do.
+        // A style saved before MaruViewer's status size (no MaruSize.STYLE_KEY) counts from the 11 sp default bands, as
+        // it did then; UserStyle.applyTo takes the 13 sp bands' growth off at the size it is applied with. One with no
+        // top/bottom at all has nothing to convert: today's defaults. Top/bottom saved from the screen's edge: a style
+        // carries no status bar, so they are counted from those default bands (the user's own on both devices:
+        // MaruViewer's header, the progress line), where the text box stays put.
+        val elevenSp = !o.has(MaruSize.STYLE_KEY) && (o.has("marginTopDp") || o.has("marginBottomDp"))
+        val bands = if (elevenSp) d.copy(statusFontSizeSp = MaruSize.OLD_SP) else d
         val edge = VerticalMargin.countsFromEdge(verticalBase)
-        val oldBands = !edge && !o.has(MaruSize.STYLE_KEY)
-        val old = d.copy(statusFontSizeSp = MaruSize.OLD_SP)
-        fun top(dp: Int): Int = when {
-            edge && o.has("marginTopDp") -> VerticalMargin.topFromEdge(dp, d)
-            oldBands -> MaruSize.keepBox(old, d.copy(marginTopDp = dp)).marginTopDp
-            else -> dp
-        }
-        fun bottom(dp: Int): Int = when {
-            edge && o.has("marginBottomDp") -> VerticalMargin.bottomFromEdge(dp, d)
-            oldBands -> MaruSize.keepBox(old, d.copy(marginBottomDp = dp)).marginBottomDp
-            else -> dp
-        }
+        fun top(dp: Int): Int = if (edge && o.has("marginTopDp")) VerticalMargin.topFromEdge(dp, bands) else dp
+        fun bottom(dp: Int): Int = if (edge && o.has("marginBottomDp")) VerticalMargin.bottomFromEdge(dp, bands) else dp
+        // A missing top/bottom: the default box (40 dp from the edge) on those bands.
+        val topDefault = VerticalMargin.EDGE_DP - StatusBands.headerDp(bands)
+        val bottomDefault = VerticalMargin.EDGE_DP - StatusBands.footerDp(bands)
         return UserStyle(
             name = name,
             fontId = str(o, "fontId", d.fontId).trim().ifEmpty { d.fontId },
@@ -196,10 +205,11 @@ object UserStyles {
             lineBreak = LineBreakMode.entries.firstOrNull { it.name == o.optString("lineBreak") } ?: d.lineBreak,
             marginLeftDp = if (sideLegacy) SideMargin.ZERO_DP else int(o, "marginLeftDp", d.marginLeftDp).coerceIn(0, 300),
             marginRightDp = if (sideLegacy) SideMargin.ZERO_DP else int(o, "marginRightDp", d.marginRightDp).coerceIn(0, 300),
-            marginTopDp = top(if (verticalLegacy) VerticalMargin.EDGE_DP else int(o, "marginTopDp", d.marginTopDp).coerceIn(0, 300)),
-            marginBottomDp = bottom(if (verticalLegacy) VerticalMargin.EDGE_DP else int(o, "marginBottomDp", d.marginBottomDp).coerceIn(0, 300)),
+            marginTopDp = top(if (verticalLegacy) VerticalMargin.EDGE_DP else int(o, "marginTopDp", topDefault).coerceIn(0, 300)),
+            marginBottomDp = bottom(if (verticalLegacy) VerticalMargin.EDGE_DP else int(o, "marginBottomDp", bottomDefault).coerceIn(0, 300)),
             pageMargins = (o.opt("pageMargins") as? Boolean) ?: d.pageMargins,
             pageTheme = PageTheme.entries.firstOrNull { it.name == o.optString("pageTheme") } ?: d.pageTheme,
+            elevenSpBands = elevenSp,
         )
     }
 
