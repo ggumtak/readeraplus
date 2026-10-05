@@ -8,7 +8,10 @@ import android.graphics.Rect
 import android.util.Log
 import android.util.LruCache
 import com.ggumtak.readeraplus.engine.IntSize
+import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.format.BookDocument
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Decoded image cache for one open document (LRU by bytes). Thread-safe.
@@ -18,6 +21,8 @@ import com.ggumtak.readeraplus.format.BookDocument
  * Bitmaps are never recycled on eviction: a page being drawn may still hold one (GC frees them).
  * Opaque pictures are kept as RGB_565 (half the memory); transparent ones keep their alpha, so the page's own colour
  * shows through them (white, the 마루뷰어 grey, black under the night filter) and one bitmap suits every palette.
+ * One picture at one size is decoded by one thread at a time: a neighbour prefetch and the reader's preload of the page
+ * it turns to share that decode ([InFlight]), and a draw never waits for it ([getForDraw]).
  */
 class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 * 1024) {
 
@@ -37,11 +42,77 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
     /** "src|w|h" of decodes that failed (not OOM): drawing them again must not re-decode on every frame. */
     private val failed = HashSet<String>()
 
-    /** Bitmap scaled to fit within maxW x maxH (decoded with inSampleSize), or null. */
+    /** "src|w|h" of the decodes running now. */
+    private val decoding = InFlight<String, Bitmap>()
+
+    private val drawDecodeCount = AtomicInteger()
+
+    /** Bumped by [clear]: a renderer then prefetches the neighbours of the page it draws again, even the same page. */
+    @Volatile
+    var clears = 0
+        private set
+
+    /** Pictures [getForDraw] decoded on the drawing thread so far (its last resort: stays 0 while turns preload). */
+    val drawDecodes: Int get() = drawDecodeCount.get()
+
+    /**
+     * Log tag for one line per picture [getForDraw] decodes, or leaves to another thread's decode (null = off; the
+     * reader sets RAPerf's when that tag is on DEBUG). Read only on those slow paths.
+     */
+    @Volatile
+    var drawTraceTag: String? = null
+
+    /**
+     * Bitmap scaled to fit within maxW x maxH (decoded with inSampleSize), or null. For background threads: while
+     * another thread decodes this picture at this size, waits for that decode and returns its bitmap.
+     */
     fun get(src: String, maxW: Int, maxH: Int): Bitmap? {
         if (maxW <= 0 || maxH <= 0) return null
         peek(src, maxW, maxH)?.let { return it }
         if (isKnownFailure(src, maxW, maxH)) return null
+        return decoding.run(failKey(src, maxW, maxH), wait = true) { decodeOnce(src, maxW, maxH, inDraw = false) }
+    }
+
+    /**
+     * [get] for [PageRenderer.draw] on the UI thread, which never waits: a picture another thread is decoding gives
+     * null (the renderer draws the box it draws for a failed picture, and that decode landing redraws nothing, so a
+     * turn stays one e-ink update) instead of a second decode. A picture nobody is decoding is decoded right here, as
+     * before: the reader preloads every page it turns to, so this is the last resort, counted in [drawDecodes].
+     */
+    fun getForDraw(src: String, maxW: Int, maxH: Int): Bitmap? {
+        if (maxW <= 0 || maxH <= 0) return null
+        peek(src, maxW, maxH)?.let { return it }
+        if (isKnownFailure(src, maxW, maxH)) return null
+        val key = failKey(src, maxW, maxH)
+        if (decoding.isRunning(key)) {
+            drawTraceTag?.let { Log.d(it, "draw skip $src ${maxW}x$maxH: decoding on another thread") }
+            return null
+        }
+        return decoding.run(key, wait = false) { decodeOnce(src, maxW, maxH, inDraw = true) }
+    }
+
+    /**
+     * True when page [pageIndex] of [layout] has a picture not decoded at its drawn size yet and not known to be
+     * undecodable. Allocates nothing while the page's pictures are cached and never reads the book file.
+     */
+    fun needsDecode(layout: SectionLayout, pageIndex: Int): Boolean =
+        PageImages.needsDecode(layout, pageIndex) { src, w, h -> peek(src, w, h) == null && !isKnownFailure(src, w, h) }
+
+    /** The decode itself, by one thread per picture and size at a time ([decoding]). */
+    private fun decodeOnce(src: String, maxW: Int, maxH: Int, inDraw: Boolean): Bitmap? {
+        // A decode of this key that ended between the caller's peek and its claim left its bitmap or failure behind.
+        peek(src, maxW, maxH)?.let { return it }
+        if (isKnownFailure(src, maxW, maxH)) return null
+        val t0 = if (inDraw) System.nanoTime() else 0L
+        val bmp = decodeNow(src, maxW, maxH)
+        if (inDraw) {
+            val n = drawDecodeCount.incrementAndGet()
+            drawTraceTag?.let { Log.d(it, "draw decode $n: $src ${maxW}x$maxH ${(System.nanoTime() - t0) / 1_000_000} ms") }
+        }
+        return bmp
+    }
+
+    private fun decodeNow(src: String, maxW: Int, maxH: Int): Bitmap? {
         val bytes = bytes(src)
         if (bytes == null) {
             markFailed(src, maxW, maxH)
@@ -76,6 +147,7 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
         synchronized(failed) { failed.add(failKey(src, maxW, maxH)) }
     }
 
+    /** "src|w|h": the key of a failed decode and of a running one. */
     private fun failKey(src: String, maxW: Int, maxH: Int): String = "$src|$maxW|$maxH"
 
     /** Cached bitmap for exactly this target size, without decoding (null if not cached). */
@@ -97,6 +169,7 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
 
     /** Drops all decoded bitmaps, cached bytes and sizes. */
     fun clear() {
+        clears++
         bitmaps.evictAll()
         raw.evictAll()
         synchronized(sizes) { sizes.clear() }
@@ -152,5 +225,53 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
         const val TAG = "ImageCache"
         /** Compressed bytes kept between layout (size) and drawing (get). */
         const val RAW_BYTES = 8 * 1024 * 1024
+    }
+}
+
+/**
+ * Work running now, by key (unit-tested): a caller asking for a key another thread is working on gets that work's
+ * result instead of doing it a second time. No lock is held while working or waiting, and the key is free again as
+ * soon as its work returns or throws, so a failure can be tried again. A work must not ask for its own key.
+ */
+internal class InFlight<K : Any, V : Any> {
+    private class Call<V : Any> {
+        val done = CountDownLatch(1)
+        @Volatile var result: V? = null
+    }
+
+    private val calls = HashMap<K, Call<V>>()
+
+    /** True while some thread runs the work of [key]. */
+    fun isRunning(key: K): Boolean = synchronized(calls) { calls.containsKey(key) }
+
+    /**
+     * Runs [work] for [key], unless another thread is running it already: then waits for it and returns its result
+     * (null when it failed or threw), or with [wait] = false returns null at once without working.
+     */
+    fun run(key: K, wait: Boolean, work: () -> V?): V? {
+        val mine = Call<V>()
+        val running = synchronized(calls) {
+            val other = calls[key]
+            if (other == null) calls[key] = mine
+            other
+        }
+        if (running != null) {
+            if (!wait) return null
+            try {
+                running.done.await()
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return null
+            }
+            return running.result
+        }
+        try {
+            val v = work()
+            mine.result = v
+            return v
+        } finally {
+            synchronized(calls) { calls.remove(key) }
+            mine.done.countDown()
+        }
     }
 }

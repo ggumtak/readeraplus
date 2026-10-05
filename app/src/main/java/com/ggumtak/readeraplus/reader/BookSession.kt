@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.reader
 
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.os.Process
 import android.os.SystemClock
@@ -115,7 +116,8 @@ class BookSession(
     val sectionCount: Int = document.sections.size
     val counts = PageCounts(IntArray(sectionCount) { document.sections[it].approxChars })
     val chapters = ChapterIndex(document.toc, sectionCount)
-    val images = ImageCache(document)
+    /** RAPerf DEBUG also logs every picture decoded inside a draw ("draw decode N: …", 0 expected). */
+    val images = ImageCache(document).apply { if (ReaderPerf.turns) drawTraceTag = ReaderPerf.TAG }
 
     var generation: Generation? = null
         private set
@@ -759,8 +761,12 @@ class BookSession(
         return counts.charsBetween(section, offset, (to ushr 32).toInt(), (to and 0xFFFFFFFFL).toInt())
     }
 
-    /** Drops decoded images (memory pressure). */
-    fun trimMemory() {
+    /**
+     * Drops decoded images when onTrimMemory([level]) means memory is really short ([dropsImagesOnTrim]); the renderer
+     * then prefetches the neighbours of the page it draws next again ([ImageCache.clears]).
+     */
+    fun trimMemory(level: Int) {
+        if (!dropsImagesOnTrim(level)) return
         try {
             images.clear()
         } catch (t: Throwable) {
@@ -838,6 +844,19 @@ class BookSession(
 
 /** Oldest cache entry outside the whole visible range, or null when every cached section is on screen. */
 internal fun pickVictim(lru: List<Int>, from: Int, to: Int): Int? = lru.firstOrNull { it < from || it > to }
+
+/**
+ * Whether onTrimMemory([level]) drops the decoded pictures. UI_HIDDEN and BACKGROUND keep them (they arrive each time
+ * the reader goes behind another app, and dropping them there made the first page drawn on coming back decode in
+ * onDraw; the cache is bounded anyway, 24 + 8 MB), as does MODERATE (only half-way down the cached-app list). Dropped
+ * on RUNNING_LOW / RUNNING_CRITICAL (short of memory while reading) and COMPLETE (next in line to be killed: a kill
+ * costs a whole reopen, a dropped cache one decode per picture page). Android 14+ sends only UI_HIDDEN and BACKGROUND.
+ */
+@Suppress("DEPRECATION")
+internal fun dropsImagesOnTrim(level: Int): Boolean =
+    level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+        level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+        level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE
 
 /** Lazy chapter/spine maps. Invalid split metadata never invents boundaries or sampleable sections. */
 internal object UnitStarts {

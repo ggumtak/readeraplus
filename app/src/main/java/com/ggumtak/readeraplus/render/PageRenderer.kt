@@ -133,9 +133,13 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private var xs = FloatArray(256)
     private var lineChars = CharArray(0)
 
-    /** Page whose neighbours were last handed to the image prefetcher (identity + index). */
+    /**
+     * Page whose neighbours were last handed to the image prefetcher (identity + index), and the cache's
+     * [ImageCache.clears] then: a cache dropped since (memory pressure) has them prefetched again.
+     */
     private var prefetchedLayout: SectionLayout? = null
     private var prefetchedPage = -1
+    private var prefetchedClears = 0
     /** Failed image lines are remembered without constructing cache-key Strings on scroll frames. */
     private val failedImages = ConcurrentHashMap.newKeySet<LineInfo>()
     /** The measurer's paints that carry the text shadow (set once per paint, see [shadow]). */
@@ -195,7 +199,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
 
     /**
      * Decodes the images of [pageIndex] into the image cache (blocking). Call from a background thread before
-     * showing an illustrated page so [draw] never decodes on the UI thread.
+     * showing an illustrated page so [draw] never decodes on the UI thread. A picture another thread is decoding
+     * already (the neighbour prefetch) is waited for, not decoded twice.
      */
     fun preload(layout: SectionLayout, pageIndex: Int) {
         val cache = images ?: return
@@ -224,9 +229,11 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     /** Decodes the images of the previous/next page in the background so turning to them never decodes here. */
     private fun prefetchNeighbours(layout: SectionLayout, pageIndex: Int) {
         val cache = images ?: return
-        if (prefetchedLayout === layout && prefetchedPage == pageIndex) return
+        val clears = cache.clears
+        if (prefetchedLayout === layout && prefetchedPage == pageIndex && prefetchedClears == clears) return
         prefetchedLayout = layout
         prefetchedPage = pageIndex
+        prefetchedClears = clears
         val next = needsDecode(cache, layout, pageIndex + 1)
         val prev = needsDecode(cache, layout, pageIndex - 1)
         if (!next && !prev) return
@@ -561,14 +568,15 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         return LineGeometry.charPositions(layout, ln, xs)
     }
 
-    private fun imgW(ln: LineInfo): Int = Math.round(ln.imageWidth).coerceAtLeast(1)
-    private fun imgH(ln: LineInfo): Int = Math.round(ln.imageHeight).coerceAtLeast(1)
+    private fun imgW(ln: LineInfo): Int = PageImages.width(ln)
+    private fun imgH(ln: LineInfo): Int = PageImages.height(ln)
 
     private fun drawLine(canvas: Canvas, layout: SectionLayout, ln: LineInfo, left: Float, top: Float, cw: Float) {
         val img = ln.imageBlock
         if (img != null) {
             rect.set(left + ln.x, top + ln.top, left + ln.x + ln.imageWidth, top + ln.top + ln.imageHeight)
-            val bmp = images?.get(img.src, imgW(ln), imgH(ln))
+            // Normally decoded already: the reader preloads the page it turns to (a miss: ImageCache.getForDraw).
+            val bmp = images?.getForDraw(img.src, imgW(ln), imgH(ln))
             if (bmp != null) {
                 canvas.drawBitmap(bmp, null, rect, bitmapPaint)
             } else {

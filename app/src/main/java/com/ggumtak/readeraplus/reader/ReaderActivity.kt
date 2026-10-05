@@ -767,11 +767,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        // Decoded pictures stay when the reader only went behind another app (see dropsImagesOnTrim).
+        session?.trimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND ||
             level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
             level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
         ) {
-            session?.trimMemory()
             scroll?.onTrimMemory()
             thumbs?.clear()
         }
@@ -2328,24 +2329,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /**
      * True when page [pageIndex] of [l] shows an image not yet decoded at its drawn size (the renderer's own
-     * target size: the image line's box rounded to px) and not known to be undecodable.
+     * target size: the image line's box rounded to px) and not known to be undecodable. Called on every turn:
+     * allocation-free and no file access while the page's pictures are cached, one field read per text line.
      */
-    private fun needsImageDecode(s: BookSession, l: SectionLayout, pageIndex: Int): Boolean {
-        val p = l.pages.getOrNull(pageIndex) ?: return false
-        val lines = p.lines
-        for (i in lines.indices) {
-            val ln = lines[i]
-            val img = ln.imageBlock ?: continue
-            val w = Math.round(ln.imageWidth).coerceAtLeast(1)
-            val h = Math.round(ln.imageHeight).coerceAtLeast(1)
-            val known = try {
-                s.images.isKnownFailure(img.src, w, h) || s.images.peek(img.src, w, h) != null
-            } catch (t: Throwable) {
-                true
-            }
-            if (!known) return true
-        }
-        return false
+    private fun needsImageDecode(s: BookSession, l: SectionLayout, pageIndex: Int): Boolean = try {
+        s.images.needsDecode(l, pageIndex)
+    } catch (t: Throwable) {
+        false
     }
 
     /** Decodes the images of [pageIndex] of [l] in the background (a neighbour section's boundary page). */
@@ -2467,9 +2457,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /**
      * One page forward / back. Inside the section (and into a laid-out neighbour) the page shows synchronously, so
-     * turns keep up with the fastest taps. While a layout is pending (a section being laid out, a jump, a relayout)
-     * the turn is counted instead and applied together with the others when that layout shows ([flushTurns]): no
-     * turn is dropped and none is replayed one draw at a time. False at the first / last page of the book.
+     * turns keep up with the fastest taps; a page with a picture not decoded yet waits for it first ([turnTo]).
+     * While a layout is pending (a section being laid out, a jump, a relayout, such a picture) the turn is counted
+     * instead and applied together with the others when that layout shows ([flushTurns]): no turn is dropped and
+     * none is replayed one draw at a time. False at the first / last page of the book.
      */
     private fun turn(next: Boolean): Boolean {
         val s = session ?: return false
@@ -2483,20 +2474,31 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         scroll?.let { return scrollTurn(it, next) }
         if (next) {
             if (curPageIdx < l.pageCount - 1) {
-                showPage(curSection, l, curPageIdx + 1, Nav.TURN)
+                turnTo(s, l, curPageIdx + 1)
                 return true
             }
             if (curSection + 1 >= s.sectionCount) return false
             navigateTo(curSection + 1, 0, 0, Nav.TURN)
         } else {
             if (curPageIdx > 0) {
-                showPage(curSection, l, curPageIdx - 1, Nav.TURN)
+                turnTo(s, l, curPageIdx - 1)
                 return true
             }
             if (curSection <= 0) return false
             navigateTo(curSection - 1, 0, -2, Nav.TURN)
         }
         return true
+    }
+
+    /**
+     * Turns to [pageIndex] of the section on screen: at once (text pages, pictures decoded at their drawn size) or,
+     * for a picture not decoded yet, through [navigateTo]'s preload like a turn into the next section: decoded on the
+     * IO pool while this page stays up, the taps meanwhile counted in [backlog], one draw when it is ready. So onDraw
+     * never decodes it (that held the UI thread inside the draw of the turn that reached the picture).
+     */
+    private fun turnTo(s: BookSession, l: SectionLayout, pageIndex: Int) {
+        if (needsPreload(s, l, pageIndex)) navigateTo(curSection, 0, pageIndex, Nav.TURN)
+        else showPage(curSection, l, pageIndex, Nav.TURN)
     }
 
     /**
@@ -2538,6 +2540,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // Kept before navigating: a synchronous display of the next section flushes the rest right away.
         backlog.restore(walk.remaining)
         if (walk.section == curSection) {
+            if (walk.pageIndex != curPageIdx && needsPreload(s, l, walk.pageIndex)) {
+                // A picture to decode first ([turnTo]). A turn past the book's edge waits for that page in the backlog,
+                // so the end panel (or the first-page toast) still comes from it once it shows.
+                if (walk.hitEdge) backlog.restore(if (n > 0) 1 else -1)
+                navigateTo(curSection, 0, walk.pageIndex, Nav.TURN)
+                return
+            }
             if (walk.pageIndex != curPageIdx) showPage(curSection, l, walk.pageIndex, Nav.TURN)
         } else {
             navigateTo(walk.section, 0, walk.pageIndex, Nav.TURN)
