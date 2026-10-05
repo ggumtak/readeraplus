@@ -97,6 +97,18 @@ class ProgressMathTest {
     }
 
     @Test
+    fun thePositionDotIsLeftOutOnAnEndDot() {
+        // The first and the last pages: the position dot would cover an end dot exactly (its rim blended twice).
+        for (f in listOf(0f, 0.0004f, 0.9996f, 1f, -0.5f, 1.5f)) assertTrue("$f", ProgressMath.onEndDot(f, 1080, s25))
+        // One column off is a dot of its own: 0.0005 · 1024 rounds to 1 px on the S25, 0.0007 · 683 to 0 on the Comet.
+        for (f in listOf(0.0005f, 0.25f, 1748f / 3258f, 0.9995f)) assertTrue("$f", !ProgressMath.onEndDot(f, 1080, s25))
+        assertTrue(ProgressMath.onEndDot(0.0007f, 720, comet))
+        assertTrue(!ProgressMath.onEndDot(0.5f, 720, comet))
+        // A view with no track: every dot is on the end dots.
+        assertTrue(ProgressMath.onEndDot(0.7f, 40, s25))
+    }
+
+    @Test
     fun geometryAllocatesNothing() {
         if (!AllocCounter.supported) return
         var sink = 0f
@@ -105,7 +117,8 @@ class ProgressMathTest {
                 val f = i / 10_000f
                 sink += ProgressMath.lineTop(2340, s25) + ProgressMath.centreY(2340, s25) + ProgressMath.dotX(0f, 1080, s25) +
                     ProgressMath.dotX(1f, 1080, s25) + ProgressMath.dotX(f, 1080, s25) + ProgressMath.trackPx(1080, s25) +
-                    PagePalette.PAPER.progressLine + PagePalette.MARU.inkProgressDot
+                    PagePalette.PAPER.progressLine + PagePalette.MARU.inkProgressDot +
+                    (if (ProgressMath.onEndDot(f, 1080, s25)) 1 else 0)
             }
         }
         repeat(3) { loop() }

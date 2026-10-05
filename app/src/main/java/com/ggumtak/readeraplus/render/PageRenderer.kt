@@ -173,8 +173,10 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         statusLine.color = palette.status
         statusOutline.color = palette.status
         statusOutlineFirst.color = palette.status
-        // On e-ink, greys on the panel's own levels (known e-ink only: a phone keeps the screenshot's greys).
-        val eink = DeviceClass.cached(context) == true
+        // On e-ink, greys on the panel's own levels. Unknown (no probe yet) counts as e-ink, as for the chrome
+        // (ChromePalette.of): there the panel's levels keep the line from rounding into the page, while a phone that
+        // is not probed yet only shows the line a few greys off the screenshot's until the next renderer.
+        val eink = DeviceClass.cached(context) != false
         progressLine.color = if (eink) palette.inkProgressLine else palette.progressLine
         progressDot.color = if (eink) palette.inkProgressDot else palette.progressDot
     }
@@ -441,7 +443,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
 
     /**
      * The progress line across the page view [viewW] × [viewH] ([ProgressMath]): the line from one end dot's centre to
-     * the other's, then the end dots and, at [fraction] (none while it is unknown, < 0), the position dot over it.
+     * the other's, then the end dots and, at [fraction] (none while it is unknown, < 0), the position dot over it; not
+     * where it would land on an end dot ([ProgressMath.onEndDot]), whose rim would then be blended twice.
      */
     private fun drawProgress(canvas: Canvas, fraction: Float, viewW: Int, viewH: Int) {
         val top = ProgressMath.lineTop(viewH, density).toFloat()
@@ -451,7 +454,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         canvas.drawRect(x0, top, x1, top + progressLineH, progressLine)
         canvas.drawCircle(x0, y, progressDotR, progressDot)
         canvas.drawCircle(x1, y, progressDotR, progressDot)
-        if (fraction >= 0f && fraction.isFinite())
+        if (fraction >= 0f && fraction.isFinite() && !ProgressMath.onEndDot(fraction, viewW, density))
             canvas.drawCircle(ProgressMath.dotX(fraction, viewW, density), y, progressDotR, progressDot)
     }
 

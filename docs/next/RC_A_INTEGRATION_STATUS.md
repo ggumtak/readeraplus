@@ -638,15 +638,17 @@ tools/typecheck.sh 종료 0, tools/unittest.sh OK (1519 tests), bash -n tools/ci
 - 모양(`render/ProgressMath`, 순수): 선 `max(1, round(0.67 dp))`, 점 세 개(양 끝 · 현재 위치)는 한 크기 — 4.67 dp에 가장 가깝고
   선과 짝·홀이 같은 정수 px라 선과 점의 가운데가 같은 행 경계(S25) 또는 픽셀 가운데(코멧)에 온다. 끝 점 바깥 끝은 페이지 뷰
   양옆에서 7 dp, 가운데는 아래 끝에서 8 dp 위. 위치 점은 정수 px로만 움직이고(`dotLeft` = 7 dp + round(f · trackPx)),
-  `StatusModel`이 세는 점 px과 같다(`statusTrackPx` = `ProgressMath.trackPx(viewW, density)`). 끝 캡 · 6 dp 점 · `yc`/`rDot`/
+  `StatusModel`이 세는 점 px과 같다(`statusTrackPx` = `ProgressMath.trackPx(viewW, density)`). 끝 점과 같은 px에 오면(첫 쪽 ·
+  마지막 쪽, `ProgressMath.onEndDot`) 위치 점은 그리지 않는다: 겹쳐 그리면 끝 점 가장자리가 두 번 섞여 반대쪽 끝 점보다 굵다. 끝 캡 · 6 dp 점 · `yc`/`rDot`/
   `rCap`과 `StatusFit.lanePx`/`laneBottomPx`는 지웠다.
 - 픽셀(테스트로 고정): S25 선 2315–2316 행, 점 14 px 2309–2322 행, 끝 점 x 21–34 · 1045–1058, 1749/3259쪽 위치의 점
   x 570–583 — 사진과 같다(아래 60행을 흉내 내 그린 것과 사진의 평균 차이 0.01단계, 남은 차이는 사진의 위치 점이 반 px에
   있어서). 코멧 선 1423 행(1 px), 점 9 px 1419–1427 행, 끝 점 x 14–22 · 697–705, 점 아래 종이 12 px(EDGE 8 px 이상).
 - 색(`PagePalette`, 팔레트마다 한 번): 밝은 바탕은 검정 쪽으로 46 · 75/255, 어두운 바탕은 흰색 쪽으로 31 · 50/255. 흰 바탕
   #D1D1D1 · #B4B4B4, 검은 바탕 #1F1F1F · #323232(사진과 정확히 같다), 마루뷰어 #4B4B4B · #5A5A5A(금색 대신). e-ink
-  (`DeviceClass.cached == true`)는 16단계 회색에 맞추고 선은 바탕과, 점은 선과 한 단계 이상(`PagePalette.inkGrey`): 코멧
-  흰 바탕 #CCCCCC · #BBBBBB, 흑백 반전 #222222 · #333333, 마루뷰어 #444444 · #555555. 상태 줄 글자와 배터리는 그대로 상태 색.
+  (`DeviceClass.cached != false`: 아직 모르면 크롬처럼 e-ink)는 16단계 회색에 맞추고 선은 바탕과 두 단계, 점은 선과 한 단계
+  이상(`PagePalette.inkGrey`): 코멧 흰 바탕 #CCCCCC · #BBBBBB, 흑백 반전 #222222 · #333333, 마루뷰어 #555555 · #666666(가장
+  가까운 #444444는 바탕 #333333과 한 단계뿐이라 1 px 선이 안 보일 수 있다). 상태 줄 글자와 배터리는 그대로 상태 색.
 - 그대로인 것: 아래 띠(18 dp, 아래 글자까지 36 dp)와 본문 자리(두 기기 테스트 그대로), 진행 막대 띠 위의 돌아가기 칩(점은 그
   띠 안), 스크롤 모드(같은 `drawChrome`), 미리보기(상태 줄 없음). 그리기는 할당 없음(기하 + 색 읽기 1만 번 0 B 테스트).
 - CI: 13w(13t의 막대 닫은 사진에서 흰 바탕 · 마루뷰어 · 흑백 반전의 끝 점 가운데 색, 선 색(x 40 또는 680), 점 바로 위 · 아래

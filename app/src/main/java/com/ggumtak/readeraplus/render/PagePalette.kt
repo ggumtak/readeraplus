@@ -46,11 +46,14 @@ internal class PagePalette private constructor(
     val progressDot: Int = toward(background, lightPage, if (lightPage) LIGHT_DOT else DARK_DOT)
 
     /**
-     * [progressLine] and [progressDot] on e-ink: their greys on the panel's 16 levels ([inkGrey]), the line at least one
-     * level from the page and the dots one past the line, so neither vanishes nor dithers. 흰 바탕 #CCCCCC / #BBBBBB,
-     * 흑백 반전 #222222 / #333333, MARU #444444 / #555555 (its page shows as #333333).
+     * [progressLine] and [progressDot] on e-ink: their greys on the panel's 16 levels ([inkGrey]), the line at least
+     * [INK_LINE_STEPS] levels from the page (one level of a 1 px line next to the page's own is too little to find) and
+     * the dots one past the line, so neither vanishes nor dithers. 흰 바탕 #CCCCCC / #BBBBBB (3 and 4 levels off the
+     * page), 흑백 반전 #222222 / #333333 (2 and 3; ReadEra's #1F1F1F on black is ≈ 2 levels too), MARU #555555 / #666666
+     * (its page shows as #333333: 2 and 3, as on the black page; the nearest levels #444444 / #555555 would put the line
+     * one level off it).
      */
-    val inkProgressLine: Int = rgb(inkGrey(luma(progressLine), luma(background), lightPage))
+    val inkProgressLine: Int = rgb(inkGrey(luma(progressLine), luma(background), lightPage, INK_LINE_STEPS))
     val inkProgressDot: Int = rgb(inkGrey(luma(progressDot), luma(inkProgressLine), lightPage))
 
     /** Paint.setShadowLayer's radius in px for this page's blur at [density]; 0 (no shadow) without one. */
@@ -83,6 +86,8 @@ internal class PagePalette private constructor(
         private const val DARK_DOT = 50
         /** One of an e-ink panel's 16 grey levels (0x00, 0x11 … 0xFF). */
         private const val INK_STEP = 17
+        /** The e-ink progress line's least distance from the page, in panel levels ([inkProgressLine]). */
+        private const val INK_LINE_STEPS = 2
 
         /** [c] moved [levels] of 255 of the way to black ([darker]) or to white, per channel. */
         private fun toward(c: Int, darker: Boolean, levels: Int): Int {
@@ -100,15 +105,15 @@ internal class PagePalette private constructor(
         private fun rgb(v: Int): Int = OPAQUE or (v shl 16) or (v shl 8) or v
 
         /**
-         * Grey [v] (0..255) on an e-ink panel's 16 levels: the nearest, then moved on until it is at least one level
-         * past [from]'s, darker ([darker]) or lighter. What the panel would round it to anyway, but chosen here, so a
-         * line meant to be faint never rounds into the page (or the dots into the line).
+         * Grey [v] (0..255) on an e-ink panel's 16 levels: the nearest, then moved on until it is at least [steps]
+         * levels past [from]'s, darker ([darker]) or lighter. What the panel would round it to anyway, but chosen here,
+         * so a line meant to be faint never rounds into the page (or the dots into the line).
          */
-        fun inkGrey(v: Int, from: Int, darker: Boolean): Int {
+        fun inkGrey(v: Int, from: Int, darker: Boolean, steps: Int = 1): Int {
             val level = (v.coerceIn(0, 255) + INK_STEP / 2) / INK_STEP * INK_STEP
             val base = (from.coerceIn(0, 255) + INK_STEP / 2) / INK_STEP * INK_STEP
-            return if (darker) minOf(level, base - INK_STEP).coerceAtLeast(0)
-            else maxOf(level, base + INK_STEP).coerceAtMost(255)
+            return if (darker) minOf(level, base - steps * INK_STEP).coerceAtLeast(0)
+            else maxOf(level, base + steps * INK_STEP).coerceAtMost(255)
         }
 
         /** Black on white (the default). */

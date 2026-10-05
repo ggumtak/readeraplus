@@ -799,6 +799,7 @@ fun sidePx(density: Float): Int
 fun trackPx(viewW: Int, density: Float): Int                // viewW − 2 · sidePx − dotD (StatusModel's dot pixels)
 fun dotLeft(f: Float, viewW: Int, density: Float): Int      // sidePx + round(f · trackPx)
 fun dotX(f: Float, viewW: Int, density: Float): Float       // dotLeft + dotD / 2
+fun onEndDot(f: Float, viewW: Int, density: Float): Boolean // dotLeft on an end dot's: the position dot is not drawn
 ```
 
 

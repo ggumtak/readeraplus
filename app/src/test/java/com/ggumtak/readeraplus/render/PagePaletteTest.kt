@@ -143,22 +143,35 @@ class PagePaletteTest {
     @Test
     fun progressLineOnEinkIsWholePanelLevels() {
         // The Comet's 16 greys: 흰 바탕 #CCCCCC line, #BBBBBB dots; 흑백 반전 #222222 / #333333; MaruViewer's page (shown
-        // as #333333) #444444 / #555555. Each a level of its own: the line off the page, the dots off the line.
+        // as #333333) #555555 / #666666. Each a level of its own: the line two off the page, the dots one off the line.
         assertEquals(rgb(0xCC), PagePalette.PAPER.inkProgressLine)
         assertEquals(rgb(0xBB), PagePalette.PAPER.inkProgressDot)
         assertEquals(rgb(0x22), PagePalette.NIGHT.inkProgressLine)
         assertEquals(rgb(0x33), PagePalette.NIGHT.inkProgressDot)
-        assertEquals(rgb(0x44), PagePalette.MARU.inkProgressLine)
-        assertEquals(rgb(0x55), PagePalette.MARU.inkProgressDot)
+        assertEquals(rgb(0x55), PagePalette.MARU.inkProgressLine)
+        assertEquals(rgb(0x66), PagePalette.MARU.inkProgressDot)
+        for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT, PagePalette.MARU)) {
+            // In panel levels (the page as the panel shows it): the line ≥ 2 from the page, the dots ≥ 1 past the line.
+            val page = ((p.background and 0xFF) + 8) / 17
+            val line = (p.inkProgressLine and 0xFF) / 17
+            val dot = (p.inkProgressDot and 0xFF) / 17
+            assertTrue("line $line on page $page", Math.abs(line - page) >= 2)
+            assertTrue("dot $dot past line $line", Math.abs(dot - page) >= Math.abs(line - page) + 1)
+        }
         // A grey that would round into the page (or the line) moves on one level, the page's way.
         assertEquals(0xEE, PagePalette.inkGrey(250, 255, darker = true))
         assertEquals(0xCC, PagePalette.inkGrey(209, 255, darker = true))
         assertEquals(0x11, PagePalette.inkGrey(5, 0, darker = false))
         assertEquals(0x33, PagePalette.inkGrey(50, 0x22, darker = false))
         assertEquals(0x44, PagePalette.inkGrey(52, 0x33, darker = false))
+        // Or [steps] levels: MaruViewer's line (#4B4B4B, nearest #444444) on its page (#323232, shown as #333333).
+        assertEquals(0x55, PagePalette.inkGrey(0x4B, 0x32, darker = false, steps = 2))
+        assertEquals(0xDD, PagePalette.inkGrey(250, 255, darker = true, steps = 2))
+        assertEquals(0xCC, PagePalette.inkGrey(209, 255, darker = true, steps = 2))
         // At the ends of the scale it stays on the panel.
         assertEquals(0, PagePalette.inkGrey(3, 0, darker = true))
         assertEquals(255, PagePalette.inkGrey(250, 255, darker = false))
+        assertEquals(255, PagePalette.inkGrey(240, 0xEE, darker = false, steps = 2))
         for (v in 0..255) assertEquals("$v", 0, PagePalette.inkGrey(v, 255, darker = true) % 17)
     }
 

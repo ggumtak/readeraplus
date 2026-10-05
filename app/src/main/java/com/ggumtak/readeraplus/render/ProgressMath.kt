@@ -65,4 +65,13 @@ internal object ProgressMath {
 
     /** Centre (x) of the dot at fraction [f]: the end dots' are the line's ends (S25 28.0 and 1052.0). */
     fun dotX(f: Float, viewW: Int, density: Float): Float = dotLeft(f, viewW, density) + dotD(density) / 2f
+
+    /**
+     * True when the dot at fraction [f] lands exactly on an end dot (the first and the last pages): the renderer then
+     * leaves it out, so that end dot's anti-aliased rim is not blended twice and it stays the size of the other one.
+     */
+    fun onEndDot(f: Float, viewW: Int, density: Float): Boolean {
+        val left = dotLeft(f, viewW, density)
+        return left == sidePx(density) || left == sidePx(density) + trackPx(viewW, density)
+    }
 }
