@@ -27,6 +27,19 @@ class PagePaletteTest {
     }
 
     @Test
+    fun blackPageHasMarusTextOnBlack() {
+        val b = PagePalette.of(ReaderSettings(pageTheme = PageTheme.BLACK))
+        assertSame(PagePalette.BLACK, b)
+        assertSame(PagePalette.NIGHT, PagePalette.of(ReaderSettings(invert = true, pageTheme = PageTheme.BLACK)))
+        assertEquals(0xFF000000.toInt(), b.background)
+        assertEquals(PagePalette.MARU.text, b.text)
+        assertEquals(PagePalette.MARU.status, b.status)
+        assertFalse(b.hasShadow)
+        assertTrue(b.dark)
+        assertFalse(b.invertImages)
+    }
+
+    @Test
     fun paperAndNightAreTheColoursOfBefore() {
         // Nobody who never picks a theme sees a change: black on white, white on black, no shadow.
         val p = PagePalette.PAPER

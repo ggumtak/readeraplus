@@ -35,10 +35,11 @@ class PopupGeometryTest {
     @Test
     fun topIsTheInsetPlus8dpAndHeightAtMost56Percent() {
         assertEquals(0.56f, PopupGeometry.HEIGHT_FRACTION, 0f)
-        // Status bar 48 px at 2.0: top 48 + 16; 56% of 1440 = 806 px.
+        assertEquals(0.62f, PopupGeometry.SETTINGS_FRACTION, 0f)
+        // Status bar 48 px at 2.0: top 48 + 16; 62% of 1440 = 892 px.
         val p = PopupGeometry.settings(1440, 48, 2f)
         assertEquals(64, p.top)
-        assertEquals(806, p.height)
+        assertEquals(892, p.height)
         // Immersive (no inset): 8 dp from the top.
         assertEquals(16, PopupGeometry.settings(1440, 0, 2f).top)
         // A negative inset never puts it above the window.
@@ -47,27 +48,27 @@ class PopupGeometryTest {
         val q = PopupGeometry.settings(600, 480, 2f)
         assertEquals(320, q.height)
         assertEquals(600 - 16 - 320, q.top)
-        // Tiny window: never taller than 56%.
+        // Tiny window: never taller than 62%.
         val r = PopupGeometry.settings(400, 380, 2f)
-        assertTrue(r.height <= 224)
+        assertTrue(r.height <= 248)
         assertTrue(r.top >= 0 && r.top + r.height <= 400)
     }
 
     @Test
     fun quickOptionsNeverScrollAt1440px() {
-        // 전체 읽기 설정 › · 닫기 / 글자 크기 / 굵기 / 줄 간격 / 문단 간격 / 좌우 여백 / 상하 여백 / 글꼴 (2026-10-04).
-        assertEquals(7, PopupGeometry.QUICK_ROWS)
+        // 전체 읽기 설정 › · 닫기 / 글자 크기 / 굵기 / 줄 간격 / 문단 간격 / 좌우 여백 / 상하 여백 / 글꼴 / 배경 (2026-10-05).
+        assertEquals(8, PopupGeometry.QUICK_ROWS)
         assertEquals(48, Compact.ROW_DP)
         assertEquals(48, Compact.BAR_DP)
         assertEquals(48, Compact.STEP_DP)
         assertEquals(48, Compact.LIST_ROW_DP)
         assertEquals(16f, Compact.LABEL_SP, 0f)
         assertEquals(17f, Compact.VALUE_SP, 0f)
-        assertEquals(384, PopupGeometry.QUICK_HEIGHT_DP)
+        assertEquals(432, PopupGeometry.QUICK_HEIGHT_DP)
         // Emulator / Comet: 720×1440 px at 2.0, with and without a status bar (up to 32 dp).
         for (inset in intArrayOf(0, 48, 64)) {
             val place = PopupGeometry.settings(1440, inset, 2f)
-            val whole = Math.round(PopupGeometry.QUICK_HEIGHT_DP * 2f) // 768 px
+            val whole = Math.round(PopupGeometry.QUICK_HEIGHT_DP * 2f) // 864 px
             // The whole popup + the 1 px border on each side.
             assertTrue("inset $inset: popup ${whole + 2} px > ${place.height} px", whole + 2 <= place.height)
         }

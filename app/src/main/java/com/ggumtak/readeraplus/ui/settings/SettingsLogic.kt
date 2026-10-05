@@ -416,12 +416,13 @@ object R3Rows {
 
     // ---- 화면 색 (읽기 설정 → 스타일; 웹소설 = 마루뷰어, 2026-10-04)
 
-    val PAGE_THEMES: List<PageTheme> = listOf(PageTheme.PAPER, PageTheme.MARU)
+    val PAGE_THEMES: List<PageTheme> = listOf(PageTheme.PAPER, PageTheme.MARU, PageTheme.BLACK)
 
     /** The "화면 색" chooser: the theme's name and what it looks like. */
     fun pageThemeChoice(t: PageTheme): String = when (t) {
         PageTheme.PAPER -> t.label + SettingsFormat.DEFAULT_MARK
         PageTheme.MARU -> "${t.label} (어두운 회색 바탕)"
+        PageTheme.BLACK -> "${t.label} (마루뷰어 글자색)"
     }
 
     // ---- 상태 표시줄 (UI_SPEC §5.5, anchor §2.7)

@@ -146,6 +146,8 @@ enum class PageTheme(val label: String) {
     PAPER("흰 바탕"),
     /** MaruViewer's web-novel page: light grey text with a short shadow on a dark grey page (웹소설, 2026-10-04). */
     MARU("마루뷰어"),
+    /** MARU's text and status colours on a black page (user, 2026-10-05: ⚙ 배경 흰색 / 회색 / 검은색). */
+    BLACK("검은 바탕"),
 }
 
 enum class TapZoneMode {

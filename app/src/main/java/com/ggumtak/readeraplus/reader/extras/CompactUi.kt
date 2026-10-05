@@ -36,7 +36,7 @@ import com.ggumtak.readeraplus.ui.kit.vertical
 internal object Compact {
     /**
      * Row height: the 48 dp touch target of its stepper buttons. The popup (the [BAR_DP] top bar and
-     * [PopupGeometry.QUICK_ROWS] rows, 384 dp) fits under the 56% cap of the Comet (403 dp) without scrolling.
+     * [PopupGeometry.QUICK_ROWS] rows, 432 dp) fits under the 62% cap of the Comet (446 dp) without scrolling.
      */
     const val ROW_DP = 48
     /** The top bar ("전체 읽기 설정 ›" · 닫기). */

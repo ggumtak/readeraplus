@@ -339,18 +339,23 @@ internal object SearchText {
 /**
  * Size / placement maths of the quick reading options (⚙) and the drop-down lists they open (px in the reader
  * window). Sized for the ~6" 360×720 dp e-ink screen (U polish 7): centred, the whole width but 8 dp on each side
- * (≤ 400 dp), 8 dp under the status-bar inset, and at most 56% of the height, so the lower part of the page stays in
- * view as the preview while the whole popup ([QUICK_HEIGHT_DP] = 384 dp) never scrolls.
+ * (≤ 400 dp), 8 dp under the status-bar inset, and at most 62% of the height ([SETTINGS_FRACTION]), so the lower part of
+ * the page stays in view as the preview while the whole popup ([QUICK_HEIGHT_DP] = 432 dp) never scrolls.
  */
 internal object PopupGeometry {
-    /** The quick options' rows under the top bar: 글자 크기, 굵기, 줄 간격, 문단 간격, 좌우 여백, 상하 여백, 글꼴. */
-    const val QUICK_ROWS = 7
-    /** The whole popup: the top bar ("전체 읽기 설정 ›" · 닫기) and [QUICK_ROWS] rows (48 + 7 × 48 = 384 dp). */
+    /** The quick options' rows under the top bar: 글자 크기, 굵기, 줄 간격, 문단 간격, 좌우 여백, 상하 여백, 글꼴, 배경. */
+    const val QUICK_ROWS = 8
+    /** The whole popup: the top bar ("전체 읽기 설정 ›" · 닫기) and [QUICK_ROWS] rows (48 + 8 × 48 = 432 dp). */
     const val QUICK_HEIGHT_DP = Compact.BAR_DP + QUICK_ROWS * Compact.ROW_DP
     /** Space left beside the popup, both sides together (dp): it is centred, 8 dp from each edge. */
     const val SIDE_GAP_DP = 16
     const val MAX_WIDTH_DP = 400
     const val HEIGHT_FRACTION = 0.56f
+    /**
+     * The quick options' own cap: 62% of the height, so its eight rows (432 dp, 864 px on the Comet) fit under it
+     * (892 px of 1440) with the same ≈ 28 px to spare the seven had under 56% (2026-10-05: 배경 added).
+     */
+    const val SETTINGS_FRACTION = 0.62f
     /** Drop-down lists with many entries may take this much of the screen (e.g. 12 rows × 48 dp). */
     const val TALL_LIST_FRACTION = 0.8f
     /** Gap between the status-bar inset and the popup's top edge (dp). */
@@ -369,12 +374,12 @@ internal object PopupGeometry {
 
     /**
      * The settings popup [TOP_GAP_DP] under [topInset] (the status bar / cutout; the reader's bars are hidden while it
-     * is open): its top and max height (56% of [screenH], and never past the bottom edge; moved up when less than
+     * is open): its top and max height ([SETTINGS_FRACTION] of [screenH], and never past the bottom edge; moved up when less than
      * [MIN_HEIGHT_DP] is left).
      */
     fun settings(screenH: Int, topInset: Int, density: Float): Placement {
         val edge = (EDGE_DP * density).roundToInt()
-        val cap = (screenH * HEIGHT_FRACTION).toInt().coerceAtLeast(1)
+        val cap = (screenH * SETTINGS_FRACTION).toInt().coerceAtLeast(1)
         val top = (topInset.coerceAtLeast(0) + (TOP_GAP_DP * density).roundToInt()).coerceIn(0, screenH)
         val room = screenH - top - edge
         val min = minOf(cap, (MIN_HEIGHT_DP * density).roundToInt())

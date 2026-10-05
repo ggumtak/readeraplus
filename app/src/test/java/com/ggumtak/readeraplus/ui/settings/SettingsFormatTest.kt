@@ -232,10 +232,10 @@ class SettingsFormatTest {
         assertEquals(PageTheme.entries.toList(), R3Rows.PAGE_THEMES)
         assertEquals(ReaderSettings().pageTheme, R3Rows.PAGE_THEMES.first())
         assertEquals(
-            listOf("흰 바탕 (기본)", "마루뷰어 (어두운 회색 바탕)"),
+            listOf("흰 바탕 (기본)", "마루뷰어 (어두운 회색 바탕)", "검은 바탕 (마루뷰어 글자색)"),
             R3Rows.PAGE_THEMES.map { R3Rows.pageThemeChoice(it) },
         )
-        assertEquals(listOf("흰 바탕", "마루뷰어"), R3Rows.PAGE_THEMES.map { it.label })
+        assertEquals(listOf("흰 바탕", "마루뷰어", "검은 바탕"), R3Rows.PAGE_THEMES.map { it.label })
     }
 
     @Test

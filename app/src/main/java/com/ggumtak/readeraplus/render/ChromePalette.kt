@@ -79,6 +79,14 @@ internal class ChromePalette private constructor(
             active = 0x42FFFFFF, motion = true, eink = false, dark = true,
         )
 
+        /** 검은 바탕: MARU's text and gold on black; a 1 px line instead of the shadow, as [NIGHT]. */
+        private val BLACK = ChromePalette(
+            page = rgb(0x000000), surface = rgb(0x1A1A1A), text = rgb(0xDDDDDD), text2 = rgb(0xA8A8A8),
+            accent = rgb(0xFFD387), divider = rgb(0x333333), rule = rgb(0x333333), edge = rgb(0x333333),
+            track = rgb(0x4A4A4A), hist = rgb(0xA8A8A8), shadow = 0, pressed = 0x1AFFFFFF,
+            active = 0x4DFFD387, motion = true, eink = false, dark = true,
+        )
+
         /**
          * The e-ink set of page [p]: the old chrome's colours (black, `Ink.GRAY` #555, `Ink.LINE_LIGHT` #CCC,
          * `Ink.DISABLED` #999 on white) as [p]'s greys, so 흰 바탕 is exactly the chrome of before; solid colours only.
@@ -92,6 +100,7 @@ internal class ChromePalette private constructor(
         private val EINK_PAPER = eink(PagePalette.PAPER)
         private val EINK_MARU = eink(PagePalette.MARU)
         private val EINK_NIGHT = eink(PagePalette.NIGHT)
+        private val EINK_BLACK = eink(PagePalette.BLACK)
 
         /** The chrome of before (black on white, no motion): the look until the reader pushes its own. */
         val DEFAULT: ChromePalette get() = EINK_PAPER
@@ -105,6 +114,7 @@ internal class ChromePalette private constructor(
             return when {
                 page === PagePalette.NIGHT -> if (phone) NIGHT else EINK_NIGHT
                 page === PagePalette.MARU -> if (phone) MARU else EINK_MARU
+                page === PagePalette.BLACK -> if (phone) BLACK else EINK_BLACK
                 else -> if (phone) PAPER else EINK_PAPER
             }
         }

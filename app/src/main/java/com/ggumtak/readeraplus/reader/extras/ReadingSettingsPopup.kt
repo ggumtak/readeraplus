@@ -22,6 +22,7 @@ import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.FontManager
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.SideMargin
@@ -46,7 +47,8 @@ import java.lang.ref.WeakReference
  * lower part of the page stays visible. Black on white, no animations, no scrolling, nothing that expands:
  *
  * 전체 읽기 설정 › · [닫기] / 글자 크기 / 굵기 / 줄 간격 / 문단 간격 / 좌우 여백 / 상하 여백 (− value +, 48 dp buttons
- * on 48 dp rows) / 글꼴 (drop-down list) ([QUICK_HEIGHT_DP][PopupGeometry.QUICK_HEIGHT_DP] = 384 dp).
+ * on 48 dp rows) / 글꼴 (drop-down list) / 배경 (흰색 · 회색 · 검은색, [PageTheme]; picking one turns 흑백 반전 off)
+ * ([QUICK_HEIGHT_DP][PopupGeometry.QUICK_HEIGHT_DP] = 432 dp).
  *
  * Everything else (styles, the other spacings, page breaks, status bands, page turning, keys, the TXT and EPUB
  * options) lives in 설정 → 읽기 설정 ([SettingsActivity.PAGE_READING]), which "전체 읽기 설정" opens; these seven rows
@@ -178,6 +180,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             vertical = to
         })
         root.addView(fontRow())
+        root.addView(themeRow())
         return root
     }
 
@@ -232,6 +235,43 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         return row
     }
 
+    /**
+     * 배경: 흰색 · 회색 · 검은색 ([PageTheme.PAPER] · [PageTheme.MARU] · [PageTheme.BLACK]), the chosen one framed.
+     * Applied at once (a repaint, never a relayout) with 흑백 반전 off, so the pick is what the page shows; while 흑백
+     * 반전 is on none is framed.
+     */
+    private fun themeRow(): LinearLayout {
+        val row = ctx.compactRow()
+        row.addView(ctx.compactLabelBlock("배경"), lp(0, WRAP_CONTENT, 1f))
+        val views = ArrayList<TextView>(THEMES.size)
+        fun refresh() {
+            for ((i, v) in views.withIndex()) {
+                val on = !cur.invert && cur.pageTheme == THEMES[i].first
+                v.background = if (on) ctx.borderBox(strokeDp = 2f) else pressableBackground()
+                v.setTypeface(null, if (on) Typeface.BOLD else Typeface.NORMAL)
+                v.isSelected = on
+            }
+        }
+        for ((theme, name) in THEMES) {
+            val v = ctx.label(name, Compact.VALUE_SP, maxLines = 1).apply {
+                gravity = Gravity.CENTER
+                contentDescription = "배경 $name"
+                setOnClickListener {
+                    if (!cur.invert && cur.pageTheme == theme) return@setOnClickListener
+                    // A pending stepper change first, then the colour on the saved settings (one repaint).
+                    flush()
+                    cur = cur.copy(pageTheme = theme, invert = false)
+                    host.applySettings(Settings.reader.copy(pageTheme = theme, invert = false))
+                    refresh()
+                }
+            }
+            views += v
+            row.addView(v, LinearLayout.LayoutParams(ctx.dp(THEME_DP), ctx.dp(THEME_H_DP)).apply { leftMargin = ctx.dp(4) })
+        }
+        refresh()
+        return row
+    }
+
     // ------------------------------------------------------------------ rows
 
     /** Label left, "−  value  +" right (48 dp buttons, "<title> 줄이기" / "<title> 늘리기") on the same row. */
@@ -280,6 +320,12 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
     companion object {
         private const val DEBOUNCE_MS = 250L
+        /** The 배경 row's choices, in its order, with the words the user asked for (2026-10-05). */
+        val THEMES: List<Pair<PageTheme, String>> =
+            listOf(PageTheme.PAPER to "흰색", PageTheme.MARU to "회색", PageTheme.BLACK to "검은색")
+        /** A 배경 choice: 64 dp wide ("검은색" at 17 sp fits), 40 dp tall inside the 48 dp row. */
+        private const val THEME_DP = 64
+        private const val THEME_H_DP = 40
         const val ALL_SETTINGS = "전체 읽기 설정"
         /** Weak: a popup left open when the reader is destroyed must not pin the activity. */
         private var current: WeakReference<ReadingSettingsPopup>? = null
