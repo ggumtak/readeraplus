@@ -207,6 +207,23 @@ class StatusModelTest {
     }
 
     @Test
+    fun theHeaderStartsBelowACutoutBand() {
+        // S25 fullscreen: the geometry's 87 px camera band goes with the decor, so the header draws under it.
+        val m = StatusModel()
+        val inp = inputs()
+        val s = ReaderSettings()
+        m.update(s, inp, track)
+        assertEquals(0, m.decor.top)
+        val v = m.decor.version
+        assertTrue(m.update(s, inp, track, top = 87))
+        assertEquals(87, m.decor.top)
+        assertEquals(v + 1, m.decor.version)
+        assertFalse(m.update(s, inp, track, top = 87))
+        assertTrue(m.update(s, inp, track, top = 0))
+        assertEquals(0, m.decor.top)
+    }
+
+    @Test
     fun slotChangesBetweenItemsAreChanges() {
         val m = StatusModel()
         val inp = inputs()

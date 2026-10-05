@@ -8,6 +8,7 @@ import com.ggumtak.readeraplus.format.epub.EpubPlanCache
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.render.FontMath
 import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.StatusBands
 import java.security.MessageDigest
 
 /** Placement of the page content box inside the page view (px). */
@@ -20,7 +21,8 @@ data class PageGeometry(
     val contentHeight: Int,
     /**
      * Px at the view's top that a display cutout covers ([LayoutKeys.geometry]'s extraTop; the S25's camera band in
-     * fullscreen), 0 without one. Only the live page draws there (its header): a thumbnail leaves it out.
+     * fullscreen), 0 without one. The header's band starts below it; only paper (and a bookmark ribbon) is drawn there,
+     * and a thumbnail leaves it out.
      */
     val cutoutTop: Int = 0,
 )
@@ -54,17 +56,21 @@ object LayoutKeys {
     const val TINY_MARGIN_DP = 4
 
     /**
-     * The content box of a [viewW] × [viewH] page view. [extraTop]: px at the view's top that a display cutout covers
-     * (fullscreen, system bars hidden: the S25's camera band). The view reaches into that band so the header can hug the
-     * screen's top edge like MaruViewer's status line; the text box starts below it, so it keeps the place and size (and
-     * the pagination) it had when the view was laid out below the cutout. 0 elsewhere (the Comet has no cutout).
+     * The content box of a [viewW] × [viewH] page view. From the top: [extraTop], px that a display cutout covers
+     * (fullscreen, system bars hidden: the S25's camera band; 0 elsewhere, the Comet has none), left out like a system
+     * bar; the header's band ([StatusBands]); the top margin; the text box; the bottom margin; the footer's band (footer
+     * items and the progress line) at the view's bottom. The 위·아래 여백 count from the bands since 2026-10-05 (user: "위
+     * 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지"); band + margin is rounded once, so the default box is
+     * exactly where 40 dp from the edges put it before (Comet rows 80..1360, S25 fullscreen 207..2220 below its 87 px
+     * band). Only settings decide the bands: nothing shown or hidden on the page moves the box.
      */
     fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, extraTop: Int = 0): PageGeometry {
-        fun px(dp: Int): Int = Math.round((if (s.pageMargins) dp else TINY_MARGIN_DP) * density)
-        val ml = px(s.marginLeftDp.coerceAtLeast(0))
-        val mr = px(s.marginRightDp.coerceAtLeast(0))
-        val mt = px(s.marginTopDp.coerceAtLeast(0))
-        val mb = px(s.marginBottomDp.coerceAtLeast(0))
+        fun px(dp: Int): Int = Math.round(dp * density)
+        fun margin(dp: Int): Int = if (s.pageMargins) dp.coerceAtLeast(0) else TINY_MARGIN_DP
+        val ml = px(margin(s.marginLeftDp))
+        val mr = px(margin(s.marginRightDp))
+        val mt = px(StatusBands.headerDp(s) + margin(s.marginTopDp))
+        val mb = px(StatusBands.footerDp(s) + margin(s.marginBottomDp))
         val minBox = Math.round(48 * density).coerceAtLeast(16)
         var w = viewW - ml - mr
         var left = ml
@@ -110,7 +116,10 @@ object LayoutKeys {
         return (perLine * lines * 0.75f).toInt().coerceAtLeast(20)
     }
 
-    /** Settings with every field that does NOT change the layout normalised away. */
+    /**
+     * Settings with every field that does NOT change the layout normalised away. The status slots, the progress line and
+     * the status size count only through the bands they make ([bandsChanged]; the key through the box they leave).
+     */
     private fun layoutPart(s: ReaderSettings): ReaderSettings = s.copy(
         invert = false,
         pageTheme = DEFAULTS.pageTheme,
@@ -138,12 +147,20 @@ object LayoutKeys {
         )
     }
 
-    /** True when going from [a] to [b] requires a new layout (anything but colours / footer items). */
-    fun layoutChanged(a: ReaderSettings, b: ReaderSettings): Boolean = layoutPart(a) != layoutPart(b)
+    /**
+     * True when going from [a] to [b] requires a new layout: anything but colours and which item a status slot shows. A
+     * status band that comes, goes or changes its height (all slots of a band none ↔ some item, the progress line, the
+     * status size of a band with items) moves the text box ([bandsChanged]); one item for another does not.
+     */
+    fun layoutChanged(a: ReaderSettings, b: ReaderSettings): Boolean = layoutPart(a) != layoutPart(b) || bandsChanged(a, b)
 
     /** [layoutChanged] for a book of [format]: options of the other format never force a re-layout. */
     fun layoutChanged(a: ReaderSettings, b: ReaderSettings, format: BookFormat): Boolean =
-        layoutPart(a, format) != layoutPart(b, format)
+        layoutPart(a, format) != layoutPart(b, format) || bandsChanged(a, b)
+
+    /** True when the status bands of [a] and [b] differ in height ([StatusBands]), so their text boxes do too. */
+    fun bandsChanged(a: ReaderSettings, b: ReaderSettings): Boolean =
+        StatusBands.headerDp(a) != StatusBands.headerDp(b) || StatusBands.footerDp(a) != StatusBands.footerDp(b)
 
     /** True when the document must be re-parsed. */
     fun parseChanged(a: ReaderSettings, b: ReaderSettings, encoding: String): Boolean =

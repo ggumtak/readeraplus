@@ -128,8 +128,8 @@ internal object QuoteHighlights {
 
 /**
  * Where the page content box sits in the page view when [OriginCalibrator] cannot tell (A §2.5): the reader's own
- * [PageGeometry] — the margins only; the status bands are drawn inside the margins and never move the box, so there
- * is no header term. The same in paged and scroll mode (the virtual page is re-based to the content box).
+ * [PageGeometry], which already holds the header's band (from the settings, since 2026-10-05), so there is no separate
+ * header term. The same in paged and scroll mode (the virtual page is re-based to the content box).
  */
 internal object SelectionOrigin {
     fun fallbackX(g: PageGeometry, paddingLeft: Int): Float = (paddingLeft + g.contentLeft).toFloat()

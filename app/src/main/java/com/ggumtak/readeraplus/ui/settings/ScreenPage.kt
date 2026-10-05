@@ -8,7 +8,6 @@ import android.net.Uri
 import android.view.View
 import android.widget.LinearLayout
 import com.ggumtak.readeraplus.reader.DeviceLight
-import com.ggumtak.readeraplus.reader.ReaderWindow
 import com.ggumtak.readeraplus.reader.extras.Fmt
 import com.ggumtak.readeraplus.reader.extras.QuoteSwatch
 import com.ggumtak.readeraplus.reader.extras.StatusUi
@@ -37,7 +36,8 @@ import android.provider.Settings as SystemSettings
  * 상태 글자 크기 with the bottom band; UI_SPEC §5.5, anchor §2.7), 화면 (전체 화면, 화면 켜짐 유지, 화면 방향, 인용문 색
  * 표시 with its swatches; NOTES §11) and 밝기 (UI_SPEC §4.6, brightness.md §5.6: 스와이프로
  * 밝기 조절, 기기 밝기 직접 조절 and its permission flow, 나갈 때 원래 밝기로, 밝기 방식 다시 묻기, the device's own
- * light settings). The status bands are repainted only (they live in the margins), so nothing here re-lays the page.
+ * light settings). The status bands have their own places (`StatusBands`): another item in a slot only repaints the
+ * page; a band that comes, goes or changes height (진행 막대, 상태 글자 크기) re-lays it at the same first character.
  */
 internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_SCREEN, "화면·밝기") {
     /** The reading settings the status rows show (읽기 설정's margins or a reset rebuild the page in [onShown]). */
@@ -45,7 +45,6 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
     /** The six slot rows, index band * 3 + pos. */
     private val slotRows = arrayOfNulls<View>(6)
     private var statusSizeRow: View? = null
-    private var fitWarning: View? = null
 
     private var swatches: LinearLayout? = null
     private var swatchInk: Boolean? = null
@@ -121,7 +120,6 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
             updateStatusUi()
         }.liveStepperValue().also(body::addView)
         body.addView(ctx.note(R3Rows.STATUS_NOTE))
-        fitWarning = ctx.warning(R3Rows.FIT_NOTE).also(body::addView)
         updateStatusUi()
     }
 
@@ -137,23 +135,16 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         }.also(body::addView)
     }
 
-    /** The size row shows while a band has text; the warning while a band with items has no room in its margin. */
+    /** The size row shows while a band has text. */
     private fun updateStatusUi() {
-        val r = Settings.reader
-        statusSizeRow?.setShown(R3Rows.hasStatusText(r))
-        // In fullscreen the header also has the camera band the reader last laid out (S25; 0 on the Comet).
-        val cutout = if (Settings.app.fullscreen) ReaderWindow.lastCutoutTopDp else 0
-        fitWarning?.setShown(!R3Rows.statusFits(r, cutout))
+        statusSizeRow?.setShown(R3Rows.hasStatusText(Settings.reader))
     }
 
     // ---------------------------------------------------------------- 화면
 
     private fun addScreen(body: LinearLayout, app: AppSettings) {
         body.section("화면")
-        body.addView(ctx.toggleRow("전체 화면", "시계 줄과 아래 버튼 줄 숨김", app.fullscreen) { v ->
-            editApp { it.copy(fullscreen = v) }
-            updateStatusUi()
-        })
+        body.addView(ctx.toggleRow("전체 화면", "시계 줄과 아래 버튼 줄 숨김", app.fullscreen) { v -> editApp { it.copy(fullscreen = v) } })
         body.addView(ctx.toggleRow("화면 켜짐 유지", "기기 설정보다 10분 더 켜 둡니다", app.keepScreenOn) { v ->
             editApp { it.copy(keepScreenOn = v) }
         })

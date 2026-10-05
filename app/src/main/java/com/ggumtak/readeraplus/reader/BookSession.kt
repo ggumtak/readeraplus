@@ -206,7 +206,8 @@ class BookSession(
     }
 
     /**
-     * Applies new settings: RELAYOUT when layout-affecting fields changed, REPAINT for colours/footer only, NONE when
+     * Applies new settings: RELAYOUT when layout-affecting fields changed (a status band that comes, goes or changes
+     * height too: [LayoutKeys.layoutChanged]), REPAINT for colours / which item a status slot shows, NONE when
      * the page looks the same (also a 화면 색 that 흑백 반전 hides: [PagePalette.drawSame]).
      */
     fun updateSettings(new: ReaderSettings, anchor: AnchorSpec? = null): Change {

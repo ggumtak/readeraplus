@@ -101,8 +101,8 @@ internal object ReaderWindow {
     /**
      * Insets to keep the page and chrome clear of: cutouts always, system bars only when they are shown, as
      * [left, top, right, bottom, cutoutTop]. cutoutTop is the part of top that only a display cutout takes (no system
-     * bar shown there: fullscreen on the S25); the page view reaches into it for its header (`applyPageInsets`), the
-     * chrome does not. API 30+: [WindowInsets.getInsets] only reports *visible* bars (hidden and swipe-revealed
+     * bar shown there: fullscreen on the S25); the page view reaches into it with its paper, its header and text start
+     * below it (`applyPageInsets`), the chrome does not. API 30+: [WindowInsets.getInsets] only reports *visible* bars (hidden and swipe-revealed
      * transient bars count as 0), so asking for system bars even in fullscreen costs nothing, and keeps the page clear
      * of a navigation bar that a vendor firmware refuses to hide (the Comet cut-off-bottom-bar problem).
      */
@@ -137,17 +137,12 @@ internal object ReaderWindow {
 
     /** Size of [insetsOf]'s array. */
     const val INSETS = 5
-
-    /**
-     * The cutout band (dp) the reader last laid its page out with (0 when the system bars show or there is no cutout):
-     * the settings screen's status fit estimate counts it (`StatusFit.headerFitsDp`). Main thread; this process only.
-     */
-    @JvmStatic var lastCutoutTopDp = 0
 }
 
 /**
  * How [ReaderWindow.insetsOf] splits a top inset (pure, unit-tested): the part only a display cutout takes, which the
- * page view reaches into for its header (fullscreen on the S25: the camera band), and the margin the page view keeps.
+ * page view reaches into with its paper while the header and the text start below it (fullscreen on the S25: the camera
+ * band, `LayoutKeys.geometry`'s extraTop), and the margin the page view keeps.
  */
 internal object InsetSplit {
     /**

@@ -390,7 +390,7 @@ class PageThumbs(
             val g = t.gen.geometry
             val viewW = g.viewWidth
             val viewH = g.viewHeight
-            // The page below the camera band (fullscreen S25): the band holds only the header, never drawn here.
+            // The page below the camera band (fullscreen S25): the band holds only paper, left out here.
             val band = g.cutoutTop.coerceIn(0, maxOf(0, viewH - 1))
             val shownH = viewH - band
             if (viewW <= 0 || shownH <= 0) return null
@@ -410,7 +410,7 @@ class PageThumbs(
             val decor = PageDecor(t.highlights, bookmarked = false, status = null)
             val cl = g.contentLeft.toFloat()
             val ct = g.contentTop.toFloat()
-            r.drawChrome(c, decor, cl, ct, g.contentWidth.toFloat(), g.contentHeight.toFloat(), viewW, viewH)
+            r.drawChrome(c, decor, cl, ct, g.contentWidth.toFloat(), viewW, viewH)
             r.drawBody(c, t.layout, t.key.pageIndex, cl, ct, 0f, viewH.toFloat(), t.highlights)
             c.restoreToCount(save)
             c.setBitmap(null)

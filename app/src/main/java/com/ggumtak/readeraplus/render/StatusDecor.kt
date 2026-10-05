@@ -48,6 +48,8 @@ class StatusBand {
 class StatusDecor {
     @JvmField val header = StatusBand()
     @JvmField val footer = StatusBand()
+    /** Px of the page view's top above the header's band: a display cutout's (`PageGeometry.cutoutTop`), else 0. */
+    @JvmField var top = 0
     @JvmField var lane = false
     @JvmField var progress = -1f
     @JvmField var version = 0

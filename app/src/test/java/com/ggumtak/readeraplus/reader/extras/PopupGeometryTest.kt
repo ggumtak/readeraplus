@@ -111,31 +111,32 @@ class PopupGeometryTest {
         assertEquals(SideMargin.toDp(-10), side.marginRightDp)
         val vertical = QuickFields.withVertical(off, 6)
         assertTrue(vertical.pageMargins)
-        assertEquals(VerticalMargin.toDp(6), vertical.marginTopDp)
-        assertEquals(VerticalMargin.toDp(6), vertical.marginBottomDp)
-        // "0" is the default margin, the same value 읽기 설정 shows.
+        assertEquals(VerticalMargin.topDp(6), vertical.marginTopDp)
+        assertEquals(VerticalMargin.bottomDp(6), vertical.marginBottomDp)
+        // "0" is the default margin, the same value 읽기 설정 shows (top and bottom: each its own).
         assertEquals(ReaderSettings().marginLeftDp, QuickFields.withSide(off, 0).marginLeftDp)
         assertEquals(ReaderSettings().marginTopDp, QuickFields.withVertical(off, 0).marginTopDp)
+        assertEquals(ReaderSettings().marginBottomDp, QuickFields.withVertical(off, 0).marginBottomDp)
         // On, a step changes its own axis only.
         val on = ReaderSettings(marginLeftDp = 30, marginRightDp = 30, marginTopDp = 50, marginBottomDp = 50)
         assertEquals(listOf(SideMargin.toDp(4), SideMargin.toDp(4), 50, 50), QuickFields.withSide(on, 4).let {
             listOf(it.marginLeftDp, it.marginRightDp, it.marginTopDp, it.marginBottomDp)
         })
-        assertEquals(listOf(30, 30, VerticalMargin.toDp(-4), VerticalMargin.toDp(-4)), QuickFields.withVertical(on, -4).let {
+        assertEquals(listOf(30, 30, VerticalMargin.topDp(-4), VerticalMargin.bottomDp(-4)), QuickFields.withVertical(on, -4).let {
             listOf(it.marginLeftDp, it.marginRightDp, it.marginTopDp, it.marginBottomDp)
         })
     }
 
     @Test
     fun whileTheMarginsAreOffTheSteppersStartFromTheMarginThePageHas() {
-        // The defaults stored (20/20/40/40), 여백 사용 off: the page has the minimal 4 dp margins, and the steppers show
-        // that ("−16", "−36"), not the stored "0".
+        // The defaults stored (20/20/18/24), 여백 사용 off: the page has the minimal 4 dp margins, and the steppers show
+        // that ("−16"; "−14" from the top's 18 dp), not the stored "0".
         val tiny = com.ggumtak.readeraplus.reader.LayoutKeys.TINY_MARGIN_DP
         val off = ReaderSettings(pageMargins = false)
         assertEquals(SideMargin.toUi(tiny), QuickFields.sideUi(off))
         assertEquals(-16, QuickFields.sideUi(off))
-        assertEquals(VerticalMargin.toUi(tiny), QuickFields.verticalUi(off))
-        assertEquals(-36, QuickFields.verticalUi(off))
+        assertEquals(VerticalMargin.toUi(tiny, tiny), QuickFields.verticalUi(off))
+        assertEquals(-14, QuickFields.verticalUi(off))
         assertEquals(0, QuickFields.sideUi(off.copy(pageMargins = true)))
         assertEquals(0, QuickFields.verticalUi(off.copy(pageMargins = true)))
         // "좌우 여백 줄이기": the sides narrow by one step from 4 dp, and top / bottom stay at the 4 dp they had.
@@ -145,11 +146,12 @@ class PopupGeometryTest {
         assertEquals(tiny - SideMargin.UI_STEP, narrower.marginRightDp)
         assertEquals(tiny, narrower.marginTopDp)
         assertEquals(tiny, narrower.marginBottomDp)
-        // "상하 여백 늘리기": the same from the other axis; the sides keep their 4 dp.
+        // "상하 여백 늘리기": the same from the other axis (the top one step up from 4 dp, the bottom its own "0" − 12); the
+        // sides keep their 4 dp.
         val taller = QuickFields.withVertical(off, QuickFields.verticalUi(off) + VerticalMargin.UI_STEP)
         assertTrue(taller.pageMargins)
         assertEquals(tiny + VerticalMargin.UI_STEP, taller.marginTopDp)
-        assertEquals(tiny + VerticalMargin.UI_STEP, taller.marginBottomDp)
+        assertEquals(VerticalMargin.bottomDp(-12), taller.marginBottomDp)
         assertEquals(tiny, taller.marginLeftDp)
         assertEquals(tiny, taller.marginRightDp)
     }
@@ -208,11 +210,14 @@ class PopupGeometryTest {
             assertEquals(SideMargin.label(ui), Fmt.signed(ui))
             assertEquals(VerticalMargin.label(ui), Fmt.signed(ui))
         }
-        // "0" = 20 dp at the sides (MaruViewer), 40 dp at top and bottom; the defaults show "0".
-        assertEquals("0", Fmt.signed(SideMargin.toUi(ReaderSettings().marginLeftDp)))
-        assertEquals("0", Fmt.signed(VerticalMargin.toUi(ReaderSettings().marginTopDp)))
+        for (ui in VerticalMargin.UI_MIN..VerticalMargin.UI_MAX step VerticalMargin.UI_STEP)
+            assertEquals(VerticalMargin.label(ui), Fmt.signed(ui))
+        // "0" = 20 dp at the sides (MaruViewer), 18 / 24 dp at top and bottom (from the status bands); the defaults show "0".
+        val d = ReaderSettings()
+        assertEquals("0", Fmt.signed(SideMargin.toUi(d.marginLeftDp)))
+        assertEquals("0", Fmt.signed(VerticalMargin.toUi(d.marginTopDp, d.marginBottomDp)))
         assertEquals("+10", Fmt.signed(SideMargin.toUi(30)))
-        assertEquals("−10", Fmt.signed(VerticalMargin.toUi(30)))
+        assertEquals("−10", Fmt.signed(VerticalMargin.toUi(8, 14)))
     }
 
     // ------------------------------------------------------------------ 상태 표시
@@ -235,33 +240,9 @@ class PopupGeometryTest {
     }
 
     @Test
-    fun fitNoteWhenAMarginIsTooSmall() {
-        val d = ReaderSettings()
-        assertFalse(StatusUi.showsFitNote(d))
-        // Header in a 4 dp top margin.
-        assertTrue(StatusUi.showsFitNote(d.copy(marginTopDp = 4, marginBottomDp = 4)))
-        // "페이지 여백" off = 4 dp margins.
-        assertTrue(StatusUi.showsFitNote(d.copy(pageMargins = false)))
-        // The header hugs the top edge: 4 dp of edge, the smallest glyphs (7 sp), 2 dp above the text. 18 dp holds it,
-        // 16 dp does not.
-        assertFalse(StatusUi.showsFitNote(d.copy(marginTopDp = 18)))
-        assertTrue(StatusUi.showsFitNote(d.copy(marginTopDp = 16)))
-        // In the S25's camera band (fullscreen) the header has room above a small margin: no false note.
-        assertFalse(StatusUi.showsFitNote(d.copy(marginTopDp = 16), cutoutDp = 37))
-        // No band with items: never a note.
-        val none = d.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
-        assertFalse(StatusUi.showsFitNote(none.copy(pageMargins = false)))
-        // Footer text above the 12 dp progress lane: 20 dp fits without the line, not with it.
-        val footer = none.withSlot(1, 1, StatusItem.PAGE).copy(marginBottomDp = 20)
-        assertTrue(StatusUi.showsFitNote(footer.copy(progressBar = true)))
-        assertFalse(StatusUi.showsFitNote(footer.copy(progressBar = false)))
-    }
-
-    @Test
     fun widowSummaryFollowsPageBreak() {
         assertEquals("한 쪽보다 긴 문단에만", StatusUi.widowSummary(PageBreakMode.PARAGRAPH))
         assertEquals("문단 첫 줄 · 끝 줄이 홀로 남지 않게", StatusUi.widowSummary(PageBreakMode.LINE))
-        assertEquals("상하 여백이 좁아 상태 표시줄이 가려집니다. 읽기 설정에서 ‘상하 여백’을 늘리세요.", StatusUi.FIT_NOTE)
         assertEquals("화면 맨 아래 가는 선", StatusUi.PROGRESS_SUMMARY)
     }
 }

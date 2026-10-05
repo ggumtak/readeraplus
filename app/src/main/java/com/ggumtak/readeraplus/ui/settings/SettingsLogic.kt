@@ -10,7 +10,6 @@ import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.reader.LightPolicy
 import com.ggumtak.readeraplus.reader.VolumeMode
 import com.ggumtak.readeraplus.render.DeviceCleanInfo
-import com.ggumtak.readeraplus.render.StatusFit
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_MODE_FAST
 import com.ggumtak.readeraplus.settings.EINK_MODE_HD
@@ -405,7 +404,8 @@ object R3Rows {
 
     // ---- 페이지 표시 (scroll SPEC §2.4, anchor §3.3 / §4.4)
 
-    const val MARGIN_NOTE = "0이 기본 여백입니다. 상태 표시줄은 상하 여백 안에 나옵니다."
+    /** Under the margin steppers: the 위·아래 여백 count from the status bands (2026-10-05, `StatusBands`). */
+    const val MARGIN_NOTE = "0이 기본 여백입니다. 상하 여백은 상태 표시줄과 본문 사이입니다."
 
     val PAGE_BREAKS: List<PageBreakMode> = listOf(PageBreakMode.LINE, PageBreakMode.PARAGRAPH)
 
@@ -430,11 +430,6 @@ object R3Rows {
     const val STATUS_NOTE = "모두 ‘없음’인 줄은 숨깁니다."
     /** 진행 막대's summary: the quick status panel's wording, one copy. */
     const val PROGRESS_SUMMARY = StatusUi.PROGRESS_SUMMARY
-    /** The warning while a band has no room in its margin: the quick status panel's wording, one copy. */
-    const val FIT_NOTE = StatusUi.FIT_NOTE
-
-    /** Margin used for the bands while "페이지 여백" is off (anchor §2.7). */
-    const val NO_MARGIN_DP = 4
 
     /**
      * A slot chooser's title: "위 왼쪽" … "아래 오른쪽" ([band] 0 = top, [pos] 0..2 = left, centre, right), as the quick
@@ -450,19 +445,6 @@ object R3Rows {
 
     /** "상태 글자 크기" matters only while a band shows text. */
     fun hasStatusText(r: ReaderSettings): Boolean = r.hasHeader || r.hasFooterText
-
-    /**
-     * False when a band with items has no room in its margin (anchor §2.7: the warning shows; nothing is disabled).
-     * [cutoutDp]: the camera band above the top margin that the header also uses (fullscreen S25), see
-     * [StatusFit.headerFitsDp].
-     */
-    fun statusFits(r: ReaderSettings, cutoutDp: Int = 0): Boolean {
-        val top = if (r.pageMargins) r.marginTopDp else NO_MARGIN_DP
-        val bottom = if (r.pageMargins) r.marginBottomDp else NO_MARGIN_DP
-        if (r.hasHeader && !StatusFit.headerFitsDp(r.statusFontSizeSp, top, cutoutDp)) return false
-        if (r.hasFooterText && !StatusFit.footerFitsDp(r.statusFontSizeSp, bottom, r.progressBar)) return false
-        return true
-    }
 
     // ---- brightness (UI_SPEC §4.4 / §4.6, brightness.md §5.2)
 

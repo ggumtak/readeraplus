@@ -156,14 +156,14 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
             val dp = SideMargin.toDp(v.toInt())
             edit { it.copy(marginLeftDp = dp, marginRightDp = dp) }
         }
+        // Top and bottom from the status bands, each "0" its own default (18 / 24 dp): one value moves both.
         val vertical = stepper(
             "상하 여백",
-            VerticalMargin.toUi(r.marginTopDp).coerceIn(VerticalMargin.UI_MIN, VerticalMargin.UI_MAX).toFloat(),
+            VerticalMargin.toUi(r.marginTopDp, r.marginBottomDp).toFloat(),
             VerticalMargin.UI_MIN.toFloat(), VerticalMargin.UI_MAX.toFloat(), VerticalMargin.UI_STEP.toFloat(),
             { VerticalMargin.label(it.toInt()) },
         ) { v ->
-            val dp = VerticalMargin.toDp(v.toInt())
-            edit { it.copy(marginTopDp = dp, marginBottomDp = dp) }
+            edit { it.copy(marginTopDp = VerticalMargin.topDp(v.toInt()), marginBottomDp = VerticalMargin.bottomDp(v.toInt())) }
         }
         val note = ctx.note(R3Rows.MARGIN_NOTE)
         marginViews = arrayOf(side, vertical, note)

@@ -424,7 +424,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         val r = renderer ?: return false
         val g = geometry ?: return false
         val cl = g.contentLeft.toFloat(); val ct = g.contentTop.toFloat(); val cw = g.contentWidth.toFloat()
-        r.drawChrome(canvas, decor, cl, ct, cw, this.height, width, height)
+        r.drawChrome(canvas, decor, cl, ct, cw, width, height)
         val bottom = ct + clip
         val save = canvas.save(); canvas.clipRect(0f, ct, width.toFloat(), bottom)
         var missing = false

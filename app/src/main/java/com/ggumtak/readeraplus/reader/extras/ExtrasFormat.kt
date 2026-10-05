@@ -4,7 +4,6 @@ import com.ggumtak.readeraplus.data.TxtOverride
 import com.ggumtak.readeraplus.engine.PageBreakMode
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.ReaderFormat
-import com.ggumtak.readeraplus.render.StatusFit
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.settings.StylePreset
@@ -415,14 +414,12 @@ internal object PopupGeometry {
 }
 
 /**
- * "상태 표시" wording (U §5.5, A §2.7): slot wording, which rows show, the fit note and 외톨이 줄 방지's summary (읽기
- * 설정). A status change only repaints the page (the bands live in the margins), so none of this touches the layout.
+ * "상태 표시" wording (U §5.5, A §2.7): slot wording, which rows show and 외톨이 줄 방지's summary (읽기 설정). The bands
+ * have their own places since 2026-10-05 (`StatusBands`): a band that comes or goes re-lays the page at the same first
+ * character, and no margin hides one any more, so there is no fit note.
  */
 internal object StatusUi {
-    const val FIT_NOTE = "상하 여백이 좁아 상태 표시줄이 가려집니다. 읽기 설정에서 ‘상하 여백’을 늘리세요."
     const val PROGRESS_SUMMARY = "화면 맨 아래 가는 선"
-    /** Margin of a page whose "페이지 여백" switch is off (LayoutKeys.TINY_MARGIN_DP). */
-    const val TINY_MARGIN_DP = 4
 
     /** "위" / "아래". */
     fun bandWord(band: Int): String = if (band == 0) "위" else "아래"
@@ -439,19 +436,6 @@ internal object StatusUi {
 
     /** "상태 글자 크기" shows only while some band has text. */
     fun showsSize(s: ReaderSettings): Boolean = s.hasHeader || s.hasFooterText
-
-    /**
-     * The [FIT_NOTE] warning: a band with items whose margin is too small to draw it. Nothing is disabled. [cutoutDp]:
-     * the camera band above the top margin that the header also uses ([StatusFit.headerFitsDp]).
-     */
-    fun showsFitNote(s: ReaderSettings, cutoutDp: Int = 0): Boolean {
-        val top = if (s.pageMargins) s.marginTopDp else TINY_MARGIN_DP
-        val bottom = if (s.pageMargins) s.marginBottomDp else TINY_MARGIN_DP
-        val headerHidden = s.hasHeader && !StatusFit.headerFitsDp(s.statusFontSizeSp, top, cutoutDp)
-        val footerHidden = s.hasFooterText &&
-            !StatusFit.footerFitsDp(s.statusFontSizeSp, bottom, s.progressBar)
-        return headerHidden || footerHidden
-    }
 
     /** "외톨이 줄 방지" summary: in 문단 단위 only paragraphs taller than a page are split. */
     fun widowSummary(mode: PageBreakMode): String =

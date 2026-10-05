@@ -9,11 +9,18 @@ This is an intermediate contract commit: named stubs are replaced in W1, then W2
 - Pure Kotlin engine, platform Android View UI, no AndroidX or new library dependency.
 - Page commands replace the viewport immediately on every device and in every mode. No fade, slide, curl or
   `startScroll` interpolation for taps, page keys or auto paging. Live finger scrolling is a separate gesture.
-- `PageGeometry` is view minus margins only. Chrome, status, return chip and transient dialogs are overlays.
+- `PageGeometry` is view minus the status bands and the margins (since 2026-10-05; before, minus margins only). Chrome,
+  return chip and transient dialogs are overlays; the status bands are not: each has its own place at its screen edge.
 - Default margins are 40 dp (`0` in controls). Marked deliberate 18/16 dp values stay unchanged. Since 2026-10-05 the
-  side margins' `0` is MaruViewer's 20 dp (`SideMargin.ZERO_DP`; untouched R3 40/40 and R2 18/18 become 20/20 once);
-  top/bottom stay 40 dp. The status bands hug the screen edges (`StatusFit.headerBaseline` / `footerBaseline`), and in
-  fullscreen a cutout-only top inset goes into `LayoutKeys.geometry`'s `extraTop` instead of the page view's margin.
+  side margins' `0` is MaruViewer's 20 dp (`SideMargin.ZERO_DP`; untouched R3 40/40 and R2 18/18 become 20/20 once).
+  Since 2026-10-05 (user: "위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지") top/bottom count from the
+  status bands (`StatusBands`, whole dp from the settings only: header 22 dp, progress line 16 dp at the defaults), and
+  their `0` is each side's default, 18 / 24 dp, so the default text box is where 40 dp from the edge put it (Comet
+  80..1360). Values saved from the edge (`r.marginBaseV` 40 or none) move once by their own bands; new saves write
+  `VerticalMargin.BANDS`. This replaces "the text box never makes room for the status bands" and the '가려짐' fit note.
+  The bands hug the screen edges (`StatusFit.headerBaseline` / `footerBaseline`), and in fullscreen a cutout-only top
+  inset goes into `LayoutKeys.geometry`'s `extraTop` instead of the page view's margin: left out like a system bar, the
+  header's band starts below it (S25: text box 207..2220, as before).
 - No probe, database write, counting, backfill, brightness-device initialization or auto-backup before the first page.
 - Main thread owns Views, `BookSession` state, scroll positions and decor. Its IO and layout work are dispatched.
 - Engine/math/migration/export helpers are pure; database APIs and `DeviceLight`/`LightProbe` IO are blocking off-main.
@@ -742,15 +749,29 @@ fun packedEnd(packed: Long): Int = (packed and 0xFFFFFFFFL).toInt()
 ### `render/StatusFit.kt` — E2
 
 ```kotlin
+// 2026-10-05: the bands' own places (px of settings/StatusBands' whole dp); size(), lane(), fitsDp() and the
+// '가려짐' note are gone: no margin hides or shrinks a band any more.
 internal object StatusFit
-const val PAD_DP = 2f
-const val MIN_SP = 7f
-const val LANE_DP = ReaderSettings.PROGRESS_LANE_DP * 1f
-const val LANE_MIN_DP = 6f
-const val GLYPH_EM = 1.45f
-fun size(wantPx: Float, roomPx: Float, glyphPerPx: Float, padPx: Float, minPx: Float): Float
-fun lane(marginPx: Float, density: Float): Float =
-fun fitsDp(statusSp: Float, marginDp: Int, laneDp: Float): Boolean =
+const val PAD_DP = StatusBands.PAD_DP           // 2
+const val LANE_DP = StatusBands.LANE_DP         // ReaderSettings.PROGRESS_LANE_DP
+const val EDGE_DP = StatusBands.EDGE_DP         // 4
+fun edgePx(density: Float): Int
+fun lanePx(density: Float): Int
+fun laneBottomPx(viewH: Int, density: Float): Int
+fun laneTopPx(density: Float): Int
+fun glyphPx(s: ReaderSettings, density: Float): Int
+fun headerBandPx(s: ReaderSettings, density: Float): Int
+fun footerBandPx(s: ReaderSettings, density: Float): Int
+fun headerBaseline(bandTop: Float, ascentPx: Float, descentPx: Float, glyphPx: Float, density: Float): Float
+fun footerBaseline(viewBottom: Float, lane: Boolean, ascentPx: Float, descentPx: Float, glyphPx: Float, density: Float): Float
+
+// settings/Margins.kt
+object StatusBands { EDGE_DP = 4; PAD_DP = 2; LANE_DP = 12; GLYPH_EM = 1.45
+    fun statusSp(s): Float; fun glyphDp(s): Int; fun headerDp(s): Int; fun footerDp(s): Int }
+object VerticalMargin { EDGE_DP = 40; TOP_ZERO_DP = 18; BOTTOM_ZERO_DP = 24; MAX_DP = 80; UI_MIN = -24; UI_MAX = 62
+    KEY = "r.marginBaseV"; BANDS = 2; EDGE = 40
+    fun topDp(ui): Int; fun bottomDp(ui): Int; fun toUi(top, bottom): Int; fun countsFromEdge(base: Int?): Boolean
+    fun fromEdge(s, top = true, bottom = true): ReaderSettings }
 ```
 
 
@@ -902,7 +923,7 @@ data class PageGeometry(
     val contentTop: Int,
     val contentWidth: Int,
     val contentHeight: Int,
-    val cutoutTop: Int = 0,                 // 2026-10-05: extraTop (camera band); thumbnails leave it out
+    val cutoutTop: Int = 0,                 // 2026-10-05: extraTop (camera band); the header's band starts below it
     )
 object LayoutKeys
 const val VERSION = 3
@@ -911,7 +932,8 @@ const val GOLDEN_HASH = "071717a86d158ac8"
 const val GOLDEN_HASH_PARAGRAPH = "TBD"
 const val TINY_MARGIN_DP = 4
 fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, extraTop: Int = 0): PageGeometry
-fun px(dp: Int): Int = Math.round((if (s.pageMargins) dp else TINY_MARGIN_DP) * density)
+// 2026-10-05: top = extraTop + px(StatusBands.headerDp(s) + margin), bottom = px(StatusBands.footerDp(s) + margin)
+fun px(dp: Int): Int = Math.round(dp * density)
 fun config(s: ReaderSettings, g: PageGeometry, txt: Boolean = false): LayoutConfig = LayoutConfig(
     width = g.contentWidth,
     height = g.contentHeight,
@@ -926,8 +948,9 @@ fun config(s: ReaderSettings, g: PageGeometry, txt: Boolean = false): LayoutConf
     pageBreak = s.pageBreak,
     )
 fun charsPerPageHint(c: LayoutConfig, emPx: Float): Int
-fun layoutChanged(a: ReaderSettings, b: ReaderSettings): Boolean = layoutPart(a) != layoutPart(b)
+fun layoutChanged(a: ReaderSettings, b: ReaderSettings): Boolean = layoutPart(a) != layoutPart(b) || bandsChanged(a, b)
 fun layoutChanged(a: ReaderSettings, b: ReaderSettings, format: BookFormat): Boolean =
+fun bandsChanged(a: ReaderSettings, b: ReaderSettings): Boolean  // 2026-10-05: StatusBands heights, not the raw slots
 fun parseChanged(a: ReaderSettings, b: ReaderSettings, encoding: String): Boolean =
 fun parseChanged(a: ReaderSettings, b: ReaderSettings, format: BookFormat, encoding: String): Boolean =
 fun parseOptionsFor(s: ReaderSettings, format: BookFormat, encoding: String): ParseOptions =

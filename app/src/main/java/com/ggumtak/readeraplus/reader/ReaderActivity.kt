@@ -2793,7 +2793,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
         }
         fillStatus(s, l, p, statusInputs, sample, all = false)
-        status.update(s.settings, statusInputs, statusTrackPx(s, l))
+        status.update(s.settings, statusInputs, statusTrackPx(s), s.generation?.geometry?.cutoutTop ?: 0)
         return PageDecor(hl ?: emptyList(), isBookmarked(l, p), status.decor, status.decor.version)
     }
 
@@ -2895,14 +2895,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         inp.tocCount = shown.size
     }
 
-    /** Pixels the progress dot travels (ProgressMath, the renderer's lane rule); 0 without a lane. */
-    private fun statusTrackPx(s: BookSession, l: SectionLayout): Int {
+    /** Pixels the progress dot travels (ProgressMath over the progress line's own lane); 0 without the line. */
+    private fun statusTrackPx(s: BookSession): Int {
         if (!s.settings.progressBar) return 0
         val g = s.generation?.geometry ?: return 0
         val density = resources.displayMetrics.density
-        val margin = (g.viewHeight - g.contentTop - l.config.height).toFloat()
-        val lane = StatusFit.lane(margin - StatusFit.edgeGapPx(margin, density), density)
-        return if (lane > 0f) ProgressMath.trackPx(g.viewWidth, lane, density) else 0
+        return ProgressMath.trackPx(g.viewWidth, StatusFit.lanePx(density).toFloat(), density)
     }
 
     override fun statusSample(item: StatusItem): String? {
@@ -3328,8 +3326,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /**
      * The page view's top/bottom margins: the system-bar insets, nothing else (U §2.6, C18). A top inset that only a
      * display cutout takes (fullscreen on the S25: no bar shown there) is no margin: the view reaches into the camera
-     * band so its header hugs the screen's top edge like MaruViewer's, and the session lays the text box out below the
-     * band ([pageCutoutTop], LayoutKeys.geometry), where and as large as it was: the same pages, the same first char.
+     * band (its paper and a bookmark ribbon go there), and the session lays the header's band and the text box out
+     * below the band ([pageCutoutTop], LayoutKeys.geometry), as when the view started below it: the camera band is left
+     * out like a system bar (user's screenshot, 2026-10-05).
      */
     private fun applyPageInsets() {
         val lp = page.layoutParams as? FrameLayout.LayoutParams ?: return
@@ -3338,7 +3337,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val b = insets[3]
         val bandMoved = cut != pageCutoutTop
         pageCutoutTop = cut
-        ReaderWindow.lastCutoutTopDp = Math.round(cut / resources.displayMetrics.density)
         if (lp.topMargin != t || lp.bottomMargin != b) {
             lp.topMargin = t
             lp.bottomMargin = b
@@ -4388,7 +4386,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (!::returnNav.isInitialized) return
         val chip = returnNav.chip
         val lp = chip.layoutParams as? FrameLayout.LayoutParams ?: return
-        var bottom = insets[3] + StatusFit.edgePx(resources.displayMetrics.density) + dp(ReaderSettings.PROGRESS_LANE_DP) + dp(4)
+        var bottom = insets[3] + StatusFit.laneTopPx(resources.displayMetrics.density) + dp(4)
         val bars = overlayBarsHeight()
         if (bars > 0) bottom = maxOf(bottom, bars + dp(6))
         val left = insets[0] + dp(8)

@@ -1,144 +1,133 @@
 package com.ggumtak.readeraplus.render
 
+import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.StatusBands
+import com.ggumtak.readeraplus.settings.StatusItem
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StatusFitTest {
-    private val d = 2f          // Comet density
-    private val pad = StatusFit.PAD_DP * d
-    private val min = StatusFit.MIN_SP * d
+    private val comet = 2f      // 720×1440, no cutout
+    private val s25 = 3f        // 1080×2340, 87 px camera band in fullscreen
+    private val d = ReaderSettings()
+    private val noHeader = d.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
+    private val footer = d.withSlot(1, 1, StatusItem.PAGE)
 
     @Test
-    fun defaultMarginsHoldEveryStatusSize() {
-        // 40 dp margins = 80 px. Header: all 80 px; status sizes 8..16 sp all fit unscaled.
-        for (sp in 8..16) {
-            val px = sp * d
-            assertEquals(px, StatusFit.size(px, 80f, 1.45f, pad, min), 0f)
+    fun bandsAreWholeDpFromTheSettingsAlone() {
+        // The defaults: MaruViewer's header at 11 sp (4 dp edge + 16 dp glyph box + 2 dp) and the progress line alone
+        // (4 dp edge + 12 dp lane).
+        assertEquals(16, StatusBands.glyphDp(d))
+        assertEquals(22, StatusBands.headerDp(d))
+        assertEquals(16, StatusBands.footerDp(d))
+        // Off: no header item; no footer item and no progress line.
+        assertEquals(0, StatusBands.headerDp(noHeader))
+        assertEquals(0, StatusBands.footerDp(d.copy(progressBar = false)))
+        // Footer items above the line (4 + 12 + 2 + 16 + 2) or on the edge gap (4 + 16 + 2).
+        assertEquals(36, StatusBands.footerDp(footer))
+        assertEquals(22, StatusBands.footerDp(footer.copy(progressBar = false)))
+        // Every item makes the same band: one item for another never moves the text box.
+        for (item in StatusItem.entries) if (item != StatusItem.NONE) {
+            assertEquals(22, StatusBands.headerDp(noHeader.withSlot(0, 2, item)))
+            assertEquals(36, StatusBands.footerDp(d.withSlot(1, 0, item)))
         }
-        // Footer with the progress bar: 80 - 8 (edge gap) - 24 (lane) = 48 px: 8..13 sp unscaled, 14..16 sp a little
-        // smaller (≈ 13.8 sp), never hidden. Without the bar (72 px) every size fits.
-        val room = 80f - StatusFit.edgePx(d) - StatusFit.lane(80f - StatusFit.edgePx(d), d)
-        assertEquals(48f, room, 0f)
-        for (sp in 8..13) assertEquals(sp * d, StatusFit.size(sp * d, room, 1.45f, pad, min), 0f)
-        for (sp in 14..16) assertTrue(StatusFit.size(sp * d, room, 1.45f, pad, min) in 27f..sp * d)
-        for (sp in 8..16) assertEquals(sp * d, StatusFit.size(sp * d, 80f - StatusFit.edgePx(d), 1.45f, pad, min), 0f)
+        // The status size only counts for a band with text: the progress line alone keeps 16 dp.
+        assertEquals(16, StatusBands.footerDp(d.copy(statusFontSizeSp = 16f)))
+        assertEquals(0, StatusBands.headerDp(noHeader.copy(statusFontSizeSp = 16f)))
+        // Px: whole dp × density (Comet, S25).
+        assertEquals(44, StatusFit.headerBandPx(d, comet))
+        assertEquals(66, StatusFit.headerBandPx(d, s25))
+        assertEquals(32, StatusFit.footerBandPx(d, comet))
+        assertEquals(48, StatusFit.footerBandPx(d, s25))
+        assertEquals(32, StatusFit.glyphPx(d, comet))
+        assertEquals(48, StatusFit.glyphPx(d, s25))
     }
 
     @Test
-    fun theHeaderHugsTheTopEdgeOnTheCometAndTheS25() {
-        // Comet (density 2, no cutout): 40 dp top margin = 80 px. 11 sp = 22 px; ascent ≈ 0.93 em, glyph box 1.45 em.
+    fun theGlyphBoxIsRoundedUpToWholeDp() {
+        // sp × 1.45 rounded up, without float creep (20 sp is exactly 29 dp).
+        for ((sp, dp) in listOf(6f to 9, 8f to 12, 10f to 15, 11f to 16, 11.5f to 17, 12f to 18, 16f to 24, 20f to 29, 40f to 58))
+            assertEquals("$sp sp", dp, StatusBands.glyphDp(d.copy(statusFontSizeSp = sp)))
+        // At least the status font's ascent + descent at every size the settings allow: Roboto ≈ 0.93 + 0.24, the CJK
+        // fallback ≈ 1.16 + 0.29.
+        var sp = 6f
+        while (sp <= 40f) {
+            val box = StatusBands.glyphDp(d.copy(statusFontSizeSp = sp))
+            assertTrue(box >= sp * 1.45f - 1e-3f)
+            sp += 0.5f
+        }
+        // An unusable size is drawn, and reserved, as 11 sp; the size is kept within 6..40 sp.
+        assertEquals(16, StatusBands.glyphDp(d.copy(statusFontSizeSp = Float.NaN)))
+        assertEquals(16, StatusBands.glyphDp(d.copy(statusFontSizeSp = 0f)))
+        assertEquals(58, StatusBands.glyphDp(d.copy(statusFontSizeSp = 99f)))
+    }
+
+    @Test
+    fun theHeaderHugsTheTopOfItsBand() {
+        // Comet (no cutout): 11 sp = 22 px, Roboto's ascent 0.93 em, descent 0.24 em. The glyph box starts 4 dp (8 px)
+        // below the top edge and ends inside its 32 px box, 2 dp (4 px) above the band's end at 44.
         val ts = 22f
-        val ascent = 0.93f * ts
-        val glyph = 1.45f * ts
-        val room = StatusFit.headerRoom(80f, d)
-        assertEquals(80f - 8f + 4f, room, 0f)
-        assertEquals(ts, StatusFit.size(ts, room, 1.45f, pad, min), 0f)
-        val baseline = StatusFit.headerBaseline(ascent, d)
-        // The glyph box starts 4 dp (8 px) below the view's top edge: inside the bezel-safe gap, not centred in 80 px.
-        assertEquals(8f, baseline - ascent, 0.001f)
-        assertTrue(baseline - ascent + glyph < 80f / 2f)
-        // S25 (density 3), fullscreen: the view starts at the screen top; its text box below a 87 px camera band and
-        // the 40 dp margin. The header's glyphs sit 4 dp (12 px) from the top, in the camera band like MaruViewer's
-        // (≈ 5 dp), and its size is the user's: the band only adds room.
-        val s25 = 3f
-        val top = 87f + 120f
+        val a = 0.93f * ts
+        val dd = 0.24f * ts
+        val glyph = StatusFit.glyphPx(d, comet).toFloat()
+        val baseline = StatusFit.headerBaseline(0f, a, dd, glyph, comet)
+        assertEquals(8f, baseline - a, 0.001f)
+        assertTrue(baseline + dd <= 8f + glyph)
+        assertEquals(StatusFit.headerBandPx(d, comet).toFloat(), 8f + glyph + StatusFit.PAD_DP * comet, 0f)
+        // S25 fullscreen: the band starts below the 87 px camera band, as on the user's screenshot (the header under the
+        // camera hole, not in it): glyph box 99..147, band 87..153.
         val ts3 = 33f
-        assertEquals(ts3, StatusFit.size(ts3, StatusFit.headerRoom(top, s25), 1.45f, StatusFit.PAD_DP * s25, StatusFit.MIN_SP * s25), 0f)
-        assertEquals(12f, StatusFit.headerBaseline(0.93f * ts3, s25) - 0.93f * ts3, 0.001f)
-        // The glyph box always ends PAD_DP above the text box when it is drawn at all.
-        for (topPx in listOf(20f, 30f, 36f, 40f, 60f, 80f)) {
-            val size = StatusFit.size(ts, StatusFit.headerRoom(topPx, d), 1.45f, pad, min)
-            if (size > 0f) assertTrue(StatusFit.edgePx(d) + 1.45f * size + pad <= topPx + 0.001f)
-        }
-        // Too little room: hidden (4 dp margins with 페이지 여백 off).
-        assertEquals(0f, StatusFit.size(ts, StatusFit.headerRoom(8f, d), 1.45f, pad, min), 0f)
+        val a3 = 0.93f * ts3
+        val b3 = StatusFit.headerBaseline(87f, a3, 0.24f * ts3, StatusFit.glyphPx(d, s25).toFloat(), s25)
+        assertEquals(99f, b3 - a3, 0.001f)
+        assertEquals(153, 87 + StatusFit.headerBandPx(d, s25))
     }
 
     @Test
-    fun theFooterSitsJustAboveTheLaneOrTheEdgeGap() {
-        // Comet, 40 dp bottom margin under a text box ending at 1360: the edge gap leaves 1432, the lane 24 px.
+    fun aTallerFontStaysInsideTheBandsGlyphBox() {
+        // A system font scale above 1: a 40 px glyph box in a 32 px one keeps its proportions (× 0.8) inside it.
+        val baseline = StatusFit.headerBaseline(0f, 30f, 10f, 32f, comet)
+        assertEquals(8f + 24f, baseline, 0.001f)
+        assertEquals(8f + 32f, baseline + 8f, 0.001f)
+        val footerBaseline = StatusFit.footerBaseline(1440f, false, 30f, 10f, 32f, comet)
+        assertEquals(1432f - 8f, footerBaseline, 0.001f)
+    }
+
+    @Test
+    fun theFooterSitsAboveTheLaneOrTheEdgeGap() {
+        // Comet, footer items and the progress line: the lane is rows 1408..1432 (4 dp above the edge); the glyph box
+        // ends 2 dp above it (1404) and starts 2 dp inside the band (1440 − 72 = 1368).
         val ts = 22f
-        val descent = 0.25f * ts
-        val edgeBottom = 1440f - StatusFit.edgePx(d)
-        val lane = StatusFit.lane(edgeBottom - 1360f, d)
-        assertEquals(24f, lane, 0f)
-        val withLane = StatusFit.footerBaseline(edgeBottom, lane, descent, d)
-        // Glyph box bottom 2 dp above the lane's top (where the dot sits), not centred between the text and the lane.
-        assertEquals(edgeBottom - lane - pad, withLane + descent, 0.001f)
-        assertTrue(withLane + descent <= ProgressMath.yc(edgeBottom.toInt(), lane, d) - ProgressMath.rDot(lane, d))
-        // Without the bar: on the edge gap, 4 dp above the screen's bottom edge.
-        val noLane = StatusFit.footerBaseline(edgeBottom, 0f, descent, d)
-        assertEquals(1440f - 8f, noLane + descent, 0.001f)
-        // Either way the glyph box stays below the text box when [size] lets it draw.
-        for (margin in listOf(20f, 30f, 40f, 80f)) for (bar in listOf(true, false)) {
-            val bottom = 1440f - StatusFit.edgeGapPx(margin, d)
-            val l = if (bar) StatusFit.lane(bottom - (1440f - margin), d) else 0f
-            val size = StatusFit.size(ts, bottom - (1440f - margin) - l, 1.45f, pad, min)
-            if (size > 0f) {
-                val glyphTop = StatusFit.footerBaseline(bottom, l, 0.25f * size, d) + 0.25f * size - 1.45f * size
-                assertTrue(glyphTop >= 1440f - margin + pad - 0.001f)
-            }
-        }
+        val a = 0.93f * ts
+        val dd = 0.24f * ts
+        val glyph = StatusFit.glyphPx(footer, comet).toFloat()
+        val withLane = StatusFit.footerBaseline(1440f, true, a, dd, glyph, comet)
+        assertEquals(1404f, withLane + dd, 0.001f)
+        assertEquals(1440f - StatusFit.footerBandPx(footer, comet) + StatusFit.PAD_DP * comet, 1404f - glyph, 0f)
+        // The dot sits at the lane's top, below the footer's glyphs.
+        assertTrue(withLane + dd <= ProgressMath.yc(1432, 24f, comet) - ProgressMath.rDot(24f, comet))
+        // Without the line: on the edge gap, 4 dp above the bottom edge, inside a 22 dp band.
+        val noLane = StatusFit.footerBaseline(1440f, false, a, dd, glyph, comet)
+        assertEquals(1432f, noLane + dd, 0.001f)
+        assertEquals(1440f - StatusFit.footerBandPx(footer.copy(progressBar = false), comet) + StatusFit.PAD_DP * comet, 1432f - glyph, 0f)
     }
 
     @Test
-    fun theSettingsEstimateFollowsTheEdgeHuggingHeader() {
-        // 4 dp edge + 7 sp × 1.45 + 2 dp: 18 dp holds the smallest header, 16 dp does not (centred, 16 dp did).
-        assertTrue(StatusFit.headerFitsDp(11f, 18))
-        assertFalse(StatusFit.headerFitsDp(11f, 16))
-        assertTrue(StatusFit.headerFitsDp(11f, 40))
-        assertFalse(StatusFit.headerFitsDp(11f, 4))
-        // The pixel rule agrees at the boundary (Comet).
-        assertTrue(StatusFit.size(min, StatusFit.headerRoom(18f * d, d), StatusFit.GLYPH_EM, pad, min) > 0f)
-        assertEquals(0f, StatusFit.size(min, StatusFit.headerRoom(16f * d, d), StatusFit.GLYPH_EM, pad, min), 0f)
-    }
-
-    @Test
-    fun theCameraBandCountsForTheHeaderEstimate() {
-        // S25 fullscreen: the page view reaches into the 110 px (≈ 37 dp) camera band and the header draws there, so a
-        // 10 dp top margin holds it; without the band it does not.
-        assertTrue(StatusFit.headerFitsDp(11f, 10, cutoutDp = 37))
-        assertFalse(StatusFit.headerFitsDp(11f, 10))
-        assertFalse(StatusFit.headerFitsDp(11f, 10, cutoutDp = 0))
-        assertTrue(StatusFit.headerFitsDp(11f, 0, cutoutDp = 37))
-        // The pixel rule agrees: the text box starts below band + margin (density 3).
-        val s25 = 3f
-        val room = StatusFit.headerRoom(110f + 10f * s25, s25)
-        assertEquals(11f * s25, StatusFit.size(11f * s25, room, StatusFit.GLYPH_EM, StatusFit.PAD_DP * s25, 7f * s25), 0f)
-        // A negative band is none.
-        assertFalse(StatusFit.headerFitsDp(11f, 10, cutoutDp = -37))
-    }
-
-    @Test
-    fun narrowMarginsShrinkThenHideTheText() {
-        val fit = StatusFit.size(22f, 30f, 1.45f, pad, min)
-        assertTrue(fit in min..22f)
-        assertEquals(0f, StatusFit.size(22f, 16f, 1.45f, pad, min), 0f)       // 8 dp: hidden
-        assertEquals(0f, StatusFit.size(22f, 8f, 1.45f, pad, min), 0f)        // pageMargins off (4 dp)
-    }
-
-    @Test
-    fun laneTakesTwelveDpOrTheWholeSmallMargin() {
-        assertEquals(24f, StatusFit.lane(80f, d), 0f)
-        assertEquals(16f, StatusFit.lane(16f, d), 0f)
-        assertEquals(0f, StatusFit.lane(8f, d), 0f)
-        assertTrue(StatusFit.fitsDp(11f, 40, 12f))
-        assertFalse(StatusFit.fitsDp(11f, 20, 12f))
-        assertFalse(StatusFit.fitsDp(11f, 4, 0f))
-        // The footer keeps the 4 dp edge gap too.
-        assertEquals(8, StatusFit.edgePx(d))
-        assertTrue(StatusFit.footerFitsDp(11f, 40, progressBar = true))
-        assertFalse(StatusFit.footerFitsDp(11f, 30, progressBar = true))
-        assertTrue(StatusFit.footerFitsDp(11f, 20, progressBar = false))
-        assertFalse(StatusFit.footerFitsDp(11f, 16, progressBar = false))
-        // The gap shrinks in margins too small for it and the smallest lane: the bar shows wherever it did before.
-        assertEquals(8, StatusFit.edgeGapPx(80f, d))
-        assertEquals(8, StatusFit.edgeGapPx(20f, d))
-        assertEquals(4, StatusFit.edgeGapPx(16f, d))        // 8 dp margin: lane 12 px, gap 4 px
-        assertEquals(0, StatusFit.edgeGapPx(12f, d))        // 6 dp margin: lane 12 px at the edge, as before
-        assertEquals(0, StatusFit.edgeGapPx(8f, d))
-        for (m in listOf(12f, 16f, 20f, 80f)) assertTrue(StatusFit.lane(m - StatusFit.edgeGapPx(m, d), d) > 0f)
+    fun theLaneIsAlwaysWholeAboveTheEdgeGap() {
+        assertEquals(8, StatusFit.edgePx(comet))
+        assertEquals(12, StatusFit.edgePx(s25))
+        assertEquals(24, StatusFit.lanePx(comet))
+        assertEquals(36, StatusFit.lanePx(s25))
+        assertEquals(32, StatusFit.laneTopPx(comet))
+        assertEquals(48, StatusFit.laneTopPx(s25))
+        assertEquals(1432, StatusFit.laneBottomPx(1440, comet))
+        assertEquals(2328, StatusFit.laneBottomPx(2340, s25))
+        // S25 fullscreen: the dot's row is 2302, where the user's screenshot has it (rows 2293–2311); the Comet's 1415.
+        assertEquals(2302, ProgressMath.yc(StatusFit.laneBottomPx(2340, s25), StatusFit.lanePx(s25).toFloat(), s25))
+        assertEquals(1415, ProgressMath.yc(StatusFit.laneBottomPx(1440, comet), StatusFit.lanePx(comet).toFloat(), comet))
+        // The lane is the footer band's bottom part: the band (16 dp) is exactly edge + lane.
+        assertEquals(StatusFit.footerBandPx(d, comet), StatusFit.laneTopPx(comet))
+        assertEquals(StatusFit.footerBandPx(d, s25), StatusFit.laneTopPx(s25))
     }
 }

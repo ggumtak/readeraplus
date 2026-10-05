@@ -3,8 +3,8 @@ package com.ggumtak.readeraplus.render
 /** Shared pixel geometry for the renderer and status-change detection. */
 internal object ProgressMath {
     /**
-     * Line row of a [lane] whose bottom is [viewH] (the page height minus [StatusFit.edgePx]): the dot sits at the
-     * top of the lane, away from the screen edge (a small lane is the centre, as before).
+     * Line row of a [lane] whose bottom is [viewH] ([StatusFit.laneBottomPx]: the page height minus the edge gap): the
+     * dot sits at the top of the lane, away from the screen edge (a small lane is the centre, as before).
      */
     fun yc(viewH: Int, lane: Float, density: Float): Int =
         minOf(viewH - Math.round(lane) + Math.round(rDot(lane, density)) + 1, viewH - Math.round(lane / 2f))

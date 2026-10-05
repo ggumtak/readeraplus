@@ -8,6 +8,7 @@ import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.StatusItem
+import com.ggumtak.readeraplus.settings.VerticalMargin
 import com.ggumtak.readeraplus.engine.PageBreakMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -22,11 +23,81 @@ class LayoutKeysTest {
     @Test
     fun geometryWithMarginsHeaderFooter() {
         val g = LayoutKeys.geometry(s, 720, 1440, density)
-        // MaruViewer's 20 dp at the sides, 40 dp at top and bottom.
+        // MaruViewer's 20 dp at the sides; at top and bottom the bands and their margins (22 + 18, 16 + 24 dp) are the
+        // 40 dp the text box always had: the Comet's rows 80..1360.
         assertEquals(40, g.contentLeft)
         assertEquals(80, g.contentTop)
         assertEquals(720 - 80, g.contentWidth)
         assertEquals(1440 - 160, g.contentHeight)
+        assertEquals(1360, g.contentTop + g.contentHeight)
+    }
+
+    /** The geometry before the bands (4efdf0b): margins from the screen's edges (below a cutout band), no status term. */
+    private fun edgeGeometry(t: ReaderSettings, viewW: Int, viewH: Int, d: Float, extraTop: Int = 0): IntArray {
+        fun px(dp: Int): Int = Math.round((if (t.pageMargins) dp else LayoutKeys.TINY_MARGIN_DP) * d)
+        val top = extraTop + px(t.marginTopDp)
+        return intArrayOf(px(t.marginLeftDp), top, viewW - px(t.marginLeftDp) - px(t.marginRightDp), viewH - px(t.marginBottomDp) - top)
+    }
+
+    private fun box(g: PageGeometry) = intArrayOf(g.contentLeft, g.contentTop, g.contentWidth, g.contentHeight)
+
+    @Test
+    fun theBodyStaysWhereItWasOnBothDevices() {
+        // The user (2026-10-05): "코멧에서 본문 지금 자리 그대로", "S25 전체 화면도 지금 자리 유지". Their devices hold
+        // 40/40 saved from the edge, MaruViewer's header, no footer items, the progress line, 11 sp: read as the new
+        // defaults (VerticalMargin.fromEdge), the text box is pixel-identical to 4efdf0b's.
+        val old = s.copy(marginTopDp = 40, marginBottomDp = 40)
+        val now = VerticalMargin.fromEdge(old)
+        assertEquals(s, now)
+        // Comet 720×1440 @2, no cutout: rows 80..1360.
+        val comet = LayoutKeys.geometry(now, 720, 1440, 2f)
+        assertEquals(listOf(80, 1360), listOf(comet.contentTop, comet.contentTop + comet.contentHeight))
+        assertTrue(box(comet).contentEquals(edgeGeometry(old, 720, 1440, 2f)))
+        // S25 1080×2340 @3, fullscreen: the page view starts at the top; the 87 px camera band, then the header's band
+        // (87..153), the 18 dp margin: rows 207..2220, as on the user's screenshot.
+        val full = LayoutKeys.geometry(now, 1080, 2340, 3f, extraTop = 87)
+        assertEquals(listOf(207, 2220), listOf(full.contentTop, full.contentTop + full.contentHeight))
+        assertEquals(87, full.cutoutTop)
+        assertTrue(box(full).contentEquals(edgeGeometry(old, 1080, 2340, 3f, extraTop = 87)))
+        // S25 with the system bars: the page view starts below the 110 px status bar and ends above the navigation bar
+        // (whatever its inset): the box is 120 px inside the view at both ends, as before.
+        for (bottomInset in listOf(0, 48, 63, 144)) {
+            val viewH = 2340 - 110 - bottomInset
+            val bars = LayoutKeys.geometry(now, 1080, viewH, 3f)
+            assertEquals(120, bars.contentTop)
+            assertEquals(viewH - 120, bars.contentTop + bars.contentHeight)
+            assertTrue(box(bars).contentEquals(edgeGeometry(old, 1080, viewH, 3f)))
+        }
+        // Whole-dp bands and margins rounded once: the same pixels on any density.
+        for (d in listOf(1f, 1.5f, 2f, 2.625f, 2.75f, 3f, 3.5f, 4f))
+            assertTrue("density $d", box(LayoutKeys.geometry(now, 1000, 2000, d)).contentEquals(edgeGeometry(old, 1000, 2000, d)))
+    }
+
+    @Test
+    fun marginsCountFromTheBands() {
+        // A margin of 0 puts the text right under the header's band (Comet: 22 dp = 44 px) and right above the footer's.
+        val zero = s.copy(marginTopDp = 0, marginBottomDp = 0)
+        val g = LayoutKeys.geometry(zero, 720, 1440, 2f)
+        assertEquals(44, g.contentTop)
+        assertEquals(1440 - 32, g.contentTop + g.contentHeight)
+        // S25 fullscreen: below the camera band and the header's band (87 + 66).
+        assertEquals(153, LayoutKeys.geometry(zero, 1080, 2340, 3f, extraTop = 87).contentTop)
+        // Text box = reserves + margins, for any margin: one step of 2 dp is 4 px on the Comet.
+        for (m in 0..80 step 2) {
+            val t = LayoutKeys.geometry(s.copy(marginTopDp = m, marginBottomDp = m), 720, 1440, 2f)
+            assertEquals(44 + 2 * m, t.contentTop)
+            assertEquals(1440 - 32 - 2 * m, t.contentTop + t.contentHeight)
+        }
+        // Without bands the margins count from the edges again.
+        val bare = s.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE, progressBar = false)
+        val b = LayoutKeys.geometry(bare, 720, 1440, 2f)
+        assertEquals(listOf(36, 1440 - 48), listOf(b.contentTop, b.contentTop + b.contentHeight))
+        // Footer items above the line: a 36 dp band (72 px) under the 24 dp margin.
+        val f = LayoutKeys.geometry(s.withSlot(1, 1, StatusItem.PAGE), 720, 1440, 2f)
+        assertEquals(1440 - 72 - 48, f.contentTop + f.contentHeight)
+        // "페이지 여백" off: the tiny margins, still clear of the bands.
+        val off = LayoutKeys.geometry(s.copy(pageMargins = false), 720, 1440, 2f)
+        assertEquals(listOf(44 + 8, 1440 - 32 - 8), listOf(off.contentTop, off.contentTop + off.contentHeight))
     }
 
     @Test
@@ -42,10 +113,12 @@ class LayoutKeysTest {
 
     @Test
     fun aCutoutBandAtTheTopKeepsTheTextBoxWhereItWas() {
-        // Fullscreen on the S25: the page view now starts at the screen's top edge instead of below the camera band,
-        // and the band goes into the text box's top. Same box on screen, same size, same key: the same pages.
+        // Fullscreen on the S25: the page view starts at the screen's top edge instead of below the camera band, which
+        // is left out like a system bar: the header's band and the text box start below it. Same box on screen, same
+        // size, same key: the same pages as with the view laid out below the band.
         val font = "f|1"
-        for (band in listOf(0, 1, 87, 120)) for (t in listOf(s, s.copy(pageMargins = false), s.copy(marginTopDp = 0))) {
+        val noHeader = s.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
+        for (band in listOf(0, 1, 87, 120)) for (t in listOf(s, s.copy(pageMargins = false), s.copy(marginTopDp = 0), noHeader)) {
             val below = LayoutKeys.geometry(t, 1080, 2340 - band, 3f)
             val into = LayoutKeys.geometry(t, 1080, 2340, 3f, extraTop = band)
             assertEquals(below.contentLeft, into.contentLeft)
@@ -73,12 +146,17 @@ class LayoutKeysTest {
 
     @Test
     fun geometryWithoutMarginsAndBars() {
-        val t = s.copy(pageMargins = false, headerCenter = StatusItem.NONE, footerCenter = StatusItem.NONE)
+        val t = s.copy(pageMargins = false, headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE,
+            headerRight = StatusItem.NONE, progressBar = false)
         val g = LayoutKeys.geometry(t, 720, 1440, density)
         assertEquals(8, g.contentLeft)
         assertEquals(8, g.contentTop)
         assertEquals(704, g.contentWidth)
         assertEquals(1424, g.contentHeight)
+        // The default bands stay reserved with the margins off.
+        val bands = LayoutKeys.geometry(s.copy(pageMargins = false), 720, 1440, density)
+        assertEquals(44 + 8, bands.contentTop)
+        assertEquals(1440 - 32 - 8, bands.contentTop + bands.contentHeight)
     }
 
     @Test
@@ -110,12 +188,18 @@ class LayoutKeysTest {
         assertFalse(LayoutKeys.layoutChanged(s, s.copy(pageTheme = PageTheme.MARU)))
         assertFalse(LayoutKeys.layoutChanged(s, s.copy(pageTheme = PageTheme.MARU), BookFormat.TXT))
         assertFalse(LayoutKeys.layoutChanged(s, s.copy(pageTheme = PageTheme.MARU), BookFormat.EPUB))
-        assertFalse(LayoutKeys.layoutChanged(s, s.copy(footerLeft = StatusItem.CLOCK, footerCenter = StatusItem.BATTERY, footerRight = StatusItem.CHAPTER_PAGES_LEFT)))
-        // R2 footer items are text in the footer band too: a repaint, never a re-layout.
-        assertFalse(LayoutKeys.layoutChanged(s, s.copy(footerLeft = StatusItem.EPISODE, footerCenter = StatusItem.TIME_LEFT_BOOK)))
+        // A footer band that comes moves the text box's bottom (2026-10-05: the margins count from the bands); one footer
+        // item for another (R2 items too) is a repaint.
+        val footer = s.copy(footerLeft = StatusItem.CLOCK, footerCenter = StatusItem.BATTERY, footerRight = StatusItem.CHAPTER_PAGES_LEFT)
+        assertTrue(LayoutKeys.layoutChanged(s, footer))
+        assertFalse(LayoutKeys.layoutChanged(footer, footer.copy(footerLeft = StatusItem.EPISODE, footerCenter = StatusItem.TIME_LEFT_BOOK)))
         assertTrue(LayoutKeys.layoutChanged(s, s.copy(fontSizeSp = 21f)))
         assertTrue(LayoutKeys.layoutChanged(s, s.copy(paragraphSpacingPct = 60)))
-        assertFalse(LayoutKeys.layoutChanged(s, s.copy(headerCenter = StatusItem.NONE, progressBar = false)))
+        // The header keeps its band while any slot has an item; the progress line has a band of its own.
+        assertFalse(LayoutKeys.layoutChanged(s, s.copy(headerCenter = StatusItem.NONE)))
+        assertTrue(LayoutKeys.layoutChanged(s, s.copy(progressBar = false)))
+        assertTrue(LayoutKeys.layoutChanged(s, s.copy(progressBar = false), BookFormat.TXT))
+        assertTrue(LayoutKeys.layoutChanged(s, s.copy(progressBar = false), BookFormat.EPUB))
         // (the default font is 나눔명조 since the Maru-style defaults: switch to another one)
         assertTrue(LayoutKeys.layoutChanged(s, s.copy(fontId = if (s.fontId == "ridibatang") "nanummyeongjo" else "ridibatang")))
     }
@@ -186,15 +270,32 @@ class LayoutKeysTest {
         assertEquals(LayoutKeys.keyFor(s, BookFormat.EPUB, "", g, density, font), LayoutKeys.keyFor(own, BookFormat.EPUB, "", g, density, font))
     }
 
-    @Test fun everySlotIsGeometryAndCountKeyNeutral() {
+    @Test fun slotsMoveTheBoxOnlyThroughTheirBands() {
+        // One item for another (none ↔ none, item ↔ item): the same box, no relayout, the same cached counts.
         val g=LayoutKeys.geometry(s,720,1440,density)
         val k=LayoutKeys.keyFor(s,BookFormat.TXT,"",g,density,"font")
         for (band in 0..1) for (pos in 0..2) for (item in StatusItem.entries) {
-            val changed=s.withSlot(band,pos,item).copy(statusFontSizeSp=18f,progressBar=false)
-            assertEquals(g,LayoutKeys.geometry(changed,720,1440,density))
-            assertFalse(LayoutKeys.layoutChanged(s,changed))
-            assertEquals(k,LayoutKeys.keyFor(changed,BookFormat.TXT,"",g,density,"font"))
+            val changed=s.withSlot(band,pos,item)
+            val sameBand=(band==0 && changed.hasHeader) || (band==1 && item==StatusItem.NONE)
+            val cg=LayoutKeys.geometry(changed,720,1440,density)
+            assertEquals("$band/$pos=$item",sameBand,g==cg)
+            assertEquals(!sameBand,LayoutKeys.layoutChanged(s,changed))
+            assertEquals(!sameBand,LayoutKeys.layoutChanged(s,changed,BookFormat.EPUB))
+            assertEquals(sameBand,k==LayoutKeys.keyFor(changed,BookFormat.TXT,"",cg,density,"font"))
         }
+        // none ↔ item moves the box by the band: the header's (all three slots none), the footer's (one item).
+        val noHeader=s.copy(headerLeft=StatusItem.NONE,headerCenter=StatusItem.NONE,headerRight=StatusItem.NONE)
+        assertTrue(LayoutKeys.layoutChanged(s,noHeader))
+        assertEquals(80-44,LayoutKeys.geometry(noHeader,720,1440,density).contentTop)
+        assertFalse(LayoutKeys.layoutChanged(noHeader,noHeader.copy(statusFontSizeSp=16f)))
+        // The status size moves a band with text (whole dp: 11 → 11.5 sp is 16 → 17 dp), not the progress line alone.
+        assertTrue(LayoutKeys.layoutChanged(s,s.copy(statusFontSizeSp=11.5f)))
+        assertEquals((4+17+2+18)*2,LayoutKeys.geometry(s.copy(statusFontSizeSp=11.5f),720,1440,density).contentTop)
+        assertEquals(LayoutKeys.geometry(noHeader,720,1440,density),LayoutKeys.geometry(noHeader.copy(statusFontSizeSp=14f),720,1440,density))
+        // A key is per box: a band change never reuses another box's counts; the box alone decides (the slots don't).
+        assertNotEquals(k,LayoutKeys.keyFor(noHeader,BookFormat.TXT,"",LayoutKeys.geometry(noHeader,720,1440,density),density,"font"))
+        assertTrue(LayoutKeys.bandsChanged(s,s.copy(progressBar=false)))
+        assertFalse(LayoutKeys.bandsChanged(s,s.copy(headerLeft=StatusItem.CLOCK,headerRight=StatusItem.PERCENT)))
     }
     @Test fun pageBreakChangesConfigAndKey() {
         val g=LayoutKeys.geometry(s,720,1440,density);val p=s.copy(pageBreak=PageBreakMode.PARAGRAPH)

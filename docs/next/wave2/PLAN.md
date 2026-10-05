@@ -1,5 +1,22 @@
 # PLAN.md — wave 2 build plan: R3 = scroll + UI + NOTES + user addendum U1–U6
 
+> **사용자 변경 지시 (2026-10-05): 위·아래 여백은 상태 표시줄을 뺀 본문 영역 기준.**
+> "아니지 위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지". 위 상태 줄 · 아래 상태 줄 · 진행 막대는 화면 끝에
+> 자기 띠를 갖고(`StatusBands`, 설정만으로 정한 정수 dp: 위 띠 = 끝 4 dp + 글자 상자 + 2 dp, 11 sp에서 22 dp; 아래 띠 =
+> 끝 4 dp + 진행 막대 12 dp, 아래 글자가 있으면 + 2 dp + 글자 상자 + 2 dp; 항목이 모두 '없음'이면 0), 위·아래 여백은 그
+> 띠와 본문 사이다. 여백 0이면 본문이 위 띠 바로 밑에서 시작하고, 작은 여백이 상태 줄을 가리거나 줄이지 않으므로 '가려짐'
+> 안내는 없앴다. 메뉴 · 선택 · TTS · 쪽 수 세기 · 빈 제목 · 스크롤 모드는 본문 상자를 움직이지 않는다. 슬롯의 항목을 다른
+> 항목으로 바꾸면 다시 그리기만 하고, 띠가 생기거나 없어지거나 높이가 바뀌면(모두 '없음' ↔ 항목, 진행 막대, 상태 글자
+> 크기) 첫 글자를 지키며 다시 배치한다. 숫자는 코멧에서 본문이 그대로이게 맞췄다("코멧에서 본문 지금 자리 그대로 되게
+> 숫자 맞춰줘"): 위 18 dp · 아래 24 dp(40 dp − 기본 띠), 상하 여백 "0"이 각 쪽의 기본값(범위 −24..+62, 각 0..80 dp).
+> S25 전체 화면은 사용자가 보낸 화면처럼 카메라 띠(87 px)를 시스템 막대처럼 빼고 그 아래에 위 띠를 둔다("S25 전체 화면도
+> 지금 자리 유지해줘"): 본문은 207..2220 그대로, 위 상태 줄은 카메라 띠 바로 아래. 예전 뜻(화면 끝에서 잰 값,
+> `r.marginBaseV` 40 또는 없음)으로 저장된 위·아래 여백은 읽을 때 한 번 그 설정의 띠만큼 줄여 본문 자리를 지킨다(설정 ·
+> 백업 · 내 스타일; 내 스타일은 상태 줄이 없어 기본 띠로). 새로 저장하면 `r.marginBaseV` = 2. 이 지시로 U2/C5의 "본문
+> 상자는 상태 띠에 자리를 내주지 않는다", 아래 마루뷰어 지시의 "상하 여백 40 dp = '0'"과 "S25에서는 카메라 구멍 띠 안",
+> CI 10b · 52 · 53의 "다시 배치 없음, 본문 픽셀 그대로"를 대체한다: 이제 첫 글자(`first_is`)와 본문 위쪽 줄(본문 위
+> 절반의 `raw_equal`)이 그대로인지 본다.
+>
 > **사용자 변경 지시 (2026-10-05): 마루뷰어 여백 · 상태 표시줄.**
 > 좌우 여백 기본값은 마루뷰어와 같은 20 dp다(S25에서 본문 왼쪽 x ≈ 60 px, 폭의 5.6 %). 퀵옵션과 읽기 설정의 좌우 여백 "0"이
 > 20 dp이고 범위는 −20..+60(0..80 dp)이다. 상하 여백은 그대로 40 dp = "0"이다. 저장값은 계속 실제 dp이고, 예전 기본값을
@@ -134,7 +151,7 @@ Each row names the sources, what collides, the decision, and who applies it (lan
 | **C2** | **The ⋮ fix exists three times.** The tree has `FastScrollEdge` (24/96 dp, x→0, intercept only). N H0 has `ui/kit/InkTouch.kt` (`FastScrollGuard` 12/56 dp, inset-aware, x→zoneLeft−1, intercept **and** touch, grid `OUTSIDE_OVERLAY`, `CardButton`). N W1 turns off the fast scroller in paged mode, and U polish 14 adds thin thumb drawables. | **H2 replaces the tree's version with N §3 exactly.** It creates `ui/kit/InkTouch.kt`, deletes `FastScrollEdge`, `LibraryListView` and `LibraryGridView` from `LibraryViews.kt`, and rewrites `FastScrollEdgeTest` as `ui/kit/InkTouchTest`. Why N's constants win: (a) shifting to x = 0 makes a GridView's `onTouchDown` pick **column 0** whenever no child consumes the DOWN; (b) the tree skips `onTouchEvent`, so a DOWN on a non-clickable pixel of a card (e.g. "34%") still reaches `FastScroller.onTouchEvent` and seeks; (c) a 96 dp claim breaks N's grid invariant for the 80 dp 그리드 cells. **Invariant: no clickable row pixel at x ≥ W − 12 dp.** The tree's 16 dp 요약 gap already satisfies it. Phase 0 appends N §4.9.3's paging part to `InkTouch.kt`. Paged mode (the e-ink AUTO default) has no fast scroller. Scroll mode keeps the guarded one, drawn with U's thin drawables (visual only). | H2; P0 (paging part); LIB |
 | **C3** | **Model and settings fields from four specs** touch the same frozen files: `ReaderSettings`, `Settings`, `SettingsJson`, `UserStyles`, `Models`. | These are independent fields and keys, merged into one pass (§3.1–§3.6). There are three JSON test files: `SettingsJsonR3Test` (S + A), `SettingsJsonStatusTest` (U) and `SettingsJsonNotesTest` (N). | P0 |
 | **C4** | **Margin migrations.** S has `SideMargin` (marker `r.marginBase`, legacy 18/18). A has `VerticalMargin` (marker `r.marginBaseV`, legacy 16/16) on the same "40 = 0" scale. S §2.5 expects `LayoutKeysTest` values 36→80 / 648→560 on the old geometry. | The markers stay **separate** (independent migrations, A §3.1). Both objects live in the new **`settings/Margins.kt`** (the prototype's file). Defaults are 40/40/40/40. `LayoutKeysTest` takes **A §6.4's numbers** (80, 80, 560 × 1280), which supersede S §2.5 and U §8.1. `UserStyles` writes both `marginBase` and `marginBaseV`. "설정 초기화" and "기본값 복원" give 40 on all four sides. Default users get one recount per book from the width change, and none from height: A §2.6 shows the same 1280 px box as R2. | P0 |
-| **C5** | **Footer and band geometry.** U §5.1 has the bands reserve box height, with NONE↔item = relayout and `mbEff = max(mb, lane)`. S has the bands fixed in the viewport plus `fitFooter`. A (U2) puts the bands inside the margins, makes every status change a repaint, and adds `StatusFit` shrink-then-hide. | **A wins.** `LayoutKeys.geometry(s, viewW, viewH, density)` loses `statusPx`, `STATUS_BAND` is deleted, and `layoutPart` normalises the 6 slots, `progressBar` and `statusFontSizeSp`. U keeps its `StatusDecor`, `StatusModel`, `StatusMath`, `ProgressMath` and per-version `drawBand` cache. `drawStatus` follows A §2.3 (fit per band; lane = `StatusFit.lane(bottom margin)`), and `drawProgress` takes the lane height. **S's `fitFooter` and `FitFooterTest` are dropped**: `StatusDecor` has no footer string and `drawBand` is already allocation-free. **R2's `FooterFit` and `FooterFitTest` are deleted** with the legacy footer path; any still-relevant cases move to `StatusMathTest`. Voided: U §5.1 geometry and table, U §5.5 "NONE ↔ item relays out", the U §5.7 relayout row, U CI `10b` "the page relaid out once" (now: the text is pixel-identical, §5.3), and the U §8.1 `LayoutKeysTest` rows (replaced by A §6.4). `StatusFit.LANE_DP` refers to `ReaderSettings.PROGRESS_LANE_DP`. | P0 (geometry, `layoutPart`, `StatusFit`); E2 |
+| **C5** | **Footer and band geometry.** U §5.1 has the bands reserve box height, with NONE↔item = relayout and `mbEff = max(mb, lane)`. S has the bands fixed in the viewport plus `fitFooter`. A (U2) puts the bands inside the margins, makes every status change a repaint, and adds `StatusFit` shrink-then-hide. | **A wins.** `LayoutKeys.geometry(s, viewW, viewH, density)` loses `statusPx`, `STATUS_BAND` is deleted, and `layoutPart` normalises the 6 slots, `progressBar` and `statusFontSizeSp`. U keeps its `StatusDecor`, `StatusModel`, `StatusMath`, `ProgressMath` and per-version `drawBand` cache. `drawStatus` follows A §2.3 (fit per band; lane = `StatusFit.lane(bottom margin)`), and `drawProgress` takes the lane height. **S's `fitFooter` and `FitFooterTest` are dropped**: `StatusDecor` has no footer string and `drawBand` is already allocation-free. **R2's `FooterFit` and `FooterFitTest` are deleted** with the legacy footer path; any still-relevant cases move to `StatusMathTest`. Voided: U §5.1 geometry and table, U §5.5 "NONE ↔ item relays out", the U §5.7 relayout row, U CI `10b` "the page relaid out once" (now: the text is pixel-identical, §5.3), and the U §8.1 `LayoutKeysTest` rows (replaced by A §6.4). `StatusFit.LANE_DP` refers to `ReaderSettings.PROGRESS_LANE_DP`. **2026-10-05 (user):** replaced by the bands' own places (note at the top): the geometry takes `StatusBands` heights, `layoutChanged` compares them (`bandsChanged`), shrink-then-hide and `fitsDp` are gone. | P0 (geometry, `layoutPart`, `StatusFit`); E2 |
 | **C6** | **`PageDecor` and `Highlight` are changed twice in `render/Render.kt`.** U gives `PageDecor(highlights, bookmarked, status, statusVersion)` and drops header/footer strings. N adds `Highlight.style`. | Both land in P0, with default parameters. | P0 |
 | **C7** | **The `ReaderPanels` frozen block.** U adds `StatusSampleHost`; N adds `NotePlaceHost`, plus `PageThumbsHost`, `ThumbCell` and `ThumbBatch` for W2. | All of them land in P0. W2 needs no second contract step. | P0 |
 | **C8** | **Instance state.** N §6.1 adds `jump_done`. R §4.2 adds `rp.book/section/offset/at` and a by-id intent rebuild. | **R supersedes `jump_done`**: a restored reader rebuilds a by-id intent with no jump extras. N adds only `rp.peek` (restores `peekUntilTurn`). | H1; RC-A (`rp.peek`) |
@@ -609,7 +626,7 @@ bottom) without their markers to 40/40.
 |---|---|
 | `render/Render.kt` | `PageDecor(highlights, bookmarked, status: StatusDecor? = null, statusVersion = 0)`; header, footerLeft, footerRight and battery deleted (U §5.2); `Highlight(start, end, kind, style: Int = 0)` (N §4.5). KDoc: off-screen renderers pass `status = null` (U R11). |
 | `render/StatusDecor.kt` (new) | **complete** (U §5.2: `StatusSlot`, `StatusBand`, `StatusDecor.lane/progress/version`) |
-| `render/StatusFit.kt` (new) | **complete** (A §2.3; prototype-tested; `LANE_DP` = `ReaderSettings.PROGRESS_LANE_DP.toFloat()`); EX-P and SET call `fitsDp` |
+| `render/StatusFit.kt` (new) | **complete** (A §2.3; prototype-tested; `LANE_DP` = `ReaderSettings.PROGRESS_LANE_DP.toFloat()`); EX-P and SET call `fitsDp` (2026-10-05: bands of their own, `fitsDp` and the fit note removed; note at the top) |
 | `render/ProgressMath.kt` (new) | **[Δ] complete** (pure; U §5.4 table with A §2.3's lane-aware radii: `yc(viewH, lane)`, `rDot(lane, density)`, `rCap`, `x0/x1(viewW, density)`, `dotX(f, …)`, `trackPx(viewW, lane, density)`). RC-A (U §5.3 `trackPx` for `StatusModel.update`) and RC-S (scroll settle) need the **same** formula as E2's `drawProgress`. If the formulas differ, a moved dot is not detected, or it triggers extra e-ink updates. Without this file in P0, RC-A would depend on E2's new file with no skeleton. `ProgressMathTest` moves to P0; E2 maintains both |
 | `render/QuoteStyles.kt` (new) | **complete** (N §4.9.2; highlights.md §2.1–2.2, §3.1 tables) |
 | `render/QuoteLook.kt` (new) | stub `generation = 0`, `update` no-op, `ink() = false` |
@@ -682,7 +699,8 @@ bottom) without their markers to 40/40.
 
 - **`docs/ARCHITECTURE.md`:**
   - Chrome: bars are overlays, no pinned chrome, the page size depends only on the gated insets.
-  - Status: slots and progress line drawn **inside the margins**, text box = view − margins, zero allocation, the
+  - Status: slots and progress line drawn **inside the margins** (2026-10-05: in bands of their own, text box = view −
+    bands − margins; note at the top), text box = view − margins, zero allocation, the
     redraw rule.
   - Pagination: anchored relayout (the first character stays; one generation's lifetime; the count cache is masked)
     and `PageBreakMode`.
@@ -950,7 +968,8 @@ snapshot holds `main` only. So:
   - `CompactList.show` / `PopupGeometry.dropdown` `maxHeightFraction`;
   - the §1.6.3 order.
 - **Accept:** the popup never scrolls on the main section at 1440 px; every status change is a repaint (checked by CI
-  52/53); margin steppers speak "−10".
+  52/53; 2026-10-05: an item for another is a repaint, a band that comes or goes an anchored relayout, CI 52/53 check
+  the first character); margin steppers speak "−10".
 
 ### EX-S — selection and quoting (EXTRAS)
 
@@ -1124,7 +1143,8 @@ screen rows: `pv + 80 … pv + 1360` at density 2, where `pv` is the PageView's 
 fullscreen); the header band (above) and the footer band and lane (below) are excluded. `same` = `tools/ci/same_page.py`. `top_is` = the
 dumpsys top activity. Every CHECK and PASS/FAIL line is logged and never fails the job.
 
-**[Δ]** The content rows `80…1360` hold only at 상하 여백 "0". Every step that changes the vertical margins restores
+**[Δ]** The content rows `80…1360` hold only at 상하 여백 "0" (2026-10-05: and the default bands; with footer items, 52
+on, the box ends at 1320 and the rows below it down to 1360 are margin paper). Every step that changes the vertical margins restores
 "0" before the next `raw_equal`. **Position checks** use the H4 log line, not `find_node`: `PageView` has no
 accessibility text, so a uiautomator dump never contains the page's words. `perf_mark X` records the last
 `RAPerf show` line; `perf_log.py first_is X Y` passes when the page start `o:` after Y equals the anchor `a:` at X;
@@ -1147,7 +1167,7 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 13 | `14_reading_settings` | as today | **68aa271:** centred popup (16 ± 1 px gaps): one top bar 전체 읽기 설정 › · 닫기, then 글자 크기 · 굵기 · 줄 간격 · 문단 간격 · 좌우 여백 · 상하 여백 (96 px rows) · 글꼴, no 더보기, no scrollbar; CHECK 14q: the popup's 좌우 여백 / 상하 여백 read "0"; "전체 읽기 설정" opens 설정 → 읽기 설정 (여백·페이지: "좌우 여백 0", "상하 여백 0", CHECK 14m), BACK returns to the same page | U, S, A |
 | 14 | `14b_status_slots` | ⋮ → 설정 → 화면·밝기 → 위쪽 상태 표시줄 · 아래쪽 상태 표시줄 (its first two sections; each band's rows 왼쪽 / 가운데 / 오른쪽, read under their header: `slot_row`, `ui_rows.py` "header › row") | 위 [배터리 아이콘 · 시계][책 제목][쪽 번호] (MaruViewer's line, 2026-10-05), 아래 all 없음; 진행 막대 on | U |
 | 15 | `14c_slot_list` | the 가운데 row under 아래쪽 상태 표시줄; "쪽 번호 (12 / 3259)" | 12 items with examples ("챕터 쪽 번호 (2 / 32)" right under 쪽 번호); "없음" checked | U |
-| 16 | `10b_footer_slots` (+ `rawshot 10b`) | after 14c's `back` (popup closed, chrome hidden, same page as `10a_pre`) | footer centre "N / M" centred on the text column above the line; **`raw_equal 10a_pre 10b` over the content rows: EQUAL** (turning the footer on did not move the text); **[Δ]** `no_relayout 10a_pre 10b` (perf marks at both rawshots) | U, A |
+| 16 | `10b_footer_slots` (+ `rawshot 10b`) | after 14c's `back` (popup closed, chrome hidden, same page as `10a_pre`) | footer centre "N / M" centred on the text column above the line; **2026-10-05:** the footer's band (36 dp) ends the text box 40 px higher, one anchored relayout: **`raw_equal 10a_pre 10b` over the box's upper half `pv + 80 … pv + 720` (`contenttop`): EQUAL** (the first lines stay) and **`first_is 10a_pre 10b`** (the first character stays; was `no_relayout` with the whole content rows) | U, A |
 | 17 | `14d_volume_mode` | ⋮ → 설정 → 넘기기·터치·키 → 버튼·키 → 볼륨 키 (one chooser again, 68aa271; was the popup's 더보기) → "위 키로 다음 페이지"; back; VOLUME_UP; tap 360 720; find "페이지 이동, " | the row read "아래 키로 다음 페이지" and its chooser lists the 3 entries (14d_list); the label is one page further; then restore "아래 키로 다음 페이지 (기본)" and close the chrome | R (H3) |
 | 18 | `15_toc`, `16_search` | as today | TOC title 20 sp bold | U |
 | 19 | `17_selection` | as today | one row of 5 (복사 · 인용 · 메모 · 사전·번역 · ⋮); the 인용 cell shows a yellow dot with ▾ | U, N |
@@ -1169,8 +1189,8 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 35 | `86_notes_quotes`, `87_notes_jump` + CHECK 87 | (before 85: sample-utf8.txt read 3 pages past the quotes, so its saved place is off the quote's page, §1.6.1) 인용문 tab; tap the first row | filter row; the reader at the quote with the mark; the chip "‹ N쪽으로" found | N |
 | 36 | `88_notes_select`, `89_notes_words` | long-press → 선택; 단어장 tab | "1개 선택" bar; word row with 다시 찾기 and the word in bold | N |
 | 37 | `90_highlight_ink` | 설정 → 화면·밝기 → 인용문 색 표시 → 흑백 무늬; open sample-utf8.txt, 3 pages back to the quotes | grey band + thin line / lighter band + dashed; restore 자동 | N |
-| 38 | `52_footer_toggle_same_text` | open sample TXT; ⋮ → 설정 → 화면·밝기 → 아래 가운데 = 없음 (no footer: 10b had set it); back; `rawshot 52a`; the same page → 아래 가운데 = 쪽 번호, 아래 오른쪽 = 배터리 아이콘 · 시계, 위 가운데 = 없음; back; `rawshot 52b` | **`raw_equal 52a 52b` over the content rows: EQUAL**; only the bands differ (the header loses its title — 배터리 아이콘 · 시계 and 쪽 번호 stay — and the footer is shown); **[Δ]** `no_relayout 52a 52b` | A |
-| 39 | `53_progress_toggle_same_text` | 화면·밝기 → 진행 막대 off; back; rawshot | same crop EQUAL; **[Δ]** `no_relayout`; restore on | A |
+| 38 | `52_footer_toggle_same_text` | open sample TXT; ⋮ → 설정 → 화면·밝기 → 아래 가운데 = 없음 (no footer: 10b had set it); back; `rawshot 52a`; the same page → 아래 가운데 = 쪽 번호, 아래 오른쪽 = 배터리 아이콘 · 시계, 위 가운데 = 없음; back; `rawshot 52b` | **2026-10-05 (the margins count from the bands):** the footer's band that comes moves the box's bottom, one anchored relayout: **`raw_equal 52a 52b` over `contenttop` (`pv + 80 … pv + 720`): EQUAL** and **`first_is 52a 52b`**; the header keeps its band (배터리 아이콘 · 시계 and 쪽 번호 stay; it loses its title), so the box's top stays. Was: the content rows EQUAL and `no_relayout` | A |
+| 39 | `53_progress_toggle_same_text` | 화면·밝기 → 진행 막대 off; back; rawshot | **2026-10-05:** the footer's band loses its lane (36 → 22 dp), one anchored relayout: `contenttop` EQUAL and **`first_is 52b 53`** (was: the content rows EQUAL, `no_relayout`); restore on | A |
 | 40 | `54_margin_v_exact` | **[Δ]** `perf_mark 54a`; ⚙ → 전체 읽기 설정 → 상하 여백 +10; back; `perf_mark 54b`; shot; then 상하 여백 back to 0 | **[Δ]** `first_is 54a 54b` (the exact first char; height-only change) | A |
 | 41 | `55_font_up_down` | 글자 크기 +1, then −1 | `raw_equal` with the shot before the change: EQUAL (content rows valid again: 54 restored "0") | A |
 | 42 | `56_page_break_paragraph` | **[Δ]** `perf_mark 56a`; ⚙ → 전체 읽기 설정 → 페이지 나눔 = 문단 단위; back; `perf_mark 56b`; next page | **[Δ]** `first_is 56a 56b`; the next page starts at a paragraph start (logged `o:` of the next `show TURN` is a block start: checked by eye from the shot); restore 줄 단위 | A |

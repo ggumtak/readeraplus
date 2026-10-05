@@ -29,8 +29,12 @@ data class ReaderSettings(
     /** MaruViewer's side margin ([SideMargin.ZERO_DP], 2026-10-05). */
     val marginLeftDp: Int = SideMargin.ZERO_DP,
     val marginRightDp: Int = SideMargin.ZERO_DP,
-    val marginTopDp: Int = 40,
-    val marginBottomDp: Int = 40,
+    /**
+     * Paper between the header's band and the text, and between the text and the footer's band ([VerticalMargin], since
+     * 2026-10-05; 40 dp from the screen's edges at the default bands, as before).
+     */
+    val marginTopDp: Int = VerticalMargin.TOP_ZERO_DP,
+    val marginBottomDp: Int = VerticalMargin.BOTTOM_ZERO_DP,
     /** ReadEra's "페이지 여백" switch: false = use tiny margins. */
     val pageMargins: Boolean = true,
     /** White on black (흑백 반전, 밤 모드). Wins over [pageTheme] while on. */
@@ -48,7 +52,7 @@ data class ReaderSettings(
     val footerLeft: StatusItem = StatusItem.NONE,
     val footerCenter: StatusItem = StatusItem.NONE,
     val footerRight: StatusItem = StatusItem.NONE,
-    /** ReadEra-style reading-progress line along the bottom edge, drawn in the bottom margin ("진행 막대"). */
+    /** ReadEra-style reading-progress line along the bottom edge, in its own band below the margin ("진행 막대"). */
     val progressBar: Boolean = true,
     val statusFontSizeSp: Float = 11f,            // unchanged
     val widowOrphanControl: Boolean = true,

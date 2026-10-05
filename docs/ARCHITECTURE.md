@@ -320,7 +320,8 @@ as you like, same package & signatures).
   of 2 keeping ≥ target), then scale to fit; `LruCache` by bytes; `RGB_565` when no alpha. Composite
   transparent images on white.
 - **PageRenderer.draw**: background white (black if `invert`). Header (chapter title, ellipsized, small font
-  `statusFontSizeSp`, system sans) centred in the top margin area above the content box; footer left/right
+  `statusFontSizeSp`, system sans) centred in the top margin area above the content box (R3 2026-10-05: in its own
+  band at the top edge, see the R3 revision below); footer left/right
   strings in the bottom margin area; both only when non-null. Then highlights (under text): QUOTE light grey
   fill `#D8D8D8` + 1px underline, SELECTION `#A8A8A8` fill, SEARCH `#C0C0C0` fill + 1px outline, TTS
   underline 2px + `#E0E0E0` fill (inverted variants when `invert`). Text lines: use
@@ -766,10 +767,15 @@ The release gates compare these numbers with the Wave 0 baseline recorded on the
 
 - **Chrome / insets:** reader bars and the return chip overlay the page. Pinned chrome is removed; page view size
   depends only on InsetsGate-approved system insets. Popups/dialogs preserve the underlying geometry.
-- **Status / margins:** six `StatusItem` slots and a progress lane draw inside existing margins. Text box = view
-  minus margins, with no header/footer subtraction. Defaults are 40 dp = UI `0` (sides 20 dp since 2026-10-05,
-  MaruViewer; the bands then hug the screen edges instead of centring in the margins). Model/renderer reuse buffers;
-  redraw only for a changed visible value or changed dot pixel. `footerEpisode`/`footerTimeLeft` become typed slots.
+- **Status / margins:** six `StatusItem` slots and a progress lane. Until 2026-10-05 they drew inside the margins
+  (text box = view minus margins). Since then (user: "위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지")
+  each band has its own place at its screen edge (`StatusBands`: whole dp from the settings only, never from what is
+  on screen), and the text box = view minus a display cutout's band, the bands and the margins: the 위·아래 여백 are
+  the paper between a band and the text, 0 puts the text right under the header, and no margin hides or shrinks a band
+  (no '가려짐' note). Another item in a slot repaints; a band that comes, goes or changes height relays out anchored
+  (`LayoutKeys.bandsChanged`). Defaults keep the text box 40 dp from the edges (sides 20 dp, MaruViewer; top 18 dp
+  under the 22 dp header band, bottom 24 dp over the 16 dp progress line). Model/renderer reuse buffers; redraw only
+  for a changed visible value or changed dot pixel. `footerEpisode`/`footerTimeLeft` become typed slots.
 - **Pagination:** `PageBreakMode.LINE` preserves the golden output; PARAGRAPH keeps a whole paragraph when it fits.
   Relayout opens an anchored generation so the first character stays; its changed section is masked from saved
   counts. Scroll stitches `PageInfo.lead` and real line bodies; it never uses page-bottom blank space.

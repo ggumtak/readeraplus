@@ -17,9 +17,9 @@ class SideMarginTest {
         assertEquals("+2", SideMargin.label(2))
         assertEquals("−2", SideMargin.label(-2))
         assertEquals("0", SideMargin.label(0))
-        // Top and bottom keep their own 40 dp "0".
-        assertEquals(40, ReaderSettings().marginTopDp)
-        assertEquals(0, VerticalMargin.toUi(40))
+        // Top and bottom have their own "0" (counted from the status bands since 2026-10-05: VerticalMarginTest).
+        assertEquals(VerticalMargin.TOP_ZERO_DP, ReaderSettings().marginTopDp)
+        assertEquals(0, VerticalMargin.toUi(ReaderSettings().marginTopDp, ReaderSettings().marginBottomDp))
     }
 
     @Test fun onlyAnOlderBuildsUntouchedDefaultMoves() {

@@ -89,7 +89,7 @@ internal object SettingsJson {
         .put("r.progressBar", s.progressBar)
         .put("r.pageBreak", s.pageBreak.name)
         .put(SideMargin.KEY, SideMargin.ZERO_DP)
-        .put(VerticalMargin.KEY, VerticalMargin.ZERO_DP)
+        .put(VerticalMargin.KEY, VerticalMargin.BANDS)
         .put("r.statusFontSizeSp", s.statusFontSizeSp.toDouble())
         .put("r.widowOrphanControl", s.widowOrphanControl)
         .put("r.txtBlankLines", s.txtBlankLines)
@@ -149,12 +149,17 @@ internal object SettingsJson {
         val sideBase = if (o.has(SideMargin.KEY)) BackupJson.int(o, SideMargin.KEY, -1) else null
         val side = o.has("r.marginLeftDp") && o.has("r.marginRightDp") &&
             SideMargin.isLegacyDefault(sideBase, migrated.marginLeftDp, migrated.marginRightDp)
+        val verticalBase = if (o.has(VerticalMargin.KEY)) BackupJson.int(o, VerticalMargin.KEY, -1) else null
         val vertical = o.has("r.marginTopDp") && o.has("r.marginBottomDp") &&
-            VerticalMargin.isLegacyDefault(o.has(VerticalMargin.KEY), migrated.marginTopDp, migrated.marginBottomDp)
-        migrated.copy(marginLeftDp = if (side) SideMargin.ZERO_DP else migrated.marginLeftDp,
+            VerticalMargin.isLegacyDefault(verticalBase != null, migrated.marginTopDp, migrated.marginBottomDp)
+        val moved = migrated.copy(marginLeftDp = if (side) SideMargin.ZERO_DP else migrated.marginLeftDp,
             marginRightDp = if (side) SideMargin.ZERO_DP else migrated.marginRightDp,
-            marginTopDp = if (vertical) VerticalMargin.ZERO_DP else migrated.marginTopDp,
-            marginBottomDp = if (vertical) VerticalMargin.ZERO_DP else migrated.marginBottomDp)
+            marginTopDp = if (vertical) VerticalMargin.EDGE_DP else migrated.marginTopDp,
+            marginBottomDp = if (vertical) VerticalMargin.EDGE_DP else migrated.marginBottomDp)
+        // Top/bottom the backup saved from the screen's edge: counted from the bands of the restored settings (the
+        // backup's own status slots, progress line and size), so its text box comes back where it was.
+        if (!VerticalMargin.countsFromEdge(verticalBase)) moved
+        else VerticalMargin.fromEdge(moved, o.has("r.marginTopDp"), o.has("r.marginBottomDp"))
     }
 
     // ---- app ----

@@ -41,10 +41,14 @@ internal class StatusModel {
     /** Dot position in track pixels at the last update; −1 = no dot. The dot "moved" only when this changes. */
     private var dotPx = -1
 
-    /** Fills decor for the slots of [s]. Zero allocation. True when anything drawn changed (then decor.version++). */
-    fun update(s: ReaderSettings, inp: StatusInputs, trackPx: Int): Boolean {
+    /**
+     * Fills decor for the slots of [s]; [top]: the display cutout's band above the header's (`PageGeometry.cutoutTop`).
+     * Zero allocation. True when anything drawn changed (then decor.version++).
+     */
+    fun update(s: ReaderSettings, inp: StatusInputs, trackPx: Int, top: Int = 0): Boolean {
         var changed = false
         val d = decor
+        if (d.top != top) { d.top = top; changed = true }
         if (fill(d.header.left, s.headerLeft, inp)) changed = true
         if (fill(d.header.center, s.headerCenter, inp)) changed = true
         if (fill(d.header.right, s.headerRight, inp)) changed = true

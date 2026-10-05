@@ -156,9 +156,9 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         root.addView(stepperRow("문단 간격", cur.paragraphSpacingPct.toFloat(), 0f, 300f, 10f, { Fmt.pct(it.toInt()) }) {
             update(cur.copy(paragraphSpacingPct = it.toInt()), debounce = true)
         })
-        // The margins as on 읽기 설정: "0" = the default margin (sides −20..+60 around MaruViewer's 20 dp, top and
-        // bottom −40..+40 around 40 dp), in steps of 2 (stored values stay dp). While 여백 사용 is off they show the
-        // margin the page has (QuickFields.sideUi / verticalUi).
+        // The margins as on 읽기 설정: "0" = the default margin (sides −20..+60 around MaruViewer's 20 dp; top and
+        // bottom, from the status bands, −24..+62 around their own 18 / 24 dp), in steps of 2 (stored values stay dp).
+        // While 여백 사용 is off they show the margin the page has (QuickFields.sideUi / verticalUi).
         root.addView(stepperRow(
             "좌우 여백",
             QuickFields.sideUi(cur).toFloat(),
@@ -327,15 +327,16 @@ internal object QuickFields {
 
     /**
      * The 좌우 여백 stepper's value: the margin the page has, so while "여백 사용" is off the minimal margin
-     * ([LayoutKeys.TINY_MARGIN_DP], "−16"; "−36" on the 상하 여백 stepper), not the stored one the page does not use.
+     * ([LayoutKeys.TINY_MARGIN_DP], "−16"; "−14" on the 상하 여백 stepper, from the top's 18 dp), not the stored one the
+     * page does not use.
      */
     fun sideUi(s: ReaderSettings): Int =
         SideMargin.toUi(if (s.pageMargins) s.marginLeftDp else LayoutKeys.TINY_MARGIN_DP).coerceIn(SideMargin.UI_MIN, SideMargin.UI_MAX)
 
     /** The 상하 여백 stepper's value, as [sideUi]. */
     fun verticalUi(s: ReaderSettings): Int =
-        VerticalMargin.toUi(if (s.pageMargins) s.marginTopDp else LayoutKeys.TINY_MARGIN_DP)
-            .coerceIn(VerticalMargin.UI_MIN, VerticalMargin.UI_MAX)
+        if (s.pageMargins) VerticalMargin.toUi(s.marginTopDp, s.marginBottomDp)
+        else VerticalMargin.toUi(LayoutKeys.TINY_MARGIN_DP, LayoutKeys.TINY_MARGIN_DP)
 
     /**
      * 좌우 여백 at stepper value [ui] ("0" = the default margin). A step while "여백 사용" is off turns it on: from the
@@ -352,12 +353,14 @@ internal object QuickFields {
         )
     }
 
-    /** 상하 여백 at stepper value [ui], as [withSide] (the sides keep the minimal margin when it turns the margins on). */
+    /**
+     * 상하 여백 at stepper value [ui] (each side's own default is "0": [VerticalMargin.topDp] / [bottomDp][VerticalMargin.bottomDp]),
+     * as [withSide] (the sides keep the minimal margin when it turns the margins on).
+     */
     fun withVertical(s: ReaderSettings, ui: Int): ReaderSettings {
-        val dp = VerticalMargin.toDp(ui)
         val lr = if (s.pageMargins) null else LayoutKeys.TINY_MARGIN_DP
         return s.copy(
-            marginTopDp = dp, marginBottomDp = dp,
+            marginTopDp = VerticalMargin.topDp(ui), marginBottomDp = VerticalMargin.bottomDp(ui),
             marginLeftDp = lr ?: s.marginLeftDp, marginRightDp = lr ?: s.marginRightDp,
             pageMargins = true,
         )

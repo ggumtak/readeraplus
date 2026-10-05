@@ -203,7 +203,10 @@ class SettingsStoreTest {
         val raw=hashMapOf<String,Any?>("r.marginLeftDp" to 18,"r.marginRightDp" to 18,"r.marginTopDp" to 16,"r.marginBottomDp" to 16,
             "r.showFooter" to true,"r.footerPage" to false,"r.footerPercent" to true,"r.footerClock" to true,"r.footerBattery" to true,"a.pinChrome" to true,"reader.brightnessCollapsed" to true)
         val before=HashMap(raw);val p=fresh(raw);val r=Settings.reader
-        assertEquals(20,r.marginLeftDp);assertEquals(40,r.marginTopDp);assertEquals(StatusItem.PERCENT,r.footerLeft);assertEquals(StatusItem.CLOCK_BATTERY,r.footerRight);assertEquals(before,raw)
+        assertEquals(20,r.marginLeftDp);assertEquals(StatusItem.PERCENT,r.footerLeft);assertEquals(StatusItem.CLOCK_BATTERY,r.footerRight);assertEquals(before,raw)
+        // 16/16 is R2's untouched default: 40/40 from the edge, then counted from the bands these settings have (MaruViewer's
+        // header 22 dp; footer items above the line 36 dp), so the text box stays 40 dp from both edges.
+        assertEquals(listOf(18,4),listOf(r.marginTopDp,r.marginBottomDp))
         Settings.saveReader(r);Settings.saveApp(Settings.app)
         for (k in StatusMigration.LEGACY_KEYS) assertFalse(p.contains(k))
         assertTrue(p.contains(StatusMigration.MARKER_KEY));assertFalse(p.contains("a.pinChrome"));assertFalse(p.contains("reader.brightnessCollapsed"))
@@ -213,8 +216,10 @@ class SettingsStoreTest {
         val raw=hashMapOf<String,Any?>(SideMargin.KEY to 40,VerticalMargin.KEY to 40,MaruHeader.KEY to true,
             "r.marginLeftDp" to 40,"r.marginRightDp" to 40,"r.marginTopDp" to 40,"r.marginBottomDp" to 40)
         val before=HashMap(raw);val p=fresh(raw);val r=Settings.reader
-        assertEquals(listOf(20,20,40,40),listOf(r.marginLeftDp,r.marginRightDp,r.marginTopDp,r.marginBottomDp));assertEquals(before,raw)
+        // Top and bottom (40/40 from the edge) are counted from the default bands: the new defaults 18/24, same text box.
+        assertEquals(listOf(20,20,18,24),listOf(r.marginLeftDp,r.marginRightDp,r.marginTopDp,r.marginBottomDp));assertEquals(before,raw)
         Settings.saveReader(r);assertEquals(20,p.map[SideMargin.KEY]);assertEquals(20,p.map["r.marginLeftDp"])
+        assertEquals(VerticalMargin.BANDS,p.map[VerticalMargin.KEY]);assertEquals(18,p.map["r.marginTopDp"])
         Settings.initForTest(p);assertEquals(r,Settings.reader)
         // Values the user changed under R3 stay; so does 40/40 saved by this build.
         fresh(hashMapOf(SideMargin.KEY to 40,"r.marginLeftDp" to 30,"r.marginRightDp" to 30));assertEquals(30,Settings.reader.marginLeftDp)
@@ -235,6 +240,33 @@ class SettingsStoreTest {
         Settings.initForTest(p);assertEquals(mine,Settings.reader)
         // A fresh install has nothing to switch: the defaults.
         fresh();assertEquals(ReaderSettings(),Settings.reader)
+    }
+    @Test fun topAndBottomSavedFromTheEdgeMoveOnceOntoTheBands() {
+        // The user's devices (2026-10-05): saved by the MaruViewer build, 40/40 under the U3 marker, its header and the
+        // progress line. Read as the new defaults without writing: the text box stays where it was.
+        val raw=hashMapOf<String,Any?>(SideMargin.KEY to 20,VerticalMargin.KEY to 40,MaruHeader.KEY to true,
+            "r.marginLeftDp" to 20,"r.marginRightDp" to 20,"r.marginTopDp" to 40,"r.marginBottomDp" to 40,
+            "r.headerLeft" to "CLOCK_BATTERY","r.headerCenter" to "BOOK_TITLE","r.headerRight" to "PAGE",
+            "r.footerLeft" to "NONE","r.footerCenter" to "NONE","r.footerRight" to "NONE","r.progressBar" to true,"r.statusFontSizeSp" to 11f)
+        val before=HashMap(raw);val p=fresh(raw)
+        assertEquals(ReaderSettings(),Settings.reader);assertEquals(before,raw)
+        // Read again before any save: the same (from the stored 40/40, never from a moved value).
+        Settings.initForTest(p);assertEquals(ReaderSettings(),Settings.reader)
+        // The next save writes the band marker; from then on the values are read as they are (18 stays 18, 0 stays 0).
+        Settings.saveReader(Settings.reader);assertEquals(VerticalMargin.BANDS,p.map[VerticalMargin.KEY])
+        Settings.initForTest(p);assertEquals(ReaderSettings(),Settings.reader)
+        val zero=ReaderSettings(marginTopDp=0,marginBottomDp=0);Settings.saveReader(zero);Settings.initForTest(p);assertEquals(zero,Settings.reader)
+        // The user's own values from the edge, with their own bands: no header, a footer with the line (36 dp).
+        fresh(hashMapOf(VerticalMargin.KEY to 40,MaruHeader.KEY to true,"r.marginTopDp" to 30,"r.marginBottomDp" to 50,
+            "r.headerLeft" to "NONE","r.headerCenter" to "NONE","r.headerRight" to "NONE","r.footerLeft" to "NONE","r.footerCenter" to "PAGE"))
+        assertEquals(listOf(30,14),listOf(Settings.reader.marginTopDp,Settings.reader.marginBottomDp))
+        // A margin smaller than its band stops at 0.
+        fresh(hashMapOf(VerticalMargin.KEY to 40,MaruHeader.KEY to true,"r.marginTopDp" to 10,"r.marginBottomDp" to 10))
+        assertEquals(listOf(0,0),listOf(Settings.reader.marginTopDp,Settings.reader.marginBottomDp))
+        // Saved before MaruViewer's header (no header marker, all slots none): the header it gets now counts too.
+        fresh(hashMapOf(VerticalMargin.KEY to 40,"r.marginTopDp" to 40,"r.marginBottomDp" to 40,
+            "r.headerLeft" to "NONE","r.headerCenter" to "NONE","r.headerRight" to "NONE","r.footerLeft" to "NONE"))
+        assertEquals(listOf(18,24),listOf(Settings.reader.marginTopDp,Settings.reader.marginBottomDp))
     }
     @Test fun deliberateMarginsAndPageBreakRoundTrip() {
         val p=fresh();val r=ReaderSettings(marginLeftDp=18,marginRightDp=18,marginTopDp=16,marginBottomDp=16,pageBreak=com.ggumtak.readeraplus.engine.PageBreakMode.PARAGRAPH)

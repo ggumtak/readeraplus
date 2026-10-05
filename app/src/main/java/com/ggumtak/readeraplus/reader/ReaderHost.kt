@@ -60,8 +60,8 @@ interface ReaderHost {
     val pageView: View
 
     /**
-     * Px at the page view's top that a display cutout covers (fullscreen, the S25's camera band): the text box starts
-     * below them (`LayoutKeys.geometry`'s extraTop). 0 without one.
+     * Px at the page view's top that a display cutout covers (fullscreen, the S25's camera band): the header's band and
+     * the text box start below them (`LayoutKeys.geometry`'s extraTop). 0 without one.
      */
     val pageCutoutTop: Int get() = 0
 

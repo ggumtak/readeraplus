@@ -262,24 +262,16 @@ class SettingsFormatTest {
     }
 
     @Test
-    fun statusFitNote() {
+    fun statusSizeRowAndMarginNote() {
         val r = ReaderSettings()
-        // Defaults: 40 dp top and bottom hold the header and the progress lane.
-        assertTrue(R3Rows.statusFits(r))
         assertTrue(R3Rows.hasStatusText(r))
-        // No text in any band: nothing to fit, and no size row.
+        // No text in any band: no size row.
         val none = r.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
         assertFalse(R3Rows.hasStatusText(none))
-        assertTrue(R3Rows.statusFits(none.copy(marginTopDp = 0, marginBottomDp = 0)))
-        // A header in a 4 dp margin does not fit, unless the camera band above it (fullscreen S25) gives it room.
-        assertFalse(R3Rows.statusFits(r.copy(marginTopDp = 4)))
-        assertTrue(R3Rows.statusFits(r.copy(marginTopDp = 4), cutoutDp = 37))
-        // 페이지 여백 off: bands get 4 dp.
-        assertFalse(R3Rows.statusFits(r.copy(pageMargins = false)))
-        // Footer text: the progress lane takes 12 dp of the bottom margin.
-        val footer = none.withSlot(1, 2, StatusItem.CLOCK)
-        assertTrue(R3Rows.statusFits(footer.copy(marginBottomDp = 26, progressBar = false)))
-        assertFalse(R3Rows.statusFits(footer.copy(marginBottomDp = 26, progressBar = true)))
+        assertTrue(R3Rows.hasStatusText(none.withSlot(1, 2, StatusItem.CLOCK)))
+        // The bands have their own places (2026-10-05): no margin hides them, so there is no fit note any more; the margin
+        // rows say where the margins count from.
+        assertEquals("0이 기본 여백입니다. 상하 여백은 상태 표시줄과 본문 사이입니다.", R3Rows.MARGIN_NOTE)
     }
 
     @Test
@@ -380,7 +372,7 @@ class SettingsFormatTest {
                 txtReplaceRules = "a=>b", txtDetectChapters = false,
             ),
         )
-        assertEquals(listOf(20, 20, 40, 40), listOf(r.marginLeftDp, r.marginRightDp, r.marginTopDp, r.marginBottomDp))
+        assertEquals(listOf(20, 20, 18, 24), listOf(r.marginLeftDp, r.marginRightDp, r.marginTopDp, r.marginBottomDp))
         assertEquals(PageBreakMode.LINE, r.pageBreak)
         assertEquals(StatusItem.BOOK_TITLE, r.headerCenter)
         assertEquals(StatusItem.NONE, r.footerRight)

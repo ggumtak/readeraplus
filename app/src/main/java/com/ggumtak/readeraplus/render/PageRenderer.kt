@@ -20,6 +20,7 @@ import com.ggumtak.readeraplus.engine.LineGeometry
 import com.ggumtak.readeraplus.engine.LineInfo
 import com.ggumtak.readeraplus.engine.RunStyle
 import com.ggumtak.readeraplus.engine.SectionLayout
+import com.ggumtak.readeraplus.settings.StatusBands
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.Locale
@@ -56,11 +57,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
 
     private val statusPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
         typeface = Typeface.SANS_SERIF
-        textSize = TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_SP,
-            settings.statusFontSizeSp.let { if (it.isFinite() && it > 0f) it.coerceIn(6f, 40f) else 11f },
-            context.resources.displayMetrics,
-        )
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, StatusBands.statusSp(settings), context.resources.displayMetrics)
         color = palette.status
         textLocale = Locale.KOREAN
         fontFeatureSettings = "tnum"
@@ -69,11 +66,10 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val statusDescent: Float
     /** Vertical middle of the status digits relative to the baseline (negative = above it): the battery icon's centre. */
     private val digitMiddle: Float
-    private val glyphPerPx: Float
-    private val minStatusPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, StatusFit.MIN_SP, context.resources.displayMetrics)
-    private val bandPaint = arrayOf(TextPaint(statusPaint), TextPaint(statusPaint))
-    private val bandRoom = FloatArray(2) { Float.NaN }
-    private val bandTextSize = FloatArray(2)
+    /** The bands' glyph box ([StatusBands.glyphDp]), the edge gap and the progress lane, in px. */
+    private val statusGlyphPx = StatusFit.glyphPx(settings, density).toFloat()
+    private val edgePx = StatusFit.edgePx(density)
+    private val lanePx = StatusFit.lanePx(density).toFloat()
     private val bandCache = arrayOf(StatusDrawCache(), StatusDrawCache())
     private val slotGeometry = FloatArray(12)
     private val slotNatural = FloatArray(3)
@@ -149,7 +145,6 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val digit = Rect()
         statusPaint.getTextBounds("0", 0, 1, digit)
         digitMiddle = if (digit.height() > 0) (digit.top + digit.bottom) / 2f else -0.36f * statusPaint.textSize
-        glyphPerPx = (statusAscent + statusDescent) / statusPaint.textSize
         outline.color = fg
         line.color = fg
         ribbonPaint.color = fg
@@ -173,9 +168,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     ) {
         canvas.drawColor(bg)
         val cw = layout.config.width.toFloat()
-        val ch = layout.config.height.toFloat()
         val ribbonH = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + cw, viewWidth) else 0f
-        drawStatus(canvas, decor, contentLeft, contentTop, cw, ch, viewWidth, viewHeight, ribbonH)
+        drawStatus(canvas, decor, contentLeft, contentTop, cw, viewWidth, viewHeight, ribbonH)
         if (pageIndex in 0 until layout.pages.size) {
             val page = layout.pages[pageIndex]
             val lines = page.lines
@@ -232,12 +226,15 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     // ---------------------------------------------------------------------------------------------
     // Status lines
 
-    /** Fixed chrome occupies only existing margins; it never changes the text viewport. */
+    /**
+     * The page under scrolling text: paper and the status bands, in their own places above and below the text box (the
+     * geometry made room for them), so the scrolled text clipped to the box never runs under them.
+     */
     fun drawChrome(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float,
-                   contentHeight: Float, viewWidth: Int, viewHeight: Int) {
+                   viewWidth: Int, viewHeight: Int) {
         canvas.drawColor(bg)
         val h = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + contentWidth, viewWidth) else 0f
-        drawStatus(canvas, decor, contentLeft, contentTop, contentWidth, contentHeight, viewWidth, viewHeight, h)
+        drawStatus(canvas, decor, contentLeft, contentTop, contentWidth, viewWidth, viewHeight, h)
     }
 
     /** Scroll frames only peek at decoded images; a background batch fills missing ones. */
@@ -300,42 +297,26 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         }
     }
 
-    private fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Float, cw: Float, ch: Float,
+    /**
+     * The status bands in their own places at the screen's edges (StatusFit; the text box starts and ends a margin away
+     * from them), at the chosen size: the header below [StatusDecor.top] (a display cutout's band), the footer and the
+     * progress line above the bottom edge gap. [top] / [cw]: the text box, whose column the slots share.
+     */
+    private fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Float, cw: Float,
                            viewWidth: Int, viewHeight: Int, ribbonH: Float) {
         val st = decor.status ?: return
-        // The bottom status keeps StatusFit.EDGE_DP of paper above the screen edge (the bezel may cover the last rows).
-        val edgeBottom = viewHeight - StatusFit.edgeGapPx(viewHeight - (top + ch), density)
-        val bottom = edgeBottom - (top + ch)
-        val lane = if (st.lane) StatusFit.lane(bottom, density) else 0f
-        // Both bands hug their screen edge like MaruViewer's status line (StatusFit), not centred in their margin.
+        val ts = statusPaint.textSize
         if (!st.header.isEmpty) {
-            val ts = bandSize(0, StatusFit.headerRoom(top, density))
-            if (ts > 0f) {
-                val ascent = statusAscent * ts / statusPaint.textSize
-                val baseline = StatusFit.headerBaseline(ascent, density)
-                // The ribbon's place at the header's right end is kept on every page (bookmarked or not), so toggling
-                // the bookmark moves only the right slot, by that much, and never re-fits the slots (or the title).
-                val reserve = RibbonMath.headerInset(density, left + cw, viewWidth,
-                    RibbonMath.height(density, top, left + cw, viewWidth), baseline - ascent)
-                drawBand(canvas, st, st.header, left, cw, baseline, 0, ts, reserve, if (ribbonH > 0f) reserve else 0f)
-            }
+            val baseline = StatusFit.headerBaseline(st.top.toFloat(), statusAscent, statusDescent, statusGlyphPx, density)
+            // The ribbon's place at the header's right end is kept on every page (bookmarked or not), so toggling the
+            // bookmark moves only the right slot, by that much, and never re-fits the slots (or the title).
+            val reserve = RibbonMath.headerInset(density, left + cw, viewWidth,
+                RibbonMath.height(density, top, left + cw, viewWidth), (st.top + edgePx).toFloat())
+            drawBand(canvas, st, st.header, left, cw, baseline, 0, ts, reserve, if (ribbonH > 0f) reserve else 0f)
         }
-        if (!st.footer.isEmpty) {
-            val ts = bandSize(1, bottom - lane)
-            if (ts > 0f) drawBand(canvas, st, st.footer, left, cw, StatusFit.footerBaseline(edgeBottom.toFloat(), lane,
-                statusDescent * ts / statusPaint.textSize, density), 1, ts, 0f, 0f)
-        }
-        if (lane > 0f) drawProgress(canvas, st.progress, viewWidth, edgeBottom, lane)
-    }
-
-    private fun bandSize(band: Int, room: Float): Float {
-        if (bandRoom[band] != room) {
-            bandRoom[band] = room
-            val ts = StatusFit.size(statusPaint.textSize, room, glyphPerPx, StatusFit.PAD_DP * density, minStatusPx)
-            bandTextSize[band] = ts
-            if (ts > 0f) bandPaint[band].textSize = ts
-        }
-        return bandTextSize[band]
+        if (!st.footer.isEmpty) drawBand(canvas, st, st.footer, left, cw, StatusFit.footerBaseline(viewHeight.toFloat(),
+            st.lane, statusAscent, statusDescent, statusGlyphPx, density), 1, ts, 0f, 0f)
+        if (st.lane) drawProgress(canvas, st.progress, viewWidth, StatusFit.laneBottomPx(viewHeight, density), lanePx)
     }
 
     private fun slot(b: StatusBand, i: Int): StatusSlot = when (i) { 0 -> b.left; 1 -> b.center; else -> b.right }
@@ -357,7 +338,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
      */
     private fun drawBand(canvas: Canvas, status: StatusDecor, band: StatusBand, x: Float, w: Float,
                          baseline: Float, bi: Int, ts: Float, reserve: Float, shift: Float) {
-        val paint = bandPaint[bi]
+        val paint = statusPaint
         val start = bi * 3
         if (bandCache[bi].changed(status, w, reserve, ts)) {
             for (i in 0..2) slotNatural[i] = natural(slot(band, i), paint, start + i)

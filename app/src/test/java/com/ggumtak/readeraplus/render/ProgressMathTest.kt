@@ -12,8 +12,8 @@ class ProgressMathTest {
    assertTrue("dot inside the lane",y+0.5f-r>=bottom-lane&&y+0.5f+r<=bottom)
   }
   for(lane in listOf(24f,20f,16f)) assertEquals(6f,ProgressMath.rDot(lane,2f),0f)
-  // Default 40 dp margin: ≥ 18 px (1.6 mm) of paper under the dot, 24 px under the line (was 5 and 11).
-  assertTrue(1440-(ProgressMath.yc(bottom,24f,2f)+0.5f+6f)>=18f)
-  assertEquals(0f,StatusFit.lane(8f,2f),0f);assertEquals(0f,ProgressMath.rDot(0f,2f),0f) }
+  // The lane (12 dp, its own band since 2026-10-05): ≥ 18 px (1.6 mm) of paper under the dot, 24 px under the line.
+  assertTrue(1440-(ProgressMath.yc(bottom,StatusFit.lanePx(2f).toFloat(),2f)+0.5f+6f)>=18f)
+  assertEquals(0f,ProgressMath.rDot(0f,2f),0f) }
  @Test fun capTouchAndPixelRounding() { assertEquals(24,ProgressMath.x0(720,2f));assertEquals(696,ProgressMath.x1(720,2f));assertEquals(654,ProgressMath.trackPx(720,24f,2f));assertEquals(33.5f,ProgressMath.dotX(0f,720,24f,2f),0f);assertEquals(687.5f,ProgressMath.dotX(1f,720,24f,2f),0f);assertEquals(360.5f,ProgressMath.dotX(.5f,720,24f,2f),0f);assertTrue(ProgressMath.trackPx(720,12f,2f)>ProgressMath.trackPx(720,24f,2f)) }
 }

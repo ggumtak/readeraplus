@@ -95,7 +95,7 @@ object Settings {
             putBoolean("r.progressBar", s.progressBar)
             putString("r.pageBreak", s.pageBreak.name)
             putInt(SideMargin.KEY, SideMargin.ZERO_DP)
-            putInt(VerticalMargin.KEY, VerticalMargin.ZERO_DP)
+            putInt(VerticalMargin.KEY, VerticalMargin.BANDS)
             putBoolean(MaruHeader.KEY, true)
             for (key in StatusMigration.LEGACY_KEYS) remove(key)
             putFloat("r.statusFontSizeSp", s.statusFontSizeSp)
@@ -190,7 +190,8 @@ object Settings {
         val mig = if (p.contains(StatusMigration.MARKER_KEY)) null else StatusMigration.migrate(StatusMigration.Legacy.from(p))
         val sideBase = if (p.contains(SideMargin.KEY)) p.getInt(SideMargin.KEY, 0) else null
         val sideLegacy = SideMargin.isLegacyDefault(sideBase, p.getInt("r.marginLeftDp", d.marginLeftDp), p.getInt("r.marginRightDp", d.marginRightDp))
-        val verticalLegacy = VerticalMargin.isLegacyDefault(p.contains(VerticalMargin.KEY), p.getInt("r.marginTopDp", d.marginTopDp), p.getInt("r.marginBottomDp", d.marginBottomDp))
+        val verticalBase = if (p.contains(VerticalMargin.KEY)) p.getInt(VerticalMargin.KEY, 0) else null
+        val verticalLegacy = VerticalMargin.isLegacyDefault(verticalBase != null, p.getInt("r.marginTopDp", d.marginTopDp), p.getInt("r.marginBottomDp", d.marginBottomDp))
         return ReaderSettings(
             fontId = p.getString("r.fontId", d.fontId) ?: d.fontId,
             fontSizeSp = p.getFloat("r.fontSizeSp", d.fontSizeSp),
@@ -203,8 +204,8 @@ object Settings {
             lineBreak = enumOr(p.getString("r.lineBreak", null), d.lineBreak),
             marginLeftDp = if (sideLegacy) SideMargin.ZERO_DP else p.getInt("r.marginLeftDp", d.marginLeftDp),
             marginRightDp = if (sideLegacy) SideMargin.ZERO_DP else p.getInt("r.marginRightDp", d.marginRightDp),
-            marginTopDp = if (verticalLegacy) VerticalMargin.ZERO_DP else p.getInt("r.marginTopDp", d.marginTopDp),
-            marginBottomDp = if (verticalLegacy) VerticalMargin.ZERO_DP else p.getInt("r.marginBottomDp", d.marginBottomDp),
+            marginTopDp = if (verticalLegacy) VerticalMargin.EDGE_DP else p.getInt("r.marginTopDp", d.marginTopDp),
+            marginBottomDp = if (verticalLegacy) VerticalMargin.EDGE_DP else p.getInt("r.marginBottomDp", d.marginBottomDp),
             pageMargins = p.getBoolean("r.pageMargins", d.pageMargins),
             invert = p.getBoolean("r.invert", d.invert),
             pageTheme = enumOr(p.getString("r.pageTheme", null), d.pageTheme),
@@ -227,6 +228,12 @@ object Settings {
             txtReplaceRules = p.getString("r.txtReplaceRules", d.txtReplaceRules) ?: "",
             epubPublisherStyles = p.getBoolean("r.epubPublisherStyles", d.epubPublisherStyles),
         ).let { if (p.contains(MaruHeader.KEY)) it else MaruHeader.applyTo(it) } // saved before MaruViewer's header
+            // Top/bottom saved from the screen's edge: counted from the bands the page now has (MaruViewer's header
+            // included), so the text box stays. Read only: the next saveReader writes them with VerticalMargin.BANDS.
+            .let {
+                if (!VerticalMargin.countsFromEdge(verticalBase)) it
+                else VerticalMargin.fromEdge(it, p.contains("r.marginTopDp"), p.contains("r.marginBottomDp"))
+            }
     }
 
     private fun loadApp(): AppSettings {

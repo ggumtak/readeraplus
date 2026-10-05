@@ -114,7 +114,7 @@ object UserStyles {
 
     fun toJson(u: UserStyle): JSONObject = JSONObject()
         .put(SideMargin.STYLE_KEY, SideMargin.ZERO_DP)
-        .put(VerticalMargin.STYLE_KEY, VerticalMargin.ZERO_DP)
+        .put(VerticalMargin.STYLE_KEY, VerticalMargin.BANDS)
         .put("name", u.name)
         .put("fontId", u.fontId)
         .put("fontSizeSp", u.fontSizeSp.toDouble())
@@ -163,7 +163,13 @@ object UserStyles {
         val d = ReaderSettings()
         val sideBase = if (o.has(SideMargin.STYLE_KEY)) int(o, SideMargin.STYLE_KEY, -1) else null
         val sideLegacy = SideMargin.isLegacyDefault(sideBase, int(o, "marginLeftDp", d.marginLeftDp), int(o, "marginRightDp", d.marginRightDp))
-        val verticalLegacy = VerticalMargin.isLegacyDefault(o.has(VerticalMargin.STYLE_KEY), int(o, "marginTopDp", d.marginTopDp), int(o, "marginBottomDp", d.marginBottomDp))
+        val verticalBase = if (o.has(VerticalMargin.STYLE_KEY)) int(o, VerticalMargin.STYLE_KEY, -1) else null
+        val verticalLegacy = VerticalMargin.isLegacyDefault(verticalBase != null, int(o, "marginTopDp", d.marginTopDp), int(o, "marginBottomDp", d.marginBottomDp))
+        // Top/bottom saved from the screen's edge: a style carries no status bar, so they are counted from the default
+        // bands (the user's own on both devices: MaruViewer's header, the progress line), where the text box stays put.
+        val edge = VerticalMargin.countsFromEdge(verticalBase)
+        fun top(dp: Int): Int = if (edge && o.has("marginTopDp")) VerticalMargin.topFromEdge(dp, d) else dp
+        fun bottom(dp: Int): Int = if (edge && o.has("marginBottomDp")) VerticalMargin.bottomFromEdge(dp, d) else dp
         return UserStyle(
             name = name,
             fontId = str(o, "fontId", d.fontId).trim().ifEmpty { d.fontId },
@@ -177,8 +183,8 @@ object UserStyles {
             lineBreak = LineBreakMode.entries.firstOrNull { it.name == o.optString("lineBreak") } ?: d.lineBreak,
             marginLeftDp = if (sideLegacy) SideMargin.ZERO_DP else int(o, "marginLeftDp", d.marginLeftDp).coerceIn(0, 300),
             marginRightDp = if (sideLegacy) SideMargin.ZERO_DP else int(o, "marginRightDp", d.marginRightDp).coerceIn(0, 300),
-            marginTopDp = if (verticalLegacy) VerticalMargin.ZERO_DP else int(o, "marginTopDp", d.marginTopDp).coerceIn(0, 300),
-            marginBottomDp = if (verticalLegacy) VerticalMargin.ZERO_DP else int(o, "marginBottomDp", d.marginBottomDp).coerceIn(0, 300),
+            marginTopDp = top(if (verticalLegacy) VerticalMargin.EDGE_DP else int(o, "marginTopDp", d.marginTopDp).coerceIn(0, 300)),
+            marginBottomDp = bottom(if (verticalLegacy) VerticalMargin.EDGE_DP else int(o, "marginBottomDp", d.marginBottomDp).coerceIn(0, 300)),
             pageMargins = (o.opt("pageMargins") as? Boolean) ?: d.pageMargins,
             pageTheme = PageTheme.entries.firstOrNull { it.name == o.optString("pageTheme") } ?: d.pageTheme,
         )
