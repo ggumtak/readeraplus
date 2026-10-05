@@ -57,6 +57,11 @@ object FontManager {
     private val typefaces = HashMap<String, Typeface>()
     /** One lock object per typeface cache key: concurrent requests for the same face build it once. */
     private val buildLocks = HashMap<String, Any>()
+    /**
+     * Font file path → whether its typefaces load from the [FontRepairs] copy (true) or the file itself (false), as built
+     * in this process: what [layoutTag] reports, so cached page counts follow the glyph widths actually measured.
+     */
+    private val loadedRepaired = HashMap<String, Boolean>()
 
     /** Records the application context (cheap; no disk access). Called from App.onCreate. */
     fun init(context: Context) {
@@ -126,6 +131,56 @@ object FontManager {
             synchronized(lock) { typefaces[key] = tf }
             return tf
         }
+    }
+
+    /**
+     * The typeface [typeface] would answer for [id] at [weight] if it is built already, else null: no IO, for the main
+     * thread (a label in the font's own face). A user font must have been looked up before ([font]).
+     */
+    fun cachedTypeface(id: String, weight: Int = 400, italic: Boolean = false): Typeface? {
+        val info = resolve(id)
+        val key = cacheKey(info, FontMath.normalizeWeight(weight), italic)
+        return synchronized(lock) { typefaces[key] }
+    }
+
+    /**
+     * Checks font [id]'s regular and bold files for blank glyphs ([FontRepairs]) so the first page or the settings popup
+     * never waits for that on first use: the reader calls it on a background thread next to its font warm-up. Disk IO
+     * the first time per file, a stat or two after that.
+     */
+    fun prepare(id: String) {
+        val info = resolve(id)
+        if (info.source == FontSource.SYSTEM) return
+        val ctx = app ?: return
+        for (path in listOfNotNull(info.path, info.boldPath)) {
+            try {
+                FontRepairs.fileFor(ctx, info.source, path)
+            } catch (t: Throwable) {
+                Log.w(TAG, "font check failed: $path", t)
+            }
+        }
+    }
+
+    /**
+     * What font [id]'s blank-glyph repairs ([FontRepairs]) add to the page-count key: "" when neither file needs one
+     * (its glyph widths are those of the file, as before the repairs existed, so its cached counts stay valid), else
+     * the repair rules' version and which files load from a repaired copy. A file not built in this process yet
+     * answers with the verdict its build would use. Disk IO the first time per file (background threads only).
+     */
+    fun layoutTag(id: String): String {
+        val info = resolve(id)
+        if (info.source == FontSource.SYSTEM) return ""
+        val ctx = app ?: return ""
+        val sb = StringBuilder()
+        for ((i, path) in listOfNotNull(info.path, info.boldPath).withIndex()) {
+            val used = synchronized(lock) { loadedRepaired[path] } ?: try {
+                FontRepairs.fileFor(ctx, info.source, path) != null
+            } catch (t: Throwable) {
+                false
+            }
+            if (used) sb.append(if (i == 0) 'r' else 'b')
+        }
+        return FontMath.repairTag(sb.toString(), FontRepairs.VERSION)
     }
 
     /**
@@ -256,9 +311,9 @@ object FontManager {
     }
 
     /**
-     * One font file as a typeface with the system fallback chain behind it ([FontMath.systemFallback]: serif faces fall
-     * back to the system serif). A file that maps characters to blank glyphs loads from its repaired copy
-     * ([FontRepairs]), so the fallback draws those too. Measuring and drawing share the typeface, so they agree.
+     * One font file as a typeface with the system fallback chain behind it ([FontMath.SYSTEM_FALLBACK]). A file that
+     * maps characters to blank glyphs loads from its repaired copy ([FontRepairs]), so the fallback draws those too.
+     * Measuring and drawing share the typeface, so they agree.
      */
     private fun buildFile(ctx: Context, info: FontInfo, path: String, w: Int): Typeface? {
         val fixed = try {
@@ -267,22 +322,26 @@ object FontManager {
             Log.w(TAG, "font check failed: $path", t)
             null
         }
-        val fallback = FontMath.systemFallback(info.serif)
         // A repaired copy that doesn't load (damaged since) leaves the original file, blanks and all.
-        if (fixed != null) buildFace(ctx, info, path, fixed, w, fallback)?.let { return it }
-        return buildFace(ctx, info, path, null, w, fallback)
+        if (fixed != null) {
+            buildFace(ctx, info, path, fixed, w)?.let {
+                synchronized(lock) { loadedRepaired[path] = true }
+                return it
+            }
+        }
+        return buildFace(ctx, info, path, null, w)?.also { synchronized(lock) { loadedRepaired[path] = false } }
     }
 
-    private fun buildFace(ctx: Context, info: FontInfo, path: String, fixed: File?, w: Int, fallback: String): Typeface? = try {
-        if (Build.VERSION.SDK_INT >= 29) buildWithFallback(ctx, info, path, fixed, w, fallback) else buildLegacy(ctx, info, path, fixed, w, fallback)
+    private fun buildFace(ctx: Context, info: FontInfo, path: String, fixed: File?, w: Int): Typeface? = try {
+        if (Build.VERSION.SDK_INT >= 29) buildWithFallback(ctx, info, path, fixed, w) else buildLegacy(ctx, info, path, fixed, w)
     } catch (t: Throwable) {
         Log.w(TAG, "typeface build failed: ${fixed ?: path}", t)
         null
     }
 
-    /** API 29+: what `Typeface.Builder` builds, with [fallback] named explicitly. Throws when the file can't load. */
+    /** API 29+: what `Typeface.Builder` builds, with the fallback chain named explicitly. Throws when the file can't load. */
     @TargetApi(29)
-    private fun buildWithFallback(ctx: Context, info: FontInfo, path: String, fixed: File?, w: Int, fallback: String): Typeface {
+    private fun buildWithFallback(ctx: Context, info: FontInfo, path: String, fixed: File?, w: Int): Typeface {
         val b = when {
             fixed != null -> Font.Builder(fixed)
             info.source == FontSource.BUNDLED -> Font.Builder(ctx.assets, path)
@@ -295,31 +354,25 @@ object FontManager {
         val font = b.build()
         return Typeface.CustomFallbackBuilder(FontFamily.Builder(font).build())
             .setStyle(font.style)
-            .setSystemFallback(fallback)
+            .setSystemFallback(FontMath.SYSTEM_FALLBACK)
             .build()
     }
 
     /**
-     * API 26–28: `Typeface.Builder`. Its build() answers null for a file that can't load, but with a fallback name it
-     * answers that system face instead, so the serif chain is asked for only once the file has loaded (API 28 puts the
-     * named chain behind the face; 26–27 may keep the default one).
+     * API 26–28: `Typeface.Builder`, built once. Its default chain is [FontMath.SYSTEM_FALLBACK] already; build() answers
+     * null for a file that can't load.
      */
-    private fun buildLegacy(ctx: Context, info: FontInfo, path: String, fixed: File?, w: Int, fallback: String): Typeface? {
-        fun builder(): Typeface.Builder {
-            val b = when {
-                fixed != null -> Typeface.Builder(fixed)
-                info.source == FontSource.BUNDLED -> Typeface.Builder(ctx.assets, path)
-                else -> Typeface.Builder(File(path))
-            }
-            if (info.variable) {
-                b.setFontVariationSettings("'wght' $w")
-                b.setWeight(w)
-            }
-            return b
+    private fun buildLegacy(ctx: Context, info: FontInfo, path: String, fixed: File?, w: Int): Typeface? {
+        val b = when {
+            fixed != null -> Typeface.Builder(fixed)
+            info.source == FontSource.BUNDLED -> Typeface.Builder(ctx.assets, path)
+            else -> Typeface.Builder(File(path))
         }
-        val plain = builder().build() ?: return null
-        if (fallback == FontMath.SANS_FALLBACK) return plain
-        return builder().setFallback(fallback).build() ?: plain
+        if (info.variable) {
+            b.setFontVariationSettings("'wght' $w")
+            b.setWeight(w)
+        }
+        return b.build()
     }
 
     private fun systemTypeface(serif: Boolean, w: Int, italic: Boolean): Typeface {
@@ -331,10 +384,15 @@ object FontManager {
         }
     }
 
+    /** Forgets font [id]'s typefaces (and, for a user font, which of its files loaded repaired). Under [lock]. */
     private fun dropTypefaces(id: String) {
         val prefix = "$id|"
         val it = typefaces.keys.iterator()
         while (it.hasNext()) if (it.next().startsWith(prefix)) it.remove()
+        userFiles[id]?.let { u ->
+            loadedRepaired.remove(u.file.absolutePath)
+            u.bold?.let { b -> loadedRepaired.remove(b.absolutePath) }
+        }
     }
 
     private fun userInfo(uf: UserFile): FontInfo? {

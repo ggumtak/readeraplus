@@ -873,7 +873,12 @@ fun probeAsync(context: Context, onDone: (Boolean) -> Unit)
 ### `render/PageRenderer.kt` — E2
 
 ```kotlin
-class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, private val images: ImageCache?)
+class PageRenderer(
+    context: Context,
+    private val measurer: AndroidTextMeasurer,
+    private val images: ImageCache?,
+    epub: Boolean = false, // [2026-10-05] an EPUB page: the palette's EPUB text shadow (PagePalette.shadowDyDp(epub))
+)
 fun draw(
     canvas: Canvas,
     layout: SectionLayout,

@@ -45,13 +45,14 @@ object LayoutKeys {
      * lines for the same input, and only then, so an app update keeps every cached page count (A2). The typesetter
      * half is enforced by `LayoutGoldenTest` (test/.../engine), which hashes the layout of a fixed corpus and compares
      * it with [GOLDEN_HASH]: update both together. Measurer changes (FontManager, AndroidTextMeasurer, the synthetic
-     * stroke's advances or line metrics) are not covered by that test: whoever makes one bumps this by hand.
-     * 2 (2026-10-05, 한자 빈칸): characters a font maps to blank glyphs are measured in the system font
-     * (`HollowGlyphs`: a blank 聖 was 0.95 em in 나눔명조 OTF, an empty Hangul syllable as wide as 가 in 마루 부리 /
-     * SUIT / 바른바탕), and serif faces fall back to the system serif (other fallback advances). 나눔명조's own key also
-     * changed with its file (OTF → TTF: taller line box metrics). Every cached page count is counted once again.
+     * stroke's advances or line metrics) are not covered by that test: whoever makes one bumps this by hand, unless the
+     * change only touches some fonts and their part of the key says so instead: the 2026-10-05 blank-glyph repairs
+     * (한자 빈칸: a blank 聖 was 0.95 em in 나눔명조 OTF, an empty Hangul syllable as wide as 가 in 마루 부리 / SUIT /
+     * 바른바탕) change the widths of the repaired fonts only, so the font identity carries `FontManager.layoutTag`
+     * (`|hg<rules>:<files>`, "" without a repair) and 나눔명조's own key changed with its file (OTF → TTF), while the
+     * system faces, Pretendard and every other font without blank glyphs keep their counts.
      */
-    const val ALGO_VERSION = 2
+    const val ALGO_VERSION = 1
 
     /** Hash of `LayoutGoldenTest`'s layouts at [ALGO_VERSION]; see there. */
     const val GOLDEN_HASH = "071717a86d158ac8"

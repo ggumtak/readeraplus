@@ -77,12 +77,13 @@ internal object HollowGlyphs {
     private const val OP_CHARSTRING_TYPE = 0x0C06
     private const val CS_ENDCHAR = 14
 
-    /** Scans [src]'s first face; null when it can't be read or is left alone (see the class). Never throws. */
+    /**
+     * Scans [src]'s first face; null when it can't be read or is left alone (see the class). Never throws an exception;
+     * an OutOfMemoryError passes on (a passing state: the caller asks again later, see [FontRepairs]).
+     */
     fun scan(src: SfntSource): Scan? = try {
         scanFace(src)
     } catch (e: Exception) {
-        null
-    } catch (e: OutOfMemoryError) {
         null
     }
 
@@ -593,8 +594,10 @@ internal object HollowGlyphs {
     // ------------------------------------------------------------------ GSUB
 
     /**
-     * Glyphs a default-on GSUB feature may substitute: the Coverage of every lookup a feature outside [OPT_IN] uses
-     * (for the contextual format 3, all its coverages). None without a GSUB; null when the table can't be read.
+     * Glyphs a default-on GSUB feature may substitute or needs as context: the Coverage of every lookup a feature outside
+     * [OPT_IN] uses, and every other glyph its rules name (a ligature's later components, a context rule's input,
+     * backtrack and lookahead glyphs or Coverages, every glyph a class-based rule's ClassDefs give a class). None without
+     * a GSUB; null when the table can't be read.
      */
     private fun substitutedGlyphs(src: SfntSource, gsub: Table?): BitSet? {
         if (gsub == null) return BitSet()
@@ -645,19 +648,124 @@ internal object HollowGlyphs {
         }
 
         private fun coverages(sub: Int, type: Int) {
-            if ((type == 5 || type == 6) && u16(t, sub) == 3) {
-                if (type == 5) {
-                    for (k in 0 until u16(t, sub + 2)) coverage(sub + u16(t, sub + 6 + 2 * k))
-                } else {
-                    var p = sub + 2
-                    repeat(3) { // backtrack, input, lookahead
+            val format = u16(t, sub)
+            when {
+                (type == 5 || type == 6) && format == 3 -> {
+                    if (type == 5) {
+                        for (k in 0 until u16(t, sub + 2)) coverage(sub + u16(t, sub + 6 + 2 * k))
+                    } else {
+                        var p = sub + 2
+                        repeat(3) { // backtrack, input, lookahead
+                            val n = u16(t, p)
+                            spend(n)
+                            for (k in 0 until n) coverage(sub + u16(t, p + 2 + 2 * k))
+                            p += 2 + 2 * n
+                        }
+                    }
+                }
+                type == 4 && format == 1 -> {
+                    coverage(sub + u16(t, sub + 2))
+                    ligatureComponents(sub)
+                }
+                (type == 5 || type == 6) && format == 1 -> {
+                    coverage(sub + u16(t, sub + 2))
+                    ruleGlyphs(sub, chained = type == 6)
+                }
+                type == 5 && format == 2 -> {
+                    coverage(sub + u16(t, sub + 2))
+                    classDef(sub, u16(t, sub + 4))
+                }
+                type == 6 && format == 2 -> {
+                    coverage(sub + u16(t, sub + 2))
+                    for (k in 0 until 3) classDef(sub, u16(t, sub + 4 + 2 * k)) // backtrack, input, lookahead
+                }
+                type == 8 && format == 1 -> {
+                    coverage(sub + u16(t, sub + 2))
+                    var p = sub + 4
+                    repeat(2) { // backtrack, lookahead
                         val n = u16(t, p)
+                        spend(n)
                         for (k in 0 until n) coverage(sub + u16(t, p + 2 + 2 * k))
                         p += 2 + 2 * n
                     }
                 }
-            } else {
-                coverage(sub + u16(t, sub + 2))
+                else -> coverage(sub + u16(t, sub + 2))
+            }
+        }
+
+        /** Type 4: every Ligature's components after the first (the first is the Coverage). */
+        private fun ligatureComponents(sub: Int) {
+            val sets = u16(t, sub + 4)
+            spend(sets)
+            for (i in 0 until sets) {
+                val set = sub + u16(t, sub + 6 + 2 * i)
+                val n = u16(t, set)
+                spend(n)
+                for (j in 0 until n) {
+                    val lig = set + u16(t, set + 2 + 2 * j)
+                    val components = u16(t, lig + 2)
+                    spend(components)
+                    for (c in 1 until components) out.set(u16(t, lig + 4 + 2 * (c - 1)))
+                }
+            }
+        }
+
+        /**
+         * Types 5 and 6, format 1: the glyphs of every rule (input after the first; for 6 also backtrack and lookahead).
+         * A null rule set offset is no rule set.
+         */
+        private fun ruleGlyphs(sub: Int, chained: Boolean) {
+            val sets = u16(t, sub + 4)
+            spend(sets)
+            for (i in 0 until sets) {
+                val setOffset = u16(t, sub + 6 + 2 * i)
+                if (setOffset == 0) continue
+                val set = sub + setOffset
+                val n = u16(t, set)
+                spend(n)
+                for (j in 0 until n) {
+                    var p = set + u16(t, set + 2 + 2 * j)
+                    if (chained) {
+                        p = glyphs(p + 2, u16(t, p)) // backtrack
+                        val input = u16(t, p)
+                        p = glyphs(p + 2, input - 1)
+                        glyphs(p + 2, u16(t, p)) // lookahead
+                    } else {
+                        glyphs(p + 4, u16(t, p) - 1)
+                    }
+                }
+            }
+        }
+
+        /** [n] glyph ids from [at] into the set; where the array ends. */
+        private fun glyphs(at: Int, n: Int): Int {
+            if (n <= 0) return at
+            spend(n)
+            for (k in 0 until n) out.set(u16(t, at + 2 * k))
+            return at + 2 * n
+        }
+
+        /** Every glyph a ClassDef at [base] + [offset] puts in a class (not class 0); none for a null offset. */
+        private fun classDef(base: Int, offset: Int) {
+            if (offset == 0) return
+            val at = base + offset
+            when (u16(t, at)) {
+                1 -> {
+                    val start = u16(t, at + 2)
+                    val n = u16(t, at + 4)
+                    spend(n)
+                    for (k in 0 until n) if (u16(t, at + 6 + 2 * k) != 0) out.set(start + k)
+                }
+                2 -> {
+                    val n = u16(t, at + 2)
+                    spend(n)
+                    for (k in 0 until n) {
+                        val r = at + 4 + 6 * k
+                        val first = u16(t, r)
+                        val last = u16(t, r + 2)
+                        if (u16(t, r + 4) != 0 && first <= last) out.set(first, last + 1)
+                    }
+                }
             }
         }
 

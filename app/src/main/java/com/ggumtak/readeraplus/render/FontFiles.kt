@@ -190,15 +190,22 @@ internal object FontMath {
         return if (bold) minOf(900, b + 300) else b
     }
 
-    /** The system's default fallback chain (what `Typeface.Builder` puts behind a face unless told otherwise). */
-    const val SANS_FALLBACK = "sans-serif"
+    /**
+     * The system fallback chain behind every font file's own glyphs (Hanja the font lacks, symbols, other scripts): the
+     * default one, which `Typeface.Builder` puts behind a face unless told otherwise, for 명조 / 바탕 faces too. That is
+     * MaruViewer's look on the user's S25 (its 나눔명조 page draws 聖 / 俗 in the system's gothic, 2026-10-05
+     * screenshot), and those strokes hold up in the Comet's fast black-and-white modes, where a thin serif CJK breaks
+     * up. The serif chain (Noto Serif CJK where the device has it) would be `"serif"`: one line, if a Myeongjo-style
+     * Hanja is ever wanted. Measuring is the same as before the explicit chain, so cached page counts of fonts without
+     * blank glyphs stay valid.
+     */
+    const val SYSTEM_FALLBACK = "sans-serif"
 
     /**
-     * The system fallback chain behind a font file's own glyphs (Hanja the font lacks, symbols, other scripts): a serif
-     * (명조/바탕) face gets the serif chain, whose Hanja are Noto Serif CJK's on devices that have it (fonts.xml
-     * `fallbackFor="serif"`; elsewhere the chain is the default one), a sans face the default chain.
+     * The page-count key's part for a font's blank-glyph repairs: "" when no file of it loads repaired, else the repair
+     * rules' [version] and [files] ("r" regular, "b" bold, in that order) that do.
      */
-    fun systemFallback(serif: Boolean): String = if (serif) "serif" else SANS_FALLBACK
+    fun repairTag(files: String, version: Int): String = if (files.isEmpty()) "" else "|hg$version:$files"
 
     /** Static fonts switch to their bold file from 600 up. */
     fun usesBoldFile(weight: Int, hasBoldFile: Boolean): Boolean = hasBoldFile && weight >= 600

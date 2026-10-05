@@ -136,7 +136,53 @@ internal object GlyphFixtures {
     fun gsub(tag: String, glyphs: List<Int>): ByteArray {
         val coverage = out { u16(1); u16(glyphs.size); for (g in glyphs.sorted()) u16(g) }
         val single = out { u16(1); u16(6); u16(1); write(coverage) } // format 1, coverage at 6, delta 1
-        val lookup = out { u16(1); u16(0); u16(1); u16(8); write(single) }
+        return gsubLookup(tag, 1, single)
+    }
+
+    /** A format 1 Coverage of [glyphs]. */
+    fun coverage(vararg glyphs: Int): ByteArray = out { u16(1); u16(glyphs.size); for (g in glyphs.sorted()) u16(g) }
+
+    /** Type 4: one ligature of [components] (the first in the Coverage). */
+    fun ligature(components: List<Int>): ByteArray = out {
+        val cov = coverage(components[0])
+        val lig = out { u16(1); u16(components.size); for (c in components.drop(1)) u16(c) }
+        u16(1); u16(8 + 4 + lig.size); u16(1); u16(8) // format 1, coverage after the ligature, one set at 8
+        u16(1); u16(4) // the set: one ligature at +4
+        write(lig)
+        write(cov)
+    }
+
+    /** Type 6 format 1: one rule, [backtrack] · [input] (the first in the Coverage) · [lookahead], no lookups. */
+    fun chainRule(backtrack: List<Int>, input: List<Int>, lookahead: List<Int>): ByteArray = out {
+        val rule = out {
+            u16(backtrack.size); for (g in backtrack) u16(g)
+            u16(input.size); for (g in input.drop(1)) u16(g)
+            u16(lookahead.size); for (g in lookahead) u16(g)
+            u16(0)
+        }
+        u16(1); u16(8 + 4 + rule.size); u16(1); u16(8)
+        u16(1); u16(4)
+        write(rule)
+        write(coverage(input[0]))
+    }
+
+    /** Type 5 format 2 over [first] with a format 2 ClassDef giving [classed] (a range) class 1; no rules. */
+    fun classContext(first: Int, classed: IntRange): ByteArray = out {
+        u16(2); u16(8 + 10); u16(8); u16(0)
+        u16(2); u16(1); u16(classed.first); u16(classed.last); u16(1)
+        write(coverage(first))
+    }
+
+    /** Type 6 format 2 over [first]: no backtrack or lookahead ClassDef, an input one of format 1 giving [classed] class 1. */
+    fun chainClassContext(first: Int, classed: Int): ByteArray = out {
+        u16(2); u16(14 + 8); u16(0); u16(14); u16(0); u16(0); u16(0) // 12-byte header, 2 of padding, the ClassDef at 14
+        u16(1); u16(classed); u16(1); u16(1) // format 1: one glyph, class 1
+        write(coverage(first))
+    }
+
+    /** A GSUB whose single feature [tag] runs one lookup of [type] with [subtable]. */
+    fun gsubLookup(tag: String, type: Int, subtable: ByteArray): ByteArray {
+        val lookup = out { u16(type); u16(0); u16(1); u16(8); write(subtable) }
         val lookupList = out { u16(1); u16(4); write(lookup) }
         val feature = out { u16(0); u16(1); u16(0) }
         val featureList = out { u16(1); for (c in tag) u8(c.code); u16(8); write(feature) }

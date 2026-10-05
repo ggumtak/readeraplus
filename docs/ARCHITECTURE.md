@@ -303,13 +303,16 @@ as you like, same package & signatures).
     `setFontVariationSettings("'wght' N")`. Static fonts: use the bold file when `weight ≥ 600` and one
     exists, else the regular file. Italic: `Typeface.create(base, weight, true)` (API 28+) or no-op (the
     measurer applies skew). Unknown id → default (`FontCatalog.DEFAULT_ID`, `nanummyeongjo` since R2).
-    **2026-10-05 (한자 빈칸):** every face gets the system fallback chain explicitly (API 29+
-    `Typeface.CustomFallbackBuilder(...).setSystemFallback`, 26–28 `Typeface.Builder.setFallback` once the file
-    has loaded): `"serif"` for serif faces, `"sans-serif"` for the rest (`FontMath.systemFallback`). A font file
-    that maps characters to glyphs without an outline (`HollowGlyphs`: the old 나눔명조 OTF's 4,888 Hanja, the
-    syllables outside KS X 1001 in 마루 부리 / SUIT / 바른바탕) loads from a private copy whose cmap leaves them out
-    (`FontRepairs`, cacheDir/fonts-fixed, one scan per file and install), so the system font draws them. 나눔명조
-    ships as Naver's TTF (no Hanja in its cmap, like MaruViewer's).
+    **2026-10-05 (한자 빈칸):** every face gets the system's default fallback chain, named explicitly on API 29+
+    (`Typeface.CustomFallbackBuilder(...).setSystemFallback(FontMath.SYSTEM_FALLBACK)`, `"sans-serif"`; 26–28
+    `Typeface.Builder`'s own default), 명조 / 바탕 faces too: MaruViewer draws 聖 / 俗 in the system's gothic, and
+    advances stay what they were. A font file that maps characters to glyphs without an outline (`HollowGlyphs`:
+    the old 나눔명조 OTF's 4,888 Hanja, the syllables outside KS X 1001 in 마루 부리 / SUIT / 바른바탕) loads from a
+    private copy whose cmap leaves them out (`FontRepairs`, cacheDir/fonts-fixed, one scan per font file version:
+    an asset is keyed by its length and table directory, a user file by size and mtime), so the system font draws
+    them. The reader checks its font's two files next to its warm-up (`FontManager.prepare`); the page-count key
+    names the repaired files (`FontManager.layoutTag`). 나눔명조 ships as Naver's TTF (no Hanja in its cmap, like
+    MaruViewer's).
   - `syntheticStroke(id, weight, sizePx)`: static fonts only. `w = weight` minus 300 if the bold file is used
     (i.e. bold file ≈ 700), result `max(0, (w - 400) / 100f) * 0.012f * sizePx` (so 900 ≈ 6% of size).
   - `importFont(context, uri)`: copy via ContentResolver into `filesDir/fonts/` (validate the sfnt header
@@ -687,7 +690,8 @@ throttled (only auto-repeat is paced).
   every `LineInfo` field and compares with `LayoutKeys.GOLDEN_HASH`; on a mismatch it fails with "layout output
   changed: bump ALGO_VERSION and update GOLDEN_HASH". Measurer changes (`FontManager`, `AndroidTextMeasurer`,
   synthetic stroke) are NOT covered by the test: whoever changes glyph advances or line metrics bumps `ALGO_VERSION`
-  by hand.
+  by hand, unless the change touches some fonts only and the font identity in the key says so (the blank-glyph
+  repairs: `FontManager.layoutTag`, "" for a font without one, so the other fonts keep their counts).
 - Counts are saved partially: the `page_counts` BLOB (little-endian int32 per section) may hold -1 for a section not
   counted yet (or counted as its error page: those are never cached). The reader saves every 25 counted sections, when
   complete and on close (on `ReaderIo`, array copied on the main thread first; an older save never overwrites a newer

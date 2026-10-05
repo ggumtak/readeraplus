@@ -143,6 +143,26 @@ class HollowGlyphsTest {
     }
 
     @Test
+    fun laterComponentsAndContextGlyphsKeepTheirMapping() {
+        // Old-Hangul jamo fonts may draw a syllable only as a ligature of blank placeholders: a placeholder that is a
+        // later component (or a context rule's input, backtrack or lookahead glyph) must stay mapped too.
+        val map = mapOf('A'.code to 1, 0x8056 to 2, 0x4FD7 to 3, 0xAC05 to 4)
+        fun hollow(type: Int, sub: ByteArray, tag: String = "liga"): IntArray =
+            scan(GlyphFixtures.trueType(ttGlyphs, map) { table("GSUB", GlyphFixtures.gsubLookup(tag, type, sub)) })!!.hollow
+        // A ligature A + 갅's glyph: 갅 keeps its mapping, 聖 and 俗 don't.
+        assertArrayEquals(intArrayOf(0x4FD7, 0x8056), hollow(4, GlyphFixtures.ligature(listOf(1, 4))))
+        // A chained rule 俗 | A 갅 |: both kept (backtrack and input after the first).
+        assertArrayEquals(intArrayOf(0x8056), hollow(6, GlyphFixtures.chainRule(listOf(3), listOf(1, 4), emptyList()), "ccmp"))
+        // Its lookahead too.
+        assertArrayEquals(intArrayOf(0x4FD7, 0x8056), hollow(6, GlyphFixtures.chainRule(emptyList(), listOf(1), listOf(4)), "ccmp"))
+        // Class-based rules: every glyph their ClassDefs put in a class (format 2 ranges, format 1 arrays).
+        assertArrayEquals(intArrayOf(0x8056), hollow(5, GlyphFixtures.classContext(1, 3..4), "calt"))
+        assertArrayEquals(intArrayOf(0x4FD7, 0x8056), hollow(6, GlyphFixtures.chainClassContext(1, 4), "calt"))
+        // The same rules behind an opt-in feature keep nothing.
+        assertArrayEquals(intArrayOf(0x4FD7, 0x8056, 0xAC05), hollow(4, GlyphFixtures.ligature(listOf(1, 4)), "dlig"))
+    }
+
+    @Test
     fun aGsubThatRepeatsItselfEndsTheScan() {
         // 200 features × 65,535 lookup indices: past the work limit the font is left alone, quickly.
         val font = GlyphFixtures.trueType(ttGlyphs, ttMap) { table("GSUB", GlyphFixtures.gsubSharingOneHugeFeature(200)) }
@@ -297,13 +317,40 @@ class HollowGlyphsTest {
     }
 
     @Test
-    fun serifFacesFallBackToTheSystemSerif() {
-        assertEquals("serif", FontMath.systemFallback(true))
-        assertEquals("sans-serif", FontMath.systemFallback(false))
-        assertEquals(FontMath.SANS_FALLBACK, FontMath.systemFallback(false))
-        // 나눔명조 (the default) and the other 명조 / 바탕 faces get the serif chain; the sans faces the default one.
-        val serif = FontCatalog.BUNDLED.filter { it.serif }.map { it.id }.toSet()
-        assertEquals(setOf("ridibatang", "nanummyeongjo", "maruburi", "iropkebatang", "bareonbatang"), serif)
+    fun everyFaceFallsBackToTheDefaultChainAsMaruViewerDoes() {
+        // MaruViewer's 나눔명조 page draws 聖 / 俗 in the system's gothic (S25, 2026-10-05): the default chain for every
+        // face, 명조 / 바탕 included, which is also what Typeface.Builder put behind a face before (same advances).
+        assertEquals("sans-serif", FontMath.SYSTEM_FALLBACK)
+    }
+
+    @Test
+    fun theRepairTagNamesTheRepairedFilesOnly() {
+        // A font without blank glyphs keeps its page-count key of before the repairs; a repaired one gets the rules'
+        // version and which of its files load repaired.
+        assertEquals("", FontMath.repairTag("", 1))
+        assertEquals("|hg1:r", FontMath.repairTag("r", 1))
+        assertEquals("|hg1:rb", FontMath.repairTag("rb", 1))
+        assertNotEquals(FontMath.repairTag("rb", 1), FontMath.repairTag("rb", 2))
+        assertNotEquals(FontMath.repairTag("r", 1), FontMath.repairTag("b", 1))
+    }
+
+    @Test
+    fun aFailedReadIsToldFromABrokenTable() {
+        val font = GlyphFixtures.trueType(ttGlyphs, ttMap)
+        // A table offset past the end is the font's own fault: left alone, a verdict.
+        val past = CheckedSfntSource(ByteArraySfntSource(font))
+        assertFalse(past.read(font.size - 2L, ByteArray(4), 0, 4))
+        assertFalse(past.failed)
+        // A read inside the file that fails (removable storage, a file cut while read) is not: no verdict.
+        val flaky = CheckedSfntSource(object : SfntSource {
+            override val size = font.size.toLong()
+            override fun read(pos: Long, dst: ByteArray, off: Int, len: Int) = pos < 40 && ByteArraySfntSource(font).read(pos, dst, off, len)
+        })
+        assertNull(HollowGlyphs.scan(flaky))
+        assertTrue(flaky.failed)
+        val fine = CheckedSfntSource(ByteArraySfntSource(font))
+        assertNotNull(HollowGlyphs.scan(fine))
+        assertFalse(fine.failed)
     }
 
     @Test
@@ -313,7 +360,7 @@ class HollowGlyphsTest {
         assertNotEquals(asset, user)
         val base = RepairNames.base(asset, "7:100", 1)
         assertEquals(base, RepairNames.base(asset, "7:100", 1))
-        assertNotEquals(base, RepairNames.base(asset, "8:100", 1)) // an app update
+        assertNotEquals(base, RepairNames.base(asset, "8:100", 1)) // another stamp (a changed file)
         assertNotEquals(base, RepairNames.base(asset, "7:100", 2)) // new rules
         assertTrue(base.matches(Regex("[0-9a-f]{24}-[0-9a-f]{24}")))
         val older = RepairNames.base(asset, "6:90", 1)
@@ -322,5 +369,21 @@ class HollowGlyphsTest {
         assertTrue(RepairNames.isOf(base + RepairNames.OK, asset, base))
         assertTrue(RepairNames.isOf(base + RepairNames.TEMP, asset, base))
         assertFalse(RepairNames.isOf(RepairNames.base(user, "7:100", 1) + RepairNames.FONT, asset))
+    }
+
+    @Test
+    fun anAssetsStampIsItsContentNotTheAppVersion() {
+        // An app update that ships the same font keeps its verdict (no new scan, no new copy); a changed font doesn't.
+        val font = GlyphFixtures.trueType(ttGlyphs, ttMap)
+        val head = font.copyOf(RepairNames.STAMP_BYTES)
+        val n = minOf(font.size, RepairNames.STAMP_BYTES)
+        val stamp = RepairNames.assetStamp(font.size.toLong(), head, n)
+        assertEquals(stamp, RepairNames.assetStamp(font.size.toLong(), font.copyOf(RepairNames.STAMP_BYTES), n))
+        assertNotEquals(stamp, RepairNames.assetStamp(font.size + 4L, head, n))
+        val other = head.copyOf().also { it[16] = (it[16] + 1).toByte() } // the first table's checksum
+        assertNotEquals(stamp, RepairNames.assetStamp(font.size.toLong(), other, n))
+        // Bytes past what was read don't count.
+        val tail = head.copyOf().also { it[RepairNames.STAMP_BYTES - 1] = 9 }
+        assertEquals(RepairNames.assetStamp(10, head, 8), RepairNames.assetStamp(10, tail, 8))
     }
 }

@@ -1219,10 +1219,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         scheduleLoadingText()
         val settings = Settings.reader
         // Load the reading typeface while the document opens (a CJK font asset can take ~100 ms to inflate);
-        // the layout thread then finds it in FontManager's cache.
+        // the layout thread then finds it in FontManager's cache. Then the font's other file (bold runs, the
+        // settings popup's label) gets its blank-glyph check here too, not on first use (FontRepairs).
         scope.launch(Dispatchers.Default) {
             try {
                 FontManager.typeface(settings.fontId, settings.fontWeight)
+                FontManager.prepare(settings.fontId)
             } catch (t: Throwable) {
                 Log.w(TAG, "font warm-up failed", t)
             }

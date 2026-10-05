@@ -6,8 +6,12 @@ package com.ggumtak.readeraplus.render
  * 나눔명조 is Naver's TrueType release (3.011, as in Debian's fonts-nanum), not its OTF: the OTF maps all 4,888
  * KS X 1001 Hanja (and 、 。) to blank glyphs, so Android never fell back and 聖 drew as a gap (user report
  * 2026-10-05, "성(   )과 속(   )"). The TTF has no Hanja at all, like MaruViewer's 나눔명조: the system font draws
- * them. Glyph advances are the same; the line box metrics differ (ascent / descent 0.92 / 0.23 em, were 0.80 / 0.30).
- * `HollowGlyphsTest` keeps every bundled file from drawing Hanja or 、 。 blank.
+ * them. The Hangul, Latin and punctuation advances are the same, the line box metrics differ (ascent / descent 0.92 /
+ * 0.23 em, were 0.80 / 0.30), and a few symbols changed (fontTools, both weights): 14 characters the OTF drew are not
+ * in the TTF and come from the system font now (¢ £ ¥ ¬ ‐ ‾ ∶ ⋯ ⥣ ⥥ ⫋ ⫌ 〜 ・; 〜 and ・ do occur in Korean prose),
+ * and a few advances moved (₩ 0.95 → 1.0 em; ‼ ㊞ ㏋ → 0.928 em; Bold ㊔ ㊥ 0.969 → 0.95 em). Cached page counts are
+ * keyed by the asset path, so they were counted again anyway. `HollowGlyphsTest` keeps every bundled file from drawing
+ * Hanja or 、 。 blank.
  */
 object FontCatalog {
     class Bundled(val id: String, val name: String, val regular: String, val bold: String?, val serif: Boolean)

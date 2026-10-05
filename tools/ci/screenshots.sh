@@ -1663,7 +1663,10 @@ glyph_fallback() { # 99: characters a font maps to blank glyphs are drawn by the
   # if they are drawn: KS X 1001 Hanja in 나눔명조 (the default: the TTF leaves Hanja to the system font) as TXT and EPUB
   # (99a, 99b), then in 학교안심 바른바탕 (a bundled serif without Hanja, 99c) and its blank syllables outside KS X 1001
   # (똠 됬 햏 …, drawn through the repaired copy, 99d). Back to 나눔명조 at the end. Runs after U1: the samples it opens
-  # join the library, which the U1 steps scroll.
+  # join the library, which the U1 steps scroll. 99a, 99b and 99d fail on the build before the fix (the 나눔명조 OTF's
+  # 4,888 blank Hanja, 바른바탕's blank syllables); 99c is only a smoke test of the fallback chain (바른바탕 maps no Hanja,
+  # so the system font drew them before too). No ink check tells tofu (□) from a real glyph: the shots do (DEVICE_CHECKLIST
+  # 11j-2).
   adb push samples/glyphs-hanja.txt samples/glyphs-hanja.epub samples/glyphs-hangul.txt /sdcard/Download/ >/dev/null
   local y0 y1
   fresh_reader glyphs-hanja.txt text/plain

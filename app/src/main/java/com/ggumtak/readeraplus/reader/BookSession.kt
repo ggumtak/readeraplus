@@ -689,6 +689,9 @@ class BookSession(
                         val file = File(f.path)
                         append(':').append(file.length()).append(':').append(file.lastModified())
                     }
+                    // Blank glyphs left to the system font measure differently: which files load repaired, and
+                    // the rules' version ("" for a font without blank glyphs: its counts of before stay valid).
+                    append(FontManager.layoutTag(f.id))
                 }
             }
         } catch (t: Throwable) {

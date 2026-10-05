@@ -270,7 +270,13 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     private fun fontName(id: String): String = runCatching { FontManager.font(id)?.name }.getOrNull() ?: id
 
     /** Same (id, weight) the page renderer uses, so this is normally a cache hit. */
-    private fun fontTypeface(id: String): Typeface = runCatching { FontManager.typeface(id, cur.fontWeight) }.getOrNull() ?: Typeface.DEFAULT
+    /**
+     * The font's name in its own face, never built here on the main thread (a first build reads and may repair the font
+     * file): the reader's warm-up built its font at its weight, the font list every font at 400.
+     */
+    private fun fontTypeface(id: String): Typeface = runCatching {
+        FontManager.cachedTypeface(id, cur.fontWeight) ?: FontManager.cachedTypeface(id)
+    }.getOrNull() ?: Typeface.DEFAULT
 
     companion object {
         private const val DEBOUNCE_MS = 250L
