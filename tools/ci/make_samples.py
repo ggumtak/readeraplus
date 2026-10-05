@@ -139,7 +139,9 @@ print("sample.epub", os.path.getsize(os.path.join(OUT, "sample.epub")))
 
 def restore_backup(epub_size):
     """The crafted auto backup of S §3.9 (CI shots 95–98): one book (sample.epub) with a position and a bookmark, and
-    settings saved by an R2 build: readMode PAGED and the legacy side margins 18/16 without the r.marginBase marker."""
+    settings saved by an R2 build: readMode PAGED and the legacy side margins 18/16 without the r.marginBase marker.
+    Its top/bottom 16/16 without r.marginBaseV are R2's untouched default: 40/40 from the edge, which the restore counts
+    from the default status bands since 2026-10-05 (18/22), so CI 97 checks that conversion with 상하 여백 "0"."""
     created = 1790684040000  # 2026-09-29 21:14 KST, the time in the file name
     return {
         "format": "readeraplus-backup",

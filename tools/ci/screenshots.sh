@@ -36,16 +36,19 @@ pv_rows() { # "top bottom" of the PageView in screen rows (dumpsys bounds); the 
   echo "${b:-0 1440}"
 }
 content_rows() { # "Y0 Y1" of the text box: pv + 80 … pv + 1360 (valid only at 상하 여백 "0", PLAN §5.3, with the
-  # default bands: the header's 22 dp + 18 dp, the progress line's 16 dp + 24 dp; the emulator has no display cutout). The
-  # margins count from the status bands since 2026-10-05: with footer items (36 dp, 52 on) the box ends 40 px higher and
-  # the rows below it down to pv + 1360 are margin paper, still fine for an EQUAL of the same page.
+  # default bands: the header's 22 dp + 18 dp, the progress line's 18 dp + 22 dp; the emulator has no display cutout). The
+  # margins count from the status bands since 2026-10-05: with a footer item (a 36 dp band: from 14c/10b, off at 52a, again
+  # from 52b) the box ends at pv + 1324 and rows 1324..1360 are margin paper, fine for an EQUAL or DIFF of the same
+  # settings.
   local pv; pv=$(pv_rows); pv=${pv%% *}
   echo "$((pv + 80)) $((pv + 1360 > 1440 ? 1440 : pv + 1360))"
 }
-top_rows() { # "Y0 Y1" of the text box's upper half, pv + 80 … pv + 720: its first lines stay put when a status band that
-  # comes or goes moves only the box's bottom and the page keeps its first character (10b, 52, 53)
+top_rows() { # "Y0 Y1" of the text box's upper part, pv + 80 … pv + 680: its first lines stay put when a status band that
+  # comes or goes moves only the box's bottom and the page keeps its first character (10b, 52, 53). 680: half the
+  # smallest of those boxes (80..1324) less a line, since an anchored relayout may move a keep-with-next run of up to half
+  # a page (KEEP_MAX_MOVE) to the next page
   local pv; pv=$(pv_rows); pv=${pv%% *}
-  echo "$((pv + 80)) $((pv + 720))"
+  echo "$((pv + 80)) $((pv + 680))"
 }
 band_check() { # band_check <n> <raw A> <raw B> <Y0> <Y1>: a status band that must stay put while the text scrolls. EQUAL
   # passes, and so does a DIFF under 1500 px (its live values changed: 쪽 번호, the clock, the progress dot); scrolled text
@@ -59,6 +62,13 @@ band_check() { # band_check <n> <raw A> <raw B> <Y0> <Y1>: a status band that mu
       else check "$1" 1 "band changed like moving text ($r) rows $4..$5"; fi;;
     *) check "$1" 1 "pixels ${r:-error} $2 vs $3 rows $4..$5";;
   esac
+}
+raw_blank() { # raw_blank <n> <raw> <Y0> <Y1>: rows that must hold only the page's paper (raw_equal.py --uniform; the
+  # page themes are flat colours)
+  local r; r=$(python3 tools/ci/raw_equal.py --uniform "shots/$2.raw" "$3" "$4")
+  if [ "$r" = UNIFORM ]; then check "$1" 0 "paper only: $2 rows $3..$4"
+  else check "$1" 1 "not paper only (${r:-error}): $2 rows $3..$4"; fi
+  [ "$r" = UNIFORM ]
 }
 raw_check() { # raw_check <n> <raw A> <raw B> <Y0 Y1 | content | contenttop | pageview | belowheader>: raw_equal.py over
   # those rows, as a CHECK. belowheader: the page view but its top 48 rows, where the default header (MaruViewer's line,
@@ -832,11 +842,16 @@ reading_settings() { # 14 the quick options (⚙) and 14q their margins; 14s the
   choose_item "쪽 번호" || { leave_settings; return 1; }
   sleep 2; dump && log "14c: 아래 가운데 reads '$(row_value "$(slot_row "아래 가운데")")'"
   leave_settings || return 1 # two pages (설정, 화면·밝기): the book applies the slot once, back in front
-  # 10b: same page as 10a_pre, footer now on. Its band (36 dp) ends the text box 40 px higher (2026-10-05: the margins
-  # count from the bands): one relayout that keeps the page's first character, and the first lines in place.
+  # 10b: same page as 10a_pre, footer now on. Its band (36 dp, the progress line's alone 18 dp) ends the text box 36 px
+  # higher (2026-10-05: the margins count from the bands): one relayout that keeps the page's first character, and the
+  # first lines in place. 10b_margin: the box really ends there, its 22 dp bottom margin above the footer's band
+  # (bot − 116 … bot − 72) is paper only on this full page (13h: no chip); 4 px under the box are left for a last line's
+  # shadow. Text laid out down to the old box (bot − 80) would show there.
   shot 10b_footer_slots 2; rawshot 10b; perf_mark 10b
   raw_check 10b 10a_pre 10b contenttop
   perf_check 10b first_is 10a_pre 10b
+  local pvt pvb; read -r pvt pvb <<<"$(pv_rows)"
+  raw_blank 10b_margin 10b $((pvb - 112)) $((pvb - 72))
 }
 
 # ------------------------------------------------------------------ reader steps: H3, TOC, go-to, end of book
@@ -1020,10 +1035,12 @@ scroll_moves() { # 61–66 in the scroll mode set by 60
   # progress dot. The header's glyphs fill rows 8 (4 dp below the edge) to about 40 (11 sp × 1.45 = 32 px; its band ends
   # at 44, then its 18 dp margin): its live values may change there (band_check). The paper below them down to the text
   # box (rows 48..80, as raw_check's belowheader) has nothing live, so it must stay EQUAL: scrolled text clipped a few px
-  # too high would show there.
+  # too high would show there. The same at the bottom: 14c's footer item gives a 36 dp band (bot − 72 … bot) under the
+  # 22 dp margin, so the text box ends at bot − 116 and the paper between (no chip in 61a/61b) must stay EQUAL too.
   band_check 61_header 61a 61b "$top" $((top + 48))
   raw_check 61_header_gap 61a 61b $((top + 48)) $((top + 80))
   band_check 61_footer 61a 61b $((bot - 80)) "$bot"
+  raw_check 61_footer_gap 61a 61b $((bot - 116)) $((bot - 72))
   local y0 y1 r
   read -r y0 y1 <<<"$(content_rows)"
   r=$(python3 tools/ci/raw_equal.py shots/61a.raw shots/61b.raw "$y0" "$y1")
@@ -1363,13 +1380,14 @@ notes_ink() { # 90: 인용문 색 표시 (설정 → 화면·밝기 since 68aa27
 footer_toggle() { # 52: footer slots and header changed on 화면·밝기 (over the book; 68aa271): once the book is back in
   # front, the page keeps its first character and its first lines. The footer's band that comes (36 dp) ends the text box
   # higher since 2026-10-05 (the margins count from the bands): one relayout, anchored; the header keeps its band (two of
-  # its slots keep their items), so the box's top stays.
+  # its slots keep their items), so the box's top stays. 52a follows a relayout too (10b's footer item off: 36 → 18 dp),
+  # so it waits for the page as 54 and 56 do.
   fresh_reader sample-cp949.txt text/plain
   goto_page 3 || return 1 # a full page of text (the book was left on its short last page by 18)
   open_screen_over_reader || return 1
   set_slot "아래 가운데" "없음" || { leave_settings; return 1; } # 10b had set 쪽 번호
   leave_settings || return 1
-  rawshot 52a; perf_mark 52a
+  sleep 2; rawshot 52a; perf_mark 52a
   open_screen_over_reader || return 1
   set_slot "아래 가운데" "쪽 번호" || { leave_settings; return 1; }
   set_slot "아래 오른쪽" "배터리 아이콘 · 시계" || { leave_settings; return 1; } # "배터리 아이콘 · 시계 (14:05)" (contains)

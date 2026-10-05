@@ -405,7 +405,7 @@ object R3Rows {
     // ---- 페이지 표시 (scroll SPEC §2.4, anchor §3.3 / §4.4)
 
     /** Under the margin steppers: the 위·아래 여백 count from the status bands (2026-10-05, `StatusBands`). */
-    const val MARGIN_NOTE = "0이 기본 여백입니다. 상하 여백은 상태 표시줄과 본문 사이입니다."
+    const val MARGIN_NOTE = "0이 기본 여백입니다. 상하 여백은 상태 표시줄부터 잽니다."
 
     val PAGE_BREAKS: List<PageBreakMode> = listOf(PageBreakMode.LINE, PageBreakMode.PARAGRAPH)
 

@@ -46,6 +46,23 @@ class RibbonMathTest {
     }
 
     @Test
+    fun belowACameraBandTopsAndHeightsCountFromItsBottom() {
+        // S25 fullscreen (density 3): the ribbon hangs from the 87 px camera band's bottom, as in the installed build
+        // (87..159), and the renderer passes the text box's top (207) and the header's ink top (147, the user's
+        // screenshot) less the band: full height, and the header keeps the ribbon's place at its right end.
+        val s25 = 3f
+        val band = 87f
+        val right = 1080 - 60f
+        val h = RibbonMath.height(s25, 207f - band, right, 1080)
+        assertEquals(RibbonMath.HEIGHT_DP * s25, h, 0.001f)
+        assertTrue(band + h + RibbonMath.GAP_DP * s25 <= 207f)
+        assertTrue(RibbonMath.headerInset(s25, right, 1080, h, 147f - band) > 0f)
+        // Top margin 0 (text box at 87 + 66): the ribbon shrinks to the paper above the text, still below the band.
+        val tight = RibbonMath.height(s25, 153f - band, right, 1080)
+        assertEquals(153f - band - RibbonMath.GAP_DP * s25, tight, 0.001f)
+    }
+
+    @Test
     fun noInsetWithoutOverlap() {
         val contentRight = viewW - dp(18f)
         assertEquals(0f, RibbonMath.headerInset(d, contentRight, viewW, 0f, dp(15f)), 0f)

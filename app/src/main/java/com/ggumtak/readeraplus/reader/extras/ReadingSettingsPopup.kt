@@ -157,20 +157,26 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             update(cur.copy(paragraphSpacingPct = it.toInt()), debounce = true)
         })
         // The margins as on 읽기 설정: "0" = the default margin (sides −20..+60 around MaruViewer's 20 dp; top and
-        // bottom, from the status bands, −24..+62 around their own 18 / 24 dp), in steps of 2 (stored values stay dp).
-        // While 여백 사용 is off they show the margin the page has (QuickFields.sideUi / verticalUi).
+        // bottom, from the status bands, −22..+62 around their own 18 / 22 dp), in steps of 2 (stored values stay dp).
+        // While 여백 사용 is off they show the margin the page has (QuickFields.sideUi / verticalUi). 상하 여백 moves
+        // both sides from the value it showed (QuickFields.withVertical), so a pair off the defaults' line never jumps.
         root.addView(stepperRow(
             "좌우 여백",
             QuickFields.sideUi(cur).toFloat(),
             SideMargin.UI_MIN.toFloat(), SideMargin.UI_MAX.toFloat(), SideMargin.UI_STEP.toFloat(),
             { SideMargin.label(it.toInt()) },
         ) { update(QuickFields.withSide(cur, it.toInt()), debounce = true) })
+        var vertical = QuickFields.verticalUi(cur)
         root.addView(stepperRow(
             "상하 여백",
-            QuickFields.verticalUi(cur).toFloat(),
+            vertical.toFloat(),
             VerticalMargin.UI_MIN.toFloat(), VerticalMargin.UI_MAX.toFloat(), VerticalMargin.UI_STEP.toFloat(),
             { VerticalMargin.label(it.toInt()) },
-        ) { update(QuickFields.withVertical(cur, it.toInt()), debounce = true) })
+        ) {
+            val to = it.toInt()
+            update(QuickFields.withVertical(cur, vertical, to), debounce = true)
+            vertical = to
+        })
         root.addView(fontRow())
         return root
     }
@@ -354,13 +360,17 @@ internal object QuickFields {
     }
 
     /**
-     * 상하 여백 at stepper value [ui] (each side's own default is "0": [VerticalMargin.topDp] / [bottomDp][VerticalMargin.bottomDp]),
-     * as [withSide] (the sides keep the minimal margin when it turns the margins on).
+     * 상하 여백 after its stepper went from [from] (the value it showed) to [to] ([VerticalMargin.step]: on the defaults'
+     * line each side's own default is "0", any other pair moves both sides by the step), from the margins the page has:
+     * while "여백 사용" is off the minimal ones, and the sides keep theirs as in [withSide].
      */
-    fun withVertical(s: ReaderSettings, ui: Int): ReaderSettings {
-        val lr = if (s.pageMargins) null else LayoutKeys.TINY_MARGIN_DP
+    fun withVertical(s: ReaderSettings, from: Int, to: Int): ReaderSettings {
+        val tiny = LayoutKeys.TINY_MARGIN_DP
+        val lr = if (s.pageMargins) null else tiny
+        val tb = if (s.pageMargins) VerticalMargin.step(s.marginTopDp, s.marginBottomDp, from, to)
+            else VerticalMargin.step(tiny, tiny, from, to)
         return s.copy(
-            marginTopDp = VerticalMargin.topDp(ui), marginBottomDp = VerticalMargin.bottomDp(ui),
+            marginTopDp = tb[0], marginBottomDp = tb[1],
             marginLeftDp = lr ?: s.marginLeftDp, marginRightDp = lr ?: s.marginRightDp,
             pageMargins = true,
         )

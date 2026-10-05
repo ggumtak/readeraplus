@@ -109,27 +109,29 @@ class PopupGeometryTest {
         assertTrue(side.pageMargins)
         assertEquals(SideMargin.toDp(-10), side.marginLeftDp)
         assertEquals(SideMargin.toDp(-10), side.marginRightDp)
-        val vertical = QuickFields.withVertical(off, 6)
+        val vertical = QuickFields.withVertical(off, QuickFields.verticalUi(off), 6)
         assertTrue(vertical.pageMargins)
-        assertEquals(VerticalMargin.topDp(6), vertical.marginTopDp)
-        assertEquals(VerticalMargin.bottomDp(6), vertical.marginBottomDp)
-        // "0" is the default margin, the same value 읽기 설정 shows (top and bottom: each its own).
-        assertEquals(ReaderSettings().marginLeftDp, QuickFields.withSide(off, 0).marginLeftDp)
-        assertEquals(ReaderSettings().marginTopDp, QuickFields.withVertical(off, 0).marginTopDp)
-        assertEquals(ReaderSettings().marginBottomDp, QuickFields.withVertical(off, 0).marginBottomDp)
-        // On, a step changes its own axis only.
+        // "0" is the default margin, the same value 읽기 설정 shows (top and bottom: each its own), and a step there and
+        // back returns to it.
+        val d = ReaderSettings()
+        assertEquals(d.marginLeftDp, QuickFields.withSide(off, 0).marginLeftDp)
+        val up = QuickFields.withVertical(d, 0, 2)
+        assertEquals(listOf(VerticalMargin.topDp(2), VerticalMargin.bottomDp(2)), listOf(up.marginTopDp, up.marginBottomDp))
+        assertEquals(d, QuickFields.withVertical(up, 2, 0))
+        // On, a step changes its own axis only; 50/50 is off the defaults' line ("+32"), so both move by the step.
         val on = ReaderSettings(marginLeftDp = 30, marginRightDp = 30, marginTopDp = 50, marginBottomDp = 50)
         assertEquals(listOf(SideMargin.toDp(4), SideMargin.toDp(4), 50, 50), QuickFields.withSide(on, 4).let {
             listOf(it.marginLeftDp, it.marginRightDp, it.marginTopDp, it.marginBottomDp)
         })
-        assertEquals(listOf(30, 30, VerticalMargin.topDp(-4), VerticalMargin.bottomDp(-4)), QuickFields.withVertical(on, -4).let {
+        assertEquals(32, QuickFields.verticalUi(on))
+        assertEquals(listOf(30, 30, 46, 46), QuickFields.withVertical(on, 32, 28).let {
             listOf(it.marginLeftDp, it.marginRightDp, it.marginTopDp, it.marginBottomDp)
         })
     }
 
     @Test
     fun whileTheMarginsAreOffTheSteppersStartFromTheMarginThePageHas() {
-        // The defaults stored (20/20/18/24), 여백 사용 off: the page has the minimal 4 dp margins, and the steppers show
+        // The defaults stored (20/20/18/22), 여백 사용 off: the page has the minimal 4 dp margins, and the steppers show
         // that ("−16"; "−14" from the top's 18 dp), not the stored "0".
         val tiny = com.ggumtak.readeraplus.reader.LayoutKeys.TINY_MARGIN_DP
         val off = ReaderSettings(pageMargins = false)
@@ -146,12 +148,14 @@ class PopupGeometryTest {
         assertEquals(tiny - SideMargin.UI_STEP, narrower.marginRightDp)
         assertEquals(tiny, narrower.marginTopDp)
         assertEquals(tiny, narrower.marginBottomDp)
-        // "상하 여백 늘리기": the same from the other axis (the top one step up from 4 dp, the bottom its own "0" − 12); the
-        // sides keep their 4 dp.
-        val taller = QuickFields.withVertical(off, QuickFields.verticalUi(off) + VerticalMargin.UI_STEP)
+        // "상하 여백 늘리기": the same from the other axis (top and bottom one step up from the 4 dp they had); the sides
+        // keep their 4 dp.
+        val shown = QuickFields.verticalUi(off)
+        val taller = QuickFields.withVertical(off, shown, shown + VerticalMargin.UI_STEP)
         assertTrue(taller.pageMargins)
         assertEquals(tiny + VerticalMargin.UI_STEP, taller.marginTopDp)
-        assertEquals(VerticalMargin.bottomDp(-12), taller.marginBottomDp)
+        assertEquals(tiny + VerticalMargin.UI_STEP, taller.marginBottomDp)
+        assertEquals(shown + VerticalMargin.UI_STEP, QuickFields.verticalUi(taller))
         assertEquals(tiny, taller.marginLeftDp)
         assertEquals(tiny, taller.marginRightDp)
     }
@@ -212,12 +216,12 @@ class PopupGeometryTest {
         }
         for (ui in VerticalMargin.UI_MIN..VerticalMargin.UI_MAX step VerticalMargin.UI_STEP)
             assertEquals(VerticalMargin.label(ui), Fmt.signed(ui))
-        // "0" = 20 dp at the sides (MaruViewer), 18 / 24 dp at top and bottom (from the status bands); the defaults show "0".
+        // "0" = 20 dp at the sides (MaruViewer), 18 / 22 dp at top and bottom (from the status bands); the defaults show "0".
         val d = ReaderSettings()
         assertEquals("0", Fmt.signed(SideMargin.toUi(d.marginLeftDp)))
         assertEquals("0", Fmt.signed(VerticalMargin.toUi(d.marginTopDp, d.marginBottomDp)))
         assertEquals("+10", Fmt.signed(SideMargin.toUi(30)))
-        assertEquals("−10", Fmt.signed(VerticalMargin.toUi(8, 14)))
+        assertEquals("−10", Fmt.signed(VerticalMargin.toUi(8, 12)))
     }
 
     // ------------------------------------------------------------------ 상태 표시

@@ -6,6 +6,8 @@ Usage (prints one word or line; never exits non-zero, the CI run is best effort)
   raw_equal.py pixel A.raw X Y      the pixel's colour as #RRGGBB (BADSIZE outside the image)
   raw_equal.py near A B TOL         PASS when colours #RRGGBB A and B differ by at most TOL in every channel, else FAIL
   raw_equal.py darker A B N         PASS when colour A is at least N levels darker than B (channel mean), else FAIL
+  raw_equal.py --uniform A.raw Y0 Y1  UNIFORM when rows [Y0, Y1) are one colour (the page's paper: the themes are flat),
+                                    MIXED <n> bbox x0,y0-x1,y1 (n pixels differ from the first one), or BADSIZE
 """
 import struct
 import sys
@@ -71,9 +73,31 @@ def darker(a, b, n):
     return sum(rgb(b)) / 3 - sum(rgb(a)) / 3 >= n
 
 
+def uniform(a, y0, y1):
+    """UNIFORM when every pixel of rows y0..y1 equals the first one; else MIXED with the count and box of the others."""
+    w, h, p = read(a)
+    if not 0 <= y0 < y1 <= h:
+        return "BADSIZE"
+    start, end = y0 * w * 4, y1 * w * 4
+    first = p[start:start + 4]
+    if p[start:end] == first * ((end - start) // 4):
+        return "UNIFORM"
+    count = 0
+    x0 = y0d = w
+    x1 = y1d = -1
+    for i in range(start, end, 4):
+        if p[i:i + 4] != first:
+            count += 1
+            x, y = (i // 4) % w, (i // 4) // w
+            x0, x1, y0d, y1d = min(x0, x), max(x1, x), min(y0d, y), max(y1d, y)
+    return f"MIXED {count} bbox {x0},{y0d}-{x1},{y1d}"
+
+
 def main(argv):
     mode = argv[0] if argv else ""
     try:
+        if mode == "--uniform":
+            return uniform(argv[1], int(argv[2]), int(argv[3]))
         if mode == "pixel":
             return pixel(argv[1], int(argv[2]), int(argv[3]))
         if mode == "near":

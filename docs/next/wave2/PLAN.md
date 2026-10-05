@@ -3,19 +3,25 @@
 > **사용자 변경 지시 (2026-10-05): 위·아래 여백은 상태 표시줄을 뺀 본문 영역 기준.**
 > "아니지 위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지". 위 상태 줄 · 아래 상태 줄 · 진행 막대는 화면 끝에
 > 자기 띠를 갖고(`StatusBands`, 설정만으로 정한 정수 dp: 위 띠 = 끝 4 dp + 글자 상자 + 2 dp, 11 sp에서 22 dp; 아래 띠 =
-> 끝 4 dp + 진행 막대 12 dp, 아래 글자가 있으면 + 2 dp + 글자 상자 + 2 dp; 항목이 모두 '없음'이면 0), 위·아래 여백은 그
-> 띠와 본문 사이다. 여백 0이면 본문이 위 띠 바로 밑에서 시작하고, 작은 여백이 상태 줄을 가리거나 줄이지 않으므로 '가려짐'
-> 안내는 없앴다. 메뉴 · 선택 · TTS · 쪽 수 세기 · 빈 제목 · 스크롤 모드는 본문 상자를 움직이지 않는다. 슬롯의 항목을 다른
+> 끝 4 dp + 진행 막대 12 dp + 2 dp(본문이 진행 점에 닿지 않게), 아래 글자가 있으면 + 글자 상자 + 2 dp; 진행 선만이면 18 dp,
+> 아래 글자까지 36 dp; 항목이 모두 '없음'이면 0), 위·아래 여백은 그 띠와 본문 사이다. 여백 0이면 본문이 위 띠 바로
+> 밑에서 시작하고, 작은 여백이 상태 줄을 가리거나 줄이지 않으므로 '가려짐' 안내는 없앴다. 메뉴 · 선택 · TTS · 쪽 수 세기 · 빈 제목 · 스크롤 모드는 본문 상자를 움직이지 않는다. 슬롯의 항목을 다른
 > 항목으로 바꾸면 다시 그리기만 하고, 띠가 생기거나 없어지거나 높이가 바뀌면(모두 '없음' ↔ 항목, 진행 막대, 상태 글자
 > 크기) 첫 글자를 지키며 다시 배치한다. 숫자는 코멧에서 본문이 그대로이게 맞췄다("코멧에서 본문 지금 자리 그대로 되게
-> 숫자 맞춰줘"): 위 18 dp · 아래 24 dp(40 dp − 기본 띠), 상하 여백 "0"이 각 쪽의 기본값(범위 −24..+62, 각 0..80 dp).
-> S25 전체 화면은 사용자가 보낸 화면처럼 카메라 띠(87 px)를 시스템 막대처럼 빼고 그 아래에 위 띠를 둔다("S25 전체 화면도
-> 지금 자리 유지해줘"): 본문은 207..2220 그대로, 위 상태 줄은 카메라 띠 바로 아래. 예전 뜻(화면 끝에서 잰 값,
+> 숫자 맞춰줘"): 위 18 dp · 아래 22 dp(40 dp − 기본 띠), 상하 여백 "0"이 각 쪽의 기본값(범위 −22..+62, 각 0..80 dp; 한
+> 단계는 두 쪽을 2 dp씩 옮기고, 기본값 선을 벗어난 값도 튀지 않는다: `VerticalMargin.step`). 아래 글자를 켜면 아래 띠가
+> 18 dp 커지는 만큼 본문이 짧아진다(코멧 36 px). S25 전체 화면은 사용자가 보낸 업데이트 전 화면을 따랐다("S25 전체 화면도
+> 지금 자리 유지해줘 걍 최대한 이거랑 여백 넓이랑 그리고 여백 알고리즘을 따라해봐"): 카메라 띠(87 px)를 시스템 막대처럼
+> 빼고 그 아래에 위 띠를 잡아 두며, 본문은 207..2220, 진행 점은 2302로 그 화면과 같다. 위 상태 줄도 그 화면의 방식대로 카메라
+> 띠와 본문 사이 가운데(글꼴 상자 기준, `StatusFit.headerBaseline`)에 그려 글자가 147–181 px로 그 화면과 같은 줄에 온다. 카메라
+> 띠가 없는 화면(코멧, 막대가 보이는 S25)의 위 줄은 마루뷰어처럼 위 끝 4 dp 아래 그대로다. 책갈피 리본도 그 화면처럼 카메라
+> 띠 아래(87 px)에서 내려온다. 글자 크기는 고른 그대로이고, 글자 잉크가 띠의 글자 상자보다 클 때(큰 시스템 글꼴 배율)만 한
+> 번 줄인다(`StatusFit.fitTextPx`); 잉크는 늘 자기 자리 안에 둔다. 예전 뜻(화면 끝에서 잰 값,
 > `r.marginBaseV` 40 또는 없음)으로 저장된 위·아래 여백은 읽을 때 한 번 그 설정의 띠만큼 줄여 본문 자리를 지킨다(설정 ·
 > 백업 · 내 스타일; 내 스타일은 상태 줄이 없어 기본 띠로). 새로 저장하면 `r.marginBaseV` = 2. 이 지시로 U2/C5의 "본문
 > 상자는 상태 띠에 자리를 내주지 않는다", 아래 마루뷰어 지시의 "상하 여백 40 dp = '0'"과 "S25에서는 카메라 구멍 띠 안",
-> CI 10b · 52 · 53의 "다시 배치 없음, 본문 픽셀 그대로"를 대체한다: 이제 첫 글자(`first_is`)와 본문 위쪽 줄(본문 위
-> 절반의 `raw_equal`)이 그대로인지 본다.
+> CI 10b · 52 · 53의 "다시 배치 없음, 본문 픽셀 그대로"를 대체한다: 이제 첫 글자(`first_is`)와 본문 위쪽 줄(pv + 80 …
+> pv + 680의 `raw_equal`)이 그대로인지, 새 본문 아래 끝과 아래 띠 사이가 빈 종이인지(10b_margin) 본다.
 >
 > **사용자 변경 지시 (2026-10-05): 마루뷰어 여백 · 상태 표시줄.**
 > 좌우 여백 기본값은 마루뷰어와 같은 20 dp다(S25에서 본문 왼쪽 x ≈ 60 px, 폭의 5.6 %). 퀵옵션과 읽기 설정의 좌우 여백 "0"이
@@ -192,7 +198,7 @@ Each row names the sources, what collides, the decision, and who applies it (lan
 | **C28** | **Settings rows** (popup, PageTurningPage, MainPage, BackupPage, AboutPage, LookupPage) are each added to by 3–5 specs. | The final ordering is §1.6.3. | EX-P; SET |
 | **C29** | **Library list-mode labels.** The tree has 목록/간단히/표지; N has 전체/요약/썸네일/그리드 plus `COVERS`. | N applies in P0 (enum labels; `COVERS` added; unknown → LIST). CI steps that tap "목록"/"표지" are updated by CI. **2026-10-04 (a3b8826):** the labels are 자세히 · 간단히 · 큰 표지 · 작은 표지 (stored names unchanged); CI follows. | P0; CI |
 | **C30** | **CI shot names collide.** S uses 60–69 and 70–73 (restore). R uses 70–78. A uses 72–77. N uses 41–46 and 80–93. U uses 10b, 13b–13h, 14b and 14c; R U5 uses **14c** too. | Unique numbers are assigned in §5.3: A → **52–57**, R U5 → **14d**, S restore → **95–98**. S 60–69, R 70–78, N 41–46/80–93 and U keep theirs. The S block ends with a restore-PAGED step (`69b`). The S restore block runs last, because `pm clear` wipes everything. | CI |
-| **C31** | **Two pixel-compare helpers.** U: `rawshot` + `tools/ci/raw_equal.py` (exact rows of raw RGBA). R: `tools/ci/same_page.py` (PNG, skips the top 8 % and bottom 12 %). | Keep both, owned by CI. `raw_equal` is for "nothing moved" checks inside one process run (13b, 13c, 10b, 52, 53, 57). `same_page` is for "the same page came back" across restarts and kills (71–78). | CI |
+| **C31** | **Two pixel-compare helpers.** U: `rawshot` + `tools/ci/raw_equal.py` (exact rows of raw RGBA). R: `tools/ci/same_page.py` (PNG, skips the top 8 % and bottom 12 %). | Keep both, owned by CI. `raw_equal` is for "nothing moved" checks inside one process run (13b, 13c, 57; 2026-10-05: 10b/52/53: the first lines stayed (`contenttop`) with `first_is`; `--uniform` for rows of paper only, 10b_margin). `same_page` is for "the same page came back" across restarts and kills (71–78). | CI |
 | **C32** | **Test-file names.** `FitFooterTest` (S), `FooterFitTest` (tree), `LibrarySchemaV2Test+v3` (U), `FastScrollEdgeTest` (tree). | `FitFooterTest` is not created. `FooterFitTest` is deleted (E2). `LibrarySchemaV3Test` is the single file. `FastScrollEdgeTest` becomes `ui/kit/InkTouchTest`. | E2; P0; H2 |
 | **C33** | **Brightness strip vs scroll gesture.** | Unchanged rule (S §1.12). `LightController` is the only writer of `page.brightnessSwipe` (U §2.3). | RU; RC-A |
 | **C34** | **N W2 thumbnails depend on S `drawChrome`/`drawBody` and A's anchored generations.** | W2 starts after E2 and RC-P are merged, **[Δ] and after RC-A's and EX-N's own W1 work is merged** (W2 edits `ReaderActivity`, `ContentsDialog` and `ReaderMenus`, which those lanes are still changing in W1). Thumbnail layouts go through `session.layout` of the current (anchored) generation, so thumbnail pages equal reader pages. The key adds `paintVersion` + `QuoteLook.generation` (N §12.6). | W2 (RC-A, EX-N) |
@@ -699,9 +705,9 @@ bottom) without their markers to 40/40.
 
 - **`docs/ARCHITECTURE.md`:**
   - Chrome: bars are overlays, no pinned chrome, the page size depends only on the gated insets.
-  - Status: slots and progress line drawn **inside the margins** (2026-10-05: in bands of their own, text box = view −
-    bands − margins; note at the top), text box = view − margins, zero allocation, the
-    redraw rule.
+  - Status: slots and progress line in bands of their own at the screen's edges, text box = view − bands − margins
+    (2026-10-05, note at the top; until then drawn **inside the margins**, text box = view − margins), zero
+    allocation, the redraw rule.
   - Pagination: anchored relayout (the first character stays; one generation's lifetime; the count cache is masked)
     and `PageBreakMode`.
   - Scroll: settle vs frame, STEP on e-ink, the SMOOTH exception.
@@ -1143,8 +1149,9 @@ screen rows: `pv + 80 … pv + 1360` at density 2, where `pv` is the PageView's 
 fullscreen); the header band (above) and the footer band and lane (below) are excluded. `same` = `tools/ci/same_page.py`. `top_is` = the
 dumpsys top activity. Every CHECK and PASS/FAIL line is logged and never fails the job.
 
-**[Δ]** The content rows `80…1360` hold only at 상하 여백 "0" (2026-10-05: and the default bands; with footer items, 52
-on, the box ends at 1320 and the rows below it down to 1360 are margin paper). Every step that changes the vertical margins restores
+**[Δ]** The content rows `80…1360` hold only at 상하 여백 "0" (2026-10-05: and the default bands; with a footer item, a
+36 dp band from 14c/10b and again from 52b, the box ends at `pv + 1324` and rows 1324…1360 are margin paper, fine for an
+EQUAL or DIFF of the same settings). Every step that changes the vertical margins restores
 "0" before the next `raw_equal`. **Position checks** use the H4 log line, not `find_node`: `PageView` has no
 accessibility text, so a uiautomator dump never contains the page's words. `perf_mark X` records the last
 `RAPerf show` line; `perf_log.py first_is X Y` passes when the page start `o:` after Y equals the anchor `a:` at X;
@@ -1155,7 +1162,7 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 1 | `01_library` | as today | cards with 20 px padding, light separators, thin fast-scroll thumb (scroll mode on the emulator) | U, N |
 | 2 | `41_library_more` + CHECK 41, 41b | `tap_label "책 메뉴"`; dump; then a 6 px roll `input swipe X Y X+2 Y+6 150` on the same ⋮ | menu open ("책 정보" found) and the first title's bounds unchanged, in both cases | N (H2) |
 | 3 | `02_drawer` | as today | 독서 노트 · 단어장 rows between 다 읽은 책 and 컬렉션 (the drawer's second group since a3b8826, on screen without scrolling; no counts yet) | N |
-| 4 | `10_txt_page1` | as today | **no footer text**; progress line at y = 1428, x 24..696, dot at the start; header = chapter title in the top margin (hidden on a page that begins the chapter); text box 80..640 × 80..1360 | U, A |
+| 4 | `10_txt_page1` | as today | **no footer text**; progress line and dot on row 1415 (lane 1408..1432, 4 dp above the bottom edge), x 24..696, dot at the start; header band 0..44 with MaruViewer's line (배터리 아이콘 · 시계, 책 제목, 쪽 번호; glyph box 8..40); text box 40..680 × 80..1360 (2026-10-05: the 18 dp top and 22 dp bottom margins count from the 22 dp header band and the 18 dp progress line's band) | U, A |
 | 5 | `11_txt_page2`, `12_txt_tap_right` (+ `rawshot 12b`) | as today | — | — |
 | 6 | `13_txt_chrome` (+ rawshot) | as today | back · 🔖 🔊 🔍 ☰ ⚙ ⋮; one-line title at x = 40; brightness row with ⌄, no grey square; "3 / 167" centred at x = 360 ± 2, bold, not underlined; ⟳ + outline pin; ⏮ seek ⏭; no strip | U |
 | 7 | `13b_pin` | `tap_label "이 페이지 고정"` | filled pin; strip "(pin) 3쪽" · "지우기" (79cd1a5: "N쪽", "N쪽으로"); `raw_equal 13 13b 360 1100` EQUAL | U |
@@ -1167,12 +1174,12 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 13 | `14_reading_settings` | as today | **68aa271:** centred popup (16 ± 1 px gaps): one top bar 전체 읽기 설정 › · 닫기, then 글자 크기 · 굵기 · 줄 간격 · 문단 간격 · 좌우 여백 · 상하 여백 (96 px rows) · 글꼴, no 더보기, no scrollbar; CHECK 14q: the popup's 좌우 여백 / 상하 여백 read "0"; "전체 읽기 설정" opens 설정 → 읽기 설정 (여백·페이지: "좌우 여백 0", "상하 여백 0", CHECK 14m), BACK returns to the same page | U, S, A |
 | 14 | `14b_status_slots` | ⋮ → 설정 → 화면·밝기 → 위쪽 상태 표시줄 · 아래쪽 상태 표시줄 (its first two sections; each band's rows 왼쪽 / 가운데 / 오른쪽, read under their header: `slot_row`, `ui_rows.py` "header › row") | 위 [배터리 아이콘 · 시계][책 제목][쪽 번호] (MaruViewer's line, 2026-10-05), 아래 all 없음; 진행 막대 on | U |
 | 15 | `14c_slot_list` | the 가운데 row under 아래쪽 상태 표시줄; "쪽 번호 (12 / 3259)" | 12 items with examples ("챕터 쪽 번호 (2 / 32)" right under 쪽 번호); "없음" checked | U |
-| 16 | `10b_footer_slots` (+ `rawshot 10b`) | after 14c's `back` (popup closed, chrome hidden, same page as `10a_pre`) | footer centre "N / M" centred on the text column above the line; **2026-10-05:** the footer's band (36 dp) ends the text box 40 px higher, one anchored relayout: **`raw_equal 10a_pre 10b` over the box's upper half `pv + 80 … pv + 720` (`contenttop`): EQUAL** (the first lines stay) and **`first_is 10a_pre 10b`** (the first character stays; was `no_relayout` with the whole content rows) | U, A |
+| 16 | `10b_footer_slots` (+ `rawshot 10b`) | after 14c's `back` (popup closed, chrome hidden, same page as `10a_pre`) | footer centre "N / M" centred on the text column above the line; **2026-10-05:** the footer's band (36 dp; the progress line's alone 18 dp) ends the text box 36 px higher, one anchored relayout: **`raw_equal 10a_pre 10b` over the box's upper part `pv + 80 … pv + 680` (`contenttop`: half the smaller box less a line, as an anchored relayout may move a keep-with-next run of up to half a page): EQUAL** (the first lines stay) and **`first_is 10a_pre 10b`** (the first character stays; was `no_relayout` with the whole content rows); **`10b_margin`: the rows between the new box bottom and the footer's band, `pv_bottom − 112 … pv_bottom − 72` (4 px under the box left for a last line's shadow), are paper only (`raw_equal.py --uniform`)**: the box really ends above the band | U, A |
 | 17 | `14d_volume_mode` | ⋮ → 설정 → 넘기기·터치·키 → 버튼·키 → 볼륨 키 (one chooser again, 68aa271; was the popup's 더보기) → "위 키로 다음 페이지"; back; VOLUME_UP; tap 360 720; find "페이지 이동, " | the row read "아래 키로 다음 페이지" and its chooser lists the 3 entries (14d_list); the label is one page further; then restore "아래 키로 다음 페이지 (기본)" and close the chrome | R (H3) |
 | 18 | `15_toc`, `16_search` | as today | TOC title 20 sp bold | U |
 | 19 | `17_selection` | as today | one row of 5 (복사 · 인용 · 메모 · 사전·번역 · ⋮); the 인용 cell shows a yellow dot with ▾ | U, N |
 | 20 | `20_epub_page1`, `21_epub_page4`, `22_epub_page9` | as today | narrower column (560 px) | S |
-| 21 | `60_scroll_on` … `69_scroll_again` | S §1.15 steps | S §1.15 expectations; **plus:** header, footer, progress line and return strip stay fixed while the text scrolls (61; their live values — 쪽 번호, the clock, the dot — may change: under 1500 px, in the header only over its glyph rows `pv … pv + 48`; the paper between them and the text box, `pv + 48 … pv + 80`, is EQUAL: `61_header_gap`) | S |
+| 21 | `60_scroll_on` … `69_scroll_again` | S §1.15 steps | S §1.15 expectations; **plus:** header, footer, progress line and return strip stay fixed while the text scrolls (61; their live values — 쪽 번호, the clock, the dot — may change: under 1500 px, in the header only over its glyph rows `pv … pv + 48`; the paper between them and the text box, `pv + 48 … pv + 80`, is EQUAL: `61_header_gap`; and the paper between the text box and the footer's band, `pv_bottom − 116 … pv_bottom − 72` (14c's footer item: a 36 dp band under the 22 dp margin), is EQUAL: `61_footer_gap`) | S |
 | 22 | `69b_back_to_paged` | ⋮ → "페이지로 보기"; 스크롤 움직임 → 손가락을 따라 (기본) | logged only (restores defaults for later steps) | PLAN |
 | 23 | `30_big_txt`, `31_big_txt_later`, `32_big_txt_reopen` | as today; **[Δ]** `perf_mark 31` before closing, `perf_mark 32` after the reopen | reopen shows the same first line (anchored open): **[Δ]** `first_is 31 32` | A |
 | 24 | `40_library_after` | as today | library (no resume: `am start -n` has no action) | R |
@@ -1189,10 +1196,10 @@ accessibility text, so a uiautomator dump never contains the page's words. `perf
 | 35 | `86_notes_quotes`, `87_notes_jump` + CHECK 87 | (before 85: sample-utf8.txt read 3 pages past the quotes, so its saved place is off the quote's page, §1.6.1) 인용문 tab; tap the first row | filter row; the reader at the quote with the mark; the chip "‹ N쪽으로" found | N |
 | 36 | `88_notes_select`, `89_notes_words` | long-press → 선택; 단어장 tab | "1개 선택" bar; word row with 다시 찾기 and the word in bold | N |
 | 37 | `90_highlight_ink` | 설정 → 화면·밝기 → 인용문 색 표시 → 흑백 무늬; open sample-utf8.txt, 3 pages back to the quotes | grey band + thin line / lighter band + dashed; restore 자동 | N |
-| 38 | `52_footer_toggle_same_text` | open sample TXT; ⋮ → 설정 → 화면·밝기 → 아래 가운데 = 없음 (no footer: 10b had set it); back; `rawshot 52a`; the same page → 아래 가운데 = 쪽 번호, 아래 오른쪽 = 배터리 아이콘 · 시계, 위 가운데 = 없음; back; `rawshot 52b` | **2026-10-05 (the margins count from the bands):** the footer's band that comes moves the box's bottom, one anchored relayout: **`raw_equal 52a 52b` over `contenttop` (`pv + 80 … pv + 720`): EQUAL** and **`first_is 52a 52b`**; the header keeps its band (배터리 아이콘 · 시계 and 쪽 번호 stay; it loses its title), so the box's top stays. Was: the content rows EQUAL and `no_relayout` | A |
+| 38 | `52_footer_toggle_same_text` | open sample TXT; ⋮ → 설정 → 화면·밝기 → 아래 가운데 = 없음 (no footer: 10b had set it); back; `rawshot 52a`; the same page → 아래 가운데 = 쪽 번호, 아래 오른쪽 = 배터리 아이콘 · 시계, 위 가운데 = 없음; back; `rawshot 52b` | **2026-10-05 (the margins count from the bands):** the footer's band that comes moves the box's bottom, one anchored relayout: **`raw_equal 52a 52b` over `contenttop` (`pv + 80 … pv + 680`): EQUAL** and **`first_is 52a 52b`**; the header keeps its band (배터리 아이콘 · 시계 and 쪽 번호 stay; it loses its title), so the box's top stays. Was: the content rows EQUAL and `no_relayout` | A |
 | 39 | `53_progress_toggle_same_text` | 화면·밝기 → 진행 막대 off; back; rawshot | **2026-10-05:** the footer's band loses its lane (36 → 22 dp), one anchored relayout: `contenttop` EQUAL and **`first_is 52b 53`** (was: the content rows EQUAL, `no_relayout`); restore on | A |
 | 40 | `54_margin_v_exact` | **[Δ]** `perf_mark 54a`; ⚙ → 전체 읽기 설정 → 상하 여백 +10; back; `perf_mark 54b`; shot; then 상하 여백 back to 0 | **[Δ]** `first_is 54a 54b` (the exact first char; height-only change) | A |
-| 41 | `55_font_up_down` | 글자 크기 +1, then −1 | `raw_equal` with the shot before the change: EQUAL (content rows valid again: 54 restored "0") | A |
+| 41 | `55_font_up_down` | 글자 크기 +1, then −1 | `raw_equal` with the shot before the change: EQUAL (content rows valid again: 54 restored "0"; 52b's footer item is on, so the box ends at `pv + 1324` and rows 1324…1360 are margin paper, the same in both shots) | A |
 | 42 | `56_page_break_paragraph` | **[Δ]** `perf_mark 56a`; ⚙ → 전체 읽기 설정 → 페이지 나눔 = 문단 단위; back; `perf_mark 56b`; next page | **[Δ]** `first_is 56a 56b`; the next page starts at a paragraph start (logged `o:` of the next `show TURN` is a block start: checked by eye from the shot); restore 줄 단위 | A |
 | 43 | `57_dialog_no_reflow` | fullscreen on; `rawshot 57_open`, wait 3 s, `rawshot 57_still_b` (CHECK `57_still` EQUAL); one warm-up 페이지 이동 open/cancel; `rawshot 57_before`; 페이지 이동 open (number pad seen), cancel (dialog gone, one more BACK if not); `rawshot 57_after` | `raw_equal 57_before 57_after` EQUAL; **[Δ]** `no_relayout`. The cold first frame differs from every redraw by a few hundred edge pixels per screen (CI 28–32, rasterization, no relayout): logged as `57_firstframe (info)` | A (H4) |
 | 44 | `92_thumbs`, `93_thumbs_next` (W2) | ⋮ → 페이지 미리보기 (페이지 썸네일 until the 2026-10-04 review); swipe | 4×3 (or 5×3) grid, current page framed, labels = footer numbers, marks; next grid page | N |

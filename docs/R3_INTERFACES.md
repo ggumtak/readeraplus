@@ -14,13 +14,14 @@ This is an intermediate contract commit: named stubs are replaced in W1, then W2
 - Default margins are 40 dp (`0` in controls). Marked deliberate 18/16 dp values stay unchanged. Since 2026-10-05 the
   side margins' `0` is MaruViewer's 20 dp (`SideMargin.ZERO_DP`; untouched R3 40/40 and R2 18/18 become 20/20 once).
   Since 2026-10-05 (user: "위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지") top/bottom count from the
-  status bands (`StatusBands`, whole dp from the settings only: header 22 dp, progress line 16 dp at the defaults), and
-  their `0` is each side's default, 18 / 24 dp, so the default text box is where 40 dp from the edge put it (Comet
-  80..1360). Values saved from the edge (`r.marginBaseV` 40 or none) move once by their own bands; new saves write
+  status bands (`StatusBands`, whole dp from the settings only: header 22 dp, progress line 18 dp at the defaults), and
+  their `0` is each side's default, 18 / 22 dp, so the default text box is where 40 dp from the edge put it (Comet
+  80..1360). One stepper moves both by its step (`VerticalMargin.step`). Values saved from the edge (`r.marginBaseV` 40 or none) move once by their own bands; new saves write
   `VerticalMargin.BANDS`. This replaces "the text box never makes room for the status bands" and the '가려짐' fit note.
   The bands hug the screen edges (`StatusFit.headerBaseline` / `footerBaseline`), and in fullscreen a cutout-only top
   inset goes into `LayoutKeys.geometry`'s `extraTop` instead of the page view's margin: left out like a system bar, the
-  header's band starts below it (S25: text box 207..2220, as before).
+  header's band is reserved below it, and the header is centred between it and the text box as the user's screenshot of
+  the installed build has it (S25: text box 207..2220, header ink 147–181, ribbon 87..159, as before).
 - No probe, database write, counting, backfill, brightness-device initialization or auto-backup before the first page.
 - Main thread owns Views, `BookSession` state, scroll positions and decor. Its IO and layout work are dispatched.
 - Engine/math/migration/export helpers are pure; database APIs and `DeviceLight`/`LightProbe` IO are blocking off-main.
@@ -762,15 +763,21 @@ fun laneTopPx(density: Float): Int
 fun glyphPx(s: ReaderSettings, density: Float): Int
 fun headerBandPx(s: ReaderSettings, density: Float): Int
 fun footerBandPx(s: ReaderSettings, density: Float): Int
-fun headerBaseline(bandTop: Float, ascentPx: Float, descentPx: Float, glyphPx: Float, density: Float): Float
-fun footerBaseline(viewBottom: Float, lane: Boolean, ascentPx: Float, descentPx: Float, glyphPx: Float, density: Float): Float
+const val INK_SAMPLE = "(가g0"                  // the renderer measures its ink once
+fun headerBaseline(cutoutTop: Float, contentTop: Float, ascentPx: Float, descentPx: Float, inkTopPx: Float,
+    inkBottomPx: Float, glyphPx: Float, density: Float): Float   // no cutout: glyph box EDGE below the top; below one:
+                                                                 // centred between it and the text box; ink kept inside
+fun footerBaseline(viewBottom: Float, lane: Boolean, descentPx: Float, inkTopPx: Float, inkBottomPx: Float,
+    glyphPx: Float, density: Float): Float
+fun fitTextPx(textPx: Float, inkPx: Float, glyphPx: Float): Float  // smaller once only when the ink is taller than the box
 
 // settings/Margins.kt
 object StatusBands { EDGE_DP = 4; PAD_DP = 2; LANE_DP = 12; GLYPH_EM = 1.45
     fun statusSp(s): Float; fun glyphDp(s): Int; fun headerDp(s): Int; fun footerDp(s): Int }
-object VerticalMargin { EDGE_DP = 40; TOP_ZERO_DP = 18; BOTTOM_ZERO_DP = 24; MAX_DP = 80; UI_MIN = -24; UI_MAX = 62
+object VerticalMargin { EDGE_DP = 40; TOP_ZERO_DP = 18; BOTTOM_ZERO_DP = 22; MAX_DP = 80; UI_MIN = -22; UI_MAX = 62
     KEY = "r.marginBaseV"; BANDS = 2; EDGE = 40
     fun topDp(ui): Int; fun bottomDp(ui): Int; fun toUi(top, bottom): Int; fun countsFromEdge(base: Int?): Boolean
+    fun step(top, bottom, from, to): IntArray   // on the defaults' line follow it, else both sides by to − from
     fun fromEdge(s, top = true, bottom = true): ReaderSettings }
 ```
 

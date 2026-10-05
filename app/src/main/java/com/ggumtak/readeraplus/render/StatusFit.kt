@@ -9,9 +9,11 @@ import com.ggumtak.readeraplus.settings.StatusBands
  * the header's band and ends the bottom margin above the footer's (`LayoutKeys.geometry`; user: "위 여백은 위 아래
  * 애들을 제외하고 본문영역에서만 계산해야지"). This replaces U2's rule that the text box never makes room for the bands,
  * which put them inside the margins, shrank or hid them in small ones and needed the settings' '가려짐' note. Both bands
- * draw at the chosen size: the header's glyph box [EDGE_DP] below its band's top (the page view's top, or the bottom of a
- * display cutout's band: [headerBaseline]), the footer's just above the progress lane or the bottom edge gap
- * ([footerBaseline]), the progress line at the bottom of the lane ([laneBottomPx]).
+ * draw at the chosen size (the renderer makes it smaller once only when its glyphs are taller than the band's glyph box:
+ * [fitTextPx]): the header's glyph box [EDGE_DP] below the page view's top, or, below a display cutout's band (the
+ * S25's camera hole in fullscreen), centred between that band and the text box as on the user's screenshot of the
+ * installed build ([headerBaseline]); the footer's just above the progress lane or the bottom edge gap
+ * ([footerBaseline]); the progress line at the bottom of the lane ([laneBottomPx]).
  */
 internal object StatusFit {
     /** Paper kept between the status glyphs and the margin or the progress lane. */
@@ -25,6 +27,12 @@ internal object StatusFit {
      * header's glyph box starts (MaruViewer's glyphs ≈ 5 dp from the top).
      */
     const val EDGE_DP = StatusBands.EDGE_DP
+
+    /**
+     * The status glyphs whose ink the renderer measures once: a parenthesis (the tallest and lowest in most fonts), a
+     * Hangul syllable, a descender and a digit.
+     */
+    const val INK_SAMPLE = "(가g0"
 
     /** [dp] in whole px. */
     fun px(dp: Int, density: Float): Int = Math.round(dp * density)
@@ -51,23 +59,54 @@ internal object StatusFit {
     fun footerBandPx(s: ReaderSettings, density: Float): Int = px(StatusBands.footerDp(s), density)
 
     /**
-     * Header baseline: the glyph box [EDGE_DP] below [bandTop] (the page view's top, or below a display cutout's band),
-     * [ascentPx] / [descentPx] the status paint's at the chosen size. A font taller than the band's glyph box [glyphPx]
-     * (only with a system font scale above 1) keeps its proportions inside the box instead of reaching into the margin.
+     * Header baseline. [ascentPx] / [descentPx]: the status paint's font metrics; [inkTopPx] (negative: above the
+     * baseline) / [inkBottomPx]: the ink of its tallest glyphs (the renderer measures them once), never taller than
+     * [glyphPx] ([fitTextPx]).
+     * - No cutout ([cutoutTop] 0: the Comet, a phone with its bars): the glyph box starts [EDGE_DP] below the page view's
+     *   top, MaruViewer's line; the font's ascent below the box's top (the Comet's glyphs ≈ 5 dp from the top).
+     * - Below a display cutout's band (the S25's camera hole in fullscreen, [cutoutTop] px): the font box centred between
+     *   that band and the text box at [contentTop], as the installed build placed it (user, 2026-10-05: "최대한 이거랑 여백
+     *   넓이랑 그리고 여백 알고리즘을 따라해봐"; the screenshot's header ink is rows 147–181 over the text box at 207). The
+     *   header's band is still reserved below the cutout, so a small top margin only brings it closer to the text.
+     * Either way the baseline then moves only as far as needed to keep the ink inside its room: the glyph box, or the
+     * paper from [EDGE_DP] below the cutout to [PAD_DP] above the text box.
      */
-    fun headerBaseline(bandTop: Float, ascentPx: Float, descentPx: Float, glyphPx: Float, density: Float): Float =
-        bandTop + edgePx(density) + ascentPx * squeeze(ascentPx, descentPx, glyphPx)
+    fun headerBaseline(
+        cutoutTop: Float, contentTop: Float, ascentPx: Float, descentPx: Float, inkTopPx: Float, inkBottomPx: Float,
+        glyphPx: Float, density: Float,
+    ): Float {
+        val top = cutoutTop + edgePx(density)
+        if (!(cutoutTop > 0f)) return inside(top + ascentPx, top, top + glyphPx, inkTopPx, inkBottomPx)
+        val centred = (cutoutTop + contentTop) / 2f + (ascentPx - descentPx) / 2f
+        return inside(centred, top, contentTop - px(PAD_DP, density), inkTopPx, inkBottomPx)
+    }
 
     /**
      * Footer baseline in a page view whose bottom is [viewBottom]: the glyph box's bottom [PAD_DP] above the progress
-     * lane while [lane] is on, else on the [EDGE_DP] gap; [ascentPx] / [descentPx] and [glyphPx] as in [headerBaseline].
+     * lane while [lane] is on, else on the [EDGE_DP] gap; the font's descent above the box's bottom, the ink kept inside
+     * the box (as in [headerBaseline]).
      */
-    fun footerBaseline(viewBottom: Float, lane: Boolean, ascentPx: Float, descentPx: Float, glyphPx: Float, density: Float): Float =
-        viewBottom - px(EDGE_DP + (if (lane) LANE_DP + PAD_DP else 0), density) - descentPx * squeeze(ascentPx, descentPx, glyphPx)
-
-    /** Share of a status glyph box [ascentPx] + [descentPx] that fits a band's [glyphPx] (1 when it fits). */
-    private fun squeeze(ascentPx: Float, descentPx: Float, glyphPx: Float): Float {
-        val box = ascentPx + descentPx
-        return if (box > glyphPx && glyphPx > 0f) glyphPx / box else 1f
+    fun footerBaseline(
+        viewBottom: Float, lane: Boolean, descentPx: Float, inkTopPx: Float, inkBottomPx: Float, glyphPx: Float,
+        density: Float,
+    ): Float {
+        val bottom = viewBottom - px(EDGE_DP + (if (lane) LANE_DP + PAD_DP else 0), density)
+        return inside(bottom - descentPx, bottom - glyphPx, bottom, inkTopPx, inkBottomPx)
     }
+
+    /**
+     * The status text size the renderer draws: [textPx], the chosen size, unless the ink of its tallest glyphs
+     * ([inkPx] high at that size) is taller than the band's glyph box [glyphPx] (a large system font scale: the bands
+     * count the settings' sp only); then the size whose ink just fits. The text size, not just the baseline, so the
+     * glyphs never reach the margin, the lane or the bezel's rows.
+     */
+    fun fitTextPx(textPx: Float, inkPx: Float, glyphPx: Float): Float =
+        if (inkPx > glyphPx && glyphPx > 0f) textPx * glyphPx / inkPx else textPx
+
+    /**
+     * [baseline], moved only as far as needed to keep the ink ([inkTopPx] .. [inkBottomPx] around it) between [top] and
+     * [bottom]; the top wins if the ink is taller than the room ([fitTextPx] keeps it from being taller than the box).
+     */
+    private fun inside(baseline: Float, top: Float, bottom: Float, inkTopPx: Float, inkBottomPx: Float): Float =
+        maxOf(top - inkTopPx, minOf(baseline, bottom - inkBottomPx))
 }

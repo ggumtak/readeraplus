@@ -52,8 +52,11 @@ object StatusBands {
     /** The progress line's lane. */
     const val LANE_DP = ReaderSettings.PROGRESS_LANE_DP
     /**
-     * Glyph box per sp of status text: at least the ascent + descent of the status font (Roboto ≈ 1.17, the CJK system
-     * font ≈ 1.45), so its glyphs never leave their band.
+     * Glyph box per sp of status text: the ink of the status glyphs (a parenthesis ≈ 1.05 em, Hangul ≈ 0.9 em on the
+     * S25's screenshot) with paper to spare, and Roboto's ascent + descent (≈ 1.17 em). Not every font's: the S25's
+     * system font has a far taller font box, so the renderer keeps the glyphs' ink, not that box, inside it
+     * (`StatusFit.headerBaseline`), and makes the text smaller once only if the ink is taller (`StatusFit.fitTextPx`: a
+     * large system font scale, which the bands, counted in the settings' sp, do not follow).
      */
     const val GLYPH_EM = 1.45
 
@@ -68,12 +71,14 @@ object StatusBands {
     fun headerDp(s: ReaderSettings): Int = if (s.hasHeader) EDGE_DP + glyphDp(s) + PAD_DP else 0
 
     /**
-     * The footer's band from the bottom edge: [EDGE_DP], the lane while the progress line is on, and with footer items
-     * ([PAD_DP] above the lane) the glyph box and [PAD_DP]; 0 with neither. 16 dp by default (the progress line alone).
+     * The footer's band from the bottom edge: [EDGE_DP], the lane and [PAD_DP] above it while the progress line is on
+     * (the text never touches the dot at the lane's top), and with footer items the glyph box and [PAD_DP]; 0 with
+     * neither. 18 dp by default (the progress line alone).
      */
     fun footerDp(s: ReaderSettings): Int {
-        if (!s.hasFooterText) return if (s.progressBar) EDGE_DP + LANE_DP else 0
-        return EDGE_DP + (if (s.progressBar) LANE_DP + PAD_DP else 0) + glyphDp(s) + PAD_DP
+        val lane = if (s.progressBar) LANE_DP + PAD_DP else 0
+        if (!s.hasFooterText) return if (s.progressBar) EDGE_DP + lane else 0
+        return EDGE_DP + lane + glyphDp(s) + PAD_DP
     }
 }
 
@@ -81,7 +86,7 @@ object StatusBands {
  * U3: top/bottom margins, stored as actual dp. Since 2026-10-05 they count from the status bands ([StatusBands]), not
  * from the screen's edge: the top margin is the paper between the header's band and the text, the bottom one between the
  * text and the footer's band. The defaults keep the text box where 40 dp from the edge put it with the default bands
- * (user: "코멧에서 본문 지금 자리 그대로 되게 숫자 맞춰줘"): [TOP_ZERO_DP] = 40 − 22, [BOTTOM_ZERO_DP] = 40 − 16, rows
+ * (user: "코멧에서 본문 지금 자리 그대로 되게 숫자 맞춰줘"): [TOP_ZERO_DP] = 40 − 22, [BOTTOM_ZERO_DP] = 40 − 18, rows
  * 80..1360 on the Comet as before. Each side's default is its "0"; the one 상하 여백 stepper moves both by its value.
  * [KEY] (prefs and the backup's reader object; [STYLE_KEY] in a saved style) says how the values were saved: [BANDS] now,
  * [EDGE] from U3 until the bands ("40 dp = 0" from the edge), nothing ≤ R2. Values saved from the edge move once when
@@ -92,13 +97,13 @@ object VerticalMargin {
     const val EDGE_DP = 40
     /** The top margin's "0": [EDGE_DP] less the default header band (22 dp). */
     const val TOP_ZERO_DP = 18
-    /** The bottom margin's "0": [EDGE_DP] less the default footer band (the progress line, 16 dp). */
-    const val BOTTOM_ZERO_DP = 24
+    /** The bottom margin's "0": [EDGE_DP] less the default footer band (the progress line, 18 dp). */
+    const val BOTTOM_ZERO_DP = 22
     /** Either margin's largest value on the steppers. */
     const val MAX_DP = 80
     /** ≤ R2 default of marginTopDp / marginBottomDp. */
     const val LEGACY_DEFAULT_DP = 16
-    /** −24..+62: both margins 0..80 dp (each stops at its end). */
+    /** −22..+62: both margins 0..80 dp (each stops at its end). */
     const val UI_MIN = -BOTTOM_ZERO_DP
     const val UI_MAX = MAX_DP - TOP_ZERO_DP
     const val UI_STEP = SideMargin.UI_STEP
@@ -117,6 +122,16 @@ object VerticalMargin {
     fun toUi(top: Int, bottom: Int): Int =
         (if (top <= 0) bottom - BOTTOM_ZERO_DP else top - TOP_ZERO_DP).coerceIn(UI_MIN, UI_MAX)
 
+    /**
+     * The margins after the 상하 여백 stepper went from [from] to [to], with [top] / [bottom] on the page. A pair on the
+     * defaults' line ([topDp] / [bottomDp] of [from]) stays on it, so "0" is always the defaults; any other pair (bands
+     * other than the defaults when it was counted from the edge, the minimal margins while 여백 사용 is off) moves both
+     * sides by the step, each within 0..[MAX_DP], so neither side jumps. [top] first, then [bottom].
+     */
+    fun step(top: Int, bottom: Int, from: Int, to: Int): IntArray =
+        if (top == topDp(from) && bottom == bottomDp(from)) intArrayOf(topDp(to), bottomDp(to))
+        else intArrayOf((top + to - from).coerceIn(0, MAX_DP), (bottom + to - from).coerceIn(0, MAX_DP))
+
     fun label(ui: Int): String = SideMargin.label(ui)
 
     /** Values saved before U3 that equal the old untouched default 16/16. */
@@ -134,7 +149,7 @@ object VerticalMargin {
 
     /**
      * [s] with the margins it read from the edge ([top], [bottom]: those that were saved) counted from its own bands, so
-     * its text box stays where it was: 40/40 with the default bands become the defaults 18/24.
+     * its text box stays where it was: 40/40 with the default bands become the defaults 18/22.
      */
     fun fromEdge(s: ReaderSettings, top: Boolean = true, bottom: Boolean = true): ReaderSettings = s.copy(
         marginTopDp = if (top) topFromEdge(s.marginTopDp, s) else s.marginTopDp,

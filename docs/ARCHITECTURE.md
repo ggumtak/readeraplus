@@ -774,7 +774,8 @@ The release gates compare these numbers with the Wave 0 baseline recorded on the
   the paper between a band and the text, 0 puts the text right under the header, and no margin hides or shrinks a band
   (no '가려짐' note). Another item in a slot repaints; a band that comes, goes or changes height relays out anchored
   (`LayoutKeys.bandsChanged`). Defaults keep the text box 40 dp from the edges (sides 20 dp, MaruViewer; top 18 dp
-  under the 22 dp header band, bottom 24 dp over the 16 dp progress line). Model/renderer reuse buffers; redraw only
+  under the 22 dp header band, bottom 22 dp over the 18 dp progress line; a fullscreen camera band is left out like a
+  system bar, the header centred between it and the text box as before). Model/renderer reuse buffers; redraw only
   for a changed visible value or changed dot pixel. `footerEpisode`/`footerTimeLeft` become typed slots.
 - **Pagination:** `PageBreakMode.LINE` preserves the golden output; PARAGRAPH keeps a whole paragraph when it fits.
   Relayout opens an anchored generation so the first character stays; its changed section is masked from saved

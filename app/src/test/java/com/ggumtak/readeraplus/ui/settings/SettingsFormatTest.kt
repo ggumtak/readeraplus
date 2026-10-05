@@ -271,7 +271,7 @@ class SettingsFormatTest {
         assertTrue(R3Rows.hasStatusText(none.withSlot(1, 2, StatusItem.CLOCK)))
         // The bands have their own places (2026-10-05): no margin hides them, so there is no fit note any more; the margin
         // rows say where the margins count from.
-        assertEquals("0이 기본 여백입니다. 상하 여백은 상태 표시줄과 본문 사이입니다.", R3Rows.MARGIN_NOTE)
+        assertEquals("0이 기본 여백입니다. 상하 여백은 상태 표시줄부터 잽니다.", R3Rows.MARGIN_NOTE)
     }
 
     @Test
@@ -372,7 +372,7 @@ class SettingsFormatTest {
                 txtReplaceRules = "a=>b", txtDetectChapters = false,
             ),
         )
-        assertEquals(listOf(20, 20, 18, 24), listOf(r.marginLeftDp, r.marginRightDp, r.marginTopDp, r.marginBottomDp))
+        assertEquals(listOf(20, 20, 18, 22), listOf(r.marginLeftDp, r.marginRightDp, r.marginTopDp, r.marginBottomDp))
         assertEquals(PageBreakMode.LINE, r.pageBreak)
         assertEquals(StatusItem.BOOK_TITLE, r.headerCenter)
         assertEquals(StatusItem.NONE, r.footerRight)

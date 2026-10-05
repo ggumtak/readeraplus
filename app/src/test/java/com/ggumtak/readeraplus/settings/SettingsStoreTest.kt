@@ -216,8 +216,8 @@ class SettingsStoreTest {
         val raw=hashMapOf<String,Any?>(SideMargin.KEY to 40,VerticalMargin.KEY to 40,MaruHeader.KEY to true,
             "r.marginLeftDp" to 40,"r.marginRightDp" to 40,"r.marginTopDp" to 40,"r.marginBottomDp" to 40)
         val before=HashMap(raw);val p=fresh(raw);val r=Settings.reader
-        // Top and bottom (40/40 from the edge) are counted from the default bands: the new defaults 18/24, same text box.
-        assertEquals(listOf(20,20,18,24),listOf(r.marginLeftDp,r.marginRightDp,r.marginTopDp,r.marginBottomDp));assertEquals(before,raw)
+        // Top and bottom (40/40 from the edge) are counted from the default bands: the new defaults 18/22, same text box.
+        assertEquals(listOf(20,20,18,22),listOf(r.marginLeftDp,r.marginRightDp,r.marginTopDp,r.marginBottomDp));assertEquals(before,raw)
         Settings.saveReader(r);assertEquals(20,p.map[SideMargin.KEY]);assertEquals(20,p.map["r.marginLeftDp"])
         assertEquals(VerticalMargin.BANDS,p.map[VerticalMargin.KEY]);assertEquals(18,p.map["r.marginTopDp"])
         Settings.initForTest(p);assertEquals(r,Settings.reader)
@@ -266,7 +266,7 @@ class SettingsStoreTest {
         // Saved before MaruViewer's header (no header marker, all slots none): the header it gets now counts too.
         fresh(hashMapOf(VerticalMargin.KEY to 40,"r.marginTopDp" to 40,"r.marginBottomDp" to 40,
             "r.headerLeft" to "NONE","r.headerCenter" to "NONE","r.headerRight" to "NONE","r.footerLeft" to "NONE"))
-        assertEquals(listOf(18,24),listOf(Settings.reader.marginTopDp,Settings.reader.marginBottomDp))
+        assertEquals(listOf(18,22),listOf(Settings.reader.marginTopDp,Settings.reader.marginBottomDp))
     }
     @Test fun deliberateMarginsAndPageBreakRoundTrip() {
         val p=fresh();val r=ReaderSettings(marginLeftDp=18,marginRightDp=18,marginTopDp=16,marginBottomDp=16,pageBreak=com.ggumtak.readeraplus.engine.PageBreakMode.PARAGRAPH)

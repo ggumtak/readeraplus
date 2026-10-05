@@ -64,11 +64,13 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     }
     private val statusAscent: Float
     private val statusDescent: Float
+    /** Ink of the status text's tallest glyphs ([StatusFit.INK_SAMPLE]) around the baseline: top (negative) and bottom. */
+    private val statusInkTop: Float
+    private val statusInkBottom: Float
     /** Vertical middle of the status digits relative to the baseline (negative = above it): the battery icon's centre. */
     private val digitMiddle: Float
-    /** The bands' glyph box ([StatusBands.glyphDp]), the edge gap and the progress lane, in px. */
+    /** The bands' glyph box ([StatusBands.glyphDp]) and the progress lane, in px. */
     private val statusGlyphPx = StatusFit.glyphPx(settings, density).toFloat()
-    private val edgePx = StatusFit.edgePx(density)
     private val lanePx = StatusFit.lanePx(density).toFloat()
     private val bandCache = arrayOf(StatusDrawCache(), StatusDrawCache())
     private val slotGeometry = FloatArray(12)
@@ -126,6 +128,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val ribbon = Path()
     private var ribbonForWidth = -1
     private var ribbonForHeight = -1f
+    private var ribbonForTop = -1f
 
     private var xs = FloatArray(256)
     private var lineChars = CharArray(0)
@@ -139,9 +142,18 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val shadowed: MutableSet<TextPaint> = Collections.newSetFromMap(IdentityHashMap<TextPaint, Boolean>())
 
     init {
+        // Settings and density are fixed per renderer: the status size is fitted to the bands' glyph box once, here.
+        val ink = Rect()
+        statusPaint.getTextBounds(StatusFit.INK_SAMPLE, 0, StatusFit.INK_SAMPLE.length, ink)
+        if (ink.height() > 0) {
+            statusPaint.textSize = StatusFit.fitTextPx(statusPaint.textSize, ink.height().toFloat(), statusGlyphPx)
+            statusPaint.getTextBounds(StatusFit.INK_SAMPLE, 0, StatusFit.INK_SAMPLE.length, ink)
+        }
         val fm = statusPaint.fontMetrics
         statusAscent = -fm.ascent
         statusDescent = fm.descent
+        statusInkTop = if (ink.height() > 0) ink.top.toFloat() else fm.ascent
+        statusInkBottom = if (ink.height() > 0) ink.bottom.toFloat() else fm.descent
         val digit = Rect()
         statusPaint.getTextBounds("0", 0, 1, digit)
         digitMiddle = if (digit.height() > 0) (digit.top + digit.bottom) / 2f else -0.36f * statusPaint.textSize
@@ -168,7 +180,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     ) {
         canvas.drawColor(bg)
         val cw = layout.config.width.toFloat()
-        val ribbonH = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + cw, viewWidth) else 0f
+        val ribbonTop = ribbonTop(decor)
+        val ribbonH = if (decor.bookmarked) RibbonMath.height(density, contentTop - ribbonTop, contentLeft + cw, viewWidth) else 0f
         drawStatus(canvas, decor, contentLeft, contentTop, cw, viewWidth, viewHeight, ribbonH)
         if (pageIndex in 0 until layout.pages.size) {
             val page = layout.pages[pageIndex]
@@ -176,7 +189,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             if (decor.highlights.isNotEmpty()) drawHighlights(canvas, layout, lines, decor.highlights, contentLeft, contentTop)
             for (i in 0 until lines.size) drawLine(canvas, layout, lines[i], contentLeft, contentTop, cw)
         }
-        if (decor.bookmarked) drawRibbon(canvas, viewWidth, ribbonH)
+        if (decor.bookmarked) drawRibbon(canvas, viewWidth, ribbonH, ribbonTop)
         if (images != null) prefetchNeighbours(layout, pageIndex)
     }
 
@@ -233,7 +246,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     fun drawChrome(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float,
                    viewWidth: Int, viewHeight: Int) {
         canvas.drawColor(bg)
-        val h = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + contentWidth, viewWidth) else 0f
+        val h = if (decor.bookmarked) RibbonMath.height(density, contentTop - ribbonTop(decor), contentLeft + contentWidth, viewWidth) else 0f
         drawStatus(canvas, decor, contentLeft, contentTop, contentWidth, viewWidth, viewHeight, h)
     }
 
@@ -271,7 +284,9 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     }
 
     fun drawOverlay(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float, viewWidth: Int) {
-        if (decor.bookmarked) drawRibbon(canvas, viewWidth, RibbonMath.height(density, contentTop, contentLeft + contentWidth, viewWidth))
+        if (!decor.bookmarked) return
+        val top = ribbonTop(decor)
+        drawRibbon(canvas, viewWidth, RibbonMath.height(density, contentTop - top, contentLeft + contentWidth, viewWidth), top)
     }
 
     /** One latest-pending batch; copy callers' reusable slot arrays before submitting. */
@@ -299,23 +314,26 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
 
     /**
      * The status bands in their own places at the screen's edges (StatusFit; the text box starts and ends a margin away
-     * from them), at the chosen size: the header below [StatusDecor.top] (a display cutout's band), the footer and the
-     * progress line above the bottom edge gap. [top] / [cw]: the text box, whose column the slots share.
+     * from them), at the chosen size: the header at the top, or below [StatusDecor.top] (a display cutout's band) centred
+     * between it and the text box, the footer and the progress line above the bottom edge gap. [top] / [cw]: the text
+     * box, whose column the slots share.
      */
     private fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Float, cw: Float,
                            viewWidth: Int, viewHeight: Int, ribbonH: Float) {
         val st = decor.status ?: return
         val ts = statusPaint.textSize
         if (!st.header.isEmpty) {
-            val baseline = StatusFit.headerBaseline(st.top.toFloat(), statusAscent, statusDescent, statusGlyphPx, density)
+            val baseline = StatusFit.headerBaseline(st.top.toFloat(), top, statusAscent, statusDescent, statusInkTop,
+                statusInkBottom, statusGlyphPx, density)
             // The ribbon's place at the header's right end is kept on every page (bookmarked or not), so toggling the
-            // bookmark moves only the right slot, by that much, and never re-fits the slots (or the title).
+            // bookmark moves only the right slot, by that much, and never re-fits the slots (or the title). The ribbon
+            // hangs from the cutout's band (ribbonTop): both measured from there.
             val reserve = RibbonMath.headerInset(density, left + cw, viewWidth,
-                RibbonMath.height(density, top, left + cw, viewWidth), (st.top + edgePx).toFloat())
+                RibbonMath.height(density, top - st.top, left + cw, viewWidth), baseline + statusInkTop - st.top)
             drawBand(canvas, st, st.header, left, cw, baseline, 0, ts, reserve, if (ribbonH > 0f) reserve else 0f)
         }
         if (!st.footer.isEmpty) drawBand(canvas, st, st.footer, left, cw, StatusFit.footerBaseline(viewHeight.toFloat(),
-            st.lane, statusAscent, statusDescent, statusGlyphPx, density), 1, ts, 0f, 0f)
+            st.lane, statusDescent, statusInkTop, statusInkBottom, statusGlyphPx, density), 1, ts, 0f, 0f)
         if (st.lane) drawProgress(canvas, st.progress, viewWidth, StatusFit.laneBottomPx(viewHeight, density), lanePx)
     }
 
@@ -661,20 +679,27 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     // ---------------------------------------------------------------------------------------------
     // Bookmark ribbon
 
-    private fun drawRibbon(canvas: Canvas, viewWidth: Int, h: Float) {
-        if (ribbonForWidth != viewWidth || ribbonForHeight != h) {
+    /**
+     * The ribbon hangs from the page view's top, or from the bottom of a display cutout's band ([StatusDecor.top]: the
+     * S25's camera hole in fullscreen), where the installed build hung it and where the bookmark's tap corner starts.
+     */
+    private fun ribbonTop(decor: PageDecor): Float = (decor.status?.top ?: 0).toFloat()
+
+    private fun drawRibbon(canvas: Canvas, viewWidth: Int, h: Float, top: Float) {
+        if (ribbonForWidth != viewWidth || ribbonForHeight != h || ribbonForTop != top) {
             val l = RibbonMath.left(viewWidth, density)
             val r = l + RibbonMath.WIDTH_DP * density
             val notch = h * RibbonMath.NOTCH_FRACTION
             ribbon.reset()
-            ribbon.moveTo(l, 0f)
-            ribbon.lineTo(r, 0f)
-            ribbon.lineTo(r, h)
-            ribbon.lineTo((l + r) / 2f, h - notch)
-            ribbon.lineTo(l, h)
+            ribbon.moveTo(l, top)
+            ribbon.lineTo(r, top)
+            ribbon.lineTo(r, top + h)
+            ribbon.lineTo((l + r) / 2f, top + h - notch)
+            ribbon.lineTo(l, top + h)
             ribbon.close()
             ribbonForWidth = viewWidth
             ribbonForHeight = h
+            ribbonForTop = top
         }
         canvas.drawPath(ribbon, ribbonHalo)
         canvas.drawPath(ribbon, ribbonPaint)
@@ -682,10 +707,12 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
 }
 
 /**
- * Bookmark ribbon geometry (px; pure, unit-tested). The ribbon hangs from the top edge, [RIGHT_DP] from the
- * view's right edge. It keeps its full height only where that stays above the text column; otherwise it shrinks
- * to the band above the text (never below [MIN_HEIGHT_DP]). A header that would run under it keeps [headerInset] free
- * at its right end (StatusMath.allocate's reserve) on every page, so a bookmark moves only its right slot.
+ * Bookmark ribbon geometry (px; pure, unit-tested). The ribbon hangs from the top edge, or from the bottom of a display
+ * cutout's band (the S25's camera hole in fullscreen: every top and height here is then measured from that band's
+ * bottom), [RIGHT_DP] from the view's right edge. It keeps its full height only where that stays above the text column;
+ * otherwise it shrinks to the band above the text (never below [MIN_HEIGHT_DP]). A header that would run under it keeps
+ * [headerInset] free at its right end (StatusMath.allocate's reserve) on every page, so a bookmark moves only its right
+ * slot.
  */
 internal object RibbonMath {
     const val WIDTH_DP = 14f

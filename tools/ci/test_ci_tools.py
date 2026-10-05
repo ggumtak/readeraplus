@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Unit tests for the pure CI helpers: perf_log.py, find_node.py, ui_rows.py, hub_rows.py, raw_equal.py and the crafted
-restore backup of make_samples.py. Run from the repository root: python3 -m unittest tools/ci/test_ci_tools.py"""
+"""Unit tests for the pure CI helpers: perf_log.py, find_node.py, ui_rows.py, hub_rows.py, raw_equal.py (with
+--uniform) and the crafted restore backup of make_samples.py. Run from the repository root:
+python3 -m unittest tools/ci/test_ci_tools.py"""
 import json
 import os
 import struct
@@ -503,6 +504,30 @@ class RawEqualTest(unittest.TestCase):
             self.assertEqual(raw_equal.main([a, b, "0", "6"]), "DIFF 8 bbox 0,0-3,5")
             self.assertEqual(raw_equal.main([a]), "BADSIZE")
 
+    def test_uniform_rows_are_one_colour(self):
+        # CI 10b_margin: the paper between the text box and the footer's band holds nothing (raw_equal.py --uniform).
+        with tempfile.TemporaryDirectory() as d:
+            a, b = (os.path.join(d, n) for n in ("a.raw", "b.raw"))
+            raw_image(a, 4, 6, [0, 10, 10, 10, 40, 50], header=12)
+            self.assertEqual(raw_equal.uniform(a, 1, 4), "UNIFORM")
+            self.assertEqual(raw_equal.uniform(a, 2, 3), "UNIFORM")
+            self.assertEqual(raw_equal.uniform(a, 1, 5), "MIXED 4 bbox 0,4-3,4")
+            self.assertEqual(raw_equal.uniform(a, 0, 2), "MIXED 4 bbox 0,1-3,1")
+            self.assertEqual(raw_equal.uniform(a, 4, 9), "BADSIZE")
+            self.assertEqual(raw_equal.uniform(a, 3, 3), "BADSIZE")
+            # One stray pixel (a glyph's descender clipped a row too low) is named.
+            data = bytearray(open(a, "rb").read())
+            data[12 + (2 * 4 + 1) * 4] = 200  # (x 1, y 2) after the 12-byte header
+            with open(b, "wb") as f:
+                f.write(bytes(data))
+            self.assertEqual(raw_equal.uniform(b, 1, 4), "MIXED 1 bbox 1,2-1,2")
+            out = subprocess.run([sys.executable, os.path.join(HERE, "raw_equal.py"), "--uniform", b, "1", "4"],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.stdout.strip(), "MIXED 1 bbox 1,2-1,2")
+            out = subprocess.run([sys.executable, os.path.join(HERE, "raw_equal.py"), "--uniform", a, "1", "4"],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.stdout.strip(), "UNIFORM")
+
 
 class RestoreBackupTest(unittest.TestCase):
     def test_crafted_backup(self):
@@ -517,6 +542,10 @@ class RestoreBackupTest(unittest.TestCase):
             reader, app = data["settings"]["reader"], data["settings"]["app"]
             self.assertEqual((reader["r.marginLeftDp"], reader["r.marginRightDp"]), (18, 18))
             self.assertNotIn("r.marginBase", reader)
+            # CI 97 reads 상하 여백 "0" after the restore through the conversion: R2's 16/16 without r.marginBaseV is
+            # 40/40 from the edge, then 18/22 counted from the default status bands.
+            self.assertEqual((reader["r.marginTopDp"], reader["r.marginBottomDp"]), (16, 16))
+            self.assertNotIn("r.marginBaseV", reader)
             self.assertEqual(app["a.readMode"], "PAGED")
             book = data["books"][0]
             self.assertEqual(book["path"], "/sdcard/Download/sample.epub")
