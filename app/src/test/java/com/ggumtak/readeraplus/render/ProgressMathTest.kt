@@ -21,18 +21,18 @@ class ProgressMathTest {
         assertEquals(2303, ProgressMath.lineTop(2340, s25))
         assertEquals(2297, ProgressMath.dotTop(2340, s25))
         assertEquals(2304f, ProgressMath.centreY(2340, s25), 0f)
-        // End dots x 21–34 and 1045–1058 (7 dp from the screen's sides), the line between their centres 28 and 1052.
-        assertEquals(21, ProgressMath.dotLeft(0f, 1080, s25))
-        assertEquals(1045, ProgressMath.dotLeft(1f, 1080, s25))
-        assertEquals(28f, ProgressMath.dotX(0f, 1080, s25), 0f)
-        assertEquals(1052f, ProgressMath.dotX(1f, 1080, s25), 0f)
-        assertEquals(1024, ProgressMath.trackPx(1080, s25))
+        // End dots x 45–58 and 1021–1034 (15 dp from the screen's sides since 2026-10-06), the line between centres 52 and 1028.
+        assertEquals(45, ProgressMath.dotLeft(0f, 1080, s25))
+        assertEquals(1021, ProgressMath.dotLeft(1f, 1080, s25))
+        assertEquals(52f, ProgressMath.dotX(0f, 1080, s25), 0f)
+        assertEquals(1028f, ProgressMath.dotX(1f, 1080, s25), 0f)
+        assertEquals(976, ProgressMath.trackPx(1080, s25))
         // Page 1749 of 3259 (index 1748 of 3258): the screenshot's position dot, x 570–583.
-        assertEquals(570, ProgressMath.dotLeft(1748f / 3258f, 1080, s25))
-        assertEquals(577f, ProgressMath.dotX(1748f / 3258f, 1080, s25), 0f)
+        assertEquals(569, ProgressMath.dotLeft(1748f / 3258f, 1080, s25))
+        assertEquals(576f, ProgressMath.dotX(1748f / 3258f, 1080, s25), 0f)
         // Beyond the ends, the dot stays on the end dots.
-        assertEquals(21, ProgressMath.dotLeft(-0.5f, 1080, s25))
-        assertEquals(1045, ProgressMath.dotLeft(1.5f, 1080, s25))
+        assertEquals(45, ProgressMath.dotLeft(-0.5f, 1080, s25))
+        assertEquals(1021, ProgressMath.dotLeft(1.5f, 1080, s25))
     }
 
     @Test
@@ -43,13 +43,13 @@ class ProgressMathTest {
         assertEquals(1415, ProgressMath.lineTop(1440, comet))
         assertEquals(1411, ProgressMath.dotTop(1440, comet))
         assertEquals(1415.5f, ProgressMath.centreY(1440, comet), 0f)
-        // End dots x 14–22 and 697–705, centres 18.5 and 701.5.
-        assertEquals(14, ProgressMath.dotLeft(0f, 720, comet))
-        assertEquals(697, ProgressMath.dotLeft(1f, 720, comet))
-        assertEquals(18.5f, ProgressMath.dotX(0f, 720, comet), 0f)
-        assertEquals(701.5f, ProgressMath.dotX(1f, 720, comet), 0f)
-        assertEquals(683, ProgressMath.trackPx(720, comet))
-        // Half way: x 356–364 (341.5 px of track rounds up).
+        // End dots x 30–38 and 681–689, centres 34.5 and 685.5.
+        assertEquals(30, ProgressMath.dotLeft(0f, 720, comet))
+        assertEquals(681, ProgressMath.dotLeft(1f, 720, comet))
+        assertEquals(34.5f, ProgressMath.dotX(0f, 720, comet), 0f)
+        assertEquals(685.5f, ProgressMath.dotX(1f, 720, comet), 0f)
+        assertEquals(651, ProgressMath.trackPx(720, comet))
+        // Half way: x 356–364 (325.5 px of track rounds up).
         assertEquals(356, ProgressMath.dotLeft(0.5f, 720, comet))
     }
 
@@ -94,15 +94,15 @@ class ProgressMathTest {
         }
         // A view narrower than the two end dots: no track, every dot on the left one.
         assertEquals(0, ProgressMath.trackPx(40, s25))
-        assertEquals(21, ProgressMath.dotLeft(0.7f, 40, s25))
+        assertEquals(45, ProgressMath.dotLeft(0.7f, 40, s25))
     }
 
     @Test
     fun thePositionDotIsLeftOutOnAnEndDot() {
         // The first and the last pages: the position dot would cover an end dot exactly (its rim blended twice).
         for (f in listOf(0f, 0.0004f, 0.9996f, 1f, -0.5f, 1.5f)) assertTrue("$f", ProgressMath.onEndDot(f, 1080, s25))
-        // One column off is a dot of its own: 0.0005 · 1024 rounds to 1 px on the S25, 0.0007 · 683 to 0 on the Comet.
-        for (f in listOf(0.0005f, 0.25f, 1748f / 3258f, 0.9995f)) assertTrue("$f", !ProgressMath.onEndDot(f, 1080, s25))
+        // One column off is a dot of its own: 0.0006 · 976 rounds to 1 px on the S25, 0.0007 · 651 to 0 on the Comet.
+        for (f in listOf(0.0006f, 0.25f, 1748f / 3258f, 0.9994f)) assertTrue("$f", !ProgressMath.onEndDot(f, 1080, s25))
         assertTrue(ProgressMath.onEndDot(0.0007f, 720, comet))
         assertTrue(!ProgressMath.onEndDot(0.5f, 720, comet))
         // A view with no track: every dot is on the end dots.

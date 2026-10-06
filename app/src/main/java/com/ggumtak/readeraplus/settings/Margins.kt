@@ -90,7 +90,7 @@ object StatusBands {
  * from the screen's edge: the top margin is the paper between the header's band and the text, the bottom one between the
  * text and the footer's band. The defaults keep the text box where 40 dp from the edge put it with the default bands
  * (user: "코멧에서 본문 지금 자리 그대로 되게 숫자 맞춰줘"): [TOP_ZERO_DP] = 40 − 25 (MaruViewer's 13 sp header; 40 − 22
- * at 11 sp before [MaruSize]), [BOTTOM_ZERO_DP] = 40 − 18, rows 80..1360 on the Comet as before. Each side's default
+ * at 11 sp before [MaruSize]); [BOTTOM_ZERO_DP] was 40 − 18 until 2026-10-06 and is 10 dp now: the Comet's rows 80..1384. Each side's default
  * is its "0"; the one 상하 여백 stepper moves both by its value.
  * [KEY] (prefs and the backup's reader object; [STYLE_KEY] in a saved style) says how the values were saved: [BANDS] now,
  * [EDGE] from U3 until the bands ("40 dp = 0" from the edge), nothing ≤ R2. Values saved from the edge move once when

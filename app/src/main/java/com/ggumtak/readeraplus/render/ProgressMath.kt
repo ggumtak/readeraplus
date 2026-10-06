@@ -21,8 +21,12 @@ internal object ProgressMath {
     const val LINE_DP = 2f / 3f
     /** One diameter for the end dots and the position dot: 14 px on the S25. */
     const val DOT_DP = 14f / 3f
-    /** From each side of the page view to the outer edge of the end dot there: 21 px on the S25. */
-    const val SIDE_DP = 7
+    /**
+     * From each side of the page view to the outer edge of the end dot there: 15 dp (user, 2026-10-06: "라운드형 폰이면 양
+     * 옆이 둥글둥글한 부분때문에 잘려"; ReadEra's 7 dp before), the header's own side inset: clear of a rounded corner's
+     * curve at the line's height. 45 px on the S25 at 3 px per dp, 30 on the Comet.
+     */
+    const val SIDE_DP = 15
     /**
      * From the page view's bottom up to the dots' and the line's centre: 36 px on the S25 (user, 2026-10-06: "진행상태바
      * 위치를 지금보다 살짝 위로"; ReadEra's 8 dp before). The dots' top stays under the lane's top (12 + 2.3 < 16 dp).
@@ -41,13 +45,13 @@ internal object ProgressMath {
         return line + 2 * Math.round((DOT_DP * density - line) / 2f).coerceAtLeast(0)
     }
 
-    /** The line's first row in a page view [viewH] tall: 2305 on the S25 (2340 px, 2.8125 px per dp), 1415 on the Comet (1440 px). */
+    /** The line's first row in a page view [viewH] tall: 2303 on the S25 at 3 px per dp (2340 px), 1415 on the Comet (1440 px). */
     fun lineTop(viewH: Int, density: Float): Int = viewH - Math.round(CENTRE_DP * density + lineH(density) / 2f)
 
-    /** The dots' first row: centred on the line (S25 2299, Comet 1411). */
+    /** The dots' first row: centred on the line (S25 2297, Comet 1411). */
     fun dotTop(viewH: Int, density: Float): Int = lineTop(viewH, density) - (dotD(density) - lineH(density)) / 2
 
-    /** The centre of the line and the dots (y): S25 2306.0 (between rows 2305 and 2306), Comet 1415.5. */
+    /** The centre of the line and the dots (y): S25 2304.0 (between rows 2303 and 2304), Comet 1415.5. */
     fun centreY(viewH: Int, density: Float): Float = lineTop(viewH, density) + lineH(density) / 2f
 
     /** [SIDE_DP] in whole px: the left end dot's first column. */
@@ -60,13 +64,13 @@ internal object ProgressMath {
     fun trackPx(viewW: Int, density: Float): Int = (viewW - 2 * sidePx(density) - dotD(density)).coerceAtLeast(0)
 
     /**
-     * First column of the dot at fraction [f] (0..1) of the track, in whole px; 0 and 1 are the end dots (S25 21 and
-     * 1045). The status model counts the same `round(f · track)`, so the dot "moved" exactly when this changes.
+     * First column of the dot at fraction [f] (0..1) of the track, in whole px; 0 and 1 are the end dots (S25 45 and
+     * 1021). The status model counts the same `round(f · track)`, so the dot "moved" exactly when this changes.
      */
     fun dotLeft(f: Float, viewW: Int, density: Float): Int =
         sidePx(density) + Math.round(f.coerceIn(0f, 1f) * trackPx(viewW, density))
 
-    /** Centre (x) of the dot at fraction [f]: the end dots' are the line's ends (S25 28.0 and 1052.0). */
+    /** Centre (x) of the dot at fraction [f]: the end dots' are the line's ends (S25 52.0 and 1028.0). */
     fun dotX(f: Float, viewW: Int, density: Float): Float = dotLeft(f, viewW, density) + dotD(density) / 2f
 
     /**
