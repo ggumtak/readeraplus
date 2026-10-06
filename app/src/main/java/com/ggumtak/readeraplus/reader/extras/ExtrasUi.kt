@@ -293,7 +293,7 @@ internal object Overlay {
 internal object TextActions {
     const val SHARE_MAX_CHARS = 50_000
     private const val PREF_LAST_DICT = "extras.lastDictApp"
-    private const val NAVER_LABEL = "네이버 사전"
+    private const val NAVER_LABEL = "네이버 사전 (창)"
 
     /**
      * Copies [text]. Android 13+ confirms a copy itself, so by default the toast is only shown below that; a caller
