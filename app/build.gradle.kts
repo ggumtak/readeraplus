@@ -16,7 +16,8 @@ android {
         // CI passes its run number, so every build is a higher version than the one installed.
         val buildNumber = System.getenv("BUILD_NUMBER")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
         versionCode = buildNumber
-        versionName = "0.1.$buildNumber"
+        // 0.2 starts at CI run 66 (2026-10-06): 0.2.0, then 0.2.1 … with every build (versionCode keeps the run number).
+        versionName = "0.2.${(buildNumber - 66).coerceAtLeast(0)}"
     }
 
     // Release signing comes from the environment (CI: the repository secrets, or the key kept in the Actions
