@@ -386,6 +386,21 @@ select_at() { # select_at x y: long-press a word; on blank space (leading, a bla
   done
   log "no selection bar after long-presses at $x $y..$SEL_Y"; return 1
 }
+full_page() { # full_page: pages the shown reader page (bars hidden) on until its text reaches the bottom of the text box
+  # Since 5c0bd03 every TXT chapter heading opens a new page, so a page that ends a chapter is short and a fixed point
+  # such as 300 700 can be blank. select_at 300 1132 tries 1132, 1180 … 1372, the bottom of the box (pv + 1384 at most,
+  # content_rows); it selecting there proves a full page. The selection is cleared with BACK (as notes_toc does). Up to
+  # 4 attempts, a PAGE_DOWN between them; the page it stops on is the one the caller then works on.
+  local i
+  for i in 1 2 3 4; do
+    if select_at 300 1132; then
+      dump_all && has "복사" && back
+      log "full_page: page $i ok"; return 0
+    fi
+    [ "$i" -lt 4 ] && { adb shell input keyevent KEYCODE_PAGE_DOWN; sleep 2; }
+  done
+  log "full_page: no page with text down to y 1372 in 4 tries"; return 1
+}
 hide_chrome() { # closes the go-to dialog / the reader's bars while they show (BACK without them would leave the book)
   local i
   for i in 1 2 3; do
@@ -1407,6 +1422,7 @@ eink_settings() { # 50d: 설정 → e-ink 새로고침 (e-ink 화면 until the 2
 notes_quotes() { # 80 quote, 81/81b palette → 초록, 82 the existing quote's popup
   # The selection bar is read from all-windows dumps (dump_all, sel_tap); the palette is focusable (plain dump).
   fresh_reader sample-utf8.txt text/plain
+  full_page || return 1 # the saved page may end a chapter (short): page on to one with text down to the box's bottom
   select_at 300 700 || return 1
   local qy=$SEL_Y # where the first quote is, for 82
   sel_tap "인용" || return 1
@@ -1458,8 +1474,9 @@ first_row_xy() { # the first note's text in the last dump (never a header: CI 34
 }
 notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select, 89 단어장
   # 87's chip offers the way back to the book's saved place, and only when that is not the quote's page (PLAN §1.6.1:
-  # if (!isOnCurrentPage(saved)) returnNav.onJump(saved)). 80–84 made the quotes on the page sample-utf8.txt was saved
-  # at (CI 30: no chip, correctly), so the book is read 3 pages on first; 90 turns back to the quotes.
+  # if (!isOnCurrentPage(saved)) returnNav.onJump(saved)). 80–84 made the quotes on the page sample-utf8.txt is saved
+  # at (CI 30: no chip, correctly); full_page (80) turns to a full page before the first quote, so every page turn comes
+  # first and the book stays on the quotes' page. The book is read 3 pages on first; 90 turns back to the quotes.
   local i
   fresh_reader sample-utf8.txt text/plain
   for i in 1 2 3; do adb shell input keyevent KEYCODE_PAGE_DOWN; sleep 1; done
