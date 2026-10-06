@@ -13,6 +13,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.VelocityTracker
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.render.PageDecor
@@ -74,6 +76,10 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         fun onViewSizeChanged(w: Int, h: Int)
         /** Mouse wheel / wheel-emulating page-turner remote: [next] = scrolled down. */
         fun onWheel(next: Boolean)
+        /** TalkBack scroll action: the turn a key makes. False when nothing turned (the book's first / last page). */
+        fun onAccessibilityTurn(next: Boolean): Boolean { onWheel(next); return true }
+        /** The text of the page shown, for screen readers (asked only while one is on); null when there is none. */
+        fun accessibilityText(): CharSequence? = null
     }
 
     /** The next page replaces the frame at once: no fade, slide, curl or timed interpolation. */
@@ -164,6 +170,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         isHapticFeedbackEnabled = false
         isSoundEffectsEnabled = false
         isFocusable = false
+        // A canvas without text of its own: the page text and the scroll actions below are what a screen reader gets.
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         defaultFocusHighlightEnabled = false
         overScrollMode = OVER_SCROLL_NEVER
     }
@@ -494,27 +502,43 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
 
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
-        if (scroll != null) {
-            info.isScrollable = true
-            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
-            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
-        }
+        // Built here, when a service asks: nothing is prepared per draw or turn.
+        cb.accessibilityText()?.let { info.text = it }
+        // Both modes turn by the same commands as the keys (the scroll viewport steps one screen).
+        info.isScrollable = true
+        info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
+        info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
     }
 
     override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
-        val input = scroll
-        if (input != null) {
-            if (action == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) return input.a11yStep(true)
-            if (action == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) return input.a11yStep(false)
+        val next = when (action) {
+            AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> true
+            AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> false
+            else -> return super.performAccessibilityAction(action, arguments)
         }
-        return super.performAccessibilityAction(action, arguments)
+        val input = scroll
+        return if (input != null) input.a11yStep(next) else accessibilityStep(next)
     }
 
     /** Use the same reader command as a tap/remote, including manual-turn and auto-turn bookkeeping. */
     internal fun accessibilityStep(next: Boolean): Boolean {
         noteInput(PerfLines.INPUT_NONE, 0L, SystemClock.uptimeMillis())
-        cb.onWheel(next)
-        return true
+        return cb.onAccessibilityTurn(next)
+    }
+
+    private val accessibilityManager by lazy { context.getSystemService(AccessibilityManager::class.java) }
+
+    /**
+     * A new page is on screen (a turn, jump or open; a scroll settle): tells a screen reader to read the text again.
+     * One event, and only while an accessibility service is on; decoration repaints and background count updates
+     * never call it. Draws nothing.
+     */
+    @Suppress("DEPRECATION")
+    fun notifyPageChanged() {
+        if (accessibilityManager?.isEnabled != true) return
+        val e = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        e.contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT
+        sendAccessibilityEventUnchecked(e)
     }
 
     /** The first finger of the gesture lifted (pointer index [i] of [ev]): tap, swipe or the end of a drag. */

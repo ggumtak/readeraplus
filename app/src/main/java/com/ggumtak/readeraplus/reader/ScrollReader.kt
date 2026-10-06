@@ -430,7 +430,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     override fun cancelDrag() { held = false; if (live) stopMotion() }
     override fun a11yStep(next: Boolean): Boolean {
         if (frozen || detached || session == null) return false
-        view.accessibilityStep(next); return true
+        return view.accessibilityStep(next)
     }
     override fun computeScroll() { /* The fling runs on its own frame callbacks ([stepFling]). */ }
     override fun draw(canvas: Canvas, width: Int, height: Int): Boolean {

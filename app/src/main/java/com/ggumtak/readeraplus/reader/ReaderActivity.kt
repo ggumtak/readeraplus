@@ -260,7 +260,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val b = bookRef
         if (!afterOpenPending || s == null || b == null) return@Runnable
         afterOpenPending = false
-        writeTextPosition(b, s, anchor)
+        rebindTextPosition(b, s, anchor)
         afterOpen()
     }
 
@@ -1818,7 +1818,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // A re-parse during the peek skipped the text signature: record it with the parse now shown.
         val b = bookRef
         val s = session
-        if (b != null && s != null) writeTextPosition(b, s, anchor)
+        if (b != null && s != null) rebindTextPosition(b, s, anchor)
     }
 
     /** Removes the note mark (a manual turn, a new note jump). */
@@ -2010,6 +2010,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             buildDecor(sample = true),
         )
         page.invalidate()
+        // A relayout shows the same place again: only a new page is announced.
+        if (kind != Nav.RELAYOUT) page.notifyPageChanged()
         if (kind == Nav.OPEN) page.traceOpen(bookRef?.id ?: -1L, openStartedAt)
         if (ReaderPerf.turns) {
             val started = when (kind) {
@@ -2166,6 +2168,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             endPeek(PeekRule.Event.SCROLL_SETTLE)
         }
         if (!relayout) schedulePositionSave()
+        if (!relayout && moved) page.notifyPageChanged()
         keeper.poke()
         if (chromeVisible) bindChrome() else returnNav.bind()
         if (kind == SettleKind.DRAG || kind == SettleKind.FLING) {
@@ -3501,7 +3504,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 // Where the needle was found again (the anchored break), else the estimate.
                 val off = if (l.anchorBreak >= 0) l.anchorBreak else target.offset.coerceIn(0, l.content.length)
                 // Positions saved from now on are in the new parse's coordinates.
-                writeTextPosition(b, s, DocPosition(sec, off))
+                rebindTextPosition(b, s, DocPosition(sec, off))
                 val (nw, nh) = pageTargetSize()
                 // A layout change made after this session was built (settings) or a resize that went to the old one:
                 // lay the target out again instead of showing a stale layout.
@@ -3793,9 +3796,30 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         override fun onViewSizeChanged(w: Int, h: Int) = this@ReaderActivity.onViewSizeChanged(w, h)
 
         override fun onWheel(next: Boolean) {
+            onAccessibilityTurn(next)
+        }
+
+        override fun onAccessibilityTurn(next: Boolean): Boolean {
             keeper.poke()
-            if (safely { selection?.isActive } == true) return
-            userTurn(next)
+            if (safely { selection?.isActive } == true) return false
+            return userTurn(next)
+        }
+
+        override fun accessibilityText(): CharSequence? {
+            // The page drawn (paged: its frame; scroll: the virtual page, S §1.6).
+            val f = page.frame
+            val l: SectionLayout
+            val p: PageInfo
+            if (scroll != null) {
+                val vp = vpage() ?: return null
+                l = vp.layout
+                p = vp.page
+            } else {
+                if (f == null) return null
+                l = f.layout
+                p = l.pages.getOrNull(f.pageIndex) ?: return null
+            }
+            return A11yText.page(l.content.text, p.start, p.end)
         }
     }
 
@@ -4726,6 +4750,31 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             if (persistText) Library.notesChanged()
         }
         if (persistText) writeTextPosition(b, s, pos)
+    }
+
+    /**
+     * The parse shown changed (re-parse, remapped open, end of a peek): records [s]'s signature with [pos] like
+     * [writeTextPosition], and first saves the library row in the same (new) coordinates. Prefs alone would pair the
+     * new signature with the old parse's (section, offset) if the process died before the delayed save, and the next
+     * open would read that place as belonging to the new parse ([TextPositions.remapFraction] sees equal signatures).
+     * Nothing is saved while a note peek holds the position ([PeekRule]); the signature then waits for [endPeek].
+     */
+    private fun rebindTextPosition(b: Book, s: BookSession, pos: DocPosition) {
+        if (!peek.savesPosition) return
+        try {
+            val sig = LayoutKeys.textSignature(s.settings, s.document.format, b.encoding)
+            val stored = TextPositions.decode(readTextPosition(b.id))
+            if (sig != null && stored != null && stored.first != sig) {
+                // A pending save would carry the old parse's anchor.
+                handler.removeCallbacks(saveRunnable)
+                val prog = s.counts.charProgress(pos.section, pos.offset)
+                val at = System.currentTimeMillis()
+                ReaderIo.launch { Library.savePosition(b.id, pos.section, pos.offset, prog, at) }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "text position rebind failed", t)
+        }
+        writeTextPosition(b, s, pos)
     }
 
     /** (signature|fraction) recorded for [bookId], or null (IO thread safe). */

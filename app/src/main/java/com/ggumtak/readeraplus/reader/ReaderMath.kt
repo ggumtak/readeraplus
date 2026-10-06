@@ -354,6 +354,39 @@ object Gestures {
     fun inBrightnessStrip(x: Float, widthPx: Int): Boolean = widthPx > 0 && x < widthPx * 0.10f
 }
 
+/** The text a screen reader gets for one page of a section (pure; [PageView] asks only while a service is on). */
+internal object A11yText {
+    /** A page holds a few thousand chars at most; a longer range (a huge unbroken block) is cut here. */
+    const val MAX_CHARS = 8000
+    /** Said for a page that has a picture but no text. */
+    const val PICTURE = "그림"
+
+    /**
+     * [start, end) of [text] (clamped to it) without the marks the layout keeps in it (picture placeholder, soft
+     * hyphen, line / paragraph separators become line breaks), trimmed and cut at [MAX_CHARS]. A page that shows only
+     * pictures reads [PICTURE]; an empty range reads "".
+     */
+    fun page(text: String, start: Int, end: Int): String {
+        val a = start.coerceIn(0, text.length)
+        val b = end.coerceIn(a, text.length)
+        if (a == b) return ""
+        val sb = StringBuilder(minOf(b - a, MAX_CHARS))
+        var picture = false
+        var i = a
+        while (i < b && sb.length < MAX_CHARS) {
+            when (val c = text[i]) {
+                '\uFFFC' -> picture = true
+                '\u00AD' -> {}
+                '\u2028', '\u2029' -> sb.append('\n')
+                else -> sb.append(c)
+            }
+            i++
+        }
+        val out = sb.toString().trim()
+        return if (out.isEmpty() && picture) PICTURE else out
+    }
+}
+
 /**
  * Saved reading positions are (section, offset) in the coordinates of the parse that produced them. A TXT parse
  * depends on global options (chapter detection, blank lines, replace rules, ...) and the book's encoding, so the
