@@ -55,8 +55,9 @@ object LayoutKeys {
      * size, so every font measures whole-px hinted advances (나눔명조 at 17 sp on the S25: a Hangul syllable 45 px, not
      * 45.43; a space 14, not 14.33) and its metrics at that size. Every cached page count is counted once again; an open
      * book keeps its first character (the reopen is an anchored layout).
+     * 3 (2026-10-06): a TXT chapter heading opens a page (TxtParagraphs), so TXT books' cached counts are counted again.
      */
-    const val ALGO_VERSION = 2
+    const val ALGO_VERSION = 3
 
     /** Hash of `LayoutGoldenTest`'s layouts at [ALGO_VERSION]; see there. */
     const val GOLDEN_HASH = "071717a86d158ac8"
