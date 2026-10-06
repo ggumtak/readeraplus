@@ -120,7 +120,8 @@ internal fun LibraryActivity.bookMenu(
 
 private fun LibraryActivity.editInfo(b: Book) {
     try {
-        ReaderPanels.editBookInfo(this, b) { changed() }
+        // After the save: the reload also drops the in-memory cover drawn with the old title.
+        ReaderPanels.editBookInfo(this, b) { checkTitles = true; changed() }
     } catch (t: Throwable) {
         toast(ErrorLines.line("책 정보를 편집할 수 없습니다", t))
     }

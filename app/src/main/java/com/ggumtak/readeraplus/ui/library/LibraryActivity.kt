@@ -167,7 +167,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     /** Reload when the window regains focus (after dialogs owned by other modules that may edit books). */
     internal var refreshOnFocus = false
     /** Books may come back retitled (책 정보 edited here or in the reader): the next [showBooks] compares titles. */
-    private var checkTitles = false
+    internal var checkTitles = false
     private var localStatus: String? = null
     /** The empty list shows the no-access message and buttons: the permission panel above it hides (no duplicates). */
     private var noAccessShown = false

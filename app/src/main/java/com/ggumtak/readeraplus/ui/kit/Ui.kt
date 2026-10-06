@@ -493,6 +493,7 @@ fun Context.popupMenu(anchor: View, items: List<MenuItem>, widthDp: Int = 240): 
         background = borderBox()
         isVerticalScrollBarEnabled = true
         isScrollbarFadingEnabled = false
+        isVerticalFadingEdgeEnabled = false
         overScrollMode = View.OVER_SCROLL_NEVER
         addView(list, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
     }
