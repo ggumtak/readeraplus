@@ -341,7 +341,11 @@ object Backup {
                 )
                 // Newer wins: an older backup doesn't move a position read later on this device.
                 if (r.applyPosition) {
-                    exec(LibrarySql.UPDATE_POSITION, b.posSection, b.posOffset, b.progress, b.lastReadAt, id)
+                    // The backup's own read time is the guard too: a row already read later keeps its place.
+                    exec(
+                        LibrarySql.UPDATE_POSITION,
+                        b.posSection, b.posOffset, b.progress, b.lastReadAt, id, b.lastReadAt,
+                    )
                     if (BackupJson.remapsTextPosition(data.txtParseVersion, b)) remap += id to b.progress
                 }
                 for (name in b.collections) {

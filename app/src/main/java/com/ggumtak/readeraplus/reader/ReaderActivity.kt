@@ -4709,8 +4709,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (curLayout == null) return
         val pos = anchor
         val prog = progress()
+        // The read time is taken here with the position: the IO pool may run two saves out of order, and
+        // Library.savePosition keeps the later `at` (it also stamps last_read_at: BOOK_RECENT, ReaderRestore).
+        val at = System.currentTimeMillis()
         ReaderIo.launch {
-            Library.savePosition(b.id, pos.section, pos.offset, prog)
+            Library.savePosition(b.id, pos.section, pos.offset, prog, at)
             if (persistText) Library.notesChanged()
         }
         if (persistText) writeTextPosition(b, s, pos)

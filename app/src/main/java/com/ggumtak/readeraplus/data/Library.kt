@@ -271,11 +271,16 @@ object Library {
         }
     }
 
-    fun savePosition(bookId: Long, section: Int, offset: Int, progress: Float) {
+    /**
+     * Saves the place read at [at] (epoch millis, taken by the caller when it read the position, not when this runs).
+     * `last_read_at` becomes [at], and the write is skipped when the row already holds a later read time, so
+     * writes that reach the database out of order leave the newest position in place ([LibrarySql.UPDATE_POSITION]).
+     */
+    fun savePosition(bookId: Long, section: Int, offset: Int, progress: Float, at: Long) {
         val p = if (progress.isNaN()) 0f else progress.coerceIn(0f, 1f)
         db().exec(
             LibrarySql.UPDATE_POSITION,
-            section.coerceAtLeast(0), offset.coerceAtLeast(0), p, System.currentTimeMillis(), bookId,
+            section.coerceAtLeast(0), offset.coerceAtLeast(0), p, at, bookId, at,
         )
     }
 

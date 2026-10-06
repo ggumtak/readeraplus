@@ -194,12 +194,24 @@ class LibrarySqlTest {
     }
 
     @Test
+    fun updatePositionIsNewerWinsAndBindOrderMatchesTheCallers() {
+        val sql = LibrarySql.UPDATE_POSITION
+        // One UPDATE; the guard is in its WHERE, after the id, so the binds run
+        // pos_section, pos_offset, progress, last_read_at, id, read time (Library.savePosition, Backup restore).
+        assertTrue(sql.startsWith("UPDATE books SET pos_section = ?, pos_offset = ?, progress = ?, last_read_at = ? "))
+        assertTrue(sql, sql.endsWith("WHERE id = ? AND last_read_at <= ?"))
+        assertEquals(4, placeholders(sql.substringBefore(" WHERE ")))
+        assertEquals(2, placeholders(sql.substringAfter(" WHERE ")))
+        assertTrue(sql.indexOf("id = ?") < sql.indexOf("last_read_at <= ?"))
+    }
+
+    @Test
     fun statementsHaveExpectedPlaceholderCounts() {
         assertEquals(12, placeholders(LibrarySql.INSERT_BOOK))
         assertEquals(6, placeholders(LibrarySql.UPDATE_BOOK_FILE))
         assertEquals(6, placeholders(LibrarySql.UPDATE_BOOK_META))
         assertEquals(5, placeholders(LibrarySql.UPDATE_BOOK_META_USER))
-        assertEquals(5, placeholders(LibrarySql.UPDATE_POSITION))
+        assertEquals(6, placeholders(LibrarySql.UPDATE_POSITION))
         assertEquals(9, placeholders(LibrarySql.RESTORE_FLAGS))
         assertEquals(9, placeholders(LibrarySql.INSERT_BOOKMARK))
         assertEquals(11, placeholders(LibrarySql.INSERT_QUOTE))

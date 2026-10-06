@@ -89,9 +89,15 @@ internal object LibrarySql {
     /** User edit. Args: title, author, series, series_index, id. */
     const val UPDATE_BOOK_META_USER =
         "UPDATE books SET title = ?, author = ?, series = ?, series_index = ?, meta_locked = 1 WHERE id = ?"
-    /** Args: pos_section, pos_offset, progress, last_read_at, id. */
+    /**
+     * Newer-wins position write: the row changes only when its stored `last_read_at` is not later than the read time
+     * being written, so a position that was read earlier but commits later (the IO pool does not keep order) changes
+     * nothing. The last bind is the same read time as the fourth. Args: pos_section, pos_offset, progress,
+     * last_read_at (the read time), id, read time (the guard).
+     */
     const val UPDATE_POSITION =
-        "UPDATE books SET pos_section = ?, pos_offset = ?, progress = ?, last_read_at = ? WHERE id = ?"
+        "UPDATE books SET pos_section = ?, pos_offset = ?, progress = ?, last_read_at = ? " +
+            "WHERE id = ? AND last_read_at <= ?"
     /** Args: seconds, id. */
     const val ADD_READING_TIME = "UPDATE books SET reading_seconds = reading_seconds + ? WHERE id = ?"
     const val SET_FAVORITE = "UPDATE books SET favorite = ? WHERE id = ?"
