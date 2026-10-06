@@ -216,6 +216,11 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         bar.addView(edit, lp(0, WRAP_CONTENT, 1f))
         bar.addView(ctx.flatIcon(R.drawable.ic_search, "검색") { startSearch(edit.text.toString()) })
         bar.addView(ctx.flatIcon(R.drawable.ic_close, "지우기") {
+            // Nothing typed and nothing found: × closes search, as it looks like it should.
+            if (edit.text.isNullOrEmpty() && state == null) {
+                dialog.dismiss()
+                return@flatIcon
+            }
             job?.cancel()
             edit.setText("")
             state = null
