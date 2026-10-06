@@ -14,12 +14,13 @@ class ProgressMathTest {
 
     @Test
     fun s25IsTheScreenshotToThePixel() {
-        // The line: 2 px, rows 2315–2316. The dots: 14 px, rows 2309–2322, centred on the line (y 2316.0, 8 dp up).
+        // The line: 2 px, rows 2303–2304. The dots: 14 px, rows 2297–2310, centred on the line (y 2304.0, 12 dp up since
+        // 2026-10-06; ReadEra's 8 dp before).
         assertEquals(2, ProgressMath.lineH(s25))
         assertEquals(14, ProgressMath.dotD(s25))
-        assertEquals(2315, ProgressMath.lineTop(2340, s25))
-        assertEquals(2309, ProgressMath.dotTop(2340, s25))
-        assertEquals(2316f, ProgressMath.centreY(2340, s25), 0f)
+        assertEquals(2303, ProgressMath.lineTop(2340, s25))
+        assertEquals(2297, ProgressMath.dotTop(2340, s25))
+        assertEquals(2304f, ProgressMath.centreY(2340, s25), 0f)
         // End dots x 21–34 and 1045–1058 (7 dp from the screen's sides), the line between their centres 28 and 1052.
         assertEquals(21, ProgressMath.dotLeft(0f, 1080, s25))
         assertEquals(1045, ProgressMath.dotLeft(1f, 1080, s25))
@@ -36,12 +37,12 @@ class ProgressMathTest {
 
     @Test
     fun cometIsTheSameInItsOwnPixels() {
-        // 1 px line, 9 px dots (4.5 dp, the nearest odd size to 4.67 dp: both centred on a pixel's middle, row 1423).
+        // 1 px line, 9 px dots (4.5 dp, the nearest odd size to 4.67 dp: both centred on a pixel's middle, row 1415).
         assertEquals(1, ProgressMath.lineH(comet))
         assertEquals(9, ProgressMath.dotD(comet))
-        assertEquals(1423, ProgressMath.lineTop(1440, comet))
-        assertEquals(1419, ProgressMath.dotTop(1440, comet))
-        assertEquals(1423.5f, ProgressMath.centreY(1440, comet), 0f)
+        assertEquals(1415, ProgressMath.lineTop(1440, comet))
+        assertEquals(1411, ProgressMath.dotTop(1440, comet))
+        assertEquals(1415.5f, ProgressMath.centreY(1440, comet), 0f)
         // End dots x 14–22 and 697–705, centres 18.5 and 701.5.
         assertEquals(14, ProgressMath.dotLeft(0f, 720, comet))
         assertEquals(697, ProgressMath.dotLeft(1f, 720, comet))
@@ -80,8 +81,8 @@ class ProgressMathTest {
             assertTrue("$density: dot top under the lane's top",
                 ProgressMath.dotTop(viewH, density) >= viewH - StatusFit.laneTopPx(density))
         }
-        assertEquals(12, 1440 - (ProgressMath.dotTop(1440, comet) + ProgressMath.dotD(comet)))
-        assertEquals(17, 2340 - (ProgressMath.dotTop(2340, s25) + ProgressMath.dotD(s25)))
+        assertEquals(20, 1440 - (ProgressMath.dotTop(1440, comet) + ProgressMath.dotD(comet)))
+        assertEquals(29, 2340 - (ProgressMath.dotTop(2340, s25) + ProgressMath.dotD(s25)))
     }
 
     @Test

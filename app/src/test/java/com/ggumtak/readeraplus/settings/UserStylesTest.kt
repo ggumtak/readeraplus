@@ -118,8 +118,9 @@ class UserStylesTest {
         // R2's 16/16 = 40/40 from the edge, counted from the default bands of its time (a style has no status bar; 11 sp:
         // 22 / 18 dp): 18/22, which the 13 sp default settings take as 15/22, the same text box.
         val moved=UserStyles.fromJson(old)!!;assertEquals(20,moved.marginLeftDp);assertEquals(20,moved.marginRightDp)
-        assertEquals(listOf(18,22),listOf(moved.marginTopDp,moved.marginBottomDp));assertTrue(moved.elevenSpBands)
-        assertEquals(listOf(15,22),moved.applyTo(ReaderSettings()).let { listOf(it.marginTopDp,it.marginBottomDp) })
+        // The bottom then 12 dp less once (2026-10-06: its "0" moved from 22 to 10 dp).
+        assertEquals(listOf(18,10),listOf(moved.marginTopDp,moved.marginBottomDp));assertTrue(moved.elevenSpBands)
+        assertEquals(listOf(15,10),moved.applyTo(ReaderSettings()).let { listOf(it.marginTopDp,it.marginBottomDp) })
         old.put("marginBase",40).put("marginBaseV",40)
         // 16/16 chosen under U3, from the edge: inside the default bands (22 / 18 dp), so 0/0 now.
         val deliberate=UserStyles.fromJson(old)!!;assertEquals(18,deliberate.marginLeftDp)
@@ -143,26 +144,27 @@ class UserStylesTest {
         // 15/22, the same text box; footer items 36 → 39 dp, so their bottom gives 3 dp back too.
         fun tb(s: ReaderSettings) = listOf(s.marginTopDp, s.marginBottomDp)
         val d=ReaderSettings()
-        val before=JSONObject().put("name","b").put("marginBase",20).put("marginBaseV",VerticalMargin.BANDS)
+        val before=JSONObject().put("name","b").put("marginBase",20).put("marginBaseV",VerticalMargin.BANDS_V1)
             .put("marginLeftDp",20).put("marginRightDp",20).put("marginTopDp",18).put("marginBottomDp",22)
         val moved=UserStyles.fromJson(before)!!
-        assertTrue(moved.elevenSpBands);assertEquals(listOf(18,22),listOf(moved.marginTopDp,moved.marginBottomDp))
-        assertEquals(listOf(15,22),tb(moved.applyTo(d)));assertTrue(moved.matches(d))
+        // Its bottom also comes 12 dp closer once (the 22 dp "0" of marker 2 became 10 dp on 2026-10-06).
+        assertTrue(moved.elevenSpBands);assertEquals(listOf(18,10),listOf(moved.marginTopDp,moved.marginBottomDp))
+        assertEquals(listOf(15,10),tb(moved.applyTo(d)));assertTrue(moved.matches(d))
         assertEquals(VerticalMargin.EDGE_DP,StatusBands.headerDp(d)+moved.applyTo(d).marginTopDp)
-        assertEquals(listOf(15,19),tb(moved.applyTo(d.withSlot(1,1,StatusItem.PAGE))))
+        assertEquals(listOf(15,7),tb(moved.applyTo(d.withSlot(1,1,StatusItem.PAGE))))
         // At any other size the bands are those the style was saved with: its margins as they are (a size the user
         // chose; 11 sp kept with 여백 사용 off, MaruSize.applyTo, or restored from a backup).
-        assertEquals(listOf(18,22),tb(moved.applyTo(d.copy(statusFontSizeSp=MaruSize.OLD_SP))))
-        assertEquals(listOf(18,22),tb(moved.applyTo(d.copy(statusFontSizeSp=12f))))
+        assertEquals(listOf(18,10),tb(moved.applyTo(d.copy(statusFontSizeSp=MaruSize.OLD_SP))))
+        assertEquals(listOf(18,10),tb(moved.applyTo(d.copy(statusFontSizeSp=12f))))
         assertTrue(moved.matches(d.copy(statusFontSizeSp=12f,marginTopDp=18)))
         // Other values; a top smaller than the growth stops at 0.
-        assertEquals(listOf(27,30),tb(UserStyles.fromJson(JSONObject(before.toString()).put("marginTopDp",30).put("marginBottomDp",30))!!.applyTo(d)))
+        assertEquals(listOf(27,18),tb(UserStyles.fromJson(JSONObject(before.toString()).put("marginTopDp",30).put("marginBottomDp",30))!!.applyTo(d)))
         assertEquals(0,UserStyles.fromJson(JSONObject(before.toString()).put("marginTopDp",2))!!.applyTo(d).marginTopDp)
         // Written again by this build (another style saved, a rename, a backup) it stays one of the 11 sp bands: nothing
         // moves twice. Saved again from the page it made, it is one of this build's.
         assertEquals(moved,UserStyles.fromJson(UserStyles.toJson(moved))!!)
         assertEquals(moved.copy(name="c"),UserStyles.fromJson(UserStyles.toJson(moved.copy(name="c")))!!)
-        val again=UserStyle.from("b",moved.applyTo(d));assertFalse(again.elevenSpBands);assertEquals(listOf(15,22),tb(again.applyTo(d)))
+        val again=UserStyle.from("b",moved.applyTo(d));assertFalse(again.elevenSpBands);assertEquals(listOf(15,10),tb(again.applyTo(d)))
         // No top or bottom saved at all: today's defaults, nothing to convert.
         assertFalse(UserStyles.fromJson(JSONObject().put("name","n"))!!.elevenSpBands)
     }
@@ -174,8 +176,8 @@ class UserStylesTest {
         val r3=JSONObject().put("name","r3").put("marginBase",40).put("marginBaseV",40)
             .put("marginLeftDp",40).put("marginRightDp",40).put("marginTopDp",40).put("marginBottomDp",40)
         val moved=UserStyles.fromJson(r3)!!
-        assertEquals(listOf(20,20,18,22),listOf(moved.marginLeftDp,moved.marginRightDp,moved.marginTopDp,moved.marginBottomDp))
-        assertEquals(listOf(15,22),moved.applyTo(ReaderSettings()).let { listOf(it.marginTopDp,it.marginBottomDp) })
+        assertEquals(listOf(20,20,18,10),listOf(moved.marginLeftDp,moved.marginRightDp,moved.marginTopDp,moved.marginBottomDp))
+        assertEquals(listOf(15,10),moved.applyTo(ReaderSettings()).let { listOf(it.marginTopDp,it.marginBottomDp) })
         // A side margin the user changed stays, as do unequal sides.
         assertEquals(30,UserStyles.fromJson(JSONObject(r3.toString()).put("marginLeftDp",30).put("marginRightDp",30))!!.marginLeftDp)
         assertEquals(40,UserStyles.fromJson(JSONObject(r3.toString()).put("marginRightDp",36))!!.marginLeftDp)

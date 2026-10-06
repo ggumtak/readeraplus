@@ -35,13 +35,13 @@ pv_rows() { # "top bottom" of the PageView in screen rows (dumpsys bounds); the 
   b=$(python3 tools/ci/perf_log.py pv_bounds /tmp/top.txt)
   echo "${b:-0 1440}"
 }
-content_rows() { # "Y0 Y1" of the text box: pv + 80 … pv + 1360 (valid only at 상하 여백 "0", PLAN §5.3, with the
-  # default bands: the header's 25 dp + 15 dp (MaruViewer's 13 sp), the progress line's 18 dp + 22 dp; the emulator has no
-  # display cutout). The margins count from the status bands since 2026-10-05: with a footer item (a 39 dp band: from
-  # 14c/10b, off at 52a, again from 52b) the box ends at pv + 1318 and rows 1318..1360 are margin paper, fine for an
-  # EQUAL or DIFF of the same settings.
+content_rows() { # "Y0 Y1" of the text box: pv + 80 … pv + 1384 (valid only at 상하 여백 "0", PLAN §5.3, with the
+  # default bands: the header's 25 dp + 15 dp (MaruViewer's 13 sp), the progress line's 18 dp + 10 dp (2026-10-06; 22 dp
+  # before); the emulator has no display cutout). The margins count from the status bands: with a footer item (a 39 dp
+  # band: from 14c/10b, off at 52a, again from 52b) the box ends at pv + 1342 and rows 1342..1384 are margin paper, fine
+  # for an EQUAL or DIFF of the same settings.
   local pv; pv=$(pv_rows); pv=${pv%% *}
-  echo "$((pv + 80)) $((pv + 1360 > 1440 ? 1440 : pv + 1360))"
+  echo "$((pv + 80)) $((pv + 1384 > 1440 ? 1440 : pv + 1384))"
 }
 top_rows() { # "Y0 Y1" of the text box's upper part, pv + 80 … pv + 680: its first lines stay put when a status band that
   # comes or goes moves only the box's bottom and the page keeps its first character (10b, 52, 53). 680: half the
@@ -854,19 +854,19 @@ chrome_look() { # 13t <tag> <page> <surface> shadow|<edge> (#RRGGBB): the bars i
   no_relayout "13t_${t}_norelayout" "13t_${t}_a" "13t_${t}_b"
 }
 progress_look() { # 13w <tag> <page> <line> <dots> (#RRGGBB): ReadEra's 탐색줄 (2026-10-05) on 13t's closed page. At
-  # density 2: a 1 px line on row bot − 17 between 9 px end dots (rows bot − 21 … bot − 13, x 14–22 and 697–705), in the
-  # page's faint greys, never the status colour. Checks the left end dot's middle (18, bot − 17), the line at x 40 or
-  # 680 (the position dot covers at most one of them), and paper right above and below the dots (rows bot − 22 and
-  # bot − 12). The line before (row bot − 25 in the status colour, end caps at x 24 and 696) fails the first two.
+  # density 2: a 1 px line on row bot − 25 between 9 px end dots (rows bot − 29 … bot − 21, x 14–22 and 697–705), in the
+  # page's faint greys, never the status colour. Checks the left end dot's middle (18, bot − 25), the line at x 40 or
+  # 680 (the position dot covers at most one of them), and paper right above and below the dots (rows bot − 30 and
+  # bot − 20; 2026-10-06: 4 dp higher than ReadEra's). The line before 2026-10-05 (row bot − 17 in the status colour, end caps at x 24 and 696) fails the first two.
   local t=$1 pg=$2 ln=$3 dt=$4 raw="13t_${1}_closed" bot a b ok=1
   read -r _ bot <<<"$(pv_rows)"
-  near_check "13w_${t}_dot" "$(raw_pixel "$raw" 18 $((bot - 17)))" "$dt" "the left end dot at (18, $((bot - 17)))"
-  a=$(raw_pixel "$raw" 40 $((bot - 17))); b=$(raw_pixel "$raw" 680 $((bot - 17)))
+  near_check "13w_${t}_dot" "$(raw_pixel "$raw" 18 $((bot - 25)))" "$dt" "the left end dot at (18, $((bot - 25)))"
+  a=$(raw_pixel "$raw" 40 $((bot - 25))); b=$(raw_pixel "$raw" 680 $((bot - 25)))
   [ "$(python3 tools/ci/raw_equal.py near "$a" "$ln" 2)" = PASS ] && ok=0
   [ "$(python3 tools/ci/raw_equal.py near "$b" "$ln" 2)" = PASS ] && ok=0
-  check "13w_${t}_line" $ok "the line on row $((bot - 17)) is $ln: $a at x 40, $b at x 680"
-  near_check "13w_${t}_above" "$(raw_pixel "$raw" 18 $((bot - 22)))" "$pg" "the paper above the end dot (18, $((bot - 22)))"
-  near_check "13w_${t}_below" "$(raw_pixel "$raw" 18 $((bot - 12)))" "$pg" "the paper below the end dot (18, $((bot - 12)))"
+  check "13w_${t}_line" $ok "the line on row $((bot - 25)) is $ln: $a at x 40, $b at x 680"
+  near_check "13w_${t}_above" "$(raw_pixel "$raw" 18 $((bot - 30)))" "$pg" "the paper above the end dot (18, $((bot - 30)))"
+  near_check "13w_${t}_below" "$(raw_pixel "$raw" 18 $((bot - 20)))" "$pg" "the paper below the end dot (18, $((bot - 20)))"
 }
 chrome_lines() { adb logcat -d -s RAPerf:D "*:S" 2>/dev/null | grep -c "chrome $1"; } # RAPerf "chrome <what>" lines
 motion_check() { # 13v: the bars follow the system's animation scale. At 1 they fade in and out (RAPerf "chrome show
@@ -991,14 +991,14 @@ reading_settings() { # 14 the quick options (⚙) and 14q their margins; 14s the
   leave_settings || return 1 # two pages (설정, 화면·밝기): the book applies the slot once, back in front
   # 10b: same page as 10a_pre, footer now on. Its band (39 dp at 13 sp, the progress line's alone 18 dp) ends the text box
   # 42 px higher (2026-10-05: the margins count from the bands): one relayout that keeps the page's first character, and
-  # the first lines in place. 10b_margin: the box really ends there, its 22 dp bottom margin above the footer's band
-  # (bot − 122 … bot − 78) is paper only on this full page (13h: no chip); 4 px under the box are left for a last line's
-  # shadow. Text laid out down to the old box (bot − 80) would show there.
+  # the first lines in place. 10b_margin: the box really ends there, its 10 dp bottom margin above the footer's band
+  # (bot − 98 … bot − 78, 2026-10-06) is paper only on this full page (13h: no chip); 2 px under the box are left for a
+  # last line's shadow. Text laid out down to the old box (bot − 80) would show there.
   shot 10b_footer_slots 2; rawshot 10b; perf_mark 10b
   raw_check 10b 10a_pre 10b contenttop
   perf_check 10b first_is 10a_pre 10b
   local pvt pvb; read -r pvt pvb <<<"$(pv_rows)"
-  raw_blank 10b_margin 10b $((pvb - 118)) $((pvb - 78))
+  raw_blank 10b_margin 10b $((pvb - 96)) $((pvb - 78))
 }
 
 # ------------------------------------------------------------------ reader steps: H3, TOC, go-to, end of book
@@ -1188,7 +1188,7 @@ scroll_moves() { # 61–66 in the scroll mode set by 60
   band_check 61_header 61a 61b "$top" $((top + 48))
   raw_check 61_header_gap 61a 61b $((top + 48)) $((top + 80))
   band_check 61_footer 61a 61b $((bot - 80)) "$bot"
-  raw_check 61_footer_gap 61a 61b $((bot - 122)) $((bot - 78))
+  raw_check 61_footer_gap 61a 61b $((bot - 98)) $((bot - 78))
   local y0 y1 r
   read -r y0 y1 <<<"$(content_rows)"
   r=$(python3 tools/ci/raw_equal.py shots/61a.raw shots/61b.raw "$y0" "$y1")

@@ -24,13 +24,14 @@ class LayoutKeysTest {
     @Test
     fun geometryWithMarginsHeaderFooter() {
         val g = LayoutKeys.geometry(s, 720, 1440, density)
-        // MaruViewer's 20 dp at the sides; at top and bottom the bands and their margins (25 + 15, 18 + 22 dp) are the
-        // 40 dp the text box always had: the Comet's rows 80..1360.
+        // MaruViewer's 20 dp at the sides; at the top the header's band and its margin (25 + 15 dp) are the 40 dp the text
+        // box always had, at the bottom the progress line's band and 10 dp (18 + 10; 22 dp before 2026-10-06): the
+        // Comet's rows 80..1384.
         assertEquals(40, g.contentLeft)
         assertEquals(80, g.contentTop)
         assertEquals(720 - 80, g.contentWidth)
-        assertEquals(1440 - 160, g.contentHeight)
-        assertEquals(1360, g.contentTop + g.contentHeight)
+        assertEquals(1440 - 136, g.contentHeight)
+        assertEquals(1384, g.contentTop + g.contentHeight)
     }
 
     /** The geometry before the bands (4efdf0b): margins from the screen's edges (below a cutout band), no status term. */
@@ -47,38 +48,41 @@ class LayoutKeysTest {
         // The user (2026-10-05): "코멧에서 본문 지금 자리 그대로", "S25 전체 화면도 지금 자리 유지". 40/40 saved from the
         // edge with MaruViewer's header, no footer items and the progress line read as the new defaults
         // (VerticalMargin.fromEdge, the 13 sp bands): the text box is pixel-identical to 4efdf0b's.
+        // Since 2026-10-06 the bottom comes 12 dp closer (VerticalMargin.shiftBottom, once, on load): the box from the edge
+        // that 40/28 gave.
         val old = s.copy(marginTopDp = 40, marginBottomDp = 40)
-        val now = VerticalMargin.fromEdge(old)
+        val now = VerticalMargin.fromEdge(old).let { it.copy(marginBottomDp = VerticalMargin.shiftBottom(it.marginBottomDp)) }
         assertEquals(s, now)
+        val edge = old.copy(marginBottomDp = 40 - VerticalMargin.BOTTOM_SHIFT_DP)
         // Their devices since the bands: 18/22 at 11 sp. MaruViewer's 13 sp comes once (MaruSize) and the top margin
         // loses the 3 dp the header's band grows: the same defaults, the same box.
         val eleven = s.copy(statusFontSizeSp = MaruSize.OLD_SP, marginTopDp = 18)
         assertEquals(s, MaruSize.keepBox(eleven, MaruSize.applyTo(eleven)))
         for ((w, h, d, band) in listOf(Quad(720, 1440, 2f, 0), Quad(1080, 2340, 3f, 87), Quad(1080, 2120, 3f, 0)))
             assertTrue(box(LayoutKeys.geometry(eleven, w, h, d, band)).contentEquals(box(LayoutKeys.geometry(s, w, h, d, band))))
-        // Comet 720×1440 @2, no cutout: rows 80..1360.
+        // Comet 720×1440 @2, no cutout: rows 80..1384.
         val comet = LayoutKeys.geometry(now, 720, 1440, 2f)
-        assertEquals(listOf(80, 1360), listOf(comet.contentTop, comet.contentTop + comet.contentHeight))
-        assertTrue(box(comet).contentEquals(edgeGeometry(old, 720, 1440, 2f)))
+        assertEquals(listOf(80, 1384), listOf(comet.contentTop, comet.contentTop + comet.contentHeight))
+        assertTrue(box(comet).contentEquals(edgeGeometry(edge, 720, 1440, 2f)))
         // S25 1080×2340 @3, fullscreen: the page view starts at the top; the 87 px camera band, then the header's band
         // (87..162, reserved: the header itself is drawn inside the camera band), the 15 dp margin: rows 207..2220, as on
-        // the user's screenshot.
+        // the user's screenshot; the bottom 28 dp from the edge.
         val full = LayoutKeys.geometry(now, 1080, 2340, 3f, extraTop = 87)
-        assertEquals(listOf(207, 2220), listOf(full.contentTop, full.contentTop + full.contentHeight))
+        assertEquals(listOf(207, 2256), listOf(full.contentTop, full.contentTop + full.contentHeight))
         assertEquals(87, full.cutoutTop)
-        assertTrue(box(full).contentEquals(edgeGeometry(old, 1080, 2340, 3f, extraTop = 87)))
+        assertTrue(box(full).contentEquals(edgeGeometry(edge, 1080, 2340, 3f, extraTop = 87)))
         // S25 with the system bars: the page view starts below the 110 px status bar and ends above the navigation bar
-        // (whatever its inset): the box is 120 px inside the view at both ends, as before.
+        // (whatever its inset): the box is 120 px inside the view at the top, 84 px at the bottom.
         for (bottomInset in listOf(0, 48, 63, 144)) {
             val viewH = 2340 - 110 - bottomInset
             val bars = LayoutKeys.geometry(now, 1080, viewH, 3f)
             assertEquals(120, bars.contentTop)
-            assertEquals(viewH - 120, bars.contentTop + bars.contentHeight)
-            assertTrue(box(bars).contentEquals(edgeGeometry(old, 1080, viewH, 3f)))
+            assertEquals(viewH - 84, bars.contentTop + bars.contentHeight)
+            assertTrue(box(bars).contentEquals(edgeGeometry(edge, 1080, viewH, 3f)))
         }
         // Whole-dp bands and margins rounded once: the same pixels on any density.
         for (d in listOf(1f, 1.5f, 2f, 2.625f, 2.75f, 3f, 3.5f, 4f))
-            assertTrue("density $d", box(LayoutKeys.geometry(now, 1000, 2000, d)).contentEquals(edgeGeometry(old, 1000, 2000, d)))
+            assertTrue("density $d", box(LayoutKeys.geometry(now, 1000, 2000, d)).contentEquals(edgeGeometry(edge, 1000, 2000, d)))
     }
 
     @Test
@@ -99,10 +103,10 @@ class LayoutKeysTest {
         // Without bands the margins count from the edges again.
         val bare = s.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE, progressBar = false)
         val b = LayoutKeys.geometry(bare, 720, 1440, 2f)
-        assertEquals(listOf(30, 1440 - 44), listOf(b.contentTop, b.contentTop + b.contentHeight))
-        // Footer items above the line: a 39 dp band (78 px) under the 22 dp margin.
+        assertEquals(listOf(30, 1440 - 20), listOf(b.contentTop, b.contentTop + b.contentHeight))
+        // Footer items above the line: a 39 dp band (78 px) under the 10 dp margin.
         val f = LayoutKeys.geometry(s.withSlot(1, 1, StatusItem.PAGE), 720, 1440, 2f)
-        assertEquals(1440 - 78 - 44, f.contentTop + f.contentHeight)
+        assertEquals(1440 - 78 - 20, f.contentTop + f.contentHeight)
         // "페이지 여백" off: the tiny margins, still clear of the bands.
         val off = LayoutKeys.geometry(s.copy(pageMargins = false), 720, 1440, 2f)
         assertEquals(listOf(50 + 8, 1440 - 36 - 8), listOf(off.contentTop, off.contentTop + off.contentHeight))

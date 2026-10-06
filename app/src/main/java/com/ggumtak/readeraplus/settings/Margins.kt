@@ -102,30 +102,45 @@ object VerticalMargin {
     const val EDGE_DP = 40
     /** The top margin's "0": [EDGE_DP] less the default header band (25 dp at 13 sp). */
     const val TOP_ZERO_DP = 15
-    /** The bottom margin's "0": [EDGE_DP] less the default footer band (the progress line, 18 dp). */
-    const val BOTTOM_ZERO_DP = 22
+    /**
+     * The bottom margin's "0": 10 dp above the footer band (user, 2026-10-06: "위에 여백좀 줄여줘"; [OLD_BOTTOM_ZERO_DP] =
+     * [EDGE_DP] less the default footer band before). Margins saved before ([BANDS_V1]) lose [BOTTOM_SHIFT_DP] once
+     * ([shiftBottom]), so every bottom margin, default or not, comes 12 dp closer to the progress line.
+     */
+    const val BOTTOM_ZERO_DP = 10
+    /** The bottom margin's "0" from 2026-10-05 until [BOTTOM_ZERO_DP]: 40 − 18. */
+    const val OLD_BOTTOM_ZERO_DP = 22
+    const val BOTTOM_SHIFT_DP = OLD_BOTTOM_ZERO_DP - BOTTOM_ZERO_DP
     /** Either margin's largest value on the steppers. */
     const val MAX_DP = 80
     /** ≤ R2 default of marginTopDp / marginBottomDp. */
     const val LEGACY_DEFAULT_DP = 16
-    /** −22..+65: both margins 0..80 dp (each stops at its end). */
-    const val UI_MIN = -BOTTOM_ZERO_DP
-    const val UI_MAX = MAX_DP - TOP_ZERO_DP
+    /** −15..+70: both margins 0..80 dp (each stops at its end: the bottom at −10 and the top at +65 first). */
+    const val UI_MIN = -TOP_ZERO_DP
+    const val UI_MAX = MAX_DP - BOTTOM_ZERO_DP
     const val UI_STEP = SideMargin.UI_STEP
     /** Marker: how the top/bottom margins were saved (prefs, backup reader object; style JSON "marginBaseV"). */
     const val KEY = "r.marginBaseV"
     const val STYLE_KEY = "marginBaseV"
-    /** [KEY]: counted from the status bands (2026-10-05). */
-    const val BANDS = 2
+    /** [KEY]: counted from the status bands, the bottom from its 10 dp "0" (2026-10-06). */
+    const val BANDS = 3
+    /** [KEY]: counted from the status bands with the bottom's "0" at 22 dp (2026-10-05): [shiftBottom] once. */
+    const val BANDS_V1 = 2
     /** [KEY] from U3 until the bands: counted from the screen's edge, 40 dp = "0". */
     const val EDGE = EDGE_DP
 
     fun topDp(ui: Int): Int = (TOP_ZERO_DP + ui).coerceIn(0, MAX_DP)
     fun bottomDp(ui: Int): Int = (BOTTOM_ZERO_DP + ui).coerceIn(0, MAX_DP)
 
-    /** The stepper value of [top] / [bottom]: the top margin's, or the bottom one's where the top stopped at 0. */
-    fun toUi(top: Int, bottom: Int): Int =
-        (if (top <= 0) bottom - BOTTOM_ZERO_DP else top - TOP_ZERO_DP).coerceIn(UI_MIN, UI_MAX)
+    /**
+     * The stepper value of [top] / [bottom]: the top margin's, or the bottom one's where the top stopped at [MAX_DP]
+     * (above +65); both at 0 is the stepper's lower end.
+     */
+    fun toUi(top: Int, bottom: Int): Int = when {
+        top <= 0 && bottom <= 0 -> UI_MIN
+        top >= MAX_DP -> bottom - BOTTOM_ZERO_DP
+        else -> top - TOP_ZERO_DP
+    }.coerceIn(UI_MIN, UI_MAX)
 
     /**
      * The margins after the 상하 여백 stepper went from [from] to [to], with [top] / [bottom] on the page. A pair on the
@@ -144,7 +159,13 @@ object VerticalMargin {
         !hasMarker && top == LEGACY_DEFAULT_DP && bottom == LEGACY_DEFAULT_DP
 
     /** True when margins saved with marker [base] (null: none) count from the screen's edge. */
-    fun countsFromEdge(base: Int?): Boolean = base != BANDS
+    fun countsFromEdge(base: Int?): Boolean = base != BANDS && base != BANDS_V1
+
+    /** True when a bottom margin saved with marker [base] still counts from the 22 dp "0" ([shiftBottom] once). */
+    fun needsBottomShift(base: Int?): Boolean = base != BANDS
+
+    /** A bottom margin saved before [BOTTOM_ZERO_DP] moved to 10 dp: [BOTTOM_SHIFT_DP] less (never below 0). */
+    fun shiftBottom(dp: Int): Int = (dp - BOTTOM_SHIFT_DP).coerceAtLeast(0)
 
     /** A top margin saved from the screen's edge, counted from the header band of [s] instead (never below 0). */
     fun topFromEdge(top: Int, s: ReaderSettings): Int = (top - StatusBands.headerDp(s)).coerceAtLeast(0)

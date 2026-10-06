@@ -160,8 +160,12 @@ internal object SettingsJson {
             marginBottomDp = if (vertical) VerticalMargin.EDGE_DP else migrated.marginBottomDp)
         // Top/bottom the backup saved from the screen's edge: counted from the bands of the restored settings (the
         // backup's own status slots, progress line and size), so its text box comes back where it was.
-        if (!VerticalMargin.countsFromEdge(verticalBase)) moved
+        val counted = if (!VerticalMargin.countsFromEdge(verticalBase)) moved
         else VerticalMargin.fromEdge(moved, o.has("r.marginTopDp"), o.has("r.marginBottomDp"))
+        // A bottom margin saved before its "0" moved from 22 to 10 dp (2026-10-06): 12 dp less, as in Settings.
+        if (o.has("r.marginBottomDp") && VerticalMargin.needsBottomShift(verticalBase))
+            counted.copy(marginBottomDp = VerticalMargin.shiftBottom(counted.marginBottomDp))
+        else counted
     }
 
     // ---- app ----

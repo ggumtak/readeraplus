@@ -159,7 +159,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             update(cur.copy(paragraphSpacingPct = it.toInt()), debounce = true)
         })
         // The margins as on 읽기 설정: "0" = the default margin (sides −20..+60 around MaruViewer's 20 dp; top and
-        // bottom, from the status bands, −22..+65 around their own 15 / 22 dp), in steps of 2 (stored values stay dp).
+        // bottom, from the status bands, −15..+70 around their own 15 / 10 dp), in steps of 2 (stored values stay dp).
         // While 여백 사용 is off they show the margin the page has (QuickFields.sideUi / verticalUi). 상하 여백 moves
         // both sides from the value it showed (QuickFields.withVertical), so a pair off the defaults' line never jumps.
         root.addView(stepperRow(

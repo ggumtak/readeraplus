@@ -188,10 +188,15 @@ object UserStyles {
         val bands = if (elevenSp) d.copy(statusFontSizeSp = MaruSize.OLD_SP) else d
         val edge = VerticalMargin.countsFromEdge(verticalBase)
         fun top(dp: Int): Int = if (edge && o.has("marginTopDp")) VerticalMargin.topFromEdge(dp, bands) else dp
-        fun bottom(dp: Int): Int = if (edge && o.has("marginBottomDp")) VerticalMargin.bottomFromEdge(dp, bands) else dp
-        // A missing top/bottom: the default box (40 dp from the edge) on those bands.
+        // Saved before the bottom's "0" moved from 22 to 10 dp (2026-10-06): 12 dp less, as in Settings.
+        val shift = VerticalMargin.needsBottomShift(verticalBase)
+        fun bottom(dp: Int): Int {
+            val counted = if (edge && o.has("marginBottomDp")) VerticalMargin.bottomFromEdge(dp, bands) else dp
+            return if (shift && o.has("marginBottomDp")) VerticalMargin.shiftBottom(counted) else counted
+        }
+        // A missing top/bottom: the defaults on those bands (the top 40 dp from the edge, the bottom 10 dp over its band).
         val topDefault = VerticalMargin.EDGE_DP - StatusBands.headerDp(bands)
-        val bottomDefault = VerticalMargin.EDGE_DP - StatusBands.footerDp(bands)
+        val bottomDefault = VerticalMargin.BOTTOM_ZERO_DP
         return UserStyle(
             name = name,
             fontId = str(o, "fontId", d.fontId).trim().ifEmpty { d.fontId },

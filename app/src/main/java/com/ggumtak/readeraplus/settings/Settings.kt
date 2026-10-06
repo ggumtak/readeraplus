@@ -243,6 +243,12 @@ object Settings {
                     else -> sized
                 }
             }
+            .let {
+                // A bottom margin saved before its "0" moved from 22 to 10 dp comes 12 dp closer to the progress line.
+                if (p.contains("r.marginBottomDp") && VerticalMargin.needsBottomShift(verticalBase))
+                    it.copy(marginBottomDp = VerticalMargin.shiftBottom(it.marginBottomDp))
+                else it
+            }
     }
 
     private fun loadApp(): AppSettings {

@@ -225,12 +225,12 @@ class StatusFitTest {
         assertEquals(12, StatusFit.edgePx(s25))
         assertEquals(32, StatusFit.laneTopPx(comet))
         assertEquals(48, StatusFit.laneTopPx(s25))
-        // S25 fullscreen: ReadEra's 탐색줄 as on the user's screenshot (2026-10-05): line rows 2315–2316, dots 2309–2322
-        // (8 dp up; until then the dot sat at the lane's top, row 2302). The Comet's line row 1423, dots 1419..1427.
-        assertEquals(2315, ProgressMath.lineTop(2340, s25))
-        assertEquals(2309, ProgressMath.dotTop(2340, s25))
-        assertEquals(1423, ProgressMath.lineTop(1440, comet))
-        assertEquals(1419, ProgressMath.dotTop(1440, comet))
+        // S25 fullscreen: line rows 2303–2304, dots 2297–2310 (12 dp up since 2026-10-06; ReadEra's 8 dp before, rows
+        // 2315–2316). The Comet's line row 1415, dots 1411..1419: still under the lane's top (1408 / 2292).
+        assertEquals(2303, ProgressMath.lineTop(2340, s25))
+        assertEquals(2297, ProgressMath.dotTop(2340, s25))
+        assertEquals(1415, ProgressMath.lineTop(1440, comet))
+        assertEquals(1411, ProgressMath.dotTop(1440, comet))
         // The progress line's band (18 dp) is edge + lane + 2 dp of paper: at bottom margin 0 the text box ends 2 dp
         // above the lane, and the dots stay clear of the text and of the edge gap (Comet rows 1419..1427, the box
         // ending at 1404, the bezel's rows from 1432).

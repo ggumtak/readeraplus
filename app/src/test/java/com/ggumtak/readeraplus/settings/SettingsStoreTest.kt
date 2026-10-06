@@ -206,7 +206,8 @@ class SettingsStoreTest {
         assertEquals(20,r.marginLeftDp);assertEquals(StatusItem.PERCENT,r.footerLeft);assertEquals(StatusItem.CLOCK_BATTERY,r.footerRight);assertEquals(before,raw)
         // 16/16 is R2's untouched default: 40/40 from the edge, then counted from the bands these settings have (MaruViewer's
         // header 25 dp; footer items above the line 39 dp, both at 13 sp), so the text box stays 40 dp from both edges.
-        assertEquals(listOf(15,1),listOf(r.marginTopDp,r.marginBottomDp))
+        // The bottom then 12 dp less once (2026-10-06), stopping at 0.
+        assertEquals(listOf(15,0),listOf(r.marginTopDp,r.marginBottomDp))
         Settings.saveReader(r);Settings.saveApp(Settings.app)
         for (k in StatusMigration.LEGACY_KEYS) assertFalse(p.contains(k))
         assertTrue(p.contains(StatusMigration.MARKER_KEY));assertFalse(p.contains("a.pinChrome"));assertFalse(p.contains("reader.brightnessCollapsed"))
@@ -216,8 +217,8 @@ class SettingsStoreTest {
         val raw=hashMapOf<String,Any?>(SideMargin.KEY to 40,VerticalMargin.KEY to 40,MaruHeader.KEY to true,
             "r.marginLeftDp" to 40,"r.marginRightDp" to 40,"r.marginTopDp" to 40,"r.marginBottomDp" to 40)
         val before=HashMap(raw);val p=fresh(raw);val r=Settings.reader
-        // Top and bottom (40/40 from the edge) are counted from the default bands: the new defaults 15/22, same text box.
-        assertEquals(listOf(20,20,15,22),listOf(r.marginLeftDp,r.marginRightDp,r.marginTopDp,r.marginBottomDp));assertEquals(before,raw)
+        // Top and bottom (40/40 from the edge) are counted from the default bands, the bottom then 12 dp less: the defaults.
+        assertEquals(listOf(20,20,15,10),listOf(r.marginLeftDp,r.marginRightDp,r.marginTopDp,r.marginBottomDp));assertEquals(before,raw)
         Settings.saveReader(r);assertEquals(20,p.map[SideMargin.KEY]);assertEquals(20,p.map["r.marginLeftDp"])
         assertEquals(VerticalMargin.BANDS,p.map[VerticalMargin.KEY]);assertEquals(15,p.map["r.marginTopDp"])
         Settings.initForTest(p);assertEquals(r,Settings.reader)
@@ -259,20 +260,20 @@ class SettingsStoreTest {
         // The user's own values from the edge, with their own bands: no header, a footer with the line (39 dp at 13 sp).
         fresh(hashMapOf(VerticalMargin.KEY to 40,MaruHeader.KEY to true,"r.marginTopDp" to 30,"r.marginBottomDp" to 50,
             "r.headerLeft" to "NONE","r.headerCenter" to "NONE","r.headerRight" to "NONE","r.footerLeft" to "NONE","r.footerCenter" to "PAGE"))
-        assertEquals(listOf(30,11),listOf(Settings.reader.marginTopDp,Settings.reader.marginBottomDp))
+        assertEquals(listOf(30,0),listOf(Settings.reader.marginTopDp,Settings.reader.marginBottomDp))
         // A margin smaller than its band stops at 0.
         fresh(hashMapOf(VerticalMargin.KEY to 40,MaruHeader.KEY to true,"r.marginTopDp" to 10,"r.marginBottomDp" to 10))
         assertEquals(listOf(0,0),listOf(Settings.reader.marginTopDp,Settings.reader.marginBottomDp))
         // Saved before MaruViewer's header (no header marker, all slots none): the header it gets now counts too.
         fresh(hashMapOf(VerticalMargin.KEY to 40,"r.marginTopDp" to 40,"r.marginBottomDp" to 40,
             "r.headerLeft" to "NONE","r.headerCenter" to "NONE","r.headerRight" to "NONE","r.footerLeft" to "NONE"))
-        assertEquals(listOf(15,22),listOf(Settings.reader.marginTopDp,Settings.reader.marginBottomDp))
+        assertEquals(listOf(15,10),listOf(Settings.reader.marginTopDp,Settings.reader.marginBottomDp))
     }
     @Test fun maruViewersStatusSizeComesOnceAndTheTextBoxStays() {
         // The user's devices since the bands (2026-10-05): the band marker, MaruViewer's header, 18/22 at the old 11 sp.
         // Read as MaruViewer's 13 sp, the top margin 3 dp smaller: exactly the new defaults, the same text box. Loading
         // writes nothing.
-        val raw=hashMapOf<String,Any?>(SideMargin.KEY to 20,VerticalMargin.KEY to VerticalMargin.BANDS,MaruHeader.KEY to true,
+        val raw=hashMapOf<String,Any?>(SideMargin.KEY to 20,VerticalMargin.KEY to VerticalMargin.BANDS_V1,MaruHeader.KEY to true,
             "r.marginLeftDp" to 20,"r.marginRightDp" to 20,"r.marginTopDp" to 18,"r.marginBottomDp" to 22,
             "r.headerLeft" to "CLOCK_BATTERY","r.headerCenter" to "BOOK_TITLE","r.headerRight" to "PAGE",
             "r.footerLeft" to "NONE","r.footerCenter" to "NONE","r.footerRight" to "NONE","r.progressBar" to true,"r.statusFontSizeSp" to 11f)
@@ -284,19 +285,19 @@ class SettingsStoreTest {
         val mine=ReaderSettings(statusFontSizeSp=11f,marginTopDp=18);Settings.saveReader(mine)
         Settings.initForTest(p);assertEquals(mine,Settings.reader)
         // Footer items too: their band grows 36 → 39 dp, the bottom margin gives it back; a margin smaller than the
-        // growth stops at 0.
+        // growth stops at 0 (and the bottom's 12 dp shift of 2026-10-06 takes the rest).
         fresh(HashMap(before).apply { put("r.footerCenter","PAGE");put("r.marginBottomDp",10) })
-        assertEquals(listOf(13f,15,7),Settings.reader.let { listOf(it.statusFontSizeSp,it.marginTopDp,it.marginBottomDp) })
+        assertEquals(listOf(13f,15,0),Settings.reader.let { listOf(it.statusFontSizeSp,it.marginTopDp,it.marginBottomDp) })
         fresh(HashMap(before).apply { put("r.marginTopDp",2) })
         assertEquals(0,Settings.reader.marginTopDp)
         // A size the user chose stays, and so do its margins.
         fresh(HashMap(before).apply { put("r.statusFontSizeSp",12f) })
-        assertEquals(listOf(12f,18,22),Settings.reader.let { listOf(it.statusFontSizeSp,it.marginTopDp,it.marginBottomDp) })
+        assertEquals(listOf(12f,18,10),Settings.reader.let { listOf(it.statusFontSizeSp,it.marginTopDp,it.marginBottomDp) })
         // 여백 사용 off: the page's minimal 4 dp margin is fixed and could not give the 13 sp bands' growth back, so the
         // size stays 11 sp and the text box with it (Comet 22 + 4 dp = row 52, S25 fullscreen 87 + 78 = 165, as before
         // the update); the next save makes that 11 sp a choice that stays.
         val off=fresh(HashMap(before).apply { put("r.pageMargins",false) })
-        assertEquals(listOf(11f,18,22),Settings.reader.let { listOf(it.statusFontSizeSp,it.marginTopDp,it.marginBottomDp) })
+        assertEquals(listOf(11f,18,10),Settings.reader.let { listOf(it.statusFontSizeSp,it.marginTopDp,it.marginBottomDp) })
         assertEquals(52,com.ggumtak.readeraplus.reader.LayoutKeys.geometry(Settings.reader,720,1440,2f).contentTop)
         assertEquals(165,com.ggumtak.readeraplus.reader.LayoutKeys.geometry(Settings.reader,1080,2340,3f,extraTop=87).contentTop)
         Settings.saveReader(Settings.reader);assertEquals(true,off.map[MaruSize.KEY])

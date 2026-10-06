@@ -23,8 +23,11 @@ internal object ProgressMath {
     const val DOT_DP = 14f / 3f
     /** From each side of the page view to the outer edge of the end dot there: 21 px on the S25. */
     const val SIDE_DP = 7
-    /** From the page view's bottom up to the dots' and the line's centre: 24 px on the S25. */
-    const val CENTRE_DP = 8
+    /**
+     * From the page view's bottom up to the dots' and the line's centre: 36 px on the S25 (user, 2026-10-06: "진행상태바
+     * 위치를 지금보다 살짝 위로"; ReadEra's 8 dp before). The dots' top stays under the lane's top (12 + 2.3 < 16 dp).
+     */
+    const val CENTRE_DP = 12
 
     /** The line's height in whole px, never under 1: 2 on the S25, 1 on the Comet. */
     fun lineH(density: Float): Int = maxOf(1, Math.round(LINE_DP * density))
@@ -38,13 +41,13 @@ internal object ProgressMath {
         return line + 2 * Math.round((DOT_DP * density - line) / 2f).coerceAtLeast(0)
     }
 
-    /** The line's first row in a page view [viewH] tall: 2315 on the S25 (2340 px), 1423 on the Comet (1440 px). */
+    /** The line's first row in a page view [viewH] tall: 2305 on the S25 (2340 px, 2.8125 px per dp), 1415 on the Comet (1440 px). */
     fun lineTop(viewH: Int, density: Float): Int = viewH - Math.round(CENTRE_DP * density + lineH(density) / 2f)
 
-    /** The dots' first row: centred on the line (S25 2309, Comet 1419). */
+    /** The dots' first row: centred on the line (S25 2299, Comet 1411). */
     fun dotTop(viewH: Int, density: Float): Int = lineTop(viewH, density) - (dotD(density) - lineH(density)) / 2
 
-    /** The centre of the line and the dots (y): S25 2316.0 (between rows 2315 and 2316), Comet 1423.5. */
+    /** The centre of the line and the dots (y): S25 2306.0 (between rows 2305 and 2306), Comet 1415.5. */
     fun centreY(viewH: Int, density: Float): Float = lineTop(viewH, density) + lineH(density) / 2f
 
     /** [SIDE_DP] in whole px: the left end dot's first column. */
