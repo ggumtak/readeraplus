@@ -92,6 +92,12 @@ class QuoteRowsTest {
     }
 
     @Test
+    fun shareAllWithoutPagesNamesNone() {
+        val text = QuoteRows.shareAll("책", "", listOf(q(1, 1, "가나", note = "메"), q(2, 0, "다라")), { "-" }, 50_000)
+        assertEquals("《책》\n인용문 2개\n\n[초록] “가나”\n  메모: 메\n\n[노랑] “다라”\n", text)
+    }
+
+    @Test
     fun shareAllIsCapped() {
         val many = (1L..200L).map { q(it, 0, "가".repeat(100)) }
         val text = QuoteRows.shareAll("책", "", many, { "1" }, 1_000)

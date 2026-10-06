@@ -190,6 +190,18 @@ internal object PageLabel {
         return if (p.page < 0) clean(label).trim() else p.page.toString()
     }
 
+    /** True when [page] is a real page number: not empty, not the "-" placeholder shown while the pages are counted. */
+    fun hasPage(page: String?): Boolean = !page.isNullOrBlank() && page.trim() != "-"
+
+    /** "12쪽 · rest" for a row's meta line; just [rest] while there is no page ("-쪽 · rest" never shows). */
+    fun metaLine(page: String?, rest: String): String = if (hasPage(page)) "${page!!.trim()}쪽 · $rest" else rest
+
+    /** [prefix] + " · 12쪽" for a status line; just [prefix] while there is no page. */
+    fun withPage(prefix: String, page: String?): String = if (hasPage(page)) "$prefix · ${page!!.trim()}쪽" else prefix
+
+    /** "  (12쪽)\n" for a shared text's entry; "" while there is no page (the line is left out entirely). */
+    fun shareLine(page: String?): String = if (hasPage(page)) "  (${page!!.trim()}쪽)\n" else ""
+
     /** Position at [fraction] (0..1) of the book, by section char counts. */
     fun positionForFraction(chars: IntArray, fraction: Float): DocPosition {
         if (chars.isEmpty()) return DocPosition.START

@@ -136,6 +136,25 @@ class FormatTest {
     }
 
     @Test
+    fun pageTextsLeaveOutAMissingPage() {
+        assertTrue(PageLabel.hasPage("12"))
+        assertTrue(!PageLabel.hasPage(""))
+        assertTrue(!PageLabel.hasPage("-"))
+        assertTrue(!PageLabel.hasPage(" - "))
+        assertTrue(!PageLabel.hasPage(null))
+        assertEquals("12쪽 · 2026.10.05", PageLabel.metaLine("12", "2026.10.05"))
+        assertEquals("2026.10.05", PageLabel.metaLine("-", "2026.10.05"))
+        assertEquals("2026.10.05", PageLabel.metaLine("", "2026.10.05"))
+        assertEquals("3 / 20 · 12쪽", PageLabel.withPage("3 / 20", "12"))
+        assertEquals("3 / 20+ · 12쪽", PageLabel.withPage("3 / 20+", "12"))
+        assertEquals("3 / 20", PageLabel.withPage("3 / 20", ""))
+        assertEquals("3 / 20", PageLabel.withPage("3 / 20", "-"))
+        assertEquals("  (12쪽)\n", PageLabel.shareLine("12"))
+        assertEquals("", PageLabel.shareLine("-"))
+        assertEquals("", PageLabel.shareLine(""))
+    }
+
+    @Test
     fun fractionMapping() {
         val chars = intArrayOf(100, 300, 0, 600)
         assertEquals(DocPosition(0, 0), PageLabel.positionForFraction(chars, 0f))

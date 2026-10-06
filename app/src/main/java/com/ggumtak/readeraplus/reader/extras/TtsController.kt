@@ -937,9 +937,11 @@ class TtsController(private val host: ReaderHost) {
         bar = row
         playButton = play
         barLabel = label
+        host.addCountsListener(countsListener)
     }
 
     private fun removeBar() {
+        host.removeCountsListener(countsListener)
         bar?.let { (it.parent as? ViewGroup)?.removeView(it) }
         playButton?.let { (it.parent as? ViewGroup)?.removeView(it) }
         bar = null
@@ -948,6 +950,8 @@ class TtsController(private val host: ReaderHost) {
     }
 
     private var lastBarText: String? = null
+    /** The pages are counted (or counting failed): the bar's 쪽수 계산 중 becomes the page number. */
+    private val countsListener: () -> Unit = { updateBar() }
     private var lastPlayIcon = 0
 
     private fun updateBar() {

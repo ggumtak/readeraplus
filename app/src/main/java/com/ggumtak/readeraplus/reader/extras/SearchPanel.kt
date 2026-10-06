@@ -434,7 +434,7 @@ internal object SearchNavBar {
         val texts = ctx.vertical { gravity = Gravity.CENTER_VERTICAL }
         texts.addView(ctx.label("‘${state.query}’", 15f, bold = true, maxLines = 1))
         val more = if (state.complete) "" else "+"
-        texts.addView(ctx.label("${index + 1} / ${state.hits.size}$more · ${SearchPanel.pageOf(host, state.hits[index])}쪽", 14f, color = Ink.GRAY))
+        texts.addView(ctx.label(PageLabel.withPage("${index + 1} / ${state.hits.size}$more", SearchPanel.pageOf(host, state.hits[index])), 14f, color = Ink.GRAY))
         row.addView(texts, lp(0, WRAP_CONTENT, 1f).apply { leftMargin = ctx.dp(4) })
         row.addView(ctx.flatIcon(R.drawable.ic_view_list, "검색 결과 목록") {
             remove()

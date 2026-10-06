@@ -74,6 +74,8 @@ internal class ThumbsTab(private val host: ReaderHost, private val close: () -> 
     private var onReady: (() -> Unit)? = null
     private var started = false
     private val readyFallback = Runnable { fireReady() }
+    /** The pages are counted (or counting failed): the bar's 쪽수 계산 中 becomes the page number. */
+    private val countsListener: () -> Unit = { if (started) updateBar() }
 
     init {
         grid.contentDescription = "페이지 미리보기"
@@ -95,6 +97,7 @@ internal class ThumbsTab(private val host: ReaderHost, private val close: () -> 
     fun prepare(bodyWidthPx: Int, bodyHeightPx: Int, ready: () -> Unit) {
         onReady = ready
         started = true
+        host.addCountsListener(countsListener)
         val t = thumbs
         if (t == null || t.thumbTotal() <= 0) {
             fireReady()
@@ -116,6 +119,7 @@ internal class ThumbsTab(private val host: ReaderHost, private val close: () -> 
     /** The tab is left or the dialog dismissed: the host stops rendering (and gives the reader its neighbours back). */
     fun stop() {
         started = false
+        host.removeCountsListener(countsListener)
         main.removeCallbacks(readyFallback)
         onReady = null
         wanted = -1

@@ -300,6 +300,49 @@ class StatusModelTest {
     }
 
     @Test
+    fun pendingTextShowsOnlyInThePageSlotWhenBothItemsAreShown() {
+        val m = StatusModel()
+        val inp = inputs().apply { pages = StatusInputs.PAGES_COUNTING }
+        val both = ReaderSettings(headerLeft = StatusItem.NONE, headerCenter = StatusItem.PAGE, headerRight = StatusItem.NONE, footerCenter = StatusItem.CHAPTER_PAGES_LEFT)
+        m.update(both, inp, track)
+        assertEquals("쪽수 계산 중", chars(slotOf(m, 0, 1)))
+        assertTrue(slotOf(m, 1, 1).isEmpty)
+        // A failed count reads the same way.
+        inp.pages = StatusInputs.PAGES_FAILED
+        m.update(both, inp, track)
+        assertEquals("쪽수 확인 불가", chars(slotOf(m, 0, 1)))
+        assertTrue(slotOf(m, 1, 1).isEmpty)
+        // Counted: both show their numbers again.
+        inp.pages = StatusInputs.PAGES_EXACT
+        assertTrue(m.update(both, inp, track))
+        assertEquals("12 / 3259", chars(slotOf(m, 0, 1)))
+        assertEquals("2 / 32", chars(slotOf(m, 1, 1)))
+        // Either item alone keeps its pending text.
+        inp.pages = StatusInputs.PAGES_COUNTING
+        val none = ReaderSettings(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
+        m.update(none.copy(footerCenter = StatusItem.CHAPTER_PAGES_LEFT), inp, track)
+        assertEquals("쪽수 계산 중", chars(slotOf(m, 1, 1)))
+        m.update(none.copy(headerCenter = StatusItem.PAGE), inp, track)
+        assertEquals("쪽수 계산 중", chars(slotOf(m, 0, 1)))
+        // The slot chooser still describes the item by itself.
+        assertEquals("쪽수 계산 중", m.sample(StatusItem.CHAPTER_PAGES_LEFT, inp))
+    }
+
+    @Test
+    fun pendingWithBothItemsAllocatesNothing() {
+        if (!AllocCounter.supported) return
+        val m = StatusModel()
+        val s = ReaderSettings(headerCenter = StatusItem.PAGE, footerCenter = StatusItem.CHAPTER_PAGES_LEFT)
+        val a = inputs().apply { pages = StatusInputs.PAGES_COUNTING }
+        val b = inputs().apply { pages = StatusInputs.PAGES_FAILED }
+        var changes = 0
+        val loop = { for (i in 0 until 10_000) if (m.update(s, if (i % 2 == 0) a else b, track)) changes++ }
+        repeat(3) { loop() }
+        val bytes = AllocCounter.measure(loop)!!
+        assertEquals("10 000 updates allocated $bytes bytes", 0L, bytes)
+    }
+
+    @Test
     fun chapterPageNeedsATocPage() {
         val m = StatusModel()
         val inp = inputs().apply { chapterPage = -1; chapterPages = -1 }

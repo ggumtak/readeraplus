@@ -131,6 +131,15 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private var episodes: Episodes? = null
     /** The TOC tab once built (its header is filled in when the episodes arrive late). */
     private var tocTab: TocTab? = null
+    /** The 북마크 / 인용문 lists once built: their rows' page numbers refresh when the pages are counted. */
+    private var bookmarkList: ListView? = null
+    private var quoteList: ListView? = null
+    /** The pages are counted (or counting failed): the page numbers shown while 쪽수 계산 중 are read again. */
+    private val countsListener: () -> Unit = {
+        tocTab?.countsChanged()
+        (bookmarkList?.adapter as? BaseAdapter)?.notifyDataSetChanged()
+        (quoteList?.adapter as? BaseAdapter)?.notifyDataSetChanged()
+    }
 
     fun show() {
         val insights = host as? BookInsightsHost
@@ -183,7 +192,12 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         root.addView(ctx.hairline())
         root.addView(body, lp(MATCH_PARENT, 0, 1f))
         dialog = ctx.fullScreenDialog(root)
-        dialog.setOnDismissListener { thumbsTab?.stop(); onFirstShown = null; scope.cancel() }
+        dialog.setOnDismissListener {
+            host.removeCountsListener(countsListener)
+            thumbsTab?.stop()
+            onFirstShown = null
+            scope.cancel()
+        }
         dialog.setOnKeyListener { _, code, event ->
             if (code == KeyEvent.KEYCODE_BACK && tab == 0 && tocTab?.isFiltering == true) {
                 if (event.action == KeyEvent.ACTION_UP) tocTab?.clearFilterIfAny()
@@ -197,12 +211,13 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             }
         }
         if (tab == 3 && ThumbsTab.available(host)) {
-            onFirstShown = { if (!stale() && !ctx.isFinishing && !ctx.isDestroyed) { dialog.show(); PanelRegistry.dialog(ctx, dialog) } }
+            onFirstShown = { if (!stale() && !ctx.isFinishing && !ctx.isDestroyed) { dialog.show(); PanelRegistry.dialog(ctx, dialog); host.addCountsListener(countsListener) } }
             select(tab)
         } else {
             select(tab)
             dialog.show()
             PanelRegistry.dialog(ctx, dialog)
+            host.addCountsListener(countsListener)
         }
     }
 
@@ -354,7 +369,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 // Read episodes (before the current one) in gray.
                 title.setTextColor(if (current >= 0 && i < current) Ink.GRAY else Ink.BLACK)
                 val lbl = labels[i] ?: tocPageLabel(secs[i], offs[i].coerceAtLeast(0))
-                    .also { if (offs[i] >= 0) labels[i] = it }
+                    // A "" given while the pages are counted is not kept: it would stay blank after the count.
+                    .also { if (offs[i] >= 0 && runCatching { host.pagesPending() }.getOrNull() == null) labels[i] = it }
                 page.text = lbl
                 return row
             }
@@ -421,6 +437,12 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
 
         fun episodesChanged() {
             renderHeader()
+        }
+
+        /** The pages are counted: the labels cached before (none while pending) are read again, visible rows included. */
+        fun countsChanged() {
+            labels.fill(null)
+            adapter.notifyDataSetChanged()
         }
 
         private fun openEntry(i: Int, then: (() -> Unit)? = null) {
@@ -688,6 +710,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 return@launch
             }
             val lv = ctx.einkListView()
+            bookmarkList = lv
             lv.adapter = object : BaseAdapter() {
                 override fun getCount() = list.size
                 override fun getItem(position: Int) = list[position]
@@ -700,7 +723,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                     note.visibility = if (b.note.isBlank()) View.GONE else View.VISIBLE
                     note.text = "메모: ${b.note}"
                     row.findViewWithTag<TextView>("meta").text =
-                        "${pageOf(b.section, b.offset)}쪽 · ${Fmt.date(b.createdAt)}"
+                        PageLabel.metaLine(pageOf(b.section, b.offset), Fmt.date(b.createdAt))
                     return row
                 }
             }
@@ -799,6 +822,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         }
         val ink = QuoteLook.ink()
         val lv = ctx.einkListView()
+        quoteList = lv
         lv.adapter = object : BaseAdapter() {
             override fun getCount() = list.size
             override fun getItem(position: Int) = list[position]
@@ -1016,7 +1040,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         val note = row.findViewWithTag<TextView>("note")
         note.visibility = if (q.note.isBlank()) View.GONE else View.VISIBLE
         note.text = "메모: ${q.note}"
-        val meta = "${pageOf(q.section, q.start)}쪽 · ${Fmt.date(q.createdAt)}"
+        val meta = PageLabel.metaLine(pageOf(q.section, q.start), Fmt.date(q.createdAt))
         row.findViewWithTag<TextView>("meta").text = if (placeChanged(q)) meta + QuoteRows.STALE_SUFFIX else meta
         val swatch = row.findViewWithTag<QuoteSwatch>("swatch")
         val style = QuoteStyles.of(q.style)

@@ -230,24 +230,35 @@ internal object InfoDialogs {
         private val chars = IntArray(doc.sections.size) { doc.sections[it].approxChars }
         private val here = host.currentPosition()
         private val jump = host as? PageJumpHost
-        private val parsed = PageLabel.parse(runCatching { host.pageLabel(here) }.getOrNull())
-        private val pagesKnown = runCatching { host.totalPagesKnown() }.getOrDefault(false) && parsed.total > 0
-        private val total = parsed.total
-        // The footer's own measure when the host has it (so "현재 N%" reads exactly like the footer); otherwise
-        // page-based once counts are complete (EPUB approxChars are only a size estimate), char-based before that.
-        private val fraction = jump?.let { j -> runCatching { j.progressFraction() }.getOrNull()?.takeIf { !it.isNaN() } }
-            ?: if (pagesKnown && parsed.page > 0) parsed.page.toFloat() / total else PageLabel.fractionOf(chars, here)
+        // Read again when the pages are counted meanwhile ([countsChanged]).
+        private var parsed = PageLabel.parse(runCatching { host.pageLabel(here) }.getOrNull())
+        private var pagesKnown = runCatching { host.totalPagesKnown() }.getOrDefault(false) && parsed.total > 0
+        private var total = parsed.total
+        private var fraction = fractionNow()
         private var mode = if (pagesKnown) MODE_PAGE else MODE_PERCENT
         private val pad = InkNumPad(ctx)
         private val segments = arrayOfNulls<TextView>(3)
+        private var infoLabel: TextView? = null
         private lateinit var dialog: AlertDialog
+        private val countsListener: () -> Unit = { countsChanged() }
+
+        // The footer's own measure when the host has it (so "현재 N%" reads exactly like the footer); otherwise
+        // page-based once counts are complete (EPUB approxChars are only a size estimate), char-based before that.
+        private fun fractionNow(): Float =
+            jump?.let { j -> runCatching { j.progressFraction() }.getOrNull()?.takeIf { !it.isNaN() } }
+                ?: if (pagesKnown && parsed.page > 0) parsed.page.toFloat() / total else PageLabel.fractionOf(chars, here)
+
+        private fun infoText(): String {
+            val pending = runCatching { host.pagesPending() }.getOrNull() ?: ReaderFormat.PAGES_COUNTING
+            return GoToText.info(parsed.page, total, fraction, pagesKnown, pending)
+        }
 
         fun show() {
             val box = ctx.vertical { setPadding(ctx.dp(20), ctx.dp(8), ctx.dp(20), 0) }
-            val pending = runCatching { host.pagesPending() }.getOrNull() ?: ReaderFormat.PAGES_COUNTING
-            box.addView(ctx.label(GoToText.info(parsed.page, total, fraction, pagesKnown, pending), 14f, color = Ink.GRAY).apply {
+            box.addView(ctx.label(infoText(), 14f, color = Ink.GRAY).apply {
                 setLineSpacing(0f, 1.2f)
                 setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
+                infoLabel = this
             }, lp())
             val row = ctx.horizontal { setPadding(0, ctx.dp(12), 0, ctx.dp(8)) }
             listOf("쪽", "%", "화").forEachIndexed { k, name ->
@@ -267,6 +278,22 @@ internal object InfoDialogs {
                 .setOnKeyListener { _, keyCode, ev -> pad.handleKey(keyCode, ev) }
                 .showNoAnim()
             PanelRegistry.dialog(ctx, dialog)
+            dialog.setOnDismissListener { host.removeCountsListener(countsListener) }
+            host.addCountsListener(countsListener)
+        }
+
+        /**
+         * The pages are counted (or counting failed) while the dialog is open: the info text and [쪽]'s availability are
+         * read again. The mode stays as the user has it (percent stays, though pages are known now).
+         */
+        private fun countsChanged() {
+            if (!dialog.isShowing || host.document !== doc) return
+            parsed = PageLabel.parse(runCatching { host.pageLabel(here) }.getOrNull())
+            pagesKnown = runCatching { host.totalPagesKnown() }.getOrDefault(false) && parsed.total > 0
+            total = parsed.total
+            fraction = fractionNow()
+            infoLabel?.let { l -> infoText().let { if (l.text.toString() != it) l.text = it } }
+            render(resetPad = false)
         }
 
         /** Episodes that arrived after the dialog showed: [화] becomes available. */

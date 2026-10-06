@@ -32,6 +32,17 @@ class QuoteExportTest {
     }
 
     @Test
+    fun shareAll_withoutAPage_leavesTheLineOut() {
+        // While the pages are counted ContentsDialog's pageOf gives "-" (or "" for a position it cannot place).
+        val text = QuoteExport.shareAll("책", "", listOf(q("첫", 2, "메모"), q("둘", 2))) { if (it.text == "첫") "-" else "" }
+        assertEquals("《책》\n인용문 2개\n\n“첫”\n  메모: 메모\n\n“둘”\n", text)
+        assertFalse(text.contains("쪽"))
+        // Mixed: only the quote with a page names it.
+        val mixed = QuoteExport.shareAll("책", "", listOf(q("첫", 2), q("둘", 2))) { if (it.text == "첫") "5" else "-" }
+        assertEquals("《책》\n인용문 2개\n\n“첫”\n  (5쪽)\n\n“둘”\n", mixed)
+    }
+
+    @Test
     fun singleShare_neverTagged() {
         assertEquals("“글”\n메모: 노트\n— 책, 작가", QuoteExport.single(q("글", 3, "노트"), "책", "작가"))
         assertEquals("", QuoteExport.prefix(q("x", 3), tagged = false))

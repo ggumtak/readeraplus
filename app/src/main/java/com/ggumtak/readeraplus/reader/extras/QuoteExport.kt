@@ -23,8 +23,8 @@ internal object QuoteExport {
     fun prefix(q: Quote, tagged: Boolean): String = if (tagged) QuoteStyles.tag(q.style) + " " else ""
 
     /**
-     * "모두 공유" (ContentsDialog.shareAllQuotes): the book header, then per quote `“…”`, `  (12쪽)` and an optional
-     * `  메모: …` line, each entry prefixed by its tag when [tagged] of the set. [pageOf] gives a quote's page label.
+     * "모두 공유" (ContentsDialog.shareAllQuotes): the book header, then per quote `“…”`, `  (12쪽)` (left out without a page) and
+     * an optional `  메모: …` line, each entry prefixed by its tag when [tagged] of the set. [pageOf] gives a quote's page label.
      */
     fun shareAll(title: String, author: String, quotes: List<Quote>, pageOf: (Quote) -> String): String {
         val tag = tagged(quotes)
@@ -34,7 +34,7 @@ internal object QuoteExport {
         sb.append("\n인용문 ").append(quotes.size).append("개\n")
         for (q in quotes) {
             sb.append('\n').append(prefix(q, tag)).append('“').append(q.text.trim()).append("”\n")
-            sb.append("  (").append(pageOf(q)).append("쪽)\n")
+            sb.append(PageLabel.shareLine(pageOf(q)))
             if (q.note.isNotBlank()) sb.append("  메모: ").append(q.note.trim()).append('\n')
         }
         return sb.toString()

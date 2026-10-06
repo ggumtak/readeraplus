@@ -51,6 +51,8 @@ internal class StatusModel {
     private val buf = CharArray(StatusSlot.CAPACITY)
     /** Dot position in track pixels at the last update; −1 = no dot. The dot "moved" only when this changes. */
     private var dotPx = -1
+    /** Pages pending and the settings show both 쪽 번호 and 챕터 쪽 번호: only the first shows the text (set by [update]). */
+    private var pendingOnce = false
 
     /**
      * Fills decor for the slots of [s]; [top]: the display cutout's band above the header's (`PageGeometry.cutoutTop`);
@@ -61,6 +63,7 @@ internal class StatusModel {
     fun update(s: ReaderSettings, inp: StatusInputs, trackPx: Int, top: Int = 0, corners: IntArray? = null): Boolean {
         var changed = false
         val d = decor
+        pendingOnce = inp.pages != StatusInputs.PAGES_EXACT && s.shows(StatusItem.PAGE) && s.shows(StatusItem.CHAPTER_PAGES_LEFT)
         if (d.top != top) { d.top = top; changed = true }
         if (corners == null) {
             if (d.cornerLeft.set(-1, 0, 0)) changed = true
@@ -107,14 +110,17 @@ internal class StatusModel {
                 }
             }
             else -> {
-                val n = chars(b, item, inp)
+                val n = chars(b, item, inp, pendingOnce)
                 if (n <= 0) slot.clear() else slot.set(b, n, -1)
             }
         }
     }
 
-    /** Characters of a numeric [item] into [b] from 0; returns the length, 0 when its input is unknown. */
-    private fun chars(b: CharArray, item: StatusItem, inp: StatusInputs): Int = when (item) {
+    /**
+     * Characters of a numeric [item] into [b] from 0; returns the length, 0 when its input is unknown. [pendingOnce]: the
+     * pending text is for 쪽 번호 only, 챕터 쪽 번호 stays empty (the same wide text twice is noise).
+     */
+    private fun chars(b: CharArray, item: StatusItem, inp: StatusInputs, pendingOnce: Boolean = false): Int = when (item) {
         StatusItem.PAGE -> when {
             inp.pages != StatusInputs.PAGES_EXACT -> StatusText.pagesPending(b, 0, inp.pages)
             inp.page <= 0 -> 0
@@ -123,7 +129,7 @@ internal class StatusModel {
         StatusItem.PERCENT -> if (inp.percent < 0) 0 else StatusText.percent(b, 0, inp.percent)
         StatusItem.CHAPTER_PAGES_LEFT -> when {
             inp.chapterPage <= 0 -> 0
-            inp.pages != StatusInputs.PAGES_EXACT -> StatusText.pagesPending(b, 0, inp.pages)
+            inp.pages != StatusInputs.PAGES_EXACT -> if (pendingOnce) 0 else StatusText.pagesPending(b, 0, inp.pages)
             else -> StatusText.chapterPage(b, 0, inp.chapterPage, inp.chapterPages)
         }
         StatusItem.EPISODE ->

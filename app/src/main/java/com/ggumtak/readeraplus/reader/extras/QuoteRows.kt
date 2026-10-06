@@ -87,7 +87,7 @@ internal object QuoteRows {
             sb.append('\n')
             if (tag) sb.append(QuoteExport.prefix(q, true))
             sb.append('“').append(q.text.trim()).append("”\n")
-            sb.append("  (").append(pageOf(q)).append("쪽)\n")
+            sb.append(PageLabel.shareLine(pageOf(q)))
             if (q.note.isNotBlank()) sb.append("  메모: ").append(q.note.trim()).append('\n')
             if (sb.length > maxChars) break
             fits = sb.length

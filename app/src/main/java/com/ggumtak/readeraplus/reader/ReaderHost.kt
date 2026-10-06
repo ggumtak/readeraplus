@@ -55,6 +55,14 @@ interface ReaderHost {
      */
     fun pagesPending(): String? = if (totalPagesKnown()) null else ReaderFormat.PAGES_COUNTING
 
+    /**
+     * [l] runs (main thread) once the pages are exact, or counting has failed, on a phone: a display that showed
+     * [pagesPending] re-reads it. Not on e-ink, where numbers change with the user's next action. Add while the display is
+     * visible and [removeCountsListener] (the same lambda) when it goes; adding twice is the same as once.
+     */
+    fun addCountsListener(l: () -> Unit) {}
+    fun removeCountsListener(l: () -> Unit) {}
+
     /** Replaces highlights of a given owner key (e.g. "tts", "search", "selection", "quotes") and redraws. */
     fun setHighlights(owner: String, section: Int, highlights: List<Highlight>)
 

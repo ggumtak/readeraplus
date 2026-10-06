@@ -1890,6 +1890,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     // ================================================================== session callbacks
 
+    /** Displays waiting for the exact page numbers ([ReaderHost.addCountsListener]); main thread. */
+    private val countsListeners = CountsListeners()
+
+    override fun addCountsListener(l: () -> Unit) = countsListeners.add(l)
+
+    override fun removeCountsListener(l: () -> Unit) = countsListeners.remove(l)
+
     private val sessionListener = object : BookSession.Listener {
         override fun onCountsChanged(complete: Boolean) {
             // While a relayout is under way the page on screen belongs to the old layout: its showPage binds both.
@@ -1904,6 +1911,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 // chip over the page relabels with the next page on e-ink, like the status line.
                 if (chromeVisible) bindChrome()
                 else if (DeviceClass.cached(this@ReaderActivity) != true) returnNav.bind()
+                // Open panels that show 쪽수 계산 중 (phone only, like the status line; e-ink: their next action).
+                if (!countsListeners.isEmpty && DeviceClass.cached(this@ReaderActivity) != true) countsListeners.fire()
                 return
             }
             val now = SystemClock.uptimeMillis()
