@@ -64,4 +64,16 @@ class HeadingRuleTest {
         assertEquals("< N >", HeadingRule.label("simple:< N >"))
         assertEquals("^제\\d+화", HeadingRule.label("^제\\d+화"))
     }
+
+    @Test
+    fun reviewCases() {
+        // a stray separator is no rule at all
+        assertEquals("", HeadingRule.simple(" | "))
+        // runs of '*' and spaces are one "anything": no stacked .* to backtrack through
+        assertEquals("^\\s*(?:.*\\Q화\\E)\\s*$", HeadingRule.simpleToRegex("* * * 화"))
+        assertTrue(matches("simple:* * * * *화", "어떤 소설 12화"))
+        assertFalse(matches("simple:* * * * *화", "가".repeat(59) + "나"))
+        assertTrue(HeadingRule.looksLikeRegex("^제\\d+화"))
+        assertFalse(HeadingRule.looksLikeRegex("< N > | (N) *"))
+    }
 }

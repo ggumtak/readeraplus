@@ -88,7 +88,13 @@ internal object HeadingRuleDialog {
         // The result of the field: the stored rule, or null after telling why a regex does not compile.
         fun result(): String? {
             val t = edit.text.toString()
-            if (!regex) return HeadingRule.simple(t)
+            if (!regex) {
+                if (!HeadingRule.looksLikeRegex(t)) return HeadingRule.simple(t)
+                // A regex typed as an easy pattern would never match: offered again as a regex.
+                ctx.toast("정규식으로 보여 정규식으로 바꿨습니다. 맞으면 다시 저장하세요")
+                open(ctx, t, true, hasRule, perBook, onSave)
+                return null
+            }
             val r = t.trim()
             val err = if (r.isEmpty()) null else runCatching { Regex(r) }.exceptionOrNull()
             if (err == null) return r

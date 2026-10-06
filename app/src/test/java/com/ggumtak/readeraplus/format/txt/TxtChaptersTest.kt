@@ -288,6 +288,13 @@ class TxtChaptersTest {
     }
 
     @Test
+    fun scatteredNumberedSentencesAreNoChapters() {
+        // numbered sentences that may end with '.' now, but whose numbers do not go up: no K4 chapters
+        val hs = listOf("3. 그는 갔다.", "1. 그리고 끝났다.", "2. 다시 왔다.", "1. 또 갔다.", "3. 결국 졌다.")
+        assertEquals(emptyList<String>(), titles(TxtTestUtil.parse(book(hs))))
+    }
+
+    @Test
     fun userRuleAddsToBuiltinRules() {
         val hs = (1..5).map { "${it}화" } + listOf("< 6 >", "< 7 >")
         val text = book(hs)

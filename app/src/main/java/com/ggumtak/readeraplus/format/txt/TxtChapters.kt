@@ -107,7 +107,7 @@ internal object TxtChapters {
         }
         if (nc < 2) return EMPTY
 
-        val chosen = chooseRule(t, cIdx, cMask, nc, user != null)
+        val chosen = chooseRule(t, cIdx, cMask, cTitle, nc, user != null)
         if (chosen == 0) return EMPTY
         val selMask = chosen or R_K3
         val notes = if (chosen and R_K3.inv() != 0) authorNotes(cMask, cTitle, nc, chosen and R_K3.inv()) else null
@@ -266,7 +266,7 @@ internal object TxtChapters {
      * still form chapters (R_K3). The user rule is added to that (R_USER) when it matches at least once, and stands
      * alone when it matches at least twice and no built-in rule qualifies. Returns 0 when nothing qualifies.
      */
-    private fun chooseRule(t: LineTable, idx: IntArray, mask: IntArray, n: Int, hasUser: Boolean): Int {
+    private fun chooseRule(t: LineTable, idx: IntArray, mask: IntArray, titles: Array<String?>, n: Int, hasUser: Boolean): Int {
         val order = intArrayOf(R_K1, R_K2, R_K6, R_K5)
         var best = 0
         var bestCount = 0
@@ -281,7 +281,7 @@ internal object TxtChapters {
         if (k4 >= 3 && k4 > bestCount) {
             var total = 0
             for (k in 0 until n) if (mask[k] and R_K4 != 0) total++
-            if (k4 * 2 >= total) {
+            if (k4 * 2 >= total && ascending(t, idx, mask, titles, n)) {
                 best = R_K4
                 bestCount = k4
             }
@@ -351,6 +351,42 @@ internal object TxtChapters {
             k.startsWith("후기") -> 4
             else -> 0
         }
+    }
+
+    /**
+     * K4's numbers must mostly go up (at least 2 of 3 steps between its spaced matches): chapter numbers do, while
+     * numbered sentences scattered through a book ("1. 그는 갔다." can be a K4 line since numbered titles may end
+     * with '.') rarely do.
+     */
+    private fun ascending(t: LineTable, idx: IntArray, mask: IntArray, titles: Array<String?>, n: Int): Boolean {
+        var steps = 0
+        var up = 0
+        var prev = -1
+        var last = Int.MIN_VALUE
+        for (k in 0 until n) {
+            if (mask[k] and R_K4 == 0) continue
+            val pos = t.rawPos[idx[k]]
+            if (last != Int.MIN_VALUE && pos - last <= 1000) continue
+            last = pos
+            val num = leadingNumber(titles[k])
+            if (prev >= 0 && num >= 0) {
+                steps++
+                if (num > prev) up++
+            }
+            if (num >= 0) prev = num
+        }
+        return up * 3 >= steps * 2
+    }
+
+    private fun leadingNumber(s: String?): Int {
+        if (s == null) return -1
+        var v = -1
+        for (c in s) {
+            if (c !in '0'..'9') break
+            v = (if (v < 0) 0 else v) * 10 + (c - '0')
+            if (v > 99999) break
+        }
+        return v
     }
 
     private fun spacedCount(t: LineTable, idx: IntArray, mask: IntArray, n: Int, rule: Int): Int {

@@ -19,7 +19,7 @@ object HeadingRule {
     fun simpleText(stored: String): String = if (isSimple(stored)) stored.substring(SIMPLE_PREFIX.length) else stored
 
     /** The stored form of the easy pattern [text]; "" (no rule) for blank text. */
-    fun simple(text: String): String = text.trim().let { if (it.isEmpty()) "" else SIMPLE_PREFIX + it }
+    fun simple(text: String): String = text.trim().let { if (simpleToRegex(it).isEmpty()) "" else SIMPLE_PREFIX + it }
 
     /** The regex of the easy pattern [text] (find semantics, anchored on the whole line); "" without any alternative. */
     fun simpleToRegex(text: String): String {
@@ -45,11 +45,15 @@ object HeadingRule {
             val c = alt[k]
             when {
                 c == 'N' -> { flush(); sb.append("\\d{1,5}"); k++ }
-                c == '*' -> { flush(); sb.append(".*"); k++ }
-                isSpace(c) -> {
+                c == '*' || isSpace(c) -> {
+                    // A run of '*' and spaces is one token: "* * *" stays a single "anything", with no backtracking blow-up.
                     flush()
-                    sb.append("\\s*")
-                    while (k < alt.length && isSpace(alt[k])) k++
+                    var star = false
+                    while (k < alt.length && (alt[k] == '*' || isSpace(alt[k]))) {
+                        if (alt[k] == '*') star = true
+                        k++
+                    }
+                    sb.append(if (star) ".*" else "\\s*")
                 }
                 else -> { lit.append(c); k++ }
             }
@@ -58,6 +62,9 @@ object HeadingRule {
     }
 
     private fun isSpace(c: Char): Boolean = c.isWhitespace() || c == '　' || c == ' '
+
+    /** True when easy-pattern [text] looks like a regex (one of ^ $ \ [ ] { } + ?), which it would match only literally. */
+    fun looksLikeRegex(text: String): Boolean = text.any { it in "^$\\[]{}+?" }
 
     /** The pattern [stored] stands for, or null for no rule (blank) and for a regex that does not compile. */
     fun compile(stored: String): Pattern? {
