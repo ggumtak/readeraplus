@@ -187,9 +187,14 @@ Owns `format/txt/`. Implements `TxtDocuments` (open / readMeta / preview / ENCOD
    - K5 `^[=\-*~#]{3,}\s*(\S.{0,40}?)\s*[=\-*~#]{3,}$` (only if the inner text matches K1–K3 or has a digit)
    - K6 `^\S.{0,30}?\s+\d{1,5}\s*화$` (title + N화)
    - K4 `^\d{1,4}\s*[.)]\s+\S.{0,40}$` only when it wins by the scoring below (list-prone).
-   - user regex `txtChapterRegex` (if valid) is tried first.
-   Reject lines ending with `다.`, `?”`, `!”`, `."`. Scoring: per rule count matches spaced > 1000 chars apart;
-   the best rule (plus K3 specials always) defines chapters; require ≥ 2 chapters. Prune runs of ≥ 3 headings
+   - user rule `txtChapterRegex` (if valid), a regex or an easy pattern stored as `simple:<text>`
+     (`format/txt/HeadingRule.kt`: `N` = number, `*` = any text, spaces optional, `|` separates alternatives, each
+     alternative matches the whole trimmed line). It adds to the built-in rules, it does not replace them.
+   Reject lines ending with `다.`, `?”`, `!”`, `."` (a numbered title `7. 제목.` is not rejected for its final `.`;
+   a line the user rule matches is never rejected). Scoring: per rule count matches spaced > 1000 chars apart;
+   the best built-in rule (plus K3 specials always) defines chapters, and the user rule's matches are added to
+   them (a book may use `76화` and then `< 77 >`); with no qualifying built-in rule the user rule alone defines
+   them when it matches ≥ 2 lines; require ≥ 2 chapters. Prune runs of ≥ 3 headings
    with no body between them (a TOC listing at the top). If the first body line equals the heading, drop it
    (duplicate title).
 6. **Sections**: each chapter starts a section; text before the first chapter is section 0 (if non-empty).
@@ -683,7 +688,7 @@ that outlive the release.
    `einkRefreshEveryNight = -1` (same as day), `einkFlashImages = false`; closing a panel only counts one turn toward
    a cadence that is already on. The default e-ink mode stays "system" (the device keeps its own waveform).
 6. **At most one `TxtIndexStore.VERSION` bump per release.** Each bump makes every large TXT parse in full once
-   (≈ 1–1.5 s for 14 MB on the A53). Release 2 spends it on A5 (3 → 4). While a TXT over 4 MB is parsed in full
+   (≈ 1–1.5 s for 14 MB on the A53). Release 2 spends it on A5 (3 → 4) and on the user heading rule (4 → 5: it adds to the built-in rules). While a TXT over 4 MB is parsed in full
    (`TxtDocuments.isBuildingIndex`) the delayed loading text reads "목차를 만드는 중…". The bump is also
    `TxtDocuments.PARSE_VERSION`, part of `LayoutKeys.textSignature`: a saved TXT position is found again once by its
    char fraction, since the new parse may split sections differently.

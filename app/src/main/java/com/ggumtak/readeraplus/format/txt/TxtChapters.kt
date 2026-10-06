@@ -7,10 +7,13 @@ import java.util.regex.Pattern
  *
  * 1. Candidates: non-blank lines of at most 60 chars that pass a cheap structural prefilter (first significant
  *    char is a digit / 제 / a keyword initial / a separator, or the line ends with 화).
- * 2. Every built-in rule (K1..K6, see ARCHITECTURE.md) is tried on the candidate; the user regex first.
- * 3. Scoring: per rule, count matches spaced more than 1000 chars apart; the best rule wins (K4 "1. title" only
- *    under stricter conditions); specials (K3: 프롤로그, 외전, 후기, …) are always included, except author notes
- *    that recur after the episodes (작가의 말 / 작가 후기 / 후기 / 완결 후기, see [authorNotes]).
+ * 2. Every built-in rule (K1..K6, see ARCHITECTURE.md) is tried on the candidate, and the user rule ([HeadingRule]:
+ *    a simple pattern or a regex).
+ * 3. Scoring: per rule, count matches spaced more than 1000 chars apart; the best built-in rule wins (K4 "1. title"
+ *    only under stricter conditions); specials (K3: 프롤로그, 외전, 후기, …) are always included, except author
+ *    notes that recur after the episodes (작가의 말 / 작가 후기 / 후기 / 완결 후기, see [authorNotes]). The user rule
+ *    adds to the winner: a book may use "76화" for most chapters and "< 77 >" for the rest. Without a qualifying
+ *    built-in rule the user rule alone defines the chapters (at least 2 matches).
  * 4. Cleanup: an immediately repeated heading is a duplicated title (second one dropped); runs of 3+ headings
  *    with no body between them are a table-of-contents listing and are pruned.
  */
@@ -41,6 +44,8 @@ internal object TxtChapters {
             "(?=$|[\\s\\d.:：\\-–—~|·>〉》\\]】」』)）]).{0,40}"
     )
     private val K4: Pattern = Pattern.compile("\\d{1,4}\\s*[.)]\\s+\\S.{0,40}")
+    /** Start of a numbered title ("7. 제목"), the K4 shape: such a line may end with '.'. */
+    private val NUMBERED_TITLE: Pattern = Pattern.compile("\\d{1,4}\\s*[.)]\\s+\\S")
     private val K5: Pattern = Pattern.compile("[=\\-*~#]{3,}\\s*(\\S.{0,40}?)\\s*[=\\-*~#]{3,}")
     private val K6: Pattern = Pattern.compile("\\S.{0,30}?\\s+\\d{1,5}\\s*화")
 
@@ -48,15 +53,13 @@ internal object TxtChapters {
     class Result(val lines: IntArray, val titles: Array<String>)
 
     /**
-     * Detects chapter headings in [t] (does not modify it). [userRegex] (find semantics) is tried first;
-     * an invalid one is ignored. Returns an empty result when fewer than 2 chapters are found.
+     * Detects chapter headings in [t] (does not modify it). [userRegex] is the stored user rule ([HeadingRule]:
+     * find semantics for a regex); its matches are added to those of the built-in rules, and a line it matches is
+     * never rejected by [rejectEnding]. An invalid one is ignored. Returns an empty result when fewer than 2
+     * chapters are found.
      */
     fun detect(t: LineTable, userRegex: String): Result {
-        val user: Pattern? = if (userRegex.isBlank()) null else try {
-            Pattern.compile(userRegex)
-        } catch (_: Exception) {
-            null
-        }
+        val user: Pattern? = HeadingRule.compile(userRegex)
         var cIdx = IntArray(256)
         var cMask = IntArray(256)
         var cTitle = arrayOfNulls<String>(256)
@@ -73,11 +76,11 @@ internal object TxtChapters {
             val pre = prefilter(a, s, e)
             if (user == null && !pre) continue
             val cand = candidateString(a, s, e)
-            if (rejectEnding(cand)) continue
             var mask = 0
             var title: String? = null
-            if (user != null && userMatches(user, cand)) mask = mask or R_USER
-            if (pre) mask = mask or builtinMask(cand)
+            if (user != null && userMatches(user, cand)) mask = R_USER
+            // A sentence-like line is no built-in heading, but a line the user rule matches stays a candidate.
+            if (pre && (mask != 0 || !rejectEnding(cand))) mask = mask or builtinMask(cand)
             if (mask and R_K5 != 0) {
                 val m = K5.matcher(cand)
                 if (m.matches()) {
@@ -107,7 +110,7 @@ internal object TxtChapters {
         val chosen = chooseRule(t, cIdx, cMask, nc, user != null)
         if (chosen == 0) return EMPTY
         val selMask = chosen or R_K3
-        val notes = if (chosen != R_K3) authorNotes(cMask, cTitle, nc, chosen) else null
+        val notes = if (chosen and R_K3.inv() != 0) authorNotes(cMask, cTitle, nc, chosen and R_K3.inv()) else null
         var sel = IntArray(nc)
         var selTitle = arrayOfNulls<String>(nc)
         var ns = 0
@@ -211,7 +214,8 @@ internal object TxtChapters {
     }
 
     /**
-     * Sentence-like endings are never headings: Hangul + '.' (except a numbered unit such as "제1화."), or a
+     * Sentence-like endings are never headings: Hangul + '.' (except a numbered unit such as "제1화." and a numbered
+     * title such as "7. 점소이가 행패를 부림.", which chooseRule only accepts as K4 when isolated), or a
      * quote closed after ? ! . … whose opening quote is not on the line (the tail of a dialogue line). A quoted
      * chapter title such as `제12화 “누구세요?”` keeps its opening quote and is accepted.
      */
@@ -221,6 +225,7 @@ internal object TxtChapters {
         val last = t[n - 1]
         val prev = t[n - 2]
         if (last == '.' && prev in '가'..'힣') {
+            if (NUMBERED_TITLE.matcher(t).lookingAt()) return false
             return !(n >= 3 && isUnit(prev) && t[n - 3] in '0'..'9')
         }
         if ((last == '”' || last == '"' || last == '’') && (prev == '?' || prev == '!' || prev == '.' || prev == '…')) {
@@ -255,17 +260,13 @@ internal object TxtChapters {
     }
 
     /**
-     * Picks the rule that defines chapters: the user rule if it matches at least twice; else the built-in rule
-     * with the most matches spaced > 1000 chars apart (ties: K1 > K2 > K6 > K5). K4 wins only with >= 3 spaced
-     * matches, strictly more than every other rule, and when most of its matches are isolated (not lists).
-     * Returns 0 when nothing qualifies (specials alone may still form chapters: returns R_K3 then).
+     * Picks the rules that define chapters, as a mask. The built-in rule is the one with the most matches spaced
+     * > 1000 chars apart (ties: K1 > K2 > K6 > K5). K4 wins only with >= 3 spaced matches, strictly more than every
+     * other rule, and when most of its matches are isolated (not lists). When nothing qualifies, specials alone may
+     * still form chapters (R_K3). The user rule is added to that (R_USER) when it matches at least once, and stands
+     * alone when it matches at least twice and no built-in rule qualifies. Returns 0 when nothing qualifies.
      */
     private fun chooseRule(t: LineTable, idx: IntArray, mask: IntArray, n: Int, hasUser: Boolean): Int {
-        if (hasUser) {
-            var c = 0
-            for (k in 0 until n) if (mask[k] and R_USER != 0) c++
-            if (c >= 2) return R_USER
-        }
         val order = intArrayOf(R_K1, R_K2, R_K6, R_K5)
         var best = 0
         var bestCount = 0
@@ -285,18 +286,31 @@ internal object TxtChapters {
                 bestCount = k4
             }
         }
-        if (bestCount >= 2) return best
-        var specials = 0
-        for (k in 0 until n) if (mask[k] and R_K3 != 0) specials++
-        return if (specials >= 2) R_K3 else 0
+        var builtin = 0
+        if (bestCount >= 2) {
+            builtin = best
+        } else {
+            var specials = 0
+            for (k in 0 until n) if (mask[k] and R_K3 != 0) specials++
+            if (specials >= 2) builtin = R_K3
+        }
+        if (!hasUser) return builtin
+        var users = 0
+        for (k in 0 until n) if (mask[k] and R_USER != 0) users++
+        return when {
+            users == 0 -> builtin
+            builtin != 0 -> builtin or R_USER
+            users >= 2 -> R_USER
+            else -> 0
+        }
     }
 
     /**
      * A5: web-novel dumps put an author note ("작가의 말", "작가 후기", "후기", "완결 후기") after many episodes. Such a
      * note belongs to its episode: it must not become a TOC entry or start a new page. With 3 or more note
-     * candidates, every note before the last heading of the [chosen] rule is dropped; a note after it is dropped
+     * candidates, every note before the last heading of the [chosen] rules is dropped; a note after it is dropped
      * too when its kind already recurred (the last episode's own note), while a different kind there stays (a
-     * closing "완결 후기" after per-episode "작가의 말"s). Notes the user regex matches stay; 프롤로그, 에필로그,
+     * closing "완결 후기" after per-episode "작가의 말"s). Notes the user rule matches stay; 프롤로그, 에필로그,
      * 서장, 종장, 서문, 외전, 번외, 후일담 and 막간 are not notes. Returns the candidates to drop, or null for none.
      */
     private fun authorNotes(mask: IntArray, titles: Array<String?>, n: Int, chosen: Int): BooleanArray? {
@@ -305,7 +319,7 @@ internal object TxtChapters {
         var lastChosen = -1
         for (k in 0 until n) {
             val m = mask[k]
-            if (m and R_K3 != 0 && !(chosen == R_USER && m and R_USER != 0)) {
+            if (m and R_K3 != 0 && !(chosen and R_USER != 0 && m and R_USER != 0)) {
                 kind[k] = noteKind(titles[k])
                 if (kind[k] != 0) notes++
             }

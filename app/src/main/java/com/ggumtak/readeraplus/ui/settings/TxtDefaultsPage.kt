@@ -2,14 +2,12 @@ package com.ggumtak.readeraplus.ui.settings
 
 import android.view.View
 import com.ggumtak.readeraplus.format.ParseOptions
-import com.ggumtak.readeraplus.reader.extras.ErrorText
+import com.ggumtak.readeraplus.format.txt.HeadingRule
 import com.ggumtak.readeraplus.reader.extras.Fmt
 import com.ggumtak.readeraplus.reader.extras.ReadingSettingsPopup
 import com.ggumtak.readeraplus.reader.extras.RulesDialog
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.chooser
-import com.ggumtak.readeraplus.ui.kit.prompt
-import com.ggumtak.readeraplus.ui.kit.toast
 
 /**
  * "TXT 정리 기본값" (T1-9): the global TXT options ([com.ggumtak.readeraplus.settings.ReaderSettings] `txt*`) that
@@ -62,7 +60,7 @@ internal class TxtDefaultsPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         headingsRow = ctx.toggleRow("챕터 제목 강조", "굵게 · 크게 · 가운데", r.txtEmphasizeHeadings) { v ->
             editReader { it.copy(txtEmphasizeHeadings = v) }
         }.also(body::addView)
-        regexRow = ctx.valueRow("챕터 규칙 (정규식)", regexLabel(r.txtChapterRegex)) { editRegex(Settings.reader.txtChapterRegex) }
+        regexRow = ctx.valueRow(HeadingRuleDialog.TITLE, regexLabel(r.txtChapterRegex)) { editRegex() }
             .oneLineSummary().also(body::addView)
         updateChapterUi()
         return ctx.pageScroll(body)
@@ -87,16 +85,9 @@ internal class TxtDefaultsPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         regexRow?.setShown(on)
     }
 
-    /** The rule prompt; a rule that does not compile is shown, then the prompt opens again with the typed text. */
-    private fun editRegex(initial: String) {
-        ctx.prompt("챕터 규칙 (정규식)", initial, "예: ^제\\s*\\d+\\s*화.*") { text ->
-            val t = text.trim()
-            val err = if (t.isEmpty()) null else runCatching { Regex(t) }.exceptionOrNull()
-            if (err != null) {
-                ctx.toast(ErrorText.regex(err))
-                editRegex(text)
-                return@prompt
-            }
+    /** The rule editor (간단 패턴 / 정규식); the rule is for every book that follows these defaults. */
+    private fun editRegex() {
+        HeadingRuleDialog.show(ctx, Settings.reader.txtChapterRegex, perBook = false) { t, _ ->
             if (t != Settings.reader.txtChapterRegex) editReader { it.copy(txtChapterRegex = t) }
             regexRow?.setSummary(regexLabel(t))
         }
@@ -113,8 +104,8 @@ internal class TxtDefaultsPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     companion object {
         const val TITLE = "TXT 정리 기본값"
 
-        /** The 챕터 규칙 row's value: the rule itself, or what applies without one. */
-        fun regexLabel(regex: String): String = regex.ifBlank { "기본 규칙만" }
+        /** The 챕터 제목 규칙 row's value: the rule itself, or what applies without one. */
+        fun regexLabel(regex: String): String = HeadingRule.label(regex)
 
         /** The popup's order of the blank-line modes. */
         val BLANK_MODES = listOf(ParseOptions.BLANK_AUTO, ParseOptions.BLANK_REMOVE_ALL, ParseOptions.BLANK_COLLAPSE, ParseOptions.BLANK_KEEP)

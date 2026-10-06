@@ -5,7 +5,6 @@ import com.ggumtak.readeraplus.data.BookPrefs
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.TxtOverride
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
-import com.ggumtak.readeraplus.reader.extras.ErrorText
 import com.ggumtak.readeraplus.reader.extras.Fmt
 import com.ggumtak.readeraplus.reader.extras.ReadingSettingsPopup
 import com.ggumtak.readeraplus.reader.extras.RulesDialog
@@ -17,7 +16,6 @@ import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.confirm
-import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.toast
 import kotlinx.coroutines.Dispatchers
@@ -99,7 +97,7 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         headingsRow = ctx.toggleRow("챕터 제목 강조", "굵게 · 크게 · 가운데", txt.txtEmphasizeHeadings) { v ->
             update(txt.copy(txtEmphasizeHeadings = v))
         }.also(body::addView)
-        regexRow = ctx.valueRow("챕터 규칙 (정규식)", TxtDefaultsPage.regexLabel(txt.txtChapterRegex)) { editRegex(txt.txtChapterRegex) }
+        regexRow = ctx.valueRow(HeadingRuleDialog.TITLE, TxtDefaultsPage.regexLabel(txt.txtChapterRegex)) { editRegex() }
             .oneLineSummary().also(body::addView)
         updateChapterUi()
 
@@ -119,17 +117,19 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         regexRow?.setShown(on)
     }
 
-    /** The rule prompt; a rule that does not compile is shown, then the prompt opens again with the typed text. */
-    private fun editRegex(initial: String) {
-        ctx.prompt("챕터 규칙 (정규식)", initial, "예: ^제\\s*\\d+\\s*화.*") { text ->
-            val t = text.trim()
-            val err = if (t.isEmpty()) null else runCatching { Regex(t) }.exceptionOrNull()
-            if (err != null) {
-                ctx.toast(ErrorText.regex(err))
-                editRegex(text)
-                return@prompt
+    /**
+     * The rule editor (간단 패턴 / 정규식). "이 책만" is this book's own option; "모든 책" makes the rule the TXT defaults
+     * and this book follows them (its override for the rule is dropped, as it equals the defaults).
+     */
+    private fun editRegex() {
+        HeadingRuleDialog.show(ctx, txt.txtChapterRegex, perBook = true) { t, all ->
+            if (all) {
+                if (t != Settings.reader.txtChapterRegex) editReader { it.copy(txtChapterRegex = t) }
+                txt = txt.copy(txtChapterRegex = t)
+                setOverride(TxtEdits.overrideFor(Settings.reader, txt))
+            } else {
+                update(txt.copy(txtChapterRegex = t))
             }
-            update(txt.copy(txtChapterRegex = t))
             regexRow?.setSummary(TxtDefaultsPage.regexLabel(t))
         }
     }

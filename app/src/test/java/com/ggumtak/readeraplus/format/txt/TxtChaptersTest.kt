@@ -276,4 +276,44 @@ class TxtChaptersTest {
         val p = TxtTestUtil.parse(book(listOf("제1화 유일한 장")))
         assertTrue(titles(p).isEmpty())
     }
+
+    @Test
+    fun numberedHeadingsMayEndWithAPeriod() {
+        val hs = listOf("7. 점소이가 행패를 부림.", "8. 객잔의 밤.", "9. 검은 옷의 사내.", "10. 새벽의 약속.")
+        assertEquals(hs, titles(TxtTestUtil.parse(book(hs))))
+        // the exemption is for the numbered shape only: a plain sentence is still no heading
+        assertTrue(TxtChapters.rejectEnding("서로를 바라보았다."))
+        assertFalse(TxtChapters.rejectEnding("7. 점소이가 행패를 부림."))
+        assertFalse(TxtChapters.rejectEnding("12) 점소이가 행패를 부림."))
+    }
+
+    @Test
+    fun userRuleAddsToBuiltinRules() {
+        val hs = (1..5).map { "${it}화" } + listOf("< 6 >", "< 7 >")
+        val text = book(hs)
+        assertEquals((1..5).map { "${it}화" }, titles(TxtTestUtil.parse(text)))
+        val o = ParseOptions(txtChapterRegex = HeadingRule.simple("< N >"))
+        assertEquals(hs, titles(TxtTestUtil.parse(text, o)))
+        // a regex rule adds the same way
+        val o2 = ParseOptions(txtChapterRegex = "^<\\s*\\d+\\s*>$")
+        assertEquals(hs, titles(TxtTestUtil.parse(text, o2)))
+    }
+
+    @Test
+    fun userRuleMatchedSentenceIsNotRejected() {
+        val hs = listOf("첫 번째 이야기가 끝남.", "두 번째 이야기가 끝남.", "세 번째 이야기가 끝남.")
+        val o = ParseOptions(txtChapterRegex = "끝남\\.$")
+        assertEquals(hs, titles(TxtTestUtil.parse(book(hs), o)))
+        assertTrue(titles(TxtTestUtil.parse(book(hs))).isEmpty())
+    }
+
+    @Test
+    fun userRuleAloneWhenNoBuiltinRuleQualifies() {
+        val hs = listOf("<시작>", "<중간>", "<끝>")
+        val o = ParseOptions(txtChapterRegex = HeadingRule.simple("<*>"))
+        assertEquals(hs, titles(TxtTestUtil.parse(book(hs), o)))
+        // one match alone is not a rule
+        val one = ParseOptions(txtChapterRegex = "^<시작>$")
+        assertTrue(titles(TxtTestUtil.parse(book(hs), one)).isEmpty())
+    }
 }
