@@ -156,35 +156,6 @@ class ReaderReviewFixesTest {
         assertEquals(0.2f, TextPositions.remapFraction(stored, "new", 12, 40, 0.2f)!!, 1e-6f)
     }
 
-    // ---------------------------------------------------------------- copy target (content:// imports)
-
-    @Test
-    fun copyNeverOverwritesAnotherBookWhenTheSizeIsUnknown() {
-        val files = mapOf("novel.txt" to 5000L)
-        val (name, reuse) = UriPaths.copyTarget("novel.txt", -1L) { files[it] }
-        assertEquals("novel (2).txt", name)
-        assertFalse(reuse)
-        assertEquals("novel (2).txt" to false, UriPaths.copyTarget("novel.txt", 0L) { files[it] })
-    }
-
-    @Test
-    fun copyReusesOnlyAMatchingSize() {
-        val files = mapOf("a.epub" to 10L, "a (2).epub" to 20L, "a (3).epub" to -1L)
-        assertEquals("a (2).epub" to true, UriPaths.copyTarget("a.epub", 20L) { files[it] })
-        assertEquals("a (4).epub" to false, UriPaths.copyTarget("a.epub", 30L) { files[it] })
-        assertEquals("b.txt" to false, UriPaths.copyTarget("b.txt", 30L) { files[it] })
-    }
-
-    @Test
-    fun copyPastTheReuseSlotsStillPicksAFreeName() {
-        val taken = (1..60).associate { UriPaths.numberedName("x.txt", it) to it.toLong() }
-        // All 50 reuse slots hold other sizes: a fresh name, never slot 1.
-        assertEquals("x (61).txt" to false, UriPaths.copyTarget("x.txt", 999L, maxReuse = 50) { taken[it] })
-        // Slot 55 matches but lies past the reuse range: still a fresh name.
-        assertEquals("x (61).txt" to false, UriPaths.copyTarget("x.txt", 55L, maxReuse = 50) { taken[it] })
-        assertEquals("x (7).txt" to true, UriPaths.copyTarget("x.txt", 7L, maxReuse = 50) { taken[it] })
-    }
-
     // ---------------------------------------------------------------- learned page keys
 
     @Test

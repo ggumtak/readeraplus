@@ -476,8 +476,11 @@ internal class LanExchange(
                 problems += LanNames.display(name) to EMPTY
                 return null
             }
-            val target = File(destDir, LanNames.unique(name) { File(destDir, it).exists() })
-            if (!temp.renameTo(target)) throw DiskError(IOException("rename failed"))
+            val target = try {
+                BookCopies.settle(temp, destDir, name)
+            } catch (e: IOException) {
+                throw DiskError(e)
+            }
             done = true
             return target
         } finally {

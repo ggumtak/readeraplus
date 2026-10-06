@@ -7,6 +7,7 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Log
 import com.ggumtak.readeraplus.data.Book
+import com.ggumtak.readeraplus.data.BookCopies
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.format.DocumentException
 import java.io.File
@@ -18,7 +19,6 @@ import java.io.FileOutputStream
  */
 internal object IntentFiles {
     private const val TAG = "IntentFiles"
-    private const val MAX_COPIES = 50
 
     fun resolveBook(context: Context, intent: Intent): Book {
         val id = intent.getLongExtra(ReaderActivity.EXTRA_BOOK_ID, -1L)
@@ -90,7 +90,7 @@ internal object IntentFiles {
 
     /** Copies the stream into the app's books folder (reusing an identical earlier copy). */
     private fun copyToBooks(context: Context, uri: Uri): File? {
-        val (name, size) = nameAndSize(context, uri)
+        val (name, _) = nameAndSize(context, uri)
         val mime = try {
             context.contentResolver.getType(uri)
         } catch (t: Throwable) {
@@ -101,36 +101,18 @@ internal object IntentFiles {
         val safe = UriPaths.safeFileName(name ?: fallback, mime, "book_${System.currentTimeMillis()}")
         val dir = context.getExternalFilesDir("books") ?: File(context.filesDir, "books")
         if (!dir.isDirectory && !dir.mkdirs()) return null
-        // Reuse an earlier copy only when its size is known to match; never overwrite a same-named copy of a
-        // different book (the library, its position and bookmarks point at that file).
-        val (name0, reuse) = UriPaths.copyTarget(safe, size, MAX_COPIES) { lengthIn(dir, it) }
-        if (reuse) return File(dir, name0)
-        var target = File(dir, name0)
-        val tmp = File(dir, "${target.name}.part")
+        // Written to a temp file first: an identical earlier copy is reused (a corrected edition of the same size
+        // is not identical); otherwise the temp file is moved to the first free name, never over another book
+        // (the library, its position and bookmarks point at that file).
+        val tmp = File(dir, ".copy-${System.nanoTime()}.part")
         try {
             val input = context.contentResolver.openInputStream(uri) ?: return null
             input.use { ins -> FileOutputStream(tmp).use { out -> ins.copyTo(out, 64 * 1024) } }
-            // Another import may have taken the name while the stream was copied: rename() would replace it.
-            if (target.exists()) target = File(dir, UriPaths.copyTarget(safe, -1L, 0) { lengthIn(dir, it) }.first)
-            if (!tmp.renameTo(target)) {
-                tmp.copyTo(target, overwrite = false)
-                tmp.delete()
-            }
-            return target
+            return BookCopies.settle(tmp, dir, safe)
         } catch (t: Throwable) {
             Log.w(TAG, "copy failed for $uri", t)
             tmp.delete()
             return null
-        }
-    }
-
-    /** Length of [name] in [dir]: null when free, -1 when taken by something that is not a file. */
-    private fun lengthIn(dir: File, name: String): Long? {
-        val f = File(dir, name)
-        return when {
-            !f.exists() -> null
-            f.isFile -> f.length()
-            else -> -1L
         }
     }
 }
