@@ -502,8 +502,9 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
 
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
-        // Built here, when a service asks: nothing is prepared per draw or turn.
-        cb.accessibilityText()?.let { info.text = it }
+        // Built here, when a service asks: nothing is prepared per draw or turn. Only for a screen reader (touch
+        // exploration on): a UI dump or another service would otherwise see the whole page as one node's text.
+        if (accessibilityManager?.isTouchExplorationEnabled == true) cb.accessibilityText()?.let { info.text = it }
         // Both modes turn by the same commands as the keys (the scroll viewport steps one screen).
         info.isScrollable = true
         info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
