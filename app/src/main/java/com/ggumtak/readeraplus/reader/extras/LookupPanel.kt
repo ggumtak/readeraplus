@@ -39,7 +39,6 @@ import com.ggumtak.readeraplus.ui.kit.vertical
 internal object LookupPanel {
     private const val SIDE_DP = 8
     private const val BAR_DP = 44
-    private const val DIM = 0.2f
 
     /**
      * Shows [url] in the window titled [title]. When no WebView can be created (no WebView provider installed) the
@@ -47,6 +46,7 @@ internal object LookupPanel {
      */
     @SuppressLint("SetJavaScriptEnabled")
     fun show(activity: Activity, title: String, url: String): Boolean {
+        if (activity.isFinishing || activity.isDestroyed) return false
         val web = try {
             WebView(activity)
         } catch (_: Throwable) {
@@ -60,9 +60,26 @@ internal object LookupPanel {
             allowContentAccess = false
         }
         web.setBackgroundColor(Ink.WHITE)
+        web.overScrollMode = View.OVER_SCROLL_NEVER
+        web.isVerticalFadingEdgeEnabled = false
 
-        val screen = activity.resources.displayMetrics.heightPixels
-        var height = LookupQuery.startHeight(screen)
+        // Re-read on every use: the reader keeps running through a rotation.
+        val screen = { activity.resources.displayMetrics.heightPixels }
+        var height = LookupQuery.startHeight(screen())
+        var destroyed = false
+        // A WebView outlives its dialog unless it is taken apart: on dismiss, and when the window goes away with
+        // its activity (no dismiss then).
+        fun destroyWeb() {
+            if (destroyed) return
+            destroyed = true
+            runCatching {
+                web.stopLoading()
+                web.loadUrl("about:blank")
+                (web.parent as? ViewGroup)?.removeView(web)
+                web.removeAllViews()
+                web.destroy()
+            }
+        }
 
         lateinit var dialog: Dialog
         val line = View(activity).apply { setBackgroundColor(Ink.BLACK); visibility = View.INVISIBLE }
@@ -118,32 +135,32 @@ internal object LookupPanel {
             }
         }
         dialog.setContentView(root)
-        dialog.setOnDismissListener {
-            // A WebView outlives its dialog unless it is taken apart.
-            runCatching {
-                web.stopLoading()
-                web.loadUrl("about:blank")
-                (web.parent as? ViewGroup)?.removeView(web)
-                web.removeAllViews()
-                web.destroy()
-            }
-        }
+        dialog.setOnDismissListener { destroyWeb() }
+        root.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {}
+            override fun onViewDetachedFromWindow(v: View) = destroyWeb()
+        })
         dialog.window?.apply {
             setBackgroundDrawable(InsetDrawable(activity.borderBox(), activity.dp(SIDE_DP), 0, activity.dp(SIDE_DP), 0))
             setGravity(Gravity.BOTTOM)
             setLayout(MATCH_PARENT, height)
-            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            setDimAmount(DIM)
+            // No dim: on e-ink it repaints the whole page grey (InkDialog has none either).
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         }
-        web.loadUrl(url)
-        dialog.showNoAnim()
+        try {
+            web.loadUrl(url)
+            dialog.showNoAnim()
+        } catch (_: Exception) {
+            destroyWeb()
+            return false
+        }
         PanelRegistry.dialog(activity, dialog)
         return true
     }
 
     /** Dragging [bar] up grows the window, down shrinks it; [apply] runs once, on the finger-up, with the clamped height. */
     @SuppressLint("ClickableViewAccessibility")
-    private fun attachResize(bar: View, screen: Int, current: () -> Int, apply: (Int) -> Unit) {
+    private fun attachResize(bar: View, screen: () -> Int, current: () -> Int, apply: (Int) -> Unit) {
         var downY = 0f
         var startHeight = 0
         bar.setOnTouchListener { _, e ->
@@ -154,7 +171,7 @@ internal object LookupPanel {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    val h = LookupQuery.clampHeight(startHeight + (downY - e.rawY).toInt(), screen)
+                    val h = LookupQuery.clampHeight(startHeight + (downY - e.rawY).toInt(), screen())
                     if (h != current()) apply(h)
                     true
                 }

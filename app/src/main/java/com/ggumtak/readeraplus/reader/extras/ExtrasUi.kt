@@ -361,8 +361,8 @@ internal object TextActions {
                 if (k == null) {
                     webSearch(activity, text) { onPicked?.invoke(Lookups.VIA_WEB, webSearchHost()) }
                 } else if (k == LookupQuery.NAVER_KEY) {
-                    runCatching { Settings.raw().edit().putString(PREF_LAST_DICT, k).apply() }
                     if (LookupPanel.show(activity, query, LookupQuery.naverUrl(query))) {
+                        runCatching { Settings.raw().edit().putString(PREF_LAST_DICT, k).apply() }
                         onPicked?.invoke(Lookups.VIA_WEB, LookupQuery.NAVER_HOST)
                     }
                 } else if (launchProcessText(activity, apps.getValue(k), text)) {
