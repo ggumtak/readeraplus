@@ -68,11 +68,12 @@ object LayoutKeys {
     /**
      * The content box of a [viewW] × [viewH] page view. From the top: [extraTop], px that a display cutout covers
      * (fullscreen, system bars hidden: the S25's camera band; 0 elsewhere, the Comet has none), left out like a system
-     * bar; the header's band ([StatusBands]); the top margin; the text box; the bottom margin; the footer's band (footer
-     * items and the progress line) at the view's bottom. The 위·아래 여백 count from the bands since 2026-10-05 (user: "위
-     * 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지"); band + margin is rounded once, so the default box is
-     * exactly where 40 dp from the edges put it before (Comet rows 80..1360, S25 fullscreen 207..2220 below its 87 px
-     * band). Only settings decide the bands: nothing shown or hidden on the page moves the box.
+     * bar; the header's band ([StatusBands]), which a cutout's band contains (the header is drawn inside it); the top
+     * margin; the text box; the bottom margin; the footer's band (footer items and the progress line) at the view's
+     * bottom. The 위·아래 여백 count from the bands since 2026-10-05 (user: "위 여백은 위 아래 애들을 제외하고 본문영역에서만
+     * 계산해야지"); band + margin is rounded once, so without a cutout the default box is where 40 dp from the top put it
+     * (Comet row 80); under the S25's 87 px band it starts one 15 dp margin below it (row 129). Only settings decide the
+     * bands: nothing shown or hidden on the page moves the box.
      */
     fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, extraTop: Int = 0): PageGeometry {
         fun px(dp: Int): Int = Math.round(dp * density)
@@ -90,8 +91,12 @@ object LayoutKeys {
         }
         val band = extraTop.coerceIn(0, viewH)
         val below = viewH - band
-        var h = below - mt - mb
-        var top = band + mt
+        // Under a display cutout the header is drawn inside the cutout's band (StatusFit.headerBaseline), so its own band
+        // is not stacked below it: the text starts one top margin under the taller of the two (user, 2026-10-06: "윗여백은
+        // 왤케 넓음?"; the S25 fullscreen text rose 70 px). Without a cutout: the header's band and the margin, as before.
+        val topEdge = if (band > 0) maxOf(band, px(StatusBands.headerDp(s))) + px(margin(s.marginTopDp)) else mt
+        var h = viewH - topEdge - mb
+        var top = topEdge
         if (h < minBox) {
             h = minOf(minBox, below).coerceAtLeast(1)
             top = band + ((below - h) / 2).coerceAtLeast(0)

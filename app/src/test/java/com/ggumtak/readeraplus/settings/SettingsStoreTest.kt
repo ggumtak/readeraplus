@@ -294,12 +294,12 @@ class SettingsStoreTest {
         fresh(HashMap(before).apply { put("r.statusFontSizeSp",12f) })
         assertEquals(listOf(12f,18,10),Settings.reader.let { listOf(it.statusFontSizeSp,it.marginTopDp,it.marginBottomDp) })
         // 여백 사용 off: the page's minimal 4 dp margin is fixed and could not give the 13 sp bands' growth back, so the
-        // size stays 11 sp and the text box with it (Comet 22 + 4 dp = row 52, S25 fullscreen 87 + 78 = 165, as before
-        // the update); the next save makes that 11 sp a choice that stays.
+        // size stays 11 sp and the text box with it (Comet 22 + 4 dp = row 52; S25 fullscreen 87 + 12 = 99, the header
+        // inside the camera band since 2026-10-06); the next save makes that 11 sp a choice that stays.
         val off=fresh(HashMap(before).apply { put("r.pageMargins",false) })
         assertEquals(listOf(11f,18,10),Settings.reader.let { listOf(it.statusFontSizeSp,it.marginTopDp,it.marginBottomDp) })
         assertEquals(52,com.ggumtak.readeraplus.reader.LayoutKeys.geometry(Settings.reader,720,1440,2f).contentTop)
-        assertEquals(165,com.ggumtak.readeraplus.reader.LayoutKeys.geometry(Settings.reader,1080,2340,3f,extraTop=87).contentTop)
+        assertEquals(99,com.ggumtak.readeraplus.reader.LayoutKeys.geometry(Settings.reader,1080,2340,3f,extraTop=87).contentTop)
         Settings.saveReader(Settings.reader);assertEquals(true,off.map[MaruSize.KEY])
         Settings.initForTest(off);assertEquals(11f,Settings.reader.statusFontSizeSp)
         // Saved from the edge at 11 sp: counted from the 13 sp bands at once (no second shrink).

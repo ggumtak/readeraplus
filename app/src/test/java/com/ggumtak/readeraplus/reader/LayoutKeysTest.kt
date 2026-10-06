@@ -8,6 +8,7 @@ import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.settings.MaruSize
 import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.StatusBands
 import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.settings.VerticalMargin
 import com.ggumtak.readeraplus.engine.PageBreakMode
@@ -58,19 +59,21 @@ class LayoutKeysTest {
         // loses the 3 dp the header's band grows: the same defaults, the same box.
         val eleven = s.copy(statusFontSizeSp = MaruSize.OLD_SP, marginTopDp = 18)
         assertEquals(s, MaruSize.keepBox(eleven, MaruSize.applyTo(eleven)))
-        for ((w, h, d, band) in listOf(Quad(720, 1440, 2f, 0), Quad(1080, 2340, 3f, 87), Quad(1080, 2120, 3f, 0)))
+        // (Without a cutout: under one the header shares the camera band, so the bands' sizes no longer add up.)
+        for ((w, h, d, band) in listOf(Quad(720, 1440, 2f, 0), Quad(1080, 2120, 3f, 0)))
             assertTrue(box(LayoutKeys.geometry(eleven, w, h, d, band)).contentEquals(box(LayoutKeys.geometry(s, w, h, d, band))))
         // Comet 720×1440 @2, no cutout: rows 80..1384.
         val comet = LayoutKeys.geometry(now, 720, 1440, 2f)
         assertEquals(listOf(80, 1384), listOf(comet.contentTop, comet.contentTop + comet.contentHeight))
         assertTrue(box(comet).contentEquals(edgeGeometry(edge, 720, 1440, 2f)))
-        // S25 1080×2340 @3, fullscreen: the page view starts at the top; the 87 px camera band, then the header's band
-        // (87..162, reserved: the header itself is drawn inside the camera band), the 15 dp margin: rows 207..2220, as on
-        // the user's screenshot; the bottom 28 dp from the edge.
+        // S25 1080×2340 @3, fullscreen: the page view starts at the top; the 87 px camera band holds the header (its 75 px
+        // band is not stacked below it since 2026-10-06), then the 15 dp margin: rows 132..2256, the bottom 28 dp from
+        // the edge. (Before: 207, the header's band below the camera band, as on the user's screenshot.)
         val full = LayoutKeys.geometry(now, 1080, 2340, 3f, extraTop = 87)
-        assertEquals(listOf(207, 2256), listOf(full.contentTop, full.contentTop + full.contentHeight))
+        assertEquals(listOf(132, 2256), listOf(full.contentTop, full.contentTop + full.contentHeight))
         assertEquals(87, full.cutoutTop)
-        assertTrue(box(full).contentEquals(edgeGeometry(edge, 1080, 2340, 3f, extraTop = 87)))
+        // A cutout band shorter than the header's: the header's band decides (no overlap).
+        assertEquals(75 + 45, LayoutKeys.geometry(now, 1080, 2340, 3f, extraTop = 40).contentTop)
         // S25 with the system bars: the page view starts below the 110 px status bar and ends above the navigation bar
         // (whatever its inset): the box is 120 px inside the view at the top, 84 px at the bottom.
         for (bottomInset in listOf(0, 48, 63, 144)) {
@@ -92,8 +95,8 @@ class LayoutKeysTest {
         val g = LayoutKeys.geometry(zero, 720, 1440, 2f)
         assertEquals(50, g.contentTop)
         assertEquals(1440 - 36, g.contentTop + g.contentHeight)
-        // S25 fullscreen: below the camera band and the header's band (87 + 75).
-        assertEquals(162, LayoutKeys.geometry(zero, 1080, 2340, 3f, extraTop = 87).contentTop)
+        // S25 fullscreen: the header sits inside the 87 px camera band: the text starts right under it.
+        assertEquals(87, LayoutKeys.geometry(zero, 1080, 2340, 3f, extraTop = 87).contentTop)
         // Text box = reserves + margins, for any margin: one step of 2 dp is 4 px on the Comet.
         for (m in 0..80 step 2) {
             val t = LayoutKeys.geometry(s.copy(marginTopDp = m, marginBottomDp = m), 720, 1440, 2f)
@@ -125,18 +128,18 @@ class LayoutKeysTest {
 
     @Test
     fun aCutoutBandAtTheTopKeepsTheTextBoxWhereItWas() {
-        // Fullscreen on the S25: the page view starts at the screen's top edge instead of below the camera band, which
-        // is left out like a system bar: the header's band and the text box start below it. Same box on screen, same
-        // size, same key: the same pages as with the view laid out below the band.
-        val font = "f|1"
+        // Fullscreen on the S25: the page view starts at the screen's top edge; the camera band is left out like a system
+        // bar, and the header, drawn inside it, shares it (2026-10-06): the text starts one top margin under the taller of
+        // the band and the header's band. Sides and bottom are those of the view laid out below the band.
         val noHeader = s.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
         for (band in listOf(0, 1, 87, 120)) for (t in listOf(s, s.copy(pageMargins = false), s.copy(marginTopDp = 0), noHeader)) {
             val below = LayoutKeys.geometry(t, 1080, 2340 - band, 3f)
             val into = LayoutKeys.geometry(t, 1080, 2340, 3f, extraTop = band)
+            val margin = Math.round((if (t.pageMargins) t.marginTopDp else LayoutKeys.TINY_MARGIN_DP) * 3f)
+            val top = if (band == 0) below.contentTop else maxOf(band, Math.round(StatusBands.headerDp(t) * 3f)) + margin
             assertEquals(below.contentLeft, into.contentLeft)
-            assertEquals(below.contentTop + band, into.contentTop)
+            assertEquals(top, into.contentTop)
             assertEquals(below.contentWidth, into.contentWidth)
-            assertEquals(below.contentHeight, into.contentHeight)
             assertEquals(2340, into.viewHeight)
             // The band is kept with the geometry (thumbnails leave it out: the same page as `below`).
             assertEquals(band, into.cutoutTop)
@@ -144,8 +147,6 @@ class LayoutKeysTest {
             assertEquals(below.viewHeight, into.viewHeight - into.cutoutTop)
             // The bottom margin is the same, so the footer and the progress lane stay where they were.
             assertEquals(below.viewHeight - below.contentTop - below.contentHeight, into.viewHeight - into.contentTop - into.contentHeight)
-            val parse = t.parseOptions()
-            assertEquals(LayoutKeys.key(t, parse, below, 3f, font), LayoutKeys.key(t, parse, into, 3f, font))
         }
         // No cutout (the Comet): nothing changes.
         assertEquals(LayoutKeys.geometry(s, 720, 1440, 2f), LayoutKeys.geometry(s, 720, 1440, 2f, extraTop = 0))
