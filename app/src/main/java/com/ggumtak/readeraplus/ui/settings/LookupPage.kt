@@ -16,7 +16,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * "사전·번역·검색": the web search site for selected text (a preset or a typed address), the installed PROCESS_TEXT
- * apps the selection menu's "사전·번역" opens (listed, not tappable), and the 단어장 (whether lookups are recorded,
+ * apps the selection menu's "사전·번역" lists beside its always-present "네이버 사전" window (listed, not tappable), and the 단어장 (whether lookups are recorded,
  * clearing it; the notes open it from the drawer and the reader's ⋮).
  */
 internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_LOOKUP, "사전·번역·검색") {
@@ -53,7 +53,7 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         updateRadios()
 
         body.section("사전·번역 앱")
-        body.addView(ctx.note("선택 메뉴의 ‘사전·번역’으로 열리는 앱입니다."))
+        body.addView(ctx.note("선택 메뉴의 ‘사전·번역’은 항상 ‘네이버 사전’(창으로 보기, 검색어 뒤에 ‘뜻’)을 함께 보여 주고, 아래 앱이 있으면 같이 고를 수 있습니다."))
         appsText = ctx.note("불러오는 중…").also(body::addView)
         loadApps()
 
@@ -138,7 +138,7 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
                         .sorted()
                 }.getOrDefault(emptyList())
             }
-            appsText.text = if (names.isEmpty()) "설치된 앱이 없어 웹 검색으로 찾습니다." else names.joinToString("\n") { "· $it" }
+            appsText.text = if (names.isEmpty()) "설치된 앱이 없습니다. ‘네이버 사전’과 ‘웹 검색’을 고를 수 있습니다." else names.joinToString("\n") { "· $it" }
         }
     }
 }

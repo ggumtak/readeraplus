@@ -293,6 +293,7 @@ internal object Overlay {
 internal object TextActions {
     const val SHARE_MAX_CHARS = 50_000
     private const val PREF_LAST_DICT = "extras.lastDictApp"
+    private const val NAVER_LABEL = "네이버 사전"
 
     /**
      * Copies [text]. Android 13+ confirms a copy itself, so by default the toast is only shown below that; a caller
@@ -335,7 +336,7 @@ internal object TextActions {
             emptyList()
         }
         val own = ctx.packageName
-        val last = runCatching { Settings.raw().getString(PREF_LAST_DICT, null) }.getOrNull()
+        val last = lastDict()
         return list.filter { it.activityInfo != null && it.activityInfo.packageName != own }
             .sortedWith(compareBy({ key(it) != last }, { it.loadLabel(pm).toString() }))
     }
@@ -343,25 +344,28 @@ internal object TextActions {
     private fun key(ri: ResolveInfo): String = ri.activityInfo.packageName + "/" + ri.activityInfo.name
 
     /**
-     * Dictionary / translate: pick a PROCESS_TEXT app (list), or fall back to a web search. [onPicked] (main thread)
-     * runs once the pick was started — an app ([Lookups.VIA_APP], its label), "웹 검색" ([Lookups.VIA_WEB], the site
-     * host) or the no-app fallback ([Lookups.VIA_WEB_FALLBACK], the site host) — and never when the chooser is
-     * cancelled or nothing could be started.
+     * Dictionary / translate: always a list — "네이버 사전" (the floating [LookupPanel], the selection + " 뜻"), the
+     * PROCESS_TEXT apps and "웹 검색"; the last used entry first ([LookupQuery.order]). [onPicked] (main thread) runs
+     * once the pick was started — an app ([Lookups.VIA_APP], its label), the Naver window or "웹 검색"
+     * ([Lookups.VIA_WEB], the site host) — and never when the chooser is cancelled or nothing could be started.
      */
     fun lookUp(activity: Activity, text: String, onPicked: ((via: Int, app: String) -> Unit)? = null) {
-        val apps = processTextApps(activity)
-        if (apps.isEmpty()) {
-            activity.toast("사전·번역 앱이 없어 웹에서 검색합니다")
-            webSearch(activity, text) { onPicked?.invoke(Lookups.VIA_WEB_FALLBACK, webSearchHost()) }
-            return
-        }
         val pm = activity.packageManager
-        val labels = apps.map { it.loadLabel(pm).toString() } + "웹 검색"
+        val apps = processTextApps(activity).associateBy { key(it) }
+        val query = LookupQuery.query(text)
+        val keys = LookupQuery.order(apps.keys.toList(), lastDict()).filter { it != LookupQuery.NAVER_KEY || query.isNotEmpty() }
+        val labels = keys.map { k -> apps[k]?.loadLabel(pm)?.toString() ?: NAVER_LABEL } + "웹 검색"
         activity.alert().setTitle("사전·번역")
             .setItems(labels.toTypedArray()) { _, which ->
-                if (which >= apps.size) {
+                val k = keys.getOrNull(which)
+                if (k == null) {
                     webSearch(activity, text) { onPicked?.invoke(Lookups.VIA_WEB, webSearchHost()) }
-                } else if (launchProcessText(activity, apps[which], text)) {
+                } else if (k == LookupQuery.NAVER_KEY) {
+                    runCatching { Settings.raw().edit().putString(PREF_LAST_DICT, k).apply() }
+                    if (LookupPanel.show(activity, query, LookupQuery.naverUrl(query))) {
+                        onPicked?.invoke(Lookups.VIA_WEB, LookupQuery.NAVER_HOST)
+                    }
+                } else if (launchProcessText(activity, apps.getValue(k), text)) {
                     onPicked?.invoke(Lookups.VIA_APP, labels[which])
                 }
             }
@@ -370,6 +374,8 @@ internal object TextActions {
             .also { d -> d.listView?.selector = ColorDrawable(Color.TRANSPARENT) }
             .also { d -> PanelRegistry.dialog(activity, d) }
     }
+
+    private fun lastDict(): String? = runCatching { Settings.raw().getString(PREF_LAST_DICT, null) }.getOrNull()
 
     private fun launchProcessText(ctx: Context, ri: ResolveInfo, text: String): Boolean {
         runCatching { Settings.raw().edit().putString(PREF_LAST_DICT, key(ri)).apply() }

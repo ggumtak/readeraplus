@@ -9,6 +9,7 @@ import java.text.Normalizer
  * thread-safe; every write bumps the hub's change counter ([Notes.generation]) after its commit.
  */
 object Lookups {
+    /** [VIA_WEB_FALLBACK] (no dictionary app, searched the web) is no longer recorded; old rows and backups keep it. */
     const val VIA_APP=0; const val VIA_WEB=1; const val VIA_WEB_FALLBACK=2; const val DEDUPE_MS=10*60_000L
     private const val TAG = "Lookups"
     private const val DELETE_CHUNK = 500

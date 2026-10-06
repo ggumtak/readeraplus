@@ -412,7 +412,10 @@ fun Context.alert(): AlertDialog.Builder = AlertDialog.Builder(this, R.style.Ink
 fun Dialog.noAnimation(): Dialog = apply { window?.setWindowAnimations(0) }
 
 /** Shows an alert built with [alert] without animation. */
-fun AlertDialog.Builder.showNoAnim(): AlertDialog = create().also { d ->
+fun AlertDialog.Builder.showNoAnim(): AlertDialog = create().showNoAnim()
+
+/** Shows any dialog without animation, asking for the owner activity's system-bar state as an [alert] does. */
+fun <T : Dialog> T.showNoAnim(): T = also { d ->
     d.window?.setWindowAnimations(0)
     val owner = d.context.activityOrNull()?.window
     if (owner != null) d.window?.let { matchSystemBars(it, owner) }
