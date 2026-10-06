@@ -182,20 +182,35 @@ class SettingsJsonTest {
     }
 
     @Test
-    fun legacyBackupBrightnessIsConvertedOnceByItsOwnDeviceFlag() {
-        // No marker: a window-path backup holds linear light, restored as its position.
+    fun legacyBackupBrightnessIsConvertedOnceByTheFlagInEffect() {
+        val pos = Math.sqrt((0.25 - 0.01) / 0.99).toFloat()
+        // No marker, no flag (builds that wrote no marker never exported it): the restoring device's flag decides.
+        // Window path (flag off): linear light, restored as its position.
         val legacy = JSONObject().put("a.brightness", 0.25)
-        assertEquals(0.5f, SettingsJson.appFromJson(legacy, AppSettings()).brightness, 1e-6f)
-        // The restoring device's own flag never decides for a backup (and is not restored).
+        assertEquals(pos, SettingsJson.appFromJson(legacy, AppSettings()).brightness, 1e-6f)
+        // Device path (flag on): already a position. The flag itself is not restored.
         val restored = SettingsJson.appFromJson(legacy, AppSettings(brightnessDevice = true))
-        assertEquals(0.5f, restored.brightness, 1e-6f)
+        assertEquals(0.25f, restored.brightness, 0f)
         assertTrue(restored.brightnessDevice)
-        // A backup that carries its own device flag: already a position.
+        // A backup that carries its own device flag wins over the device's.
         val device = JSONObject().put("a.brightness", 0.25).put("a.brightnessDevice", true)
         assertEquals(0.25f, SettingsJson.appFromJson(device, AppSettings()).brightness, 0f)
+        val window = JSONObject().put("a.brightness", 0.25).put("a.brightnessDevice", false)
+        assertEquals(pos, SettingsJson.appFromJson(window, AppSettings(brightnessDevice = true)).brightness, 1e-6f)
         // Auto stays; a missing value keeps the device's own.
         assertEquals(-1f, SettingsJson.appFromJson(JSONObject().put("a.brightness", -1), AppSettings(brightness = 0.7f)).brightness, 0f)
         assertEquals(0.7f, SettingsJson.appFromJson(JSONObject(), AppSettings(brightness = 0.7f)).brightness, 0f)
+    }
+
+    @Test
+    fun backupMarkerIsReadByItsVersionValue() {
+        val v = BrightnessEncoding.KEY_VERSION
+        val pos = Math.sqrt((0.25 - 0.01) / 0.99).toFloat()
+        // An older version is legacy; a newer unknown one is the current meaning, made safe.
+        assertEquals(pos, SettingsJson.appFromJson(JSONObject().put("a.brightness", 0.25).put(v, 1), AppSettings()).brightness, 1e-6f)
+        assertEquals(0.25f, SettingsJson.appFromJson(JSONObject().put("a.brightness", 0.25).put(v, 3), AppSettings()).brightness, 0f)
+        assertEquals(1f, SettingsJson.appFromJson(JSONObject().put("a.brightness", 4).put(v, 2), AppSettings()).brightness, 0f)
+        assertEquals(-1f, SettingsJson.appFromJson(JSONObject().put("a.brightness", -0.2).put(v, 2), AppSettings(brightness = 0.7f)).brightness, 0f)
     }
 
     @Test

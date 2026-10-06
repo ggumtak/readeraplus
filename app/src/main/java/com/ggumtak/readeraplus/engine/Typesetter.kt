@@ -200,9 +200,8 @@ object LineGeometry {
         if (len == 0) return 0L
         val o = offset.coerceIn(0, len - 1)
         if (!isWordChar(text, o)) {
-            var s = o
-            val c = text[o]
-            if (Character.isLowSurrogate(c) && s > 0 && Character.isHighSurrogate(text[s - 1])) s--
+            // Whole cluster (a ZWJ / variation selector / flag half inside it too), whichever char of it was hit.
+            val s = clusterStart(text, o)
             return pack(s, clusterEnd(text, s))
         }
         var s = o

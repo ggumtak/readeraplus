@@ -40,10 +40,6 @@ internal interface LightHost {                        // implemented by ReaderAc
 internal class LightController(private val host: LightHost) {
     companion object {
         const val ASK_NONE=0; const val ASK_WINDOW=1; const val ASK_DEVICE=2
-        /** The manual position Ⓐ returns to. */
-        private const val PREF_LAST_BRIGHTNESS = "reader.lastBrightnessPos"
-        /** Before the encoding marker: the window path stored linear light here ([BrightnessEncoding.lastManual]). */
-        private const val PREF_LAST_BRIGHTNESS_LEGACY = "reader.lastBrightness"
     }
 
     private var chrome: ReaderChrome? = null
@@ -333,20 +329,19 @@ internal class LightController(private val host: LightHost) {
     private fun systemPos(): Float {
         val sys = ReaderWindow.systemBrightness(host.activity)
         val o = if (deviceOn()) DeviceLight.deviceOut else -1f
-        return LightCurve.pos(if (o >= 0f) o else sys)
+        // The device path shows pos² of the position, the window path the lifted curve ([LightCurve.windowLevel]).
+        return if (deviceOn()) LightCurve.pos(if (o >= 0f) o else sys) else LightCurve.windowPos(sys)
     }
 
-    /** The manual position Ⓐ returns to (the legacy key converted once on read, see [BrightnessEncoding.lastManual]). */
+    /** The manual position Ⓐ returns to (its legacy key was converted once when the settings loaded, [BrightnessEncoding]). */
     private fun lastManual(): Float {
         val p = Settings.raw()
         return BrightnessEncoding.lastManual(
-            if (p.contains(PREF_LAST_BRIGHTNESS)) p.getFloat(PREF_LAST_BRIGHTNESS, 0.5f) else null,
-            if (p.contains(PREF_LAST_BRIGHTNESS_LEGACY)) p.getFloat(PREF_LAST_BRIGHTNESS_LEGACY, 0.5f) else null,
-            app.brightnessDevice)
+            if (p.contains(BrightnessEncoding.KEY_LAST_POS)) p.getFloat(BrightnessEncoding.KEY_LAST_POS, 0.5f) else null)
     }
 
     private fun setManual(v: Float) {
-        Settings.raw().edit().putFloat(PREF_LAST_BRIGHTNESS, v).apply()
+        Settings.raw().edit().putFloat(BrightnessEncoding.KEY_LAST_POS, v).apply()
         host.saveApp(app.copy(brightness = v))
         if (host.chromeVisible) bind()
     }

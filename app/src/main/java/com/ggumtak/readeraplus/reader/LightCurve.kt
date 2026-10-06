@@ -5,8 +5,8 @@ package com.ggumtak.readeraplus.reader
  * the position and the light is [out] of it, whether it goes to the device ([DeviceLight.set]) or to the window
  * ([windowLevel] in `ReaderWindow.applyBrightness`).
  *
- * The light is p²: fine steps at the low end, where night reading lives. Android's own slider is gamma-shaped for the
- * same reason. Pure: unit-tested by `LightCurveTest`.
+ * The device light is p²: fine steps at the low end, where night reading lives (the window one is that, lifted onto
+ * a floor). Android's own slider is gamma-shaped for the same reason. Pure: unit-tested by `LightCurveTest`.
  */
 internal object LightCurve {
     /** Framework int range of Settings.System.SCREEN_BRIGHTNESS. 0 is "off/invalid" to its int→float mapping: never written. */
@@ -18,8 +18,17 @@ internal object LightCurve {
     /** Light 0..1 for slider position [pos] (NaN counts as 0). */
     fun out(pos: Float): Float { val p = clamp01(pos); return p * p }
 
-    /** Window screenBrightness for slider position [pos]: [out] with a floor of [floor]. */
-    fun windowLevel(pos: Float, floor: Float=WINDOW_FLOOR): Float = Math.max(floor, out(pos))
+    /**
+     * Window screenBrightness for slider position [pos]: [out] lifted onto [floor]..1 (`floor + (1 - floor) * pos²`),
+     * so every position is a distinct light and the screen never goes fully dark.
+     */
+    fun windowLevel(pos: Float, floor: Float=WINDOW_FLOOR): Float = floor + (1f - floor) * out(pos)
+
+    /** Slider position for a window light [out]; the inverse of [windowLevel] (a light at or under [floor] is position 0). */
+    fun windowPos(out: Float, floor: Float=WINDOW_FLOOR): Float {
+        if (floor >= 1f) return 0f
+        return Math.sqrt(Math.max(0f, (clamp01(out) - floor) / (1f - floor)).toDouble()).toFloat()
+    }
 
     /** Slider position for light [out]; the inverse of [out]. */
     fun pos(out: Float): Float = Math.sqrt(clamp01(out).toDouble()).toFloat()

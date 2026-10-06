@@ -308,8 +308,31 @@ object Settings {
             excludedFolders = p.getStringSet("a.excludedFolders", d.excludedFolders)?.toSet() ?: d.excludedFolders,
             orientationLock = p.getInt("a.orientationLock", d.orientationLock),
             brightness = BrightnessEncoding.fromStored(p.getFloat("a.brightness", d.brightness),
-                p.contains(BrightnessEncoding.KEY_VERSION), p.getBoolean("a.brightnessDevice", d.brightnessDevice)),
-        )
+                brightnessVersion(p), p.getBoolean("a.brightnessDevice", d.brightnessDevice)),
+        ).also { migrateLastBrightness(p, p.getBoolean("a.brightnessDevice", d.brightnessDevice)) }
+    }
+
+    /** The stored brightness encoding version, null when the marker is absent; a marker of another type counts as current. */
+    private fun brightnessVersion(p: SharedPreferences): Int? =
+        if (!p.contains(BrightnessEncoding.KEY_VERSION)) null
+        else runCatching { p.getInt(BrightnessEncoding.KEY_VERSION, BrightnessEncoding.VERSION) }.getOrDefault(BrightnessEncoding.VERSION)
+
+    /**
+     * The reader's Ⓐ last manual position, once: the key written before the encoding marker is converted by the device
+     * flag in effect now (the one the main value was converted with), stored under its new key and removed, so a later
+     * toggle of the device control never reads it again. Nothing to do (and nothing written) without the old key.
+     */
+    private fun migrateLastBrightness(p: SharedPreferences, devicePath: Boolean) {
+        if (!p.contains(BrightnessEncoding.KEY_LAST_LEGACY)) return
+        val legacy = runCatching { p.getFloat(BrightnessEncoding.KEY_LAST_LEGACY, 0.5f) }.getOrNull()
+        val pos = if (p.contains(BrightnessEncoding.KEY_LAST_POS)) {
+            runCatching { p.getFloat(BrightnessEncoding.KEY_LAST_POS, 0.5f) }.getOrNull() ?: 0.5f
+        } else null
+        val v = BrightnessEncoding.migrateLastManual(pos, legacy, devicePath)
+        p.edit().apply {
+            if (v != null) putFloat(BrightnessEncoding.KEY_LAST_POS, v)
+            remove(BrightnessEncoding.KEY_LAST_LEGACY)
+        }.apply()
     }
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =

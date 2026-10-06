@@ -42,6 +42,12 @@ interface ReaderHost {
     fun prevPage(): Boolean
 
     /**
+     * A turn asked for now would take effect at once: no page, jump or scroll step is on its way and no turn waits
+     * behind one. The selection's edge dwell turns only then (a turn that queues would be flushed with the next).
+     */
+    fun canTurnNow(): Boolean = true
+
+    /**
      * "page / total": global 1-based page number of [pos] and total pages, plain numbers (no "~"). They are estimates
      * until counting finishes ([totalPagesKnown]).
      */

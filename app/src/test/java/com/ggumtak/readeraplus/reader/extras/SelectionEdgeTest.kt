@@ -186,4 +186,63 @@ class SelectionEdgeTest {
         assertFalse(d.turning)
         assertEquals(EdgeDwell.Action.ARM, d.update(Zone.TOP))
     }
+
+    @Test
+    fun aTurnThatCannotRunNowStartsTheDwellOverInsteadOfQueueing() {
+        // The host's canTurnNow() is false: the controller gives the fired dwell back (landed) and arms again.
+        val d = EdgeDwell()
+        d.update(Zone.BOTTOM)
+        assertEquals(Zone.BOTTOM, d.fire())
+        assertTrue(d.landed())
+        assertFalse(d.turning)
+        assertEquals(EdgeDwell.Action.ARM, d.update(Zone.BOTTOM))
+        // And again, as often as the host stays busy: one timer at a time, nothing piles up.
+        assertEquals(Zone.BOTTOM, d.fire())
+        assertNull(d.fire())
+        assertTrue(d.landed())
+        assertEquals(EdgeDwell.Action.ARM, d.update(Zone.BOTTOM))
+    }
+
+    @Test
+    fun releaseDropsAnArmedDwellButKeepsAnOutstandingTurn() {
+        val d = EdgeDwell()
+        d.update(Zone.BOTTOM)
+        assertFalse(d.release())
+        assertFalse(d.armed)
+        assertNull(d.fire())
+        // A turn asked for stays: the page that shows after the finger left is still the one waited for.
+        d.update(Zone.BOTTOM)
+        d.fire()
+        assertTrue(d.release())
+        assertTrue(d.turning)
+        assertTrue(d.landed())
+        assertFalse(d.release())
+        // cancel is the hard stop (a new touch, a boundary).
+        d.update(Zone.TOP)
+        d.fire()
+        d.cancel()
+        assertFalse(d.release())
+    }
+
+    @Test
+    fun theLongPressFingerArmsOnlyAfterItDragged() {
+        // Resting (or jitter inside the slop) at the press point, even in an edge zone: no dwell.
+        assertFalse(EdgeGuard.pressDragged(100f, 900f, 100f, 900f, 8f, false))
+        assertFalse(EdgeGuard.pressDragged(100f, 900f, 105f, 904f, 8f, false))
+        // Past the slop in any direction.
+        assertTrue(EdgeGuard.pressDragged(100f, 900f, 100f, 891f, 8f, false))
+        assertTrue(EdgeGuard.pressDragged(100f, 900f, 109f, 900f, 8f, false))
+        // Or the range already grew beyond the word picked.
+        assertTrue(EdgeGuard.pressDragged(100f, 900f, 100f, 900f, 8f, true))
+    }
+
+    @Test
+    fun anEdgeTurnLandsOnlyOnThePageInTheRequestedDirection() {
+        assertTrue(EdgeGuard.turnLanded(next = true, startBefore = 1000, startNow = 2000))
+        assertFalse(EdgeGuard.turnLanded(next = true, startBefore = 1000, startNow = 1000))
+        assertFalse(EdgeGuard.turnLanded(next = true, startBefore = 1000, startNow = 400))
+        assertTrue(EdgeGuard.turnLanded(next = false, startBefore = 1000, startNow = 400))
+        assertFalse(EdgeGuard.turnLanded(next = false, startBefore = 1000, startNow = 1000))
+        assertFalse(EdgeGuard.turnLanded(next = false, startBefore = 1000, startNow = 2000))
+    }
 }

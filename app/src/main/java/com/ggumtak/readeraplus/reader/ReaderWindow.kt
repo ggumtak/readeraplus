@@ -92,7 +92,7 @@ internal object ReaderWindow {
         }
     }
 
-    /** Current system light as 0..1, linear (approximate; [LightCurve.pos] turns it into a slider position). */
+    /** Current system light as 0..1, linear (approximate; [LightCurve.windowPos] / [LightCurve.pos] turn it into a slider position). */
     fun systemBrightness(activity: Activity): Float = try {
         SystemSettings.System.getInt(activity.contentResolver, SystemSettings.System.SCREEN_BRIGHTNESS, 128) / 255f
     } catch (t: Throwable) {

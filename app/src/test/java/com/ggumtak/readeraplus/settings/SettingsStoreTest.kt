@@ -52,6 +52,9 @@ class SettingsStoreTest {
         }
     }
 
+    /** Position of a window-path legacy light of 0.25: [LightCurve.windowLevel] of it is 0.25 again. */
+    private val windowPos025 = Math.sqrt((0.25 - 0.01) / 0.99).toFloat()
+
     private fun fresh(map: MutableMap<String, Any?> = HashMap()): FakePrefs = FakePrefs(map).also { Settings.initForTest(it) }
 
     @Test
@@ -315,12 +318,12 @@ class SettingsStoreTest {
     @Test fun legacyWindowBrightnessLoadsAsPositionWithoutWriting() {
         val raw = hashMapOf<String, Any?>("a.brightness" to 0.25f)
         val before = HashMap(raw); val p = fresh(raw)
-        assertEquals(0.5f, Settings.app.brightness, 1e-6f)
+        assertEquals(windowPos025, Settings.app.brightness, 1e-6f)
         assertEquals(before, raw)
         // The first save stores the position with the marker: the next load takes it as is.
         Settings.saveApp(Settings.app)
         assertEquals(BrightnessEncoding.VERSION, p.map[BrightnessEncoding.KEY_VERSION])
-        Settings.initForTest(p); assertEquals(0.5f, Settings.app.brightness, 1e-6f)
+        Settings.initForTest(p); assertEquals(windowPos025, Settings.app.brightness, 1e-6f)
     }
 
     @Test fun legacyDeviceBrightnessAutoAndVersionedStayAsStored() {
@@ -328,15 +331,44 @@ class SettingsStoreTest {
         fresh(hashMapOf("a.brightness" to -1f)); assertEquals(-1f, Settings.app.brightness, 0f)
         fresh(); assertEquals(-1f, Settings.app.brightness, 0f)
         fresh(hashMapOf("a.brightness" to 0.25f, BrightnessEncoding.KEY_VERSION to 2)); assertEquals(0.25f, Settings.app.brightness, 0f)
+        // A marker is read by its value: a newer version is the current meaning (sanitised), an older one is legacy.
+        fresh(hashMapOf("a.brightness" to 0.25f, BrightnessEncoding.KEY_VERSION to 3)); assertEquals(0.25f, Settings.app.brightness, 0f)
+        fresh(hashMapOf("a.brightness" to 9f, BrightnessEncoding.KEY_VERSION to 2)); assertEquals(1f, Settings.app.brightness, 0f)
+        fresh(hashMapOf("a.brightness" to 0.25f, BrightnessEncoding.KEY_VERSION to 1)); assertEquals(windowPos025, Settings.app.brightness, 1e-6f)
+    }
+
+    @Test fun legacyLastManualIsMigratedOnceAtLoadByTheFlagOfThatTime() {
+        // Window path (flag off): the linear value becomes its position and the old key is gone.
+        val p = fresh(hashMapOf("a.brightness" to 0.25f, BrightnessEncoding.KEY_LAST_LEGACY to 0.25f))
+        Settings.app
+        assertEquals(windowPos025, p.map[BrightnessEncoding.KEY_LAST_POS] as Float, 1e-6f)
+        assertFalse(p.map.containsKey(BrightnessEncoding.KEY_LAST_LEGACY))
+        // A later toggle of the device control changes nothing about it.
+        Settings.saveApp(Settings.app.copy(brightnessDevice = true))
+        Settings.initForTest(p); Settings.app
+        assertEquals(windowPos025, p.map[BrightnessEncoding.KEY_LAST_POS] as Float, 1e-6f)
+        // Device path: already a position.
+        val d = fresh(hashMapOf("a.brightness" to 0.25f, "a.brightnessDevice" to true, BrightnessEncoding.KEY_LAST_LEGACY to 0.4f))
+        Settings.app
+        assertEquals(0.4f, d.map[BrightnessEncoding.KEY_LAST_POS] as Float, 0f)
+        // A position key already there wins; the old key is removed either way.
+        val w = fresh(hashMapOf(BrightnessEncoding.KEY_LAST_LEGACY to 0.9f, BrightnessEncoding.KEY_LAST_POS to 0.3f))
+        Settings.app
+        assertEquals(0.3f, w.map[BrightnessEncoding.KEY_LAST_POS] as Float, 0f)
+        assertFalse(w.map.containsKey(BrightnessEncoding.KEY_LAST_LEGACY))
+        // No old key: nothing is written.
+        val n = fresh(hashMapOf("a.brightness" to 0.25f))
+        Settings.app
+        assertFalse(n.map.containsKey(BrightnessEncoding.KEY_LAST_POS))
     }
 
     @Test fun deviceToggleAfterTheMigrationKeepsThePosition() {
-        // A window-path legacy 0.25 is position 0.5; turning the device control on afterwards must not convert it again.
+        // A window-path legacy 0.25 is its window position; turning the device control on afterwards must not convert it again.
         val p = fresh(hashMapOf("a.brightness" to 0.25f))
         Settings.saveApp(Settings.app.copy(brightnessDevice = true))
-        Settings.initForTest(p); assertEquals(0.5f, Settings.app.brightness, 1e-6f)
+        Settings.initForTest(p); assertEquals(windowPos025, Settings.app.brightness, 1e-6f)
         Settings.saveApp(Settings.app.copy(brightnessDevice = false))
-        Settings.initForTest(p); assertEquals(0.5f, Settings.app.brightness, 1e-6f)
+        Settings.initForTest(p); assertEquals(windowPos025, Settings.app.brightness, 1e-6f)
     }
 
 }

@@ -115,22 +115,52 @@ class LightCurveTest {
         assertEquals(" (자동)", LightProbe.modeLabel(1))
     }
 
-    @Test fun windowLevelIsTheCurveWithAFloor() {
-        assertEquals(0.25f, LightCurve.windowLevel(0.5f), 1e-6f)
-        assertEquals(1f, LightCurve.windowLevel(1f), 0f)
-        assertEquals(LightCurve.WINDOW_FLOOR, LightCurve.windowLevel(0f), 0f)
-        assertEquals(LightCurve.WINDOW_FLOOR, LightCurve.windowLevel(0.05f), 0f)   // 0.0025 is under the floor
-        assertEquals(LightCurve.WINDOW_FLOOR, LightCurve.windowLevel(Float.NaN), 0f)
-        assertEquals(1f, LightCurve.windowLevel(3f), 0f)
-        // The same slider position gives the same light on the window and the device path (above the floor).
-        for (i in 10..100) { val p = i / 100f; assertEquals(LightCurve.out(p), LightCurve.windowLevel(p), 0f) }
+    @Test fun windowLevelIsTheCurveLiftedOntoTheFloor() {
+        val f = LightCurve.WINDOW_FLOOR
+        assertEquals(f + (1f - f) * 0.25f, LightCurve.windowLevel(0.5f), 1e-6f)
+        assertEquals(1f, LightCurve.windowLevel(1f), 1e-6f)
+        assertEquals(f, LightCurve.windowLevel(0f), 1e-7f)
+        assertEquals(f, LightCurve.windowLevel(Float.NaN), 1e-7f)
+        assertEquals(1f, LightCurve.windowLevel(3f), 1e-6f)
+        // Never darker than the floor, never brighter than 1, and never darker than the device path's light.
+        for (i in 0..100) {
+            val p = i / 100f
+            assertTrue(LightCurve.windowLevel(p) >= f)
+            assertTrue(LightCurve.windowLevel(p) <= 1f)
+            assertTrue(LightCurve.windowLevel(p) >= LightCurve.out(p) - 1e-6f)
+        }
+    }
+
+    @Test fun windowLevelHasNoFlatRegion() {
+        // max(0.01, pos squared) was one light for every position under 0.1: now each step is a different light.
+        var prev = -1f
+        for (i in 0..1000) {
+            val l = LightCurve.windowLevel(i / 1000f)
+            assertTrue("level at ${i / 1000f} = $l after $prev", l > prev)
+            prev = l
+        }
+        assertTrue(LightCurve.windowLevel(0.05f) > LightCurve.windowLevel(0.02f))
+    }
+
+    @Test fun windowPosIsTheInverseOfWindowLevel() {
+        for (i in 0..1000) {
+            val x = i / 1000f
+            assertEquals(x, LightCurve.windowPos(LightCurve.windowLevel(x)), 2e-3f)
+        }
+        assertEquals(0f, LightCurve.windowPos(LightCurve.WINDOW_FLOOR), 0f)
+        assertEquals(0f, LightCurve.windowPos(0f), 0f)       // under the floor: position 0
+        assertEquals(0f, LightCurve.windowPos(Float.NaN), 0f)
+        assertEquals(1f, LightCurve.windowPos(1f), 1e-6f)
+        assertEquals(1f, LightCurve.windowPos(5f), 1e-6f)
+        assertEquals(Math.sqrt((0.25 - 0.01) / 0.99).toFloat(), LightCurve.windowPos(0.25f), 1e-6f)
     }
 
     @Test fun systemLightRoundTripsThroughThePosition() {
-        // systemPos on the window path: LightCurve.pos of the system light shows the same light again.
+        // systemPos: the device path's pos of the system light, the window path's windowPos; each shows the same light again.
         for (level in 1..255) {
             val sys = level / 255f
             assertEquals(sys, LightCurve.out(LightCurve.pos(sys)), 1e-5f)
+            assertEquals(Math.max(sys, LightCurve.WINDOW_FLOOR), LightCurve.windowLevel(LightCurve.windowPos(sys)), 1e-5f)
         }
     }
 }

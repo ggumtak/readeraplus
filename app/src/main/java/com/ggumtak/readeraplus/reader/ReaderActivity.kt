@@ -2636,6 +2636,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         return turn(true).also { if (it && !inFront) turnedInBackground = true }
     }
 
+    override fun canTurnNow(): Boolean =
+        navJob?.isActive != true && scroll?.pending != true && backlog.isEmpty
+
     override fun prevPage(): Boolean {
         if (scroll?.userMoving() == true) return true
         if (navJob?.isActive == true) return false

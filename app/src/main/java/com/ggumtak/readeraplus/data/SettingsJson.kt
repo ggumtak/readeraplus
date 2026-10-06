@@ -229,11 +229,13 @@ internal object SettingsJson {
      */
     fun appFromJson(o: JSONObject, base: AppSettings): AppSettings {
         // A backup with the encoding marker holds a slider position, used as is. One without it is legacy (window
-        // path: linear light), converted once: by the backup's own device-control flag when it has one (this file
-        // never writes it, DROPPED_KEYS), else as a window-path value. The flag itself is never restored.
+        // path: linear light), converted once: by the backup's own device-control flag when it has one, else by the
+        // flag of the device restoring it. Builds that wrote no marker never exported the flag (DROPPED_KEYS), so that
+        // is the usual case. The flag itself is never restored.
         val stored = BackupJson.floatOrNull(o, "a.brightness")
+        val version = if (o.has(BrightnessEncoding.KEY_VERSION)) BackupJson.int(o, BrightnessEncoding.KEY_VERSION, BrightnessEncoding.VERSION) else null
         val brightness = if (stored == null) base.brightness else BrightnessEncoding.fromStored(
-            stored, o.has(BrightnessEncoding.KEY_VERSION), BackupJson.bool(o, "a.brightnessDevice", false))
+            stored, version, BackupJson.bool(o, "a.brightnessDevice", base.brightnessDevice))
         return base.copy(
             tapZoneMode = enumOf(BackupJson.strOrNull(o, "a.tapZoneMode"), base.tapZoneMode),
             customTapZones = tapZones(o.opt("a.customTapZones")) ?: base.customTapZones,

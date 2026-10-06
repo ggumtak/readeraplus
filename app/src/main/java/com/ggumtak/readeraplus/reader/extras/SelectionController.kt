@@ -99,6 +99,10 @@ class SelectionController(private val host: ReaderHost) {
     private var tapCandidate = false
     private var downX = 0f
     private var downY = 0f
+    /** Where the long press was made, and whether its finger has dragged since (only then may it arm the edge dwell). */
+    private var pressX = 0f
+    private var pressY = 0f
+    private var pressDragged = false
 
     /** The handle being dragged, with where its finger is (screen px) and the grab offset to its anchor. */
     private var dragHandle: HandleView? = null
@@ -117,6 +121,9 @@ class SelectionController(private val host: ReaderHost) {
     /** An edge turn was asked for and its page is not shown yet: its [onPageChanged] extends instead of clearing. */
     private var turnPending = false
     private var turnLayout: SectionLayout? = null
+    /** The direction asked for and the start of the page it left: the page that lands must be the one after / before it. */
+    private var turnNext = false
+    private var turnPageStart = 0
     private val turnTimeout = Runnable {
         turnPending = false
         turnLayout = null
@@ -215,6 +222,9 @@ class SelectionController(private val host: ReaderHost) {
         editingQuote = q
         active = true
         fromLongPress = true
+        pressX = x
+        pressY = y
+        pressDragged = false
         tapCandidate = false
         updateHighlight()
         showHandles()
@@ -241,7 +251,11 @@ class SelectionController(private val host: ReaderHost) {
                     dragX = ev.x
                     dragY = ev.y
                     extendTo(ev.x, ev.y)
-                    armDwell()
+                    // A finger resting where the press was made (maybe in an edge zone) turns nothing.
+                    if (!pressDragged) {
+                        pressDragged = EdgeGuard.pressDragged(pressX, pressY, ev.x, ev.y, slop.toFloat(), selStart < anchorStart || selEnd > anchorEnd)
+                    }
+                    if (pressDragged) armDwell()
                 } else if (tapCandidate && hypot(ev.x - downX, ev.y - downY) > slop) {
                     tapCandidate = false
                     main.removeCallbacks(reselect)
@@ -249,7 +263,7 @@ class SelectionController(private val host: ReaderHost) {
             }
             MotionEvent.ACTION_UP -> {
                 main.removeCallbacks(reselect)
-                cancelDwell()
+                releaseDwell()
                 if (fromLongPress) {
                     fromLongPress = false
                     showActions()
@@ -260,7 +274,7 @@ class SelectionController(private val host: ReaderHost) {
             }
             MotionEvent.ACTION_CANCEL -> {
                 main.removeCallbacks(reselect)
-                cancelDwell()
+                releaseDwell()
                 if (fromLongPress) showActions()
                 fromLongPress = false
                 tapCandidate = false
@@ -302,6 +316,8 @@ class SelectionController(private val host: ReaderHost) {
     /** The page an edge dwell turned to is shown. False when what is shown is not the same layout any more. */
     private fun edgeTurnLanded(): Boolean {
         val before = turnLayout
+        val next = turnNext
+        val startBefore = turnPageStart
         turnPending = false
         turnLayout = null
         main.removeCallbacks(turnTimeout)
@@ -311,6 +327,8 @@ class SelectionController(private val host: ReaderHost) {
         // No layout at all (scroll: the section has no whole line on screen) hides the handles; another one is a
         // relayout or a seam: the selection goes.
         if (before == null || (now != null && now !== before)) return false
+        // Some other page change (a turn from elsewhere) is not the one asked for: the selection goes.
+        host.currentPage?.let { if (!EdgeGuard.turnLanded(next, startBefore, it.start)) return false }
         dwell.landed()
         showHandles()
         if (dragging) {
@@ -403,6 +421,15 @@ class SelectionController(private val host: ReaderHost) {
     }
 
     /**
+     * The pointer went up: no timer, but a turn already asked for stays outstanding, so a page that shows after the
+     * finger left still keeps the selection ([turnTimeout] ends the wait).
+     */
+    private fun releaseDwell() {
+        main.removeCallbacks(dwellFire)
+        if (!dwell.release()) cancelDwell()
+    }
+
+    /**
      * The dwell ran out: one page toward the zone through the host's own turn (no animation; not a manual turn for the
      * return chip, and no peek ends: a note peek stays a peek, nothing is saved while it holds). [turnPending] lets
      * its [onPageChanged] keep the selection; the next dwell is armed only when that page shows.
@@ -417,8 +444,17 @@ class SelectionController(private val host: ReaderHost) {
             dwell.cancel()
             return
         }
+        // A step still waiting for its section (scroll), or a jump: one more turn would queue behind it and the
+        // timeouts would flush several screens at once. Wait another dwell instead.
+        if (!host.canTurnNow()) {
+            dwell.landed()
+            armDwell()
+            return
+        }
         turnPending = true
         turnLayout = host.currentLayout
+        turnNext = next
+        turnPageStart = page.start
         main.removeCallbacks(turnTimeout)
         main.postDelayed(turnTimeout, EDGE_TURN_WAIT_MS)
         val ok = runCatching { if (next) host.nextPage() else host.prevPage() }.getOrDefault(false)
@@ -1022,8 +1058,9 @@ class SelectionController(private val host: ReaderHost) {
     }
 
     /** The memo editor of [q]; a failed save says so and opens again with the typed text (never lost silently). */
-    private fun editQuoteNote(q: Quote, initial: String = q.note) {
-        clear()
+    private fun editQuoteNote(q: Quote, initial: String = q.note, fromRetry: Boolean = false) {
+        // A retry comes after the user went on: a selection made meanwhile stays.
+        if (!fromRetry) clear()
         ctx.multilinePrompt("인용문 메모", initial, "메모", minLines = 3) { note ->
             scope.launch {
                 val (ok, all) = withContext(Dispatchers.IO) {
@@ -1033,7 +1070,7 @@ class SelectionController(private val host: ReaderHost) {
                 if (all != null) QuoteCache.put(q.bookId, all)
                 if (!ok && !ctx.isFinishing && !ctx.isDestroyed) {
                     ctx.toast("저장하지 못했습니다")
-                    editQuoteNote(q, note)
+                    editQuoteNote(q, note, fromRetry = true)
                 }
             }
         }

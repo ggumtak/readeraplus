@@ -41,6 +41,24 @@ internal object SelectionSpan {
         if (next) pageEnd < textLength else pageStart > 0
 }
 
+/** The two checks around a dwell's turn that need no android: where the finger counts as dragging, and what landed. */
+internal object EdgeGuard {
+    /**
+     * The long press's finger has started to drag: it moved more than [slop] from where the press was made, or the
+     * selection already grew past the word picked ([grew]). A finger that only rests (a long press near an edge)
+     * never arms the dwell.
+     */
+    fun pressDragged(pressX: Float, pressY: Float, x: Float, y: Float, slop: Float, grew: Boolean): Boolean =
+        grew || kotlin.math.hypot(x - pressX, y - pressY) > slop
+
+    /**
+     * The page shown after an edge turn is the one asked for: it starts after the page the turn left when the turn
+     * was forward, before it when backward. Any other page change (a turn from elsewhere, a relayout) is not it.
+     */
+    fun turnLanded(next: Boolean, startBefore: Int, startNow: Int): Boolean =
+        if (next) startNow > startBefore else startNow < startBefore
+}
+
 /** Which edge of the text area a held point is in. */
 internal enum class Zone { NONE, TOP, BOTTOM }
 
@@ -116,7 +134,19 @@ internal class EdgeDwell {
         return was
     }
 
-    /** Pointer up / cancel, a dialog, a boundary, disposal: back to idle whatever the state. */
+    /**
+     * The pointer went up: an armed dwell is dropped, but a turn already asked for stays outstanding (its page may
+     * still show, and keeps the selection). True when one stays.
+     */
+    fun release(): Boolean {
+        if (state == State.ARMED) {
+            state = State.IDLE
+            zone = Zone.NONE
+        }
+        return state == State.TURNING
+    }
+
+    /** A dialog, a boundary, disposal, a new touch: back to idle whatever the state. */
     fun cancel() {
         state = State.IDLE
         zone = Zone.NONE

@@ -182,4 +182,14 @@ class LineGeometryTest {
         val packed = LineGeometry.wordAt("ab cd", 4)
         assertEquals((3L shl 32) or 5L, packed)
     }
+
+    @Test
+    fun wordAtNonWordStartsAtTheClusterStart() {
+        val family = "\uD83D\uDC68\u200D\uD83D\uDC69" // man ZWJ woman: the ZWJ is no word char
+        val t = "a $family b"
+        for (o in 2 until 2 + family.length) assertEquals(family, word(t, o))
+        val flag = "\uD83C\uDDF0\uD83C\uDDF7" // two regional indicators
+        val f = "a $flag b"
+        for (o in 2 until 2 + flag.length) assertEquals(flag, word(f, o))
+    }
 }
