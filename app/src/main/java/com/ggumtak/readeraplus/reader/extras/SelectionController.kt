@@ -31,6 +31,7 @@ import com.ggumtak.readeraplus.engine.OBJECT_CHAR
 import com.ggumtak.readeraplus.engine.PageInfo
 import com.ggumtak.readeraplus.engine.RectPx
 import com.ggumtak.readeraplus.engine.SectionLayout
+import com.ggumtak.readeraplus.engine.clusterEnd
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.LayoutKeys
@@ -164,7 +165,7 @@ class SelectionController(private val host: ReaderHost) {
             s = q.start
             e = q.end
         } else {
-            val packed = runCatching { LineGeometry.wordAt(text, off) }.getOrDefault((off.toLong() shl 32) or (off + 1).toLong())
+            val packed = runCatching { LineGeometry.wordAt(text, off) }.getOrDefault((off.toLong() shl 32) or clusterEnd(text, off).toLong())
             s = (packed ushr 32).toInt()
             e = (packed and 0xFFFFFFFFL).toInt()
         }
@@ -262,12 +263,12 @@ class SelectionController(private val host: ReaderHost) {
     }
 
     private fun extendTo(x: Float, y: Float) {
-        val (_, page) = validPage() ?: return
+        val (layout, page) = validPage() ?: return
         val off = host.hitTest(x, y)
         if (off < 0) return
         val o = off.coerceIn(page.start, page.end - 1)
         val s = minOf(anchorStart, o)
-        val e = maxOf(anchorEnd, o + 1).coerceAtMost(page.end)
+        val e = maxOf(anchorEnd, clusterEnd(layout.content.text, o)).coerceAtMost(page.end)
         setRange(s, e)
     }
 
@@ -361,14 +362,14 @@ class SelectionController(private val host: ReaderHost) {
                     v.parent?.requestDisallowInterceptTouchEvent(true)
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val (_, page) = validPage() ?: return true
+                    val (layout, page) = validPage() ?: return true
                     val pv = host.pageView
                     val px = ev.rawX + grabDx - pv.left - pv.translationX
                     val py = ev.rawY + grabDy - pv.top - pv.translationY - h.lineHalf
                     val off = host.hitTest(px, py)
                     if (off >= 0) {
                         val o = off.coerceIn(page.start, page.end - 1)
-                        if (h.start) setRange(o.coerceAtMost(selEnd - 1), selEnd) else setRange(selStart, (o + 1).coerceAtLeast(selStart + 1))
+                        if (h.start) setRange(o.coerceAtMost(selEnd - 1), selEnd) else setRange(selStart, clusterEnd(layout.content.text, o).coerceAtMost(page.end).coerceAtLeast(selStart + 1))
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> showActions()
@@ -717,9 +718,10 @@ class SelectionController(private val host: ReaderHost) {
      * Saves [q] in [style]. The page shows the new quote at once — in the same main-thread message as the [clear]
      * that came before, so quoting costs ONE e-ink update: the "quotes" list gets a copy of [QuoteCache] plus the new
      * one, in database order, and the insert + reload then find the page decor unchanged and draw nothing. A failed
-     * insert takes it away again (one update) with "저장하지 못했습니다".
+     * insert takes it away again (one update) with "저장하지 못했습니다"
+     * and then calls [onFailed] (the note prompt opens again with the typed text).
      */
-    private fun saveQuote(q: QuoteSnapshot, note: String, style: Int) {
+    private fun saveQuote(q: QuoteSnapshot, note: String, style: Int, onFailed: (() -> Unit)? = null) {
         val before = QuoteCache.get(q.bookId)
         val pending = Quote(id = Long.MAX_VALUE, bookId = q.bookId, section = q.section, start = q.start, end = q.end,
             text = q.text, note = note, createdAt = 0L, style = style)
@@ -736,10 +738,17 @@ class SelectionController(private val host: ReaderHost) {
             if (saved == null) {
                 if (before != null && sameBook(q.bookId)) applyQuoteHighlights(q.section, QuoteCache.get(q.bookId) ?: before ?: emptyList())
                 ctx.toast("저장하지 못했습니다")
+                if (onFailed != null && !ctx.isFinishing && !ctx.isDestroyed) onFailed()
                 return@launch
             }
-            // The reload failed: the cache still gets the row the insert returned.
-            val list = all ?: QuoteHighlights.withAdded(QuoteCache.get(q.bookId) ?: before ?: emptyList(), saved.copy(style = style))
+            // The reload failed: the cache still gets the row the insert returned, but only on top of a list it knew.
+            // Without one, a cache of the new quote alone would hide the older ones: leave it unset (the next press
+            // loads it again) and draw nothing here; the quote is saved all the same.
+            val list = all ?: (QuoteCache.get(q.bookId) ?: before)?.let { QuoteHighlights.withAdded(it, saved.copy(style = style)) }
+            if (list == null) {
+                quotesRequested = false
+                return@launch
+            }
             QuoteCache.put(q.bookId, list)
             // Only repaint when the same book is still open (the quote itself is saved either way).
             if (sameBook(q.bookId)) applyQuoteHighlights(q.section, list)
@@ -815,9 +824,17 @@ class SelectionController(private val host: ReaderHost) {
             return
         }
         hideActions()
-        ctx.multilinePrompt("인용문 메모", "", "메모", minLines = 3) { note ->
+        promptQuoteNote(snap, "")
+    }
+
+    /** The memo prompt of a new quote; a failed save opens it again with the typed note (once per submit, no duplicates). */
+    private fun promptQuoteNote(snap: QuoteSnapshot, initial: String) {
+        var submitted = false
+        ctx.multilinePrompt("인용문 메모", initial, "메모", minLines = 3) { note ->
+            if (submitted) return@multilinePrompt
+            submitted = true
             if (active && section == snap.section && selStart == snap.start && selEnd == snap.end) clear()
-            saveQuote(snap, note.trim(), LastQuoteStyle.get())
+            saveQuote(snap, note.trim(), LastQuoteStyle.get()) { promptQuoteNote(snap, note) }
         }
     }
 

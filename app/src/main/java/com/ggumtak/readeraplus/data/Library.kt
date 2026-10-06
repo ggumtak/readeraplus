@@ -553,7 +553,8 @@ object Library {
 
     /**
      * [style] = QuoteStyles id (clamped to 0..[DataLimits.QUOTE_STYLE_MAX]); [place] = where the quote sits (null
-     * stores "unknown").
+     * stores "unknown"). Throws when nothing was inserted (the insert returns an id <= 0, e.g. OR IGNORE), so a caller
+     * never mistakes the placeholder row for a saved quote.
      */
     fun addQuote(bookId: Long, section: Int, start: Int, end: Int, text: String, note: String = "", style: Int = 0, place: NotePlace? = null): Quote {
         val now = System.currentTimeMillis()
@@ -565,7 +566,8 @@ object Library {
         val st = NoteWrites.style(style)
         val p = NoteWrites.place(place)
         val id = db().insertRow(LibrarySql.INSERT_QUOTE, bookId, sec, s, e, t, n, now, st, p.chapter, p.frac, p.sig)
-        if (id > 0) notesChanged()
+        check(id > 0) { "quote not inserted" }
+        notesChanged()
         return Quote(
             id = id, bookId = bookId, section = sec, start = s, end = e, text = t, note = n, createdAt = now,
             style = st, chapter = p.chapter, frac = p.frac, sig = p.sig,

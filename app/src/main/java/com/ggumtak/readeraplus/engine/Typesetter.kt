@@ -201,11 +201,9 @@ object LineGeometry {
         val o = offset.coerceIn(0, len - 1)
         if (!isWordChar(text, o)) {
             var s = o
-            var e = o + 1
             val c = text[o]
-            if (Character.isHighSurrogate(c) && e < len && Character.isLowSurrogate(text[e])) e++
-            else if (Character.isLowSurrogate(c) && s > 0 && Character.isHighSurrogate(text[s - 1])) s--
-            return pack(s, e)
+            if (Character.isLowSurrogate(c) && s > 0 && Character.isHighSurrogate(text[s - 1])) s--
+            return pack(s, clusterEnd(text, s))
         }
         var s = o
         while (s > 0 && isWordChar(text, s - 1)) s--
