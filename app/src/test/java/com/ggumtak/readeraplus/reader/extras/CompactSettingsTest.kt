@@ -88,7 +88,7 @@ class CompactSettingsTest {
         assertTrue(StyleChoice.isDefault(d))
         assertEquals(PageTheme.PAPER, d.pageTheme)
         assertEquals("nanummyeongjo", d.fontId)
-        assertEquals(500, d.fontWeight)
+        assertEquals(400, d.fontWeight)
         assertEquals(200, d.lineHeightPct)
         assertEquals(100, d.paragraphSpacingPct)
         assertEquals(Align.LEFT, d.align)
@@ -132,7 +132,7 @@ class CompactSettingsTest {
         assertTrue(StyleChoice.isDefault(untouched))
         // Any field a preset sets leaves it ("직접 설정"), and so does every preset.
         val tweaks = listOf(
-            d.copy(fontId = "ridibatang"), d.copy(fontWeight = 400), d.copy(lineHeightPct = 170), d.copy(paragraphSpacingPct = 200),
+            d.copy(fontId = "ridibatang"), d.copy(fontWeight = 500), d.copy(lineHeightPct = 170), d.copy(paragraphSpacingPct = 200),
             d.copy(indentPct = 100), d.copy(letterSpacingPm = 10), d.copy(align = Align.JUSTIFY), d.copy(lineBreak = LineBreakMode.CHAR),
             d.copy(pageTheme = PageTheme.MARU),
         )

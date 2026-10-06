@@ -1720,7 +1720,7 @@ crisp_text() { # 100: the body text is hinted on whole pixels (CrispText: no LIN
   # so each line repeats its pattern pixel for pixel at a whole-px period and every line is the same pixels, the same row
   # profile (raw_equal.py crisp). The linear paint of before drew the copies at other quarter-pixel phases (1548/1024 em
   # = 60.47 px at 40 px): SOFT. Any font, theme or size: only the advances and origins count. The full/lit ratio of the
-  # first line is in the CHECK line for the record (at the default weight 500 the synthetic stroke hides the hinting's
+  # first line is in the CHECK line for the record (at weight 500 the synthetic stroke hides the hinting's
   # gain in it, so it is not a pass condition).
   adb push samples/crisp.txt /sdcard/Download/ >/dev/null
   local y0 y1 r

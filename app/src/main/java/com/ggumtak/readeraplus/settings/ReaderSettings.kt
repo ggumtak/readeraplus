@@ -13,8 +13,8 @@ data class ReaderSettings(
     /** FontManager font id ("ridibatang", "nanummyeongjo", "user:<file name>", ...). */
     val fontId: String = "nanummyeongjo",
     val fontSizeSp: Float = 20f,
-    /** 100..900; 400 = regular. Static fonts get synthetic emboldening above 400; variable fonts use wght. */
-    val fontWeight: Int = 500,
+    /** 100..900; 400 = 기본 (the regular weight, the default). Static fonts get synthetic emboldening above 400; variable fonts use wght. */
+    val fontWeight: Int = 400,
     /** Line height, % of em (170 = 1.7 em). */
     val lineHeightPct: Int = 200,
     /** Space between paragraphs, % of em. */
@@ -106,7 +106,7 @@ data class ReaderSettings(
  *
  * [MARU] (웹소설) is MaruViewer's page as measured on the user's screenshot (2026-10-04): 나눔명조 Regular, a 2 em
  * line pitch, one empty line between paragraphs, ragged right, no indent, on the [PageTheme.MARU] colours. The
- * defaults of [ReaderSettings] keep the earlier 웹소설 typography (weight 500, a 1 em paragraph gap) on white, so they
+ * defaults of [ReaderSettings] keep the earlier 웹소설 typography (a 1 em paragraph gap) on white, so they
  * match no preset: the 스타일 row calls them "기본" (`StyleChoice.isDefault`).
  */
 enum class StylePreset(val label: String, val description: String) {
