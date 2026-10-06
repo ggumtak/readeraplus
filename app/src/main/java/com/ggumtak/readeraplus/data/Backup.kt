@@ -345,6 +345,7 @@ object Backup {
                     exec(
                         LibrarySql.UPDATE_POSITION,
                         b.posSection, b.posOffset, b.progress, b.lastReadAt, id, b.lastReadAt,
+                        b.lastReadAt + LibrarySql.FUTURE_STAMP_MS,
                     )
                     if (BackupJson.remapsTextPosition(data.txtParseVersion, b)) remap += id to b.progress
                 }

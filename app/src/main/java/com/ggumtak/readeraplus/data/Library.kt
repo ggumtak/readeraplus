@@ -280,7 +280,7 @@ object Library {
         val p = if (progress.isNaN()) 0f else progress.coerceIn(0f, 1f)
         db().exec(
             LibrarySql.UPDATE_POSITION,
-            section.coerceAtLeast(0), offset.coerceAtLeast(0), p, at, bookId, at,
+            section.coerceAtLeast(0), offset.coerceAtLeast(0), p, at, bookId, at, at + LibrarySql.FUTURE_STAMP_MS,
         )
     }
 

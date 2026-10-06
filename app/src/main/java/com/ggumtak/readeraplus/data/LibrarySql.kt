@@ -92,12 +92,15 @@ internal object LibrarySql {
     /**
      * Newer-wins position write: the row changes only when its stored `last_read_at` is not later than the read time
      * being written, so a position that was read earlier but commits later (the IO pool does not keep order) changes
-     * nothing. The last bind is the same read time as the fourth. Args: pos_section, pos_offset, progress,
-     * last_read_at (the read time), id, read time (the guard).
+     * nothing. A stored stamp more than a day after the read time is not trusted (the clock was set back, or a backup
+     * from a device with a wrong clock): it never blocks a save. Args: pos_section, pos_offset, progress, last_read_at
+     * (the read time), id, read time (the guard), read time + [FUTURE_STAMP_MS].
      */
     const val UPDATE_POSITION =
         "UPDATE books SET pos_section = ?, pos_offset = ?, progress = ?, last_read_at = ? " +
-            "WHERE id = ? AND last_read_at <= ?"
+            "WHERE id = ? AND (last_read_at <= ? OR last_read_at > ?)"
+    /** How far a stored `last_read_at` may lie after a new read time and still win ([UPDATE_POSITION]): one day. */
+    const val FUTURE_STAMP_MS = 24L * 60 * 60 * 1000
     /** Args: seconds, id. */
     const val ADD_READING_TIME = "UPDATE books SET reading_seconds = reading_seconds + ? WHERE id = ?"
     const val SET_FAVORITE = "UPDATE books SET favorite = ? WHERE id = ?"
