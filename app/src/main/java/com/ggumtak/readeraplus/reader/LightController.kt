@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.PowerManager
 import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.BrightnessEncoding
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
@@ -29,8 +30,8 @@ internal interface LightHost {                        // implemented by ReaderAc
 
 /**
  * The reader's brightness (UI_SPEC §4, brightness.md §4): the brightness row and its options panel, the left-edge
- * swipe, the window path (linear `ReaderWindow.applyBrightness`, phones) or the opt-in device path ([DeviceLight],
- * light = [LightCurve.out]), the one-time verdict question per firmware and the restore-on-leave policy.
+ * swipe, the window path (`ReaderWindow.applyBrightness`, phones) or the opt-in device path ([DeviceLight]), both
+ * showing light = [LightCurve.out] of the one stored slider position ([BrightnessEncoding]), the one-time verdict question per firmware and the restore-on-leave policy.
  *
  * Rules: [onCreate] does no IO (only the window attribute); every device write, the verdict read, the observer and
  * the warm probe start in [afterFirstPage]. A drag allocates nothing on the main thread. The only writer of
@@ -39,8 +40,10 @@ internal interface LightHost {                        // implemented by ReaderAc
 internal class LightController(private val host: LightHost) {
     companion object {
         const val ASK_NONE=0; const val ASK_WINDOW=1; const val ASK_DEVICE=2
-        /** The manual position Ⓐ returns to (same key as the old ReaderActivity constant). */
-        private const val PREF_LAST_BRIGHTNESS = "reader.lastBrightness"
+        /** The manual position Ⓐ returns to. */
+        private const val PREF_LAST_BRIGHTNESS = "reader.lastBrightnessPos"
+        /** Before the encoding marker: the window path stored linear light here ([BrightnessEncoding.lastManual]). */
+        private const val PREF_LAST_BRIGHTNESS_LEGACY = "reader.lastBrightness"
     }
 
     private var chrome: ReaderChrome? = null
@@ -201,7 +204,7 @@ internal class LightController(private val host: LightHost) {
     /** Ⓐ: auto ↔ manual (the last manual position). */
     fun onAuto() {
         if (app.brightness < 0f) {
-            val v = Settings.raw().getFloat(PREF_LAST_BRIGHTNESS, 0.5f).coerceIn(0f, 1f)
+            val v = lastManual()
             apply(v)
             setManual(v)
         } else {
@@ -326,12 +329,20 @@ internal class LightController(private val host: LightHost) {
         return false
     }
 
-    /** Slider position of the device's own brightness (auto look, drag start). */
+    /** Slider position of the device's own brightness (auto look, drag start), on either path. */
     private fun systemPos(): Float {
         val sys = ReaderWindow.systemBrightness(host.activity)
-        if (!deviceOn()) return sys
-        val o = DeviceLight.deviceOut
+        val o = if (deviceOn()) DeviceLight.deviceOut else -1f
         return LightCurve.pos(if (o >= 0f) o else sys)
+    }
+
+    /** The manual position Ⓐ returns to (the legacy key converted once on read, see [BrightnessEncoding.lastManual]). */
+    private fun lastManual(): Float {
+        val p = Settings.raw()
+        return BrightnessEncoding.lastManual(
+            if (p.contains(PREF_LAST_BRIGHTNESS)) p.getFloat(PREF_LAST_BRIGHTNESS, 0.5f) else null,
+            if (p.contains(PREF_LAST_BRIGHTNESS_LEGACY)) p.getFloat(PREF_LAST_BRIGHTNESS_LEGACY, 0.5f) else null,
+            app.brightnessDevice)
     }
 
     private fun setManual(v: Float) {

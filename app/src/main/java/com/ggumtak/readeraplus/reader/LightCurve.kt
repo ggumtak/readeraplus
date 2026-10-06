@@ -1,8 +1,9 @@
 package com.ggumtak.readeraplus.reader
 
 /**
- * Slider position ↔ device light (brightness.md §3.1, UI_SPEC §4.2). **Device path only**: the window path keeps
- * `ReaderWindow.applyBrightness(activity, pos)` linear with its 0.01 floor.
+ * Slider position ↔ light (brightness.md §3.1, UI_SPEC §4.2). One meaning on both paths: `AppSettings.brightness` is
+ * the position and the light is [out] of it, whether it goes to the device ([DeviceLight.set]) or to the window
+ * ([windowLevel] in `ReaderWindow.applyBrightness`).
  *
  * The light is p²: fine steps at the low end, where night reading lives. Android's own slider is gamma-shaped for the
  * same reason. Pure: unit-tested by `LightCurveTest`.
@@ -11,8 +12,14 @@ internal object LightCurve {
     /** Framework int range of Settings.System.SCREEN_BRIGHTNESS. 0 is "off/invalid" to its int→float mapping: never written. */
     const val LEVEL_MIN=1; const val LEVEL_MAX=255
 
+    /** Lowest window brightness ([windowLevel]): the screen never goes fully dark. */
+    const val WINDOW_FLOOR=0.01f
+
     /** Light 0..1 for slider position [pos] (NaN counts as 0). */
     fun out(pos: Float): Float { val p = clamp01(pos); return p * p }
+
+    /** Window screenBrightness for slider position [pos]: [out] with a floor of [floor]. */
+    fun windowLevel(pos: Float, floor: Float=WINDOW_FLOOR): Float = Math.max(floor, out(pos))
 
     /** Slider position for light [out]; the inverse of [out]. */
     fun pos(out: Float): Float = Math.sqrt(clamp01(out).toDouble()).toFloat()

@@ -167,6 +167,7 @@ object Settings {
             putStringSet("a.excludedFolders", s.excludedFolders)
             putInt("a.orientationLock", s.orientationLock)
             putFloat("a.brightness", s.brightness)
+            putInt(BrightnessEncoding.KEY_VERSION, BrightnessEncoding.VERSION)
         }.apply()
         notifyListeners()
     }
@@ -306,7 +307,8 @@ object Settings {
             scanFolders = p.getStringSet("a.scanFolders", d.scanFolders)?.toSet() ?: d.scanFolders,
             excludedFolders = p.getStringSet("a.excludedFolders", d.excludedFolders)?.toSet() ?: d.excludedFolders,
             orientationLock = p.getInt("a.orientationLock", d.orientationLock),
-            brightness = p.getFloat("a.brightness", d.brightness),
+            brightness = BrightnessEncoding.fromStored(p.getFloat("a.brightness", d.brightness),
+                p.contains(BrightnessEncoding.KEY_VERSION), p.getBoolean("a.brightnessDevice", d.brightnessDevice)),
         )
     }
 

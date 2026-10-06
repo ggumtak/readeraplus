@@ -312,4 +312,31 @@ class SettingsStoreTest {
         fresh(hashMapOf("r.pageBreak" to "X"));assertEquals(com.ggumtak.readeraplus.engine.PageBreakMode.LINE,Settings.reader.pageBreak)
     }
 
+    @Test fun legacyWindowBrightnessLoadsAsPositionWithoutWriting() {
+        val raw = hashMapOf<String, Any?>("a.brightness" to 0.25f)
+        val before = HashMap(raw); val p = fresh(raw)
+        assertEquals(0.5f, Settings.app.brightness, 1e-6f)
+        assertEquals(before, raw)
+        // The first save stores the position with the marker: the next load takes it as is.
+        Settings.saveApp(Settings.app)
+        assertEquals(BrightnessEncoding.VERSION, p.map[BrightnessEncoding.KEY_VERSION])
+        Settings.initForTest(p); assertEquals(0.5f, Settings.app.brightness, 1e-6f)
+    }
+
+    @Test fun legacyDeviceBrightnessAutoAndVersionedStayAsStored() {
+        fresh(hashMapOf("a.brightness" to 0.25f, "a.brightnessDevice" to true)); assertEquals(0.25f, Settings.app.brightness, 0f)
+        fresh(hashMapOf("a.brightness" to -1f)); assertEquals(-1f, Settings.app.brightness, 0f)
+        fresh(); assertEquals(-1f, Settings.app.brightness, 0f)
+        fresh(hashMapOf("a.brightness" to 0.25f, BrightnessEncoding.KEY_VERSION to 2)); assertEquals(0.25f, Settings.app.brightness, 0f)
+    }
+
+    @Test fun deviceToggleAfterTheMigrationKeepsThePosition() {
+        // A window-path legacy 0.25 is position 0.5; turning the device control on afterwards must not convert it again.
+        val p = fresh(hashMapOf("a.brightness" to 0.25f))
+        Settings.saveApp(Settings.app.copy(brightnessDevice = true))
+        Settings.initForTest(p); assertEquals(0.5f, Settings.app.brightness, 1e-6f)
+        Settings.saveApp(Settings.app.copy(brightnessDevice = false))
+        Settings.initForTest(p); assertEquals(0.5f, Settings.app.brightness, 1e-6f)
+    }
+
 }

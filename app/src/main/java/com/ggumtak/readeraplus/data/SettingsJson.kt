@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.data
 
+import com.ggumtak.readeraplus.settings.BrightnessEncoding
 import com.ggumtak.readeraplus.settings.MaruHeader
 import com.ggumtak.readeraplus.settings.MaruSize
 import com.ggumtak.readeraplus.settings.StatusMigration
@@ -219,6 +220,7 @@ internal object SettingsJson {
         .put("a.excludedFolders", JSONArray().also { a -> s.excludedFolders.sorted().forEach { a.put(it) } })
         .put("a.orientationLock", s.orientationLock)
         .put("a.brightness", if (s.brightness.isFinite()) s.brightness.toDouble() else -1.0)
+        .put(BrightnessEncoding.KEY_VERSION, BrightnessEncoding.VERSION)
 
     /**
      * Fields missing from [o] keep their value from [base]. Fields this mapper doesn't name (newer settings) are
@@ -226,7 +228,12 @@ internal object SettingsJson {
      * [unmappedFromJson].
      */
     fun appFromJson(o: JSONObject, base: AppSettings): AppSettings {
-        val brightness = BackupJson.float(o, "a.brightness", base.brightness)
+        // A backup with the encoding marker holds a slider position, used as is. One without it is legacy (window
+        // path: linear light), converted once: by the backup's own device-control flag when it has one (this file
+        // never writes it, DROPPED_KEYS), else as a window-path value. The flag itself is never restored.
+        val stored = BackupJson.floatOrNull(o, "a.brightness")
+        val brightness = if (stored == null) base.brightness else BrightnessEncoding.fromStored(
+            stored, o.has(BrightnessEncoding.KEY_VERSION), BackupJson.bool(o, "a.brightnessDevice", false))
         return base.copy(
             tapZoneMode = enumOf(BackupJson.strOrNull(o, "a.tapZoneMode"), base.tapZoneMode),
             customTapZones = tapZones(o.opt("a.customTapZones")) ?: base.customTapZones,

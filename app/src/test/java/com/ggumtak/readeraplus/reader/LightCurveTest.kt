@@ -114,4 +114,23 @@ class LightCurveTest {
         assertEquals(" (수동)", LightProbe.modeLabel(0))
         assertEquals(" (자동)", LightProbe.modeLabel(1))
     }
+
+    @Test fun windowLevelIsTheCurveWithAFloor() {
+        assertEquals(0.25f, LightCurve.windowLevel(0.5f), 1e-6f)
+        assertEquals(1f, LightCurve.windowLevel(1f), 0f)
+        assertEquals(LightCurve.WINDOW_FLOOR, LightCurve.windowLevel(0f), 0f)
+        assertEquals(LightCurve.WINDOW_FLOOR, LightCurve.windowLevel(0.05f), 0f)   // 0.0025 is under the floor
+        assertEquals(LightCurve.WINDOW_FLOOR, LightCurve.windowLevel(Float.NaN), 0f)
+        assertEquals(1f, LightCurve.windowLevel(3f), 0f)
+        // The same slider position gives the same light on the window and the device path (above the floor).
+        for (i in 10..100) { val p = i / 100f; assertEquals(LightCurve.out(p), LightCurve.windowLevel(p), 0f) }
+    }
+
+    @Test fun systemLightRoundTripsThroughThePosition() {
+        // systemPos on the window path: LightCurve.pos of the system light shows the same light again.
+        for (level in 1..255) {
+            val sys = level / 255f
+            assertEquals(sys, LightCurve.out(LightCurve.pos(sys)), 1e-5f)
+        }
+    }
 }

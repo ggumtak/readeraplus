@@ -292,7 +292,7 @@ data class AppSettings(
     val highlightLook: Int = HL_LOOK_AUTO,
     val listPaging: Int = LIST_PAGING_AUTO,
     val recordLookups: Boolean = true,
-    /** Slider position 0..1, or -1 = system; the device path applies LightCurve. */
+    /** Slider position 0..1, or -1 = system; both light paths output LightCurve.out of it ([BrightnessEncoding]). */
     val brightness: Float = -1f,
 )
 

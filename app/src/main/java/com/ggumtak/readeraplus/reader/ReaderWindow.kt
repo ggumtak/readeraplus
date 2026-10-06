@@ -81,18 +81,18 @@ internal object ReaderWindow {
         c.setSystemBarsAppearance(if (dark) 0 else mask, mask)
     }
 
-    /** [value] 0..1, or < 0 for the system brightness. */
+    /** [value] = slider position 0..1 (the window shows [LightCurve.windowLevel] of it), or < 0 for the system brightness. */
     fun applyBrightness(activity: Activity, value: Float) {
         val w = activity.window
         val lp = w.attributes
-        val target = if (value < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else value.coerceIn(0.01f, 1f)
+        val target = if (value < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else LightCurve.windowLevel(value)
         if (lp.screenBrightness != target) {
             lp.screenBrightness = target
             w.attributes = lp
         }
     }
 
-    /** Current system brightness as 0..1 (approximate; used as the start of a manual adjustment). */
+    /** Current system light as 0..1, linear (approximate; [LightCurve.pos] turns it into a slider position). */
     fun systemBrightness(activity: Activity): Float = try {
         SystemSettings.System.getInt(activity.contentResolver, SystemSettings.System.SCREEN_BRIGHTNESS, 128) / 255f
     } catch (t: Throwable) {

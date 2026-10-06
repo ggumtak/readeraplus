@@ -4,6 +4,7 @@ import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.engine.LineBreakMode
 import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.BrightnessEncoding
 import com.ggumtak.readeraplus.settings.LibraryListMode
 import com.ggumtak.readeraplus.settings.LibrarySort
 import com.ggumtak.readeraplus.settings.PageTheme
@@ -166,5 +167,44 @@ class SettingsJsonTest {
         val o = SettingsJson.settingsToJson(reader, app, mapOf("x" to 1))
         assertTrue(o.has("reader") && o.has("app") && o.has("other") && o.has("otherTypes"))
         assertEquals("int", o.getJSONObject("otherTypes").getString("x"))
+    }
+
+    @Test
+    fun brightnessTravelsWithItsEncodingMarker() {
+        val json = JSONObject(SettingsJson.appToJson(AppSettings(brightness = 0.4f)).toString())
+        assertEquals(BrightnessEncoding.VERSION, json.getInt(BrightnessEncoding.KEY_VERSION))
+        // With the marker: used as is (never converted twice), whatever the device's own state.
+        assertEquals(0.4f, SettingsJson.appFromJson(json, AppSettings(brightness = 0.9f, brightnessDevice = true)).brightness, 0f)
+        assertEquals(0.4f, SettingsJson.appFromJson(json, AppSettings(brightness = 0.9f)).brightness, 0f)
+        // Export, restore, export again: stable.
+        val again = SettingsJson.appToJson(SettingsJson.appFromJson(json, AppSettings()))
+        assertEquals(0.4, again.getDouble("a.brightness"), 1e-6)
+    }
+
+    @Test
+    fun legacyBackupBrightnessIsConvertedOnceByItsOwnDeviceFlag() {
+        // No marker: a window-path backup holds linear light, restored as its position.
+        val legacy = JSONObject().put("a.brightness", 0.25)
+        assertEquals(0.5f, SettingsJson.appFromJson(legacy, AppSettings()).brightness, 1e-6f)
+        // The restoring device's own flag never decides for a backup (and is not restored).
+        val restored = SettingsJson.appFromJson(legacy, AppSettings(brightnessDevice = true))
+        assertEquals(0.5f, restored.brightness, 1e-6f)
+        assertTrue(restored.brightnessDevice)
+        // A backup that carries its own device flag: already a position.
+        val device = JSONObject().put("a.brightness", 0.25).put("a.brightnessDevice", true)
+        assertEquals(0.25f, SettingsJson.appFromJson(device, AppSettings()).brightness, 0f)
+        // Auto stays; a missing value keeps the device's own.
+        assertEquals(-1f, SettingsJson.appFromJson(JSONObject().put("a.brightness", -1), AppSettings(brightness = 0.7f)).brightness, 0f)
+        assertEquals(0.7f, SettingsJson.appFromJson(JSONObject(), AppSettings(brightness = 0.7f)).brightness, 0f)
+    }
+
+    @Test
+    fun brightnessMarkerIsAMappedKeyNotARawEntry() {
+        val raw = mapOf(BrightnessEncoding.KEY_VERSION to 2, "a.brightness" to 0.4f)
+        val a = SettingsJson.settingsToJson(ReaderSettings(), AppSettings(brightness = 0.4f), raw).getJSONObject("app")
+        assertEquals(2, a.getInt(BrightnessEncoding.KEY_VERSION))
+        assertTrue(SettingsJson.unmappedFromJson(a, SettingsJson.APP_PREFIX, raw).isEmpty())
+        // Exported from the typed settings even when the raw prefs have no marker yet (never saved since the update).
+        assertEquals(2, SettingsJson.settingsToJson(ReaderSettings(), AppSettings(), emptyMap<String, Any?>()).getJSONObject("app").getInt(BrightnessEncoding.KEY_VERSION))
     }
 }
