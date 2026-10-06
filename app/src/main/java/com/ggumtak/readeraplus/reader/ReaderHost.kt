@@ -81,6 +81,12 @@ interface ReaderHost {
      */
     val pageCutoutTop: Int get() = 0
 
+    /**
+     * Scroll mode: [section] stays the one [currentPage] / [hitTest] describe after a settle (a selection running over
+     * screens; a settle otherwise returns to the anchor's section) until the selection ends. Paged: nothing to do.
+     */
+    fun holdSection(section: Int) {}
+
     /** Converts view coordinates to (section offset) on the current page, or -1. */
     fun hitTest(x: Float, y: Float): Int
 

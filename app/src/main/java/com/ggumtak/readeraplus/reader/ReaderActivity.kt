@@ -3601,6 +3601,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         return if (pw > 0 && ph > 0) pw to ph else page.width to page.height
     }
 
+    override fun holdSection(section: Int) {
+        val sc = scroll ?: return
+        if (sc.focusSection(section)) scrollFocusHeld = true
+    }
+
     override fun hitTest(x: Float, y: Float): Int {
         if (scroll != null) {
             // The virtual page's lines are already shifted to the content box (no allocation: selection calibrates

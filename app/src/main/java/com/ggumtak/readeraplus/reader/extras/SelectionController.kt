@@ -32,6 +32,7 @@ import com.ggumtak.readeraplus.engine.PageInfo
 import com.ggumtak.readeraplus.engine.RectPx
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.engine.clusterEnd
+import com.ggumtak.readeraplus.engine.clusterStart
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.LayoutKeys
@@ -71,9 +72,12 @@ import kotlin.math.hypot
  * Long-press text selection with two draggable handles and an action popup: one row of 복사 · 인용 · 메모 · 사전·번역 ·
  * ⋮ ([SelectionActions]; over an existing quote a colour row above 복사 · 메모 · 인용 삭제 · 사전·번역 · ⋮), the ⋮ menu
  * holding 색 골라 인용… · 공유 · 문단 선택 · 책에서 검색 · 웹 검색 · 여기부터 듣기 and, in a TXT book, 문구 지우기.
- * The selection is limited to the current page of the current section; highlight owner "selection". A second long
- * press while a selection shows waits [AppSettings.longPressMs][com.ggumtak.readeraplus.settings.AppSettings.longPressMs],
- * like the page's own.
+ * The selection is (section, start, end) in the section's text, whatever page shows: only its part on the page shown
+ * is drawn and gets handles ([SelectionSpan]); highlight owner "selection". It grows over pages of ONE section: a
+ * handle (or the long press's finger) held in the top / bottom zone of the text area for [EDGE_DWELL_MS] turns one
+ * page ([EdgeDwell]) and keeps extending there; any other page change clears it. A second long press while a
+ * selection shows waits [AppSettings.longPressMs][com.ggumtak.readeraplus.settings.AppSettings.longPressMs], like the
+ * page's own.
  */
 class SelectionController(private val host: ReaderHost) {
     // Resolved lazily: the host may construct this before its own properties are initialised.
@@ -85,6 +89,8 @@ class SelectionController(private val host: ReaderHost) {
     private var section = -1
     private var selStart = 0
     private var selEnd = 0
+    /** Text of [section] (Copy / Quote / Note read it, not the page shown). */
+    private var sectionText: String? = null
     /** The word picked by the long press: dragging the same finger extends from it in both directions. */
     private var anchorStart = 0
     private var anchorEnd = 0
@@ -93,6 +99,30 @@ class SelectionController(private val host: ReaderHost) {
     private var tapCandidate = false
     private var downX = 0f
     private var downY = 0f
+
+    /** The handle being dragged, with where its finger is (screen px) and the grab offset to its anchor. */
+    private var dragHandle: HandleView? = null
+    private var dragRawX = 0f
+    private var dragRawY = 0f
+    private var dragGrabDx = 0f
+    private var dragGrabDy = 0f
+    /** The held point in page view px: the long press's finger, or the dragged handle's hit point. */
+    private var dragX = 0f
+    private var dragY = 0f
+    private val dragging: Boolean get() = fromLongPress || dragHandle != null
+
+    /** Edge dwell ([EdgeDwell]): the page turn a held point in an edge zone asks for, and the wait for its page. */
+    private val dwell = EdgeDwell()
+    private val dwellFire = Runnable { fireDwell() }
+    /** An edge turn was asked for and its page is not shown yet: its [onPageChanged] extends instead of clearing. */
+    private var turnPending = false
+    private var turnLayout: SectionLayout? = null
+    private val turnTimeout = Runnable {
+        turnPending = false
+        turnLayout = null
+        dwell.landed()
+        armDwell()
+    }
 
     private var startHandle: HandleView? = null
     private var endHandle: HandleView? = null
@@ -169,14 +199,15 @@ class SelectionController(private val host: ReaderHost) {
             s = (packed ushr 32).toInt()
             e = (packed and 0xFFFFFFFFL).toInt()
         }
-        s = s.coerceIn(page.start, page.end)
-        e = e.coerceIn(s, page.end)
+        s = s.coerceIn(0, text.length)
+        e = e.coerceIn(s, text.length)
         if (e <= s) return false
         if (e - s == 1 && (text[s] == OBJECT_CHAR || SentenceSplitter.isSpace(text[s]))) return false
 
         // Only now that there is a new word: a press that selects nothing keeps the current selection.
         if (active) clear()
         section = sec
+        sectionText = text
         selStart = s
         selEnd = e
         anchorStart = s
@@ -200,13 +231,17 @@ class SelectionController(private val host: ReaderHost) {
                 tapCandidate = true
                 downX = ev.x
                 downY = ev.y
+                cancelDwell()
                 main.removeCallbacks(reselect)
                 main.postDelayed(reselect, longPressMs())
             }
             MotionEvent.ACTION_MOVE -> {
                 if (fromLongPress) {
                     hideActions()
+                    dragX = ev.x
+                    dragY = ev.y
                     extendTo(ev.x, ev.y)
+                    armDwell()
                 } else if (tapCandidate && hypot(ev.x - downX, ev.y - downY) > slop) {
                     tapCandidate = false
                     main.removeCallbacks(reselect)
@@ -214,6 +249,7 @@ class SelectionController(private val host: ReaderHost) {
             }
             MotionEvent.ACTION_UP -> {
                 main.removeCallbacks(reselect)
+                cancelDwell()
                 if (fromLongPress) {
                     fromLongPress = false
                     showActions()
@@ -224,6 +260,7 @@ class SelectionController(private val host: ReaderHost) {
             }
             MotionEvent.ACTION_CANCEL -> {
                 main.removeCallbacks(reselect)
+                cancelDwell()
                 if (fromLongPress) showActions()
                 fromLongPress = false
                 tapCandidate = false
@@ -237,6 +274,8 @@ class SelectionController(private val host: ReaderHost) {
         active = false
         fromLongPress = false
         tapCandidate = false
+        dragHandle = null
+        cancelDwell()
         main.removeCallbacks(reselect)
         editingQuote = null
         hideActions()
@@ -246,11 +285,41 @@ class SelectionController(private val host: ReaderHost) {
         endHandle = null
         if (wasActive && section >= 0) runCatching { host.setHighlights("selection", section, emptyList()) }
         section = -1
+        sectionText = null
     }
 
-    /** Called by the host after page changes / relayout so handles and popup follow or close. */
+    /**
+     * Called by the host after page changes / relayout so handles and popup follow or close. Every page change clears
+     * the selection except the one an edge dwell asked for ([fireDwell]): that page, still of the same layout, keeps
+     * it and goes on extending under the finger.
+     */
     fun onPageChanged() {
-        if (active) clear()
+        if (!active) return
+        if (turnPending && edgeTurnLanded()) return
+        clear()
+    }
+
+    /** The page an edge dwell turned to is shown. False when what is shown is not the same layout any more. */
+    private fun edgeTurnLanded(): Boolean {
+        val before = turnLayout
+        turnPending = false
+        turnLayout = null
+        main.removeCallbacks(turnTimeout)
+        // Scroll: a settle gives the virtual page back to the anchor's section; the selection's section stays in focus.
+        host.holdSection(section)
+        val now = host.currentLayout
+        // No layout at all (scroll: the section has no whole line on screen) hides the handles; another one is a
+        // relayout or a seam: the selection goes.
+        if (before == null || (now != null && now !== before)) return false
+        dwell.landed()
+        showHandles()
+        if (dragging) {
+            refreshDrag()
+            armDwell()
+        } else {
+            showActions()
+        }
+        return true
     }
 
     // ------------------------------------------------------------------ selection geometry
@@ -262,14 +331,105 @@ class SelectionController(private val host: ReaderHost) {
         return layout to page
     }
 
+    /** The press's drag: the word picked grows to the char under (x, y) on the page shown (clusters stay whole). */
     private fun extendTo(x: Float, y: Float) {
         val (layout, page) = validPage() ?: return
         val off = host.hitTest(x, y)
         if (off < 0) return
+        val text = layout.content.text
         val o = off.coerceIn(page.start, page.end - 1)
-        val s = minOf(anchorStart, o)
-        val e = maxOf(anchorEnd, clusterEnd(layout.content.text, o)).coerceAtMost(page.end)
+        val s = minOf(anchorStart, clusterStart(text, o))
+        val e = maxOf(anchorEnd, clusterEnd(text, o))
         setRange(s, e)
+    }
+
+    /** The held finger again, after a turn: the new page under it gets the extension. */
+    private fun refreshDrag() {
+        if (fromLongPress) extendTo(dragX, dragY) else if (dragHandle != null) moveDraggedHandle()
+    }
+
+    /** The dragged handle's hit point (its anchor moved up into the glyph band) to a char; the selection follows. */
+    private fun moveDraggedHandle() {
+        val h = dragHandle ?: return
+        val (layout, page) = validPage() ?: return
+        val pv = host.pageView
+        val px = dragRawX + dragGrabDx - pv.left - pv.translationX
+        val py = dragRawY + dragGrabDy - pv.top - pv.translationY - h.lineHalf
+        dragX = px
+        dragY = py
+        val off = host.hitTest(px, py)
+        if (off < 0) return
+        val text = layout.content.text
+        val o = off.coerceIn(page.start, page.end - 1)
+        if (h.start) setRange(clusterStart(text, o.coerceAtMost(selEnd - 1)), selEnd)
+        else setRange(selStart, maxOf(clusterEnd(text, o), clusterEnd(text, selStart)))
+    }
+
+    // ------------------------------------------------------------------ edge dwell
+
+    /** The zone the held point is in, NONE where the page may not turn that way (a handle's other way, a section's end). */
+    private fun zoneNow(): Zone {
+        if (!dragging) return Zone.NONE
+        val page = validPage()?.second ?: return Zone.NONE
+        val len = sectionText?.length ?: return Zone.NONE
+        val v = host.pageView
+        val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density, host.pageCutoutTop)
+        val h = dragHandle
+        val allowNext = (h == null || !h.start) && SelectionSpan.canTurn(true, page.start, page.end, len)
+        val allowPrev = (h == null || h.start) && SelectionSpan.canTurn(false, page.start, page.end, len)
+        return EdgeZone.of(dragY, g.contentTop.toFloat(), (g.contentTop + g.contentHeight).toFloat(),
+            ctx.dpF(EDGE_ZONE_DP.toFloat()), allowNext, allowPrev)
+    }
+
+    /** The held point moved (or a page showed): starts, keeps or drops the dwell timer. */
+    private fun armDwell() {
+        when (dwell.update(zoneNow())) {
+            EdgeDwell.Action.ARM -> {
+                main.removeCallbacks(dwellFire)
+                main.postDelayed(dwellFire, EDGE_DWELL_MS)
+            }
+            EdgeDwell.Action.CANCEL -> main.removeCallbacks(dwellFire)
+            else -> {}
+        }
+    }
+
+    /** Pointer up / cancel, clear, a boundary: no timer, no page waited for. */
+    private fun cancelDwell() {
+        dwell.cancel()
+        main.removeCallbacks(dwellFire)
+        main.removeCallbacks(turnTimeout)
+        turnPending = false
+        turnLayout = null
+    }
+
+    /**
+     * The dwell ran out: one page toward the zone through the host's own turn (no animation; not a manual turn for the
+     * return chip, and no peek ends: a note peek stays a peek, nothing is saved while it holds). [turnPending] lets
+     * its [onPageChanged] keep the selection; the next dwell is armed only when that page shows.
+     */
+    private fun fireDwell() {
+        val zone = dwell.fire() ?: return
+        val next = zone == Zone.BOTTOM
+        val page = validPage()?.second
+        val len = sectionText?.length ?: 0
+        // A dialog took the window's focus, the finger is gone, or the section has no page that way.
+        if (!active || !dragging || page == null || !ctx.hasWindowFocus() || !SelectionSpan.canTurn(next, page.start, page.end, len)) {
+            dwell.cancel()
+            return
+        }
+        turnPending = true
+        turnLayout = host.currentLayout
+        main.removeCallbacks(turnTimeout)
+        main.postDelayed(turnTimeout, EDGE_TURN_WAIT_MS)
+        val ok = runCatching { if (next) host.nextPage() else host.prevPage() }.getOrDefault(false)
+        if (!ok && turnPending) {
+            // Nothing turned (a page still on its way): the finger is still there, so the dwell starts over.
+            turnPending = false
+            turnLayout = null
+            main.removeCallbacks(turnTimeout)
+            dwell.landed()
+            armDwell()
+        }
     }
 
     private fun setRange(s: Int, e: Int) {
@@ -321,11 +481,31 @@ class SelectionController(private val host: ReaderHost) {
         originKey = if (!dx.isNaN() && !dy.isNaN()) key else null
     }
 
+    /** The part of the selection on [page] as line rects, or null when none of it is on the page. */
+    private fun visibleRects(layout: SectionLayout, page: PageInfo): List<RectPx>? {
+        if (!SelectionSpan.visible(selStart, selEnd, page.start, page.end)) return null
+        val vs = SelectionSpan.start(selStart, page.start)
+        val ve = SelectionSpan.end(selEnd, page.end)
+        return runCatching { LineGeometry.rangeRects(layout, page, vs, ve) }.getOrNull()?.takeIf { it.isNotEmpty() }
+    }
+
+    /** A handle whose end is not on the page shown is hidden (the one being dragged keeps getting its touches). */
+    private fun hideHandles() {
+        startHandle?.visibility = View.INVISIBLE
+        endHandle?.visibility = View.INVISIBLE
+    }
+
     private fun showHandles() {
-        val (layout, page) = validPage() ?: return
         val parent = Overlay.parentOf(host) ?: return
-        val rects = runCatching { LineGeometry.rangeRects(layout, page, selStart, selEnd) }.getOrNull()
-        if (rects.isNullOrEmpty()) return
+        val shown = validPage()
+        val rects = shown?.let { visibleRects(it.first, it.second) }
+        if (shown == null || rects == null) {
+            // Nothing of the selection is on this page: the handles and the popup wait for a page that has it.
+            hideHandles()
+            hideActions()
+            return
+        }
+        val (layout, page) = shown
         origin(layout, page)
         val pv = host.pageView
         val baseX = pv.left + pv.translationX + originX
@@ -345,34 +525,38 @@ class SelectionController(private val host: ReaderHost) {
         // Anchored under the letters (the glyph band), not under the line box's blank leading.
         sh.place(baseX + first.left, baseY + HandleAnchor.bottom(layout, page, first), HandleAnchor.halfHeight(layout, page, first))
         eh.place(baseX + last.right, baseY + HandleAnchor.bottom(layout, page, last), HandleAnchor.halfHeight(layout, page, last))
+        sh.visibility = if (SelectionSpan.startShown(selStart, selEnd, page.start, page.end)) View.VISIBLE else View.INVISIBLE
+        eh.visibility = if (SelectionSpan.endShown(selStart, selEnd, page.start, page.end)) View.VISIBLE else View.INVISIBLE
     }
 
     /** Drags a handle; the hit point is the handle's anchor moved up into the middle of the glyph band. */
     private inner class HandleDrag(private val h: HandleView) : View.OnTouchListener {
-        private var grabDx = 0f
-        private var grabDy = 0f
-
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouch(v: View, ev: MotionEvent): Boolean {
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    grabDx = h.anchorX - ev.rawX
-                    grabDy = h.anchorY - ev.rawY
+                    dragHandle = h
+                    dragRawX = ev.rawX
+                    dragRawY = ev.rawY
+                    dragGrabDx = h.anchorX - ev.rawX
+                    dragGrabDy = h.anchorY - ev.rawY
+                    cancelDwell()
                     hideActions()
+                    // The handle's own touch stream: the page view sees none of it, so no tap or swipe is recognised.
                     v.parent?.requestDisallowInterceptTouchEvent(true)
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val (layout, page) = validPage() ?: return true
-                    val pv = host.pageView
-                    val px = ev.rawX + grabDx - pv.left - pv.translationX
-                    val py = ev.rawY + grabDy - pv.top - pv.translationY - h.lineHalf
-                    val off = host.hitTest(px, py)
-                    if (off >= 0) {
-                        val o = off.coerceIn(page.start, page.end - 1)
-                        if (h.start) setRange(o.coerceAtMost(selEnd - 1), selEnd) else setRange(selStart, clusterEnd(layout.content.text, o).coerceAtMost(page.end).coerceAtLeast(selStart + 1))
-                    }
+                    if (dragHandle !== h) return true
+                    dragRawX = ev.rawX
+                    dragRawY = ev.rawY
+                    moveDraggedHandle()
+                    armDwell()
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> showActions()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (dragHandle === h) dragHandle = null
+                    cancelDwell()
+                    showActions()
+                }
             }
             return true
         }
@@ -436,8 +620,8 @@ class SelectionController(private val host: ReaderHost) {
     private fun showActions() {
         if (!active) return
         val (layout, page) = validPage() ?: return
-        val rects = runCatching { LineGeometry.rangeRects(layout, page, selStart, selEnd) }.getOrNull()
-        if (rects.isNullOrEmpty()) return
+        // Anchored to the part of the selection on the page shown.
+        val rects = visibleRects(layout, page) ?: return
         origin(layout, page)
         hideActions()
 
@@ -545,8 +729,7 @@ class SelectionController(private val host: ReaderHost) {
     // ------------------------------------------------------------------ actions
 
     private fun selectedText(): String {
-        val layout = host.currentLayout ?: return ""
-        val text = layout.content.text
+        val text = sectionText ?: return ""
         val s = selStart.coerceIn(0, text.length)
         val e = selEnd.coerceIn(s, text.length)
         val sb = StringBuilder(e - s)
@@ -594,9 +777,9 @@ class SelectionController(private val host: ReaderHost) {
     /** What a lookup of the selection records (hub.md §6.4); taken before [clear]. Null when nothing is selected. */
     private fun lookupSnapshot(selected: String): LookupSnapshot? {
         if (!active || section < 0 || selected.isEmpty()) return null
-        val layout = validPage()?.first ?: return null
+        val text = sectionText ?: return null
         val bookId = runCatching { host.book.id }.getOrNull() ?: return null
-        val context = runCatching { LookupContext.sentence(layout.content.text, selStart, selEnd) }.getOrDefault("")
+        val context = runCatching { LookupContext.sentence(text, selStart, selEnd) }.getOrDefault("")
         return LookupSnapshot(bookId, LookupSnapshot.word(selected), section, selStart, selEnd, context, placeOf(selStart))
     }
 
@@ -614,7 +797,7 @@ class SelectionController(private val host: ReaderHost) {
 
     /** The selection holds no line break (a paragraph end in the laid-out text). */
     private fun selectionIsOneLine(): Boolean {
-        val text = host.currentLayout?.content?.text ?: return false
+        val text = sectionText ?: return false
         val s = selStart.coerceIn(0, text.length)
         val e = selEnd.coerceIn(s, text.length)
         for (i in s until e) if (text[i] == '\n' || text[i] == '\r') return false
@@ -672,13 +855,13 @@ class SelectionController(private val host: ReaderHost) {
         if (cb != null) cb(pos) else TtsRegistry.get(host)?.startFrom(pos)
     }
 
+    /** The whole paragraphs the selection touches, in the section's text (not cut at the page's edges). */
     private fun selectParagraph() {
-        val (layout, page) = validPage() ?: return
-        val text = layout.content.text
-        var s = selStart
-        while (s > page.start && text[s - 1] != '\n') s--
-        var e = selEnd
-        while (e < page.end && text[e] != '\n') e++
+        val text = sectionText ?: return
+        var s = selStart.coerceIn(0, text.length)
+        while (s > 0 && text[s - 1] != '\n') s--
+        var e = selEnd.coerceIn(s, text.length)
+        while (e < text.length && text[e] != '\n') e++
         setRange(s, e)
         showActions()
     }
@@ -688,7 +871,7 @@ class SelectionController(private val host: ReaderHost) {
 
     /** The current selection as a quote, or null when there is none (or nothing selectable in it). */
     private fun snapshot(): QuoteSnapshot? {
-        if (!active || section < 0 || validPage() == null) return null
+        if (!active || section < 0 || sectionText == null) return null
         val t = selectedText()
         if (t.isEmpty()) return null
         val bookId = runCatching { host.book.id }.getOrNull() ?: return null
@@ -890,6 +1073,8 @@ class SelectionController(private val host: ReaderHost) {
     }
 
     private companion object {
+        /** How long an edge turn may take to show before the dwell starts over (a section or picture being loaded). */
+        const val EDGE_TURN_WAIT_MS = 1500L
         const val DEFAULT_LONG_PRESS_MS = 500
         const val MIN_LONG_PRESS_MS = 200
         const val MAX_LONG_PRESS_MS = 2000

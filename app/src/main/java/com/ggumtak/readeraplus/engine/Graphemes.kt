@@ -1,7 +1,7 @@
 package com.ggumtak.readeraplus.engine
 
 /*
- * Grapheme-cluster end for selections (pure, no android.*): a selection that ends at `o + 1` can cut a surrogate
+ * Grapheme-cluster bounds for selections (pure, no android.*): a selection that ends at `o + 1` can cut a surrogate
  * pair, an emoji sequence or a base + combining mark in half. Same rules as the typesetter's line breaking
  * (TypesetPass.graphemeOk: never break before a mark or after a ZWJ), here as a forward scan from a cluster's start.
  */
@@ -33,6 +33,50 @@ fun clusterEnd(text: CharSequence, o: Int): Int {
         }
     }
     return i
+}
+
+/**
+ * Start of the grapheme cluster that holds the char at [o] (the counterpart of [clusterEnd], same rules): an [o] in
+ * the middle of a surrogate pair, after a base letter's combining mark, behind a ZWJ or on the second regional
+ * indicator of a flag moves back to the cluster's first char. Clamped to 0 .. `text.length`; an [o] at or past the
+ * end returns the length.
+ */
+fun clusterStart(text: CharSequence, o: Int): Int {
+    val n = text.length
+    if (o >= n) return n
+    var i = o.coerceAtLeast(0)
+    if (i > 0 && Character.isLowSurrogate(text[i]) && Character.isHighSurrogate(text[i - 1])) i--
+    // Back to a code point that starts a cluster by itself: no extender, not joined by a ZWJ before it.
+    while (i > 0) {
+        val cp = Character.codePointAt(text, i)
+        val prev = Character.codePointBefore(text, i)
+        if (isExtender(cp) || cp == ZWJ || prev == ZWJ) {
+            i -= Character.charCount(prev)
+        } else if (isRegionalIndicator(cp) && isRegionalIndicator(prev) && riRunBefore(text, i) % 2 == 1) {
+            i -= Character.charCount(prev)
+        } else {
+            break
+        }
+    }
+    // Forward from there with clusterEnd's own rules, so both sides always agree on where the clusters are.
+    while (true) {
+        val e = clusterEnd(text, i)
+        if (e > o || e <= i) return i
+        i = e
+    }
+}
+
+/** How many regional indicators stand directly before [i]. */
+private fun riRunBefore(text: CharSequence, i: Int): Int {
+    var n = 0
+    var k = i
+    while (k > 0) {
+        val cp = Character.codePointBefore(text, k)
+        if (!isRegionalIndicator(cp)) break
+        n++
+        k -= Character.charCount(cp)
+    }
+    return n
 }
 
 private fun isRegionalIndicator(cp: Int): Boolean = cp in 0x1F1E6..0x1F1FF
