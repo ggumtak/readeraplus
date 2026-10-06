@@ -27,10 +27,9 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 * 1024) {
 
-    private class Entry(val maxW: Int, val maxH: Int, val bitmap: Bitmap)
-
-    private val bitmaps = object : LruCache<String, Entry>(maxBytes.coerceAtLeast(1024 * 1024)) {
-        override fun sizeOf(key: String, value: Entry): Int = value.bitmap.allocationByteCount.coerceAtLeast(1)
+    /** By [key] ("src|w|h"): one picture at two sizes (a font size tried and back) keeps both, not one slot. */
+    private val bitmaps = object : LruCache<String, Bitmap>(maxBytes.coerceAtLeast(1024 * 1024)) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount.coerceAtLeast(1)
     }
 
     private val raw = object : LruCache<String, ByteArray>(RAW_BYTES) {
@@ -141,7 +140,7 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
             markFailed(src, maxW, maxH)
             return null
         }
-        bitmaps.put(src, Entry(maxW, maxH, bmp))
+        bitmaps.put(key(src, maxW, maxH), bmp)
         return bmp
     }
 
@@ -156,13 +155,13 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
         synchronized(failed) { failed.add(failKey(src, maxW, maxH)) }
     }
 
-    /** "src|w|h": the key of a failed decode and of a running one. */
-    private fun failKey(src: String, maxW: Int, maxH: Int): String = "$src|$maxW|$maxH"
+    /** "src|w|h": the key of a failed decode and of a running one ([key]). */
+    private fun failKey(src: String, maxW: Int, maxH: Int): String = key(src, maxW, maxH)
 
     /** Cached bitmap for exactly this target size, without decoding (null if not cached). */
     fun peek(src: String, maxW: Int, maxH: Int): Bitmap? {
-        val e = bitmaps.get(src) ?: return null
-        return if (e.maxW == maxW && e.maxH == maxH && !e.bitmap.isRecycled) e.bitmap else null
+        val b = bitmaps.get(key(src, maxW, maxH)) ?: return null
+        return if (!b.isRecycled) b else null
     }
 
     /** Intrinsic size without decoding pixels. */
@@ -230,10 +229,13 @@ class ImageCache(private val document: BookDocument, maxBytes: Int = 24 * 1024 *
         return out
     }
 
-    private companion object {
-        const val TAG = "ImageCache"
+    internal companion object {
+        private const val TAG = "ImageCache"
+        /** The key of a picture at a target size: the decoded bitmaps, the running decodes and the failures all use it. */
+        fun key(src: String, maxW: Int, maxH: Int): String = "$src|$maxW|$maxH"
+
         /** Compressed bytes kept between layout (size) and drawing (get). */
-        const val RAW_BYTES = 8 * 1024 * 1024
+        private const val RAW_BYTES = 8 * 1024 * 1024
     }
 }
 

@@ -66,6 +66,11 @@ object ReaderPanels {
         InfoDialogs.goTo(host)
     }
 
+    /** A relayout (font size, rotation) changed the page numbers: the search-results bar over the page reads its own again. */
+    fun refreshSearchBar() {
+        SearchNavBar.refresh()
+    }
+
     /**
      * Closes the search-results bar over [host]'s page (and clears its search highlight), if shown. Returns true
      * when a bar was closed, so the reader's BACK handling can close it first and only leave the book on the next

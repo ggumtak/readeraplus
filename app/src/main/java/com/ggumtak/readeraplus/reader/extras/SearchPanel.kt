@@ -68,9 +68,7 @@ internal object SearchPanel {
     /** Results and status reach the screen at most this often while scanning (each refresh is an e-ink update). */
     const val FLUSH_MS = 500L
 
-    class Hit(val section: Int, val start: Int, val end: Int, val snippet: CharSequence) {
-        var page: String? = null
-    }
+    class Hit(val section: Int, val start: Int, val end: Int, val snippet: CharSequence)
 
     class State(val bookId: Long, doc: BookDocument, val query: String) {
         val docRef = WeakReference(doc)
@@ -126,12 +124,13 @@ internal object SearchPanel {
         return sp
     }
 
-    /** A hit's page; empty (and not remembered) while the pages are counted, so it never keeps an estimate. */
+    /**
+     * A hit's page, read from the current layout every time (the results outlive a relayout, e.g. a font size change;
+     * [ReaderHost.pageLabel] is a lookup in the counts); empty while the pages are counted, so it never shows an estimate.
+     */
     fun pageOf(host: ReaderHost, h: Hit): String {
-        h.page?.let { return it }
         if (runCatching { host.pagesPending() }.getOrNull() != null) return ""
         return PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(h.section, h.start)) }.getOrNull())
-            .also { h.page = it }
     }
 
     // ------------------------------------------------------------------ highlight / navigation
@@ -183,6 +182,10 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
     private lateinit var status: TextView
     private lateinit var empty: TextView
     private val adapter = ResultAdapter()
+    /** The pages are counted (or counting failed): the rows' page numbers are read again, the list stays where it is. */
+    private val countsListener: () -> Unit = {
+        if (::dialog.isInitialized && dialog.isShowing && adapter.count > 0) adapter.notifyDataSetChanged()
+    }
 
     fun show() {
         val root = ctx.vertical { setBackgroundColor(Ink.WHITE) }
@@ -248,6 +251,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
 
         dialog = ctx.fullScreenDialog(root)
         dialog.setOnDismissListener {
+            host.removeCountsListener(countsListener)
             job?.cancel()
             scope.cancel()
             state?.let { SearchPanel.remember(it) }
@@ -283,6 +287,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
             }
         }
         PanelRegistry.dialog(ctx, dialog)
+        host.addCountsListener(countsListener)
     }
 
     private fun startSearch(raw: String) {
@@ -420,12 +425,36 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
 internal object SearchNavBar {
     /** Weak: the bar belongs to the reader window; a static strong reference would leak the activity. */
     private var barRef: WeakReference<View>? = null
+    /** What the bar shows, to relabel it when the page numbers change (all weak, like [barRef]). */
+    private var hostRef: WeakReference<ReaderHost>? = null
+    private var stateRef: WeakReference<SearchPanel.State>? = null
+    private var labelRef: WeakReference<TextView>? = null
+    private var shownIndex = 0
+    /** While the bar is shown: the pages are counted, so its page number is read again. */
+    private val countsListener: () -> Unit = { refresh() }
+
+    private fun labelText(host: ReaderHost, state: SearchPanel.State, index: Int): String {
+        val more = if (state.complete) "" else "+"
+        return PageLabel.withPage("${index + 1} / ${state.hits.size}$more", SearchPanel.pageOf(host, state.hits[index]))
+    }
+
+    /** Reads the bar's page number again (the pages were counted, or the layout changed); no-op without a bar. */
+    fun refresh() {
+        val host = hostRef?.get()
+        val state = stateRef?.get()
+        val label = labelRef?.get()
+        if (host == null || state == null || label == null || label.parent == null) return
+        if (shownIndex !in state.hits.indices) return
+        val text = labelText(host, state, shownIndex)
+        if (label.text.toString() != text) label.text = text
+    }
 
     fun show(host: ReaderHost, state: SearchPanel.State, index: Int) {
         val parent = Overlay.parentOf(host) ?: return
         val ctx = host.activity
         remove()
         if (index !in state.hits.indices) return
+        shownIndex = index
         val row = Overlay.bar(ctx)
         row.addView(ctx.flatIcon(R.drawable.ic_close, "검색 닫기") {
             SearchPanel.clearHighlight(host)
@@ -433,8 +462,8 @@ internal object SearchNavBar {
         })
         val texts = ctx.vertical { gravity = Gravity.CENTER_VERTICAL }
         texts.addView(ctx.label("‘${state.query}’", 15f, bold = true, maxLines = 1))
-        val more = if (state.complete) "" else "+"
-        texts.addView(ctx.label(PageLabel.withPage("${index + 1} / ${state.hits.size}$more", SearchPanel.pageOf(host, state.hits[index])), 14f, color = Ink.GRAY))
+        val label = ctx.label(labelText(host, state, index), 14f, color = Ink.GRAY)
+        texts.addView(label)
         row.addView(texts, lp(0, WRAP_CONTENT, 1f).apply { leftMargin = ctx.dp(4) })
         row.addView(ctx.flatIcon(R.drawable.ic_view_list, "검색 결과 목록") {
             remove()
@@ -449,6 +478,10 @@ internal object SearchNavBar {
         row.setPadding(row.paddingLeft, row.paddingTop, row.paddingRight, Overlay.bottomInset(host.pageView))
         parent.addView(row, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
         barRef = WeakReference(row)
+        hostRef = WeakReference(host)
+        stateRef = WeakReference(state)
+        labelRef = WeakReference(label)
+        host.addCountsListener(countsListener)
     }
 
     fun isShown(): Boolean = barRef?.get()?.parent != null
@@ -460,7 +493,11 @@ internal object SearchNavBar {
     }
 
     fun remove() {
+        hostRef?.get()?.removeCountsListener(countsListener)
         barRef?.get()?.let { (it.parent as? ViewGroup)?.removeView(it) }
         barRef = null
+        hostRef = null
+        stateRef = null
+        labelRef = null
     }
 }

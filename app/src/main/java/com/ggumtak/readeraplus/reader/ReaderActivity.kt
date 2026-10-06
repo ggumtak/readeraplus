@@ -2028,6 +2028,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         safely { selection?.onPageChanged() }
         if (chromeVisible) bindChrome() else returnNav.bind()
+        // The search bar's page number belongs to the old layout (the page it shows is redrawn anyway).
+        if (kind == Nav.RELAYOUT) safely { ReaderPanels.refreshSearchBar() }
 
         // A relayout shows the same place again: the page on screen keeps counting.
         if (kind != Nav.RELAYOUT) trackPage(p)

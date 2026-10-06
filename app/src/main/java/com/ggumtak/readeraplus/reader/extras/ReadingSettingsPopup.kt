@@ -3,6 +3,8 @@ package com.ggumtak.readeraplus.reader.extras
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.LayerDrawable
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -252,7 +254,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         fun refresh() {
             for ((i, v) in views.withIndex()) {
                 val on = !cur.invert && cur.pageTheme == THEMES[i].first
-                v.background = if (on) ctx.borderBox(strokeDp = 2f) else pressableBackground()
+                v.background = themeBox(if (on) ctx.borderBox(strokeDp = 2f) else pressableBackground())
                 v.setTypeface(null, if (on) Typeface.BOLD else Typeface.NORMAL)
                 v.isSelected = on
             }
@@ -271,10 +273,19 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                 }
             }
             views += v
-            row.addView(v, LinearLayout.LayoutParams(ctx.dp(THEME_DP), ctx.dp(THEME_H_DP)).apply { leftMargin = ctx.dp(4) })
+            row.addView(v, LinearLayout.LayoutParams(ctx.dp(THEME_DP), ctx.dp(Compact.ROW_DP)).apply { leftMargin = ctx.dp(4) })
         }
         refresh()
         return row
+    }
+
+    /** A choice's look, [THEME_H_DP] tall in the 48 dp touch target (a layer inset, which adds no padding). */
+    private fun themeBox(look: Drawable): Drawable {
+        val inset = ctx.dp((Compact.ROW_DP - THEME_H_DP) / 2)
+        return LayerDrawable(arrayOf(look)).apply {
+            setLayerInsetTop(0, inset)
+            setLayerInsetBottom(0, inset)
+        }
     }
 
     // ------------------------------------------------------------------ rows
@@ -328,7 +339,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         /** The 배경 row's choices, in its order, with the words the user asked for (2026-10-05). */
         val THEMES: List<Pair<PageTheme, String>> =
             listOf(PageTheme.PAPER to "흰색", PageTheme.MARU to "회색", PageTheme.BLACK to "검은색")
-        /** A 배경 choice: 64 dp wide ("검은색" at 17 sp fits), 40 dp tall inside the 48 dp row. */
+        /** A 배경 choice: 64 dp wide ("검은색" at 17 sp fits), drawn 40 dp tall; the view is the row's 48 dp (touch target). */
         private const val THEME_DP = 64
         private const val THEME_H_DP = 40
         const val ALL_SETTINGS = "전체 읽기 설정"

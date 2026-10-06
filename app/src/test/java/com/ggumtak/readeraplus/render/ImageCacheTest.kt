@@ -152,6 +152,15 @@ class ImageCacheTest {
         assertEquals(1, cache.drawDecodes)
     }
 
+    /** The decoded bitmaps, the running decodes and the failures share one key per picture and size. */
+    @Test
+    fun keyIsPerPictureAndSize() {
+        assertEquals("img/a.jpg|300|400", ImageCache.key("img/a.jpg", 300, 400))
+        assertFalse(ImageCache.key("img/a.jpg", 300, 400) == ImageCache.key("img/a.jpg", 400, 300))
+        assertFalse(ImageCache.key("img/a.jpg", 300, 400) == ImageCache.key("img/a.jpg", 300, 401))
+        assertFalse(ImageCache.key("img/a.jpg", 300, 400) == ImageCache.key("img/b.jpg", 300, 400))
+    }
+
     @Test
     fun pageNeedsDecodeUntilEachPictureIsSettled() {
         val doc = MissingImages()
