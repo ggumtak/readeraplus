@@ -62,12 +62,13 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val em = measurer.emPx
 
     /**
-     * Both status lines in the phone's own UI font (Typeface.DEFAULT: Samsung's on the S25, as MaruViewer draws its status
-     * line), never the book's. Flat, never the body's text shadow: MaruViewer draws its status line without one (its glyph
-     * shapes, stroke weight and 13 sp ink match ours on the S25 screenshots, 2026-10-05; [PagePalette.MARU]).
+     * Both status lines in 나눔명조 Regular (user, 2026-10-06: "상태표시줄도 나눔명조로"; the phone's UI font before, as
+     * MaruViewer), whatever the book's font; the phone's font if it cannot be loaded. Its size is fitted to the bands'
+     * glyph box by ink (init), so the bands keep their height. Flat, never the body's text shadow: MaruViewer draws its
+     * status line without one ([PagePalette.MARU]).
      */
     private val statusPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-        typeface = Typeface.DEFAULT
+        typeface = runCatching { FontManager.typeface(FontCatalog.DEFAULT_ID, 400) }.getOrNull() ?: Typeface.DEFAULT
         textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, StatusBands.statusSp(settings), context.resources.displayMetrics)
         color = palette.status
         textLocale = Locale.KOREAN
