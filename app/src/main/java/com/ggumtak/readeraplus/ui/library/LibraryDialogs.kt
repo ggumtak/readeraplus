@@ -105,6 +105,8 @@ internal fun LibraryActivity.bookMenu(
                 toggleFlag(row, BookFlag.HAVE_READ)
             }
         }
+        // 편집 first: the title, author and series straight from ⋮ (user, 2026-10-06), not via 책 정보.
+        item("책 정보 편집", R.drawable.ic_edit) { editInfo(b) }
         item("컬렉션에 추가", R.drawable.ic_library_books) { collectionsDialog(b) }
         item("독서 노트", R.drawable.ic_format_quote) { NotesActivity.open(this, NotesTab.ALL, b.id) }
         item("책 정보", R.drawable.ic_info) { documentInfo(b) }
@@ -114,6 +116,14 @@ internal fun LibraryActivity.bookMenu(
         item("휴지통으로 옮기기", R.drawable.ic_delete) { setTrashed(b, true) }
     }
     popupMenu(anchor, items, 240)
+}
+
+private fun LibraryActivity.editInfo(b: Book) {
+    try {
+        ReaderPanels.editBookInfo(this, b) { changed() }
+    } catch (t: Throwable) {
+        toast(ErrorLines.line("책 정보를 편집할 수 없습니다", t))
+    }
 }
 
 private fun LibraryActivity.documentInfo(b: Book) {

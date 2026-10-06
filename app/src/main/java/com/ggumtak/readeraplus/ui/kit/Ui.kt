@@ -487,8 +487,16 @@ class MenuItem(
  * ([groupLinePx], as between settings sections) at its top inside its own 48 dp: the menu is no taller for it.
  */
 fun Context.popupMenu(anchor: View, items: List<MenuItem>, widthDp: Int = 240): PopupWindow {
-    val list = vertical { background = borderBox(); setPadding(0, dp(4), 0, dp(4)) }
-    val popup = PopupWindow(list, dp(widthDp), WRAP_CONTENT, true)
+    val list = vertical { setPadding(0, dp(4), 0, dp(4)) }
+    // The rows scroll inside the border when the menu is taller than the room on either side of the anchor.
+    val scroll = android.widget.ScrollView(this).apply {
+        background = borderBox()
+        isVerticalScrollBarEnabled = true
+        isScrollbarFadingEnabled = false
+        overScrollMode = View.OVER_SCROLL_NEVER
+        addView(list, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+    }
+    val popup = PopupWindow(scroll, dp(widthDp), WRAP_CONTENT, true)
     items.forEachIndexed { i, item ->
         val r = horizontal {
             minimumHeight = dp(48)
@@ -512,7 +520,33 @@ fun Context.popupMenu(anchor: View, items: List<MenuItem>, widthDp: Int = 240): 
     popup.animationStyle = 0
     popup.isOutsideTouchable = true
     popup.elevation = 0f
-    popup.showAsDropDown(anchor)
+    // Below the anchor when it fits, else above it, else on the roomier side at that side's height (scrolling):
+    // never cut off by the screen's edge (a book row's ⋮ near the bottom).
+    val frame = android.graphics.Rect()
+    anchor.getWindowVisibleDisplayFrame(frame)
+    val at = IntArray(2)
+    anchor.getLocationOnScreen(at)
+    val edge = dp(8)
+    val below = frame.bottom - (at[1] + anchor.height) - edge
+    val above = at[1] - frame.top - edge
+    scroll.measure(
+        View.MeasureSpec.makeMeasureSpec(dp(widthDp), View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+    )
+    val h = scroll.measuredHeight
+    when {
+        h <= below -> popup.showAsDropDown(anchor)
+        h <= above -> popup.showAsDropDown(anchor, 0, -(anchor.height + h))
+        below >= above -> {
+            popup.height = below.coerceAtLeast(dp(96))
+            popup.showAsDropDown(anchor)
+        }
+        else -> {
+            val ph = above.coerceAtLeast(dp(96))
+            popup.height = ph
+            popup.showAsDropDown(anchor, 0, -(anchor.height + ph))
+        }
+    }
     return popup
 }
 
