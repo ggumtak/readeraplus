@@ -125,7 +125,13 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     val pos: ScrollPos get() = navigation.pos
     override val sectionCount: Int get() = shownCount
     private val height: Float get() = navigation.height
-    private val clip: Float get() = if (currentMotion == Motion.STEP) minOf(height, window.wholeBottom) else height
+    /**
+     * The last move was a tap / key step (user, 2026-10-06: "탭을 눌렀을 때도 … 글씨가 잘리는 일은 없도록"): until the next
+     * drag or fling the text ends at its last whole line, as in [Motion.STEP]; a drag shows the cut line again.
+     */
+    private var stepped = false
+    private val clip: Float get() =
+        if ((currentMotion == Motion.STEP || stepped) && window.wholeBottom > 0f) minOf(height, window.wholeBottom) else height
     override val live: Boolean get() = currentMotion == Motion.SMOOTH
     /** On e-ink a drag starts only past the tap slop, so a slightly moving tap still turns the page. */
     override val fineDrag: Boolean get() = live && !ink
@@ -243,6 +249,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         // A key or wheel step during a fling: the text stops where it is (one settle), then moves one screen from there.
         if (flinging) stopMotion()
         direction = if (next) 1 else -1
+        stepped = true
         return navigation.step(next)
     }
     fun onSectionStored(section: Int, layout: SectionLayout) {
@@ -366,7 +373,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     }
     override fun beginDrag() { held = true }
     override fun dragBy(dy: Float) {
-        if (!frozen && !detached && live) { direction = if (dy >= 0f) 1 else -1; navigation.drag(dy) }
+        if (!frozen && !detached && live) { stepped = false; direction = if (dy >= 0f) 1 else -1; navigation.drag(dy) }
     }
     override fun release(totalDy: Float, velocityY: Float) {
         held = false
