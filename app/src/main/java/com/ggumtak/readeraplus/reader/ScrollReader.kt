@@ -476,13 +476,15 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         val r = renderer ?: return
         imageCount = 0; requestedVersion = frameVersion
         for (i in 0 until window.count) window.layouts[i]?.let { addImage(it, window.pages[i]) }
+        val onScreen = imageCount
         for (side in 0..1) {
             imagePos.set(pos)
             ScrollMath.scrollBy(this, imagePos, if (side == 0) -height else height, height)
             ScrollMath.forEachVisible(this, imagePos, height) { _, l, p, _, _ -> addImage(l, p) }
         }
         // Once per visible-page change/settle, not once per missing-image frame. LatestTaskRunner batches it.
-        r.prefetchPages(imageLayouts, imagePages, imageCount, imageDone)
+        // The pages on screen decode before the ones a viewport away (ImageCache's single decoder takes them in that order).
+        r.prefetchPages(imageLayouts, imagePages, imageCount, imageDone, onScreen)
         imageLayouts.fill(null)
     }
     companion object {

@@ -216,7 +216,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             val page = layout.pages[pageIndex]
             val lines = page.lines
             if (decor.highlights.isNotEmpty()) drawHighlights(canvas, layout, lines, decor.highlights, contentLeft, contentTop)
-            for (i in 0 until lines.size) drawLine(canvas, layout, lines[i], contentLeft, contentTop, cw)
+            for (i in 0 until lines.size) drawLine(canvas, layout, pageIndex, lines[i], contentLeft, contentTop, cw)
         }
         if (decor.bookmarked) drawRibbon(canvas, viewWidth, ribbonH)
         if (images != null) prefetchNeighbours(layout, pageIndex)
@@ -224,15 +224,16 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
 
     /**
      * Decodes the images of [pageIndex] into the image cache (blocking). Call from a background thread before
-     * showing an illustrated page so [draw] never decodes on the UI thread. A picture another thread is decoding
-     * already (the neighbour prefetch) is waited for, not decoded twice.
+     * showing an illustrated page so [draw] finds them. The decoder takes them one at a time ([ImageCache.get]): a
+     * picture queued or running already (the neighbour prefetch) is waited for, not decoded twice. [visible]: the page
+     * about to be shown (false: a neighbour's prefetch, behind any visible page's pictures).
      */
-    fun preload(layout: SectionLayout, pageIndex: Int) {
+    fun preload(layout: SectionLayout, pageIndex: Int, visible: Boolean = true) {
         val cache = images ?: return
         val page = layout.pages.getOrNull(pageIndex) ?: return
         for (ln in page.lines) {
             val img = ln.imageBlock ?: continue
-            if (cache.get(img.src, imgW(ln), imgH(ln)) == null && cache.isKnownFailure(img.src, imgW(ln), imgH(ln)))
+            if (cache.get(img.src, imgW(ln), imgH(ln), visible) == null && cache.isKnownFailure(img.src, imgW(ln), imgH(ln)))
                 failedImages.add(ln)
         }
     }
@@ -263,8 +264,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val prev = needsDecode(cache, layout, pageIndex - 1)
         if (!next && !prev) return
         imagePrefetcher.submit {
-            if (next) preload(layout, pageIndex + 1)
-            if (prev) preload(layout, pageIndex - 1)
+            if (next) preload(layout, pageIndex + 1, visible = false)
+            if (prev) preload(layout, pageIndex - 1, visible = false)
         }
     }
 
@@ -299,7 +300,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         for (i in first until end) {
             val ln = lines[i]
             if (ln.imageBlock != null) missing = drawImagePeek(canvas, ln, left, top) || missing
-            else drawLine(canvas, layout, ln, left, top, layout.config.width.toFloat())
+            else drawLine(canvas, layout, pageIndex, ln, left, top, layout.config.width.toFloat())
         }
         canvas.restoreToCount(save)
         return missing
@@ -321,7 +322,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     }
 
     /** One latest-pending batch; copy callers' reusable slot arrays before submitting. */
-    fun prefetchPages(layouts: Array<SectionLayout?>, pages: IntArray, count: Int, done: Runnable?) {
+    fun prefetchPages(layouts: Array<SectionLayout?>, pages: IntArray, count: Int, done: Runnable?, visibleCount: Int = 0) {
         val cache = images ?: return
         val n = minOf(count, layouts.size, pages.size).coerceAtLeast(0)
         var any = false
@@ -337,7 +338,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             for (i in 0 until n) {
                 val l = ls[i] ?: continue
                 if (!needsDecode(cache, l, ps[i])) continue
-                preload(l, ps[i]); decoded = true
+                preload(l, ps[i], visible = i < visibleCount); decoded = true
             }
             if (decoded && done != null) main.post(done)
         }
@@ -648,12 +649,13 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private fun imgW(ln: LineInfo): Int = PageImages.width(ln)
     private fun imgH(ln: LineInfo): Int = PageImages.height(ln)
 
-    private fun drawLine(canvas: Canvas, layout: SectionLayout, ln: LineInfo, left: Float, top: Float, cw: Float) {
+    private fun drawLine(canvas: Canvas, layout: SectionLayout, pageIndex: Int, ln: LineInfo, left: Float, top: Float, cw: Float) {
         val img = ln.imageBlock
         if (img != null) {
             rect.set(left + ln.x, top + ln.top, left + ln.x + ln.imageWidth, top + ln.top + ln.imageHeight)
-            // Normally decoded already: the reader preloads the page it turns to (a miss: ImageCache.getForDraw).
-            val bmp = images?.getForDraw(img.src, imgW(ln), imgH(ln))
+            // Normally decoded already: the reader preloads the page it turns to. A miss reads nothing: the box stays
+            // and the picture is decoded in the background, then repaints its own box (ImageCache.getForDraw).
+            val bmp = images?.getForDraw(img.src, imgW(ln), imgH(ln), layout, pageIndex)
             if (bmp != null) {
                 canvas.drawBitmap(bmp, null, rect, bitmapPaint)
             } else {
@@ -966,7 +968,7 @@ private val nightImageFilter: ColorMatrixColorFilter by lazy {
     )
 }
 
-/** Background decoder for the images of neighbouring pages (one low-priority thread, latest request only). */
+/** Background caller of [PageRenderer.preload] for neighbouring pages (one thread, latest request only). */
 private val imagePrefetcher = LatestTaskRunner("page-image-prefetch")
 
 /**
@@ -991,8 +993,8 @@ internal class LatestTaskRunner(name: String) {
     private fun drain() {
         while (true) {
             val t = pending.getAndSet(null) ?: return
-            // Before each task: a turn waiting for this thread's decode raises it to the default priority
-            // (ImageCache's DecodeBoost), for the rest of that task only. A no-op syscall when unchanged.
+            // Before each task: back to the background group (the decoding itself runs on ImageCache's worker, which
+            // follows the requests' priority; this thread scans pages and waits). A no-op syscall when unchanged.
             try {
                 Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
             } catch (e: Throwable) {

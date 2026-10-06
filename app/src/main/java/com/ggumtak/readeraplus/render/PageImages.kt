@@ -29,4 +29,27 @@ object PageImages {
         }
         return false
     }
+
+    /** The picture line of page [pageIndex] drawn from [src] at w x h px, or null (out of range, gone, other size). */
+    fun find(layout: SectionLayout, pageIndex: Int, src: String, w: Int, h: Int): LineInfo? {
+        val lines = layout.pages.getOrNull(pageIndex)?.lines ?: return null
+        for (i in 0 until lines.size) {
+            val ln = lines[i]
+            val img = ln.imageBlock ?: continue
+            if (width(ln) == w && height(ln) == h && img.src == src) return ln
+        }
+        return null
+    }
+
+    /**
+     * The view-px box of [ln] drawn with the content box at ([left], [top]), widened outward to whole px (and one px
+     * more, for the outline the empty box drew inside it): [out] = left, top, right, bottom. The part of the screen a
+     * picture arriving later has to repaint, and nothing else.
+     */
+    fun bounds(ln: LineInfo, left: Float, top: Float, out: IntArray) {
+        out[0] = Math.floor((left + ln.x).toDouble()).toInt() - 1
+        out[1] = Math.floor((top + ln.top).toDouble()).toInt() - 1
+        out[2] = Math.ceil((left + ln.x + ln.imageWidth).toDouble()).toInt() + 1
+        out[3] = Math.ceil((top + ln.top + ln.imageHeight).toDouble()).toInt() + 1
+    }
 }

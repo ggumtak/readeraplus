@@ -2,6 +2,8 @@ package com.ggumtak.readeraplus.reader
 
 import android.content.ComponentCallbacks2
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
@@ -74,6 +76,13 @@ class BookSession(
 
         /** [layout] of [section] was just laid out and cached for the current generation (e.g. a prefetch). */
         fun onSectionStored(section: Int, layout: SectionLayout) {}
+
+        /**
+         * A picture the page drew as an empty box ([ImageCache.getForDraw]) is decoded now and cached: the page of
+         * [layout] that asked for it ([pageIndex]) paints its box again if it is still the one shown. Never called
+         * once the session is closed.
+         */
+        fun onImageReady(layout: SectionLayout, pageIndex: Int, src: String, w: Int, h: Int) {}
     }
 
     /** Immutable parameters of one layout generation (any layout-affecting change creates a new one). */
@@ -124,8 +133,17 @@ class BookSession(
     val sectionCount: Int = document.sections.size
     val counts = PageCounts(IntArray(sectionCount) { document.sections[it].approxChars })
     val chapters = ChapterIndex(document.toc, sectionCount)
-    /** RAPerf DEBUG also logs every picture decoded inside a draw ("draw decode N: …", 0 expected). */
-    val images = ImageCache(document).apply { if (ReaderPerf.turns) drawTraceTag = ReaderPerf.TAG }
+    private val uiHandler = Handler(Looper.getMainLooper())
+
+    /** RAPerf DEBUG also logs every draw that finds a picture missing ("draw miss N: …", 0 expected on turns). */
+    val images = ImageCache(document).apply {
+        if (ReaderPerf.turns) drawTraceTag = ReaderPerf.TAG
+        // The decoder's thread to the main thread; a book closed meanwhile hears nothing.
+        listener = ImageCache.Listener { layout, page, src, w, h ->
+            val l = layout as? SectionLayout
+            if (l != null) uiHandler.post { if (!closed) this@BookSession.listener?.onImageReady(l, page, src, w, h) }
+        }
+    }
 
     var generation: Generation? = null
         private set
@@ -878,6 +896,8 @@ class BookSession(
         episodesOnce.complete(null)
         val doc = document
         val imgs = images
+        // Queued decodes are dropped and nothing is cached or announced from now on; the one running is awaited below.
+        imgs.dispose()
         val counter = countExec
         try {
             layoutExec.execute {
@@ -886,10 +906,7 @@ class BookSession(
                     counter.awaitTermination(5, TimeUnit.SECONDS)
                 } catch (_: InterruptedException) {
                 }
-                try {
-                    imgs.clear()
-                } catch (_: Throwable) {
-                }
+                imgs.awaitIdle(IMAGE_IDLE_MS)
                 try {
                     doc.close()
                 } catch (t: Throwable) {
@@ -908,6 +925,8 @@ class BookSession(
     companion object {
         private const val TAG = "BookSession"
         const val MAX_CACHED = 4
+        /** How long the document's close waits for the picture decode running when the book closes. */
+        private const val IMAGE_IDLE_MS = 3000L
         /** How often a foreground layout is retried while the generation keeps changing underneath. */
         private const val MAX_ATTEMPTS = 8
         /** Partial page counts are saved after this many sections counted in the background (A2). */

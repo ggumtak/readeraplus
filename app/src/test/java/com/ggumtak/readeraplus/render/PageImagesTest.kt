@@ -9,6 +9,7 @@ import com.ggumtak.readeraplus.engine.SectionContent
 import com.ggumtak.readeraplus.engine.SectionLayout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -119,4 +120,29 @@ class PageImagesTest {
         assertEquals(0L, AllocCounter.measure(loop))
         assertEquals(0, hits)
     }
+
+    /** The repaint of a late picture finds its line by picture and drawn size, on the page that asked. */
+    @Test
+    fun findsThePictureLineOfAPage() {
+        val a = image("a.jpg", 20f, 300f, 400f)
+        val b = image("b.jpg", 440f, 300f, 200f)
+        val l = layout(listOf(text(0f), a, b), listOf(image("a.jpg", 0f, 150f, 200f)))
+        assertEquals(a, PageImages.find(l, 0, "a.jpg", 300, 400))
+        assertEquals(b, PageImages.find(l, 0, "b.jpg", 300, 200))
+        assertNull(PageImages.find(l, 0, "a.jpg", 150, 200))
+        assertNull(PageImages.find(l, 0, "c.jpg", 300, 400))
+        assertEquals(150f, PageImages.find(l, 1, "a.jpg", 150, 200)!!.imageWidth, 0f)
+        assertNull(PageImages.find(l, 2, "a.jpg", 300, 400))
+        assertNull(PageImages.find(l, -1, "a.jpg", 300, 400))
+    }
+
+    /** Only the picture's box is repainted: whole px outward plus the outline's px, never the page. */
+    @Test
+    fun repaintBoxIsThePicturesBoxInViewPx() {
+        val ln = LineInfo(4, 5, 12.5f, 20.25f, 420.25f, 420.25f, 0f, LineInfo.EXPAND_NONE, ImageBlock(4, "a.jpg"), 299.5f, 400f)
+        val out = IntArray(4)
+        PageImages.bounds(ln, 40f, 100f, out)
+        assertEquals(listOf(51, 119, 353, 522), out.toList())
+    }
 }
+

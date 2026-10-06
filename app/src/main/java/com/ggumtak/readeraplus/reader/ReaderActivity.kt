@@ -75,7 +75,9 @@ import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
 import com.ggumtak.readeraplus.render.ImageCoverage
+import com.ggumtak.readeraplus.render.ImageRepaint
 import com.ggumtak.readeraplus.render.PageDecor
+import com.ggumtak.readeraplus.render.PageImages
 import com.ggumtak.readeraplus.render.PagePalette
 import com.ggumtak.readeraplus.render.PageRenderer
 import com.ggumtak.readeraplus.render.ProgressMath
@@ -1897,6 +1899,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     override fun removeCountsListener(l: () -> Unit) = countsListeners.remove(l)
 
+    /** [PageImages.bounds] of the picture that just arrived (main thread). */
+    private val repaintBox = IntArray(4)
+
     private val sessionListener = object : BookSession.Listener {
         override fun onCountsChanged(complete: Boolean) {
             // While a relayout is under way the page on screen belongs to the old layout: its showPage binds both.
@@ -1921,6 +1926,18 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 chromeCountsAt = now
                 bindChrome()
             }
+        }
+
+        override fun onImageReady(layout: SectionLayout, pageIndex: Int, src: String, w: Int, h: Int) {
+            // A picture the shown page drew as an empty box has arrived (a turn preloads, so this is the rare miss):
+            // paint just its box, once. Another page, a relaid-out section, a scroll viewport (its own batch repaints
+            // it) or a closed book keeps the bitmap in the cache and paints nothing.
+            val f = page.frame ?: return
+            val open = session?.isClosed == false
+            if (!ImageRepaint.shouldRepaint(open, page.scroll == null, layout, f.layout, pageIndex, f.pageIndex)) return
+            val ln = PageImages.find(f.layout, f.pageIndex, src, w, h) ?: return
+            PageImages.bounds(ln, f.left, f.top, repaintBox)
+            page.invalidate(repaintBox[0], repaintBox[1], repaintBox[2], repaintBox[3])
         }
 
         override fun onSectionStored(section: Int, layout: SectionLayout) {
@@ -2408,9 +2425,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     /**
-     * Decodes the images of the page about to be shown on the IO pool so onDraw never decodes them. A picture another
-     * thread is decoding already (a boundary or neighbour prefetch) is waited for there, picture by picture
-     * ([ImageCache.get]); a prefetch of some other page is not.
+     * Asks the image decoder for the images of the page about to be shown, on the IO pool, and waits, so onDraw
+     * finds them (it never decodes). The decoder takes them before any neighbour prefetch, and one a prefetch
+     * queued or runs already is shared, picture by picture ([ImageCache.get]).
      */
     private suspend fun preloadImages(s: BookSession, l: SectionLayout, pageIndex: Int) {
         if (scrollWanted) {
@@ -2461,7 +2478,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun prefetchImages(s: BookSession, l: SectionLayout, pageIndex: Int) {
         if (!needsImageDecode(s, l, pageIndex)) return
         val r = safely { s.renderer() } ?: return
-        imagePrefetch = scope.launch(Dispatchers.IO) { runCatching { r.preload(l, pageIndex) } }
+        imagePrefetch = scope.launch(Dispatchers.IO) { runCatching { r.preload(l, pageIndex, visible = false) } }
     }
 
     /** A foreground layout returned nothing although the session is still current. */
