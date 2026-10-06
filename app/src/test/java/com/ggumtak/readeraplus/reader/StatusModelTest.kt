@@ -430,7 +430,7 @@ class StatusModelTest {
         changes = 0
         // The least of three runs: a JIT recompile or deopt landing inside one run is not the code allocating.
         val bytes = (1..3).minOf { AllocCounter.measure(loop)!! }
-        assertEquals(10_000, changes)                             // every call changed something visible
+        assertEquals(30_000, changes)                             // every call of the three runs changed something visible
         assertEquals("10 000 updates allocated $bytes bytes", 0L, bytes)
     }
 }

@@ -23,6 +23,8 @@ class FontInfo(
     /** Has a 'wght' variation axis. */
     val variable: Boolean = false,
     val serif: Boolean = true,
+    /** The font's own weight, shown as 굵기 "기본": a variable font's default `wght`, else 400 (a static file as is). */
+    val naturalWeight: Int = 400,
 )
 
 /** Range highlight kinds drawn under/over text. */

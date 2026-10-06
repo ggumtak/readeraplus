@@ -88,7 +88,7 @@ object FontManager {
                 out.add(u)
             } else {
                 val fileName = u.id.removePrefix(FontFiles.USER_PREFIX)
-                out.add(FontInfo(u.id, "${u.name} ($fileName)", u.source, u.path, u.boldPath, u.variable, u.serif))
+                out.add(FontInfo(u.id, "${u.name} ($fileName)", u.source, u.path, u.boldPath, u.variable, u.serif, u.naturalWeight))
             }
         }
         builtIn[FontCatalog.SYSTEM_SERIF]?.let { out.add(it) }
@@ -192,6 +192,9 @@ object FontManager {
         return FontMath.minWeight(info.variable, info.source == FontSource.SYSTEM)
     }
 
+    /** The weight font [id] shows as is (굵기 "기본"); 400 when it can't be resolved. */
+    fun naturalWeight(id: String): Int = runCatching { resolve(id).naturalWeight }.getOrDefault(FontMath.REGULAR)
+
     /** Extra synthetic stroke width (px) to emulate [weight] for a static font at [textSizePx]; 0 if not needed. */
     fun syntheticStroke(id: String, weight: Int, textSizePx: Float): Float {
         val info = resolve(id)
@@ -247,6 +250,7 @@ object FontManager {
             return font(id) ?: FontInfo(
                 id, sfnt.displayName ?: target.nameWithoutExtension, FontSource.USER, target.absolutePath,
                 null, sfnt.variable, FontFiles.serifGuess(sfnt.displayName ?: name, sfnt.sansHint),
+                FontMath.naturalWeight(sfnt.variable, sfnt.wghtDefault),
             )
         } finally {
             if (tmp.exists()) tmp.delete()
@@ -424,6 +428,7 @@ object FontManager {
                 boldPath = if (s.variable) null else uf.bold?.absolutePath,
                 variable = s.variable,
                 serif = FontFiles.serifGuess(name, s.sansHint),
+                naturalWeight = FontMath.naturalWeight(s.variable, s.wghtDefault),
             )
         }
         uf.info = info

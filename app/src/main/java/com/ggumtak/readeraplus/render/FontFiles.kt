@@ -171,6 +171,10 @@ internal object FontMath {
     /** The regular weight: the lightest a static (non-variable) font file can show. */
     const val REGULAR = 400
 
+    /** A font's own weight (see [FontInfo.naturalWeight]): the default `wght` of a variable font, else [REGULAR]. */
+    fun naturalWeight(variable: Boolean, wghtDefault: Float): Int =
+        if (variable && wghtDefault >= 100f && wghtDefault <= 900f) normalizeWeight(Math.round(wghtDefault)) else REGULAR
+
     /**
      * Lowest body weight that renders differently from [REGULAR]: variable fonts (`wght` axis) and the system
      * faces can go lighter, a static file cannot (synthetic stroke only thickens).

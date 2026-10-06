@@ -149,7 +149,12 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         root.addView(stepperRow("글자 크기", cur.fontSizeSp, ReaderSettings.MIN_FONT_SP, ReaderSettings.MAX_FONT_SP, 0.5f, Fmt::number) {
             update(cur.copy(fontSizeSp = it), debounce = true)
         })
-        root.addView(stepperRow("굵기", cur.fontWeight.toFloat(), 100f, 900f, 50f, { Fmt.weight(it.toInt()) }) {
+        // 굵기 counts steps from the font's own weight ("기본"); a static file can't get thinner than it is. Read per
+        // label, so a font picked here relabels the next step.
+        val minWeight = runCatching { FontManager.minWeight(cur.fontId) }.getOrDefault(100)
+            .coerceAtMost(FontManager.naturalWeight(cur.fontId)).toFloat()
+        root.addView(stepperRow("굵기", cur.fontWeight.toFloat().coerceAtLeast(minWeight), minWeight, 900f, 50f,
+            { Fmt.weight(it.toInt(), FontManager.naturalWeight(cur.fontId)) }) {
             update(cur.copy(fontWeight = it.toInt()), debounce = true)
         })
         root.addView(stepperRow("줄 간격", cur.lineHeightPct.toFloat(), 100f, 300f, 5f, { Fmt.pct(it.toInt()) }) {

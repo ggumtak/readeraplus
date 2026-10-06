@@ -4,6 +4,7 @@ import com.ggumtak.readeraplus.data.TxtOverride
 import com.ggumtak.readeraplus.engine.PageBreakMode
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.ReaderFormat
+import com.ggumtak.readeraplus.render.FontMath
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.settings.StylePreset
@@ -84,8 +85,18 @@ internal object Fmt {
         else -> "0"
     }
 
-    /** Font weight as a plain number ("500"): short and constant-width, so steppers never shift. */
-    fun weight(w: Int): String = w.toString()
+    /**
+     * Font weight as steps from the font's own weight [natural] ("기본", one step = 50): with 400, "+2" for 500 and
+     * "-1" for 350. Short, so steppers never shift.
+     */
+    fun weight(w: Int, natural: Int = FontMath.REGULAR): String {
+        val steps = (FontMath.normalizeWeight(w) - FontMath.normalizeWeight(natural)) / 50
+        return when {
+            steps == 0 -> "기본"
+            steps > 0 -> "+$steps"
+            else -> steps.toString()
+        }
+    }
 
     /** TTS rate/pitch "1.0x". */
     fun rate(v: Float): String {

@@ -80,7 +80,10 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         body.addView(stepper("글자 크기", r.fontSizeSp, ReaderSettings.MIN_FONT_SP, ReaderSettings.MAX_FONT_SP, 0.5f, Fmt::number) { v ->
             edit { it.copy(fontSizeSp = v) }
         })
-        body.addView(stepper("굵기", r.fontWeight.toFloat(), 100f, 900f, 50f, { Fmt.weight(it.toInt()) }) { v ->
+        // 굵기 counts steps from the font's own weight ("기본"); a static file can't get thinner than it is.
+        val natural = FontManager.naturalWeight(r.fontId)
+        val minWeight = runCatching { FontManager.minWeight(r.fontId) }.getOrDefault(100).coerceAtMost(natural).toFloat()
+        body.addView(stepper("굵기", r.fontWeight.toFloat(), minWeight, 900f, 50f, { Fmt.weight(it.toInt(), natural) }) { v ->
             edit { it.copy(fontWeight = v.toInt()) }
         })
         body.addView(stepper("글자 간격", r.letterSpacingPm.toFloat(), -100f, 200f, 10f, { Fmt.letterSpacing(it.toInt()) }) { v ->
