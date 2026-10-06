@@ -295,6 +295,30 @@ class ScanPlanTest {
     }
 
     @Test
+    fun vanishedWithReadingHistoryOnlyIsTrashedNotDropped() {
+        // The kept set (SELECT_IDS_KEPT_WHEN_MISSING) holds books with progress / 다 읽음 / reading log but no notes.
+        val k = listOf(known(1, "/r/a.txt"), known(2, "/r/b.txt"))
+        val plan = FileScanner.plan(
+            k, emptyMap(), emptySet(), emptyList(), vanished = { true }, userDataIds = noUserData,
+            noteIds = { setOf(2L) },
+        )
+        assertEquals(listOf(2L), plan.trash)
+        assertEquals(listOf(1L), plan.gone)
+    }
+
+    @Test
+    fun keptWhenMissingStatementCoversNotesAndReadingHistory() {
+        val sql = LibrarySql.SELECT_IDS_KEPT_WHEN_MISSING
+        for (t in listOf(
+            "FROM quotes", "FROM bookmarks", "review <> ''", "FROM lookups", "progress > 0", "have_read = 1",
+            "reading_seconds > 0", "finished_at > 0", "FROM book_prefs", "FROM reading_log",
+        )) {
+            assertTrue(t, sql.contains(t))
+        }
+        assertEquals(0, sql.count { it == '?' })
+    }
+
+    @Test
     fun aLiveEntryWinsTheMoveOverAnOlderMissingNamesake() {
         val k = listOf(known(1, "/r/x/a.txt", size = 4000, trashed = true, missingAt = 7), known(2, "/r/y/a.txt", size = 4000))
         val plan = FileScanner.plan(

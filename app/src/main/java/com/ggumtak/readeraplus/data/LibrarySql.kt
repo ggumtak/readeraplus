@@ -64,6 +64,15 @@ internal object LibrarySql {
      */
     const val SELECT_IDS_WITH_NOTES = "SELECT book_id FROM quotes UNION SELECT book_id FROM bookmarks " +
         "UNION SELECT id FROM books WHERE review <> '' UNION SELECT book_id FROM lookups"
+    /**
+     * Books worth keeping when their file vanishes: everything in [SELECT_IDS_WITH_NOTES] plus reading history (a
+     * saved position, 다 읽음, reading time, a finish time or any reading-log row). A scan moves such a book to the
+     * trash as missing ([SET_MISSING]) instead of dropping it, so putting the file back revives its history.
+     */
+    const val SELECT_IDS_KEPT_WHEN_MISSING = "SELECT book_id FROM quotes UNION SELECT book_id FROM bookmarks " +
+        "UNION SELECT id FROM books WHERE review <> '' UNION SELECT book_id FROM lookups " +
+        "UNION SELECT id FROM books WHERE progress > 0 OR have_read = 1 OR reading_seconds > 0 " +
+        "UNION SELECT book_id FROM book_prefs WHERE finished_at > 0 UNION SELECT book_id FROM reading_log"
     const val COUNT_LIBRARY = "SELECT COUNT(*) FROM books WHERE trashed = 0"
 
     // ---- books: writes ----

@@ -278,8 +278,8 @@ object FileScanner {
      * - Trashed entries are kept until the trash is emptied; a user's own 휴지통 entry (`missingAt = 0`) is never
      *   revived, re-pointed or marked missing.
      * - A vanished entry whose file name and size match a new file was moved: it is re-pointed (history kept).
-     * - Other vanished entries with notes ([noteIds]) go to the trash as missing ([SyncPlan.trash]); the rest are
-     *   dropped.
+     * - Other vanished entries with notes or reading history ([noteIds]) go to the trash as missing
+     *   ([SyncPlan.trash]); the rest are dropped.
      * - A missing entry (`missingAt > 0`) whose file is found again at its path, or matched as moved, is revived
      *   ([SyncPlan.revive]); while its file stays away it is left as it is.
      * - Existing files under an excluded folder are dropped unless the entry carries user data
@@ -384,7 +384,7 @@ object FileScanner {
         val plan = plan(
             known, walk.found, ignored, excluded, ::vanished,
             userDataIds = { db.queryList(LibrarySql.SELECT_IDS_WITH_USER_DATA, null) { it.getLong(0) }.toHashSet() },
-            noteIds = { db.queryList(LibrarySql.SELECT_IDS_WITH_NOTES, null) { it.getLong(0) }.toHashSet() },
+            noteIds = { db.queryList(LibrarySql.SELECT_IDS_KEPT_WHEN_MISSING, null) { it.getLong(0) }.toHashSet() },
         )
         val reviving = plan.revive.toHashSet()
 
