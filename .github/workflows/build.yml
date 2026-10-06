@@ -108,10 +108,18 @@ jobs:
           echo "Signing certificate SHA-256: $sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
+      # The file is named after the app's own versionName (app/build.gradle.kts), read back from the APK:
+      # ReaderaPlus-0.2.0.apk. APK_NAME is the name every later step uses.
       - name: Rename APK
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk "dist/ReaderaPlus-${GITHUB_RUN_NUMBER}.apk"
+          aapt="$(ls -d "$ANDROID_HOME"/build-tools/*/aapt | sort -V | tail -1)"
+          ver="$("$aapt" dump badging app/build/outputs/apk/release/app-release.apk | sed -n "s/.*versionName='\([^']*\)'.*/\1/p" | head -1)"
+          [ -n "$ver" ] || ver="${GITHUB_RUN_NUMBER}"
+          name="ReaderaPlus-${ver}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/$name"
+          echo "APK_NAME=$name" >> "$GITHUB_ENV"
+          echo "APK_LEGACY_NAME=ReaderaPlus-${GITHUB_RUN_NUMBER}.apk" >> "$GITHUB_ENV"
           ls -la dist
 
       - uses: actions/upload-artifact@v4
@@ -133,7 +141,9 @@ jobs:
 
       # A copy of the APK in the user's Google Drive (easy to install on the e-reader from the Drive app), set up from
       # a phone alone: a small Google Apps Script web app in the user's own Google account receives the APK and
-      # keeps only the newest ReaderaPlus-<build>.apk in its folder (tools/gdrive/upload.gs, steps in its header).
+      # keeps only the newest ReaderaPlus-<version>.apk in its folder (tools/gdrive/upload.gs, steps in its header).
+      # A web app deployed before 0.2 accepts only ReaderaPlus-<build>.apk: on its "bad name" the APK goes again under that
+      # name, until the new upload.gs is deployed.
       # Secrets: GDRIVE_UPLOAD_URL (the web app URL) and GDRIVE_UPLOAD_KEY (the same password as in the script).
       # A Drive failure never fails the build.
       - name: Upload APK to Google Drive
@@ -143,16 +153,21 @@ jobs:
           GDRIVE_UPLOAD_URL: ${{ secrets.GDRIVE_UPLOAD_URL }}
           GDRIVE_UPLOAD_KEY: ${{ secrets.GDRIVE_UPLOAD_KEY }}
         run: |
-          apk="ReaderaPlus-${GITHUB_RUN_NUMBER}.apk"
-          python3 - "$apk" > "$RUNNER_TEMP/upload.json" <<'PY'
+          upload() { # upload <name>: dist/$APK_NAME under that name; prints the web app's answer
+            python3 - "$1" > "$RUNNER_TEMP/upload.json" <<'PY'
           import base64, json, os, sys
-          name = sys.argv[1]
-          data = base64.b64encode(open("dist/" + name, "rb").read()).decode()
-          print(json.dumps({"key": os.environ.get("GDRIVE_UPLOAD_KEY", ""), "name": name, "data": data}))
+          data = base64.b64encode(open("dist/" + os.environ["APK_NAME"], "rb").read()).decode()
+          print(json.dumps({"key": os.environ.get("GDRIVE_UPLOAD_KEY", ""), "name": sys.argv[1], "data": data}))
           PY
-          # POST without -X: Apps Script answers with a redirect that curl must follow as a GET.
-          answer="$(curl -sS -L --max-time 300 -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/upload.json" "$GDRIVE_UPLOAD_URL")"
-          rm -f "$RUNNER_TEMP/upload.json"
+            # POST without -X: Apps Script answers with a redirect that curl must follow as a GET.
+            curl -sS -L --max-time 300 -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/upload.json" "$GDRIVE_UPLOAD_URL"
+            rm -f "$RUNNER_TEMP/upload.json"
+          }
+          answer="$(upload "$APK_NAME")"
+          case "$answer" in "bad name"*)
+            echo "Google Drive: the deployed upload.gs predates version names; sending as $APK_LEGACY_NAME"
+            answer="$(upload "$APK_LEGACY_NAME")";;
+          esac
           echo "Google Drive: $answer"
           case "$answer" in ok*) ;; *) exit 1 ;; esac
 

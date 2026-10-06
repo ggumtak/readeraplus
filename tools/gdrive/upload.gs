@@ -11,7 +11,7 @@
  *  4. Copy the 웹 앱 URL (ends with /exec).
  *  5. github.com → the repository → Settings → Secrets and variables → Actions → New repository secret:
  *     GDRIVE_UPLOAD_URL = the URL from step 4, GDRIVE_UPLOAD_KEY = the KEY from step 2.
- * After that every build puts ReaderaPlus-<build>.apk into the Drive folder FOLDER and removes older ones.
+ * After that every build puts ReaderaPlus-<version>.apk (e.g. ReaderaPlus-0.2.0.apk; older builds ReaderaPlus-<build>.apk) into the Drive folder FOLDER and removes older ones.
  */
 const KEY = 'CHANGE-ME-to-a-long-password';
 const FOLDER = 'ReaderaPlus';
@@ -21,7 +21,7 @@ function doPost(e) {
     const req = JSON.parse(e.postData.contents);
     if (!KEY || KEY.indexOf('CHANGE-ME') === 0 || req.key !== KEY) return text('denied');
     const name = String(req.name || '');
-    if (!/^ReaderaPlus-\d+\.apk$/.test(name)) return text('bad name');
+    if (!/^ReaderaPlus-[0-9][0-9.]*\.apk$/.test(name)) return text('bad name');
     const folders = DriveApp.getFoldersByName(FOLDER);
     const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(FOLDER);
     const blob = Utilities.newBlob(Utilities.base64Decode(req.data), 'application/vnd.android.package-archive', name);
@@ -30,7 +30,7 @@ function doPost(e) {
     const files = folder.getFiles();
     while (files.hasNext()) {
       const f = files.next();
-      if (f.getId() !== file.getId() && /^ReaderaPlus-\d+\.apk$/.test(f.getName())) f.setTrashed(true);
+      if (f.getId() !== file.getId() && /^ReaderaPlus-[0-9][0-9.]*\.apk$/.test(f.getName())) f.setTrashed(true);
     }
     return text('ok ' + name);
   } catch (err) {
