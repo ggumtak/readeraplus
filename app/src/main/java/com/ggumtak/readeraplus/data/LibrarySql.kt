@@ -66,12 +66,12 @@ internal object LibrarySql {
         "UNION SELECT id FROM books WHERE review <> '' UNION SELECT book_id FROM lookups"
     /**
      * Books worth keeping when their file vanishes: everything in [SELECT_IDS_WITH_NOTES] plus reading history (a
-     * saved position, 다 읽음, reading time, a finish time or any reading-log row). A scan moves such a book to the
-     * trash as missing ([SET_MISSING]) instead of dropping it, so putting the file back revives its history.
+     * saved position, 다 읽음, reading time, a finish time, any reading-log row or having been opened at all). A scan moves
+     * such a book to the trash as missing ([SET_MISSING]) instead of dropping it, so putting the file back revives its history.
      */
     const val SELECT_IDS_KEPT_WHEN_MISSING = "SELECT book_id FROM quotes UNION SELECT book_id FROM bookmarks " +
         "UNION SELECT id FROM books WHERE review <> '' UNION SELECT book_id FROM lookups " +
-        "UNION SELECT id FROM books WHERE progress > 0 OR have_read = 1 OR reading_seconds > 0 " +
+        "UNION SELECT id FROM books WHERE progress > 0 OR have_read = 1 OR reading_seconds > 0 OR last_read_at > 0 " +
         "UNION SELECT book_id FROM book_prefs WHERE finished_at > 0 UNION SELECT book_id FROM reading_log"
     const val COUNT_LIBRARY = "SELECT COUNT(*) FROM books WHERE trashed = 0"
 
@@ -92,15 +92,18 @@ internal object LibrarySql {
     /**
      * Newer-wins position write: the row changes only when its stored `last_read_at` is not later than the read time
      * being written, so a position that was read earlier but commits later (the IO pool does not keep order) changes
-     * nothing. A stored stamp more than a day after the read time is not trusted (the clock was set back, or a backup
+     * nothing. A stored stamp more than [FUTURE_STAMP_MS] after the read time is not trusted (the clock was set back, or a backup
      * from a device with a wrong clock): it never blocks a save. Args: pos_section, pos_offset, progress, last_read_at
      * (the read time), id, read time (the guard), read time + [FUTURE_STAMP_MS].
      */
     const val UPDATE_POSITION =
         "UPDATE books SET pos_section = ?, pos_offset = ?, progress = ?, last_read_at = ? " +
             "WHERE id = ? AND (last_read_at <= ? OR last_read_at > ?)"
-    /** How far a stored `last_read_at` may lie after a new read time and still win ([UPDATE_POSITION]): one day. */
-    const val FUTURE_STAMP_MS = 24L * 60 * 60 * 1000
+    /**
+     * How far a stored `last_read_at` may lie after a new read time and still win ([UPDATE_POSITION]): 10 minutes
+     * (the guard only has to cover IO reordering of seconds).
+     */
+    const val FUTURE_STAMP_MS = 10L * 60 * 1000
     /** Args: seconds, id. */
     const val ADD_READING_TIME = "UPDATE books SET reading_seconds = reading_seconds + ? WHERE id = ?"
     const val SET_FAVORITE = "UPDATE books SET favorite = ? WHERE id = ?"

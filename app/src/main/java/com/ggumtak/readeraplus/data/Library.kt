@@ -160,8 +160,9 @@ object Library {
     fun addOrUpdateFile(file: File): Book? = addOrUpdate(file, explicit = true)
 
     /**
-     * [explicit] = the user asked for this file (open / import): clears a "removed from library" mark so the
-     * file becomes a normal library entry again.
+     * [explicit] = the user asked for this file (open / import / Wi-Fi upload): clears a "removed from library"
+     * mark and takes a row the user trashed out of the trash, so the file becomes a normal library entry again.
+     * A library scan never passes it (it doesn't come through here).
      */
     internal fun addOrUpdate(file: File, explicit: Boolean): Book? {
         val path = normalizePath(file.absolutePath)
@@ -179,6 +180,12 @@ object Library {
                 notesChanged()
                 existing = existing.copy(trashed = false, missingAt = 0)
             }
+        }
+        if (explicit && existing != null && existing.trashed) {
+            // Added again by the user (the same file reused, e.g. an identical upload): out of the trash.
+            db.exec(LibrarySql.UNTRASH, existing.id)
+            notesChanged()
+            existing = existing.copy(trashed = false, missingAt = 0)
         }
         if (existing != null && existing.sizeBytes == size && existing.modifiedAt == mtime) return existing
         val info = FileInfo(path, f.name, format, size, mtime)

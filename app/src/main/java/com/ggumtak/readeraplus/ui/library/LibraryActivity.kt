@@ -40,6 +40,7 @@ import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.AutoBackup
 import com.ggumtak.readeraplus.data.Book
+import com.ggumtak.readeraplus.data.BookCopies
 import com.ggumtak.readeraplus.data.FileScanner
 import com.ggumtak.readeraplus.data.InstallState
 import com.ggumtak.readeraplus.data.Library
@@ -354,6 +355,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             Settings.raw().edit().putBoolean(PREF_LEGACY_ASKED, true).apply()
             requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_LEGACY_PERM)
         }
+        // Once per start: copy temp files a killed process left in the books folder.
+        val app = applicationContext
+        scope.launch(Dispatchers.IO) { BookCopies.sweepTemps(LibraryImport.booksDir(app)) }
     }
 
     private fun releaseDrawHold() {

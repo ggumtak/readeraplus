@@ -104,7 +104,7 @@ internal object IntentFiles {
         // Written to a temp file first: an identical earlier copy is reused (a corrected edition of the same size
         // is not identical); otherwise the temp file is moved to the first free name, never over another book
         // (the library, its position and bookmarks point at that file).
-        val tmp = File(dir, ".copy-${System.nanoTime()}.part")
+        val tmp = File(dir, "${BookCopies.COPY_PREFIX}${System.nanoTime()}${BookCopies.PART_SUFFIX}")
         try {
             val input = context.contentResolver.openInputStream(uri) ?: return null
             input.use { ins -> FileOutputStream(tmp).use { out -> ins.copyTo(out, 64 * 1024) } }

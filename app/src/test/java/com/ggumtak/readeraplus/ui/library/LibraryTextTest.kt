@@ -508,7 +508,7 @@ class LibraryTextTest {
             "‘책’을 서재에서 삭제할까요?\n\n이 책의 노트 5개도 함께 지워집니다.",
             LibraryText.deleteMessage("책", 5),
         )
-        assertEquals("휴지통을 비울까요? 휴지통의 책이 모두 서재에서 삭제됩니다.", LibraryText.emptyTrashMessage(0, 3))
+        assertEquals("휴지통을 비울까요? 휴지통의 책이 모두 서재에서 삭제되고, 읽은 위치·기록도 지워집니다.", LibraryText.emptyTrashMessage(0, 3))
         assertTrue(LibraryText.emptyTrashMessage(2, 3).endsWith("\n\n이 책들의 노트 2개도 함께 지워집니다."))
         assertTrue(LibraryText.emptyTrashMessage(2, 1).endsWith("\n\n이 책의 노트 2개도 함께 지워집니다."))
     }

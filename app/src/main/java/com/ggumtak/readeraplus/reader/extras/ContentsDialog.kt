@@ -211,7 +211,13 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             }
         }
         if (tab == 3 && ThumbsTab.available(host)) {
-            onFirstShown = { if (!stale() && !ctx.isFinishing && !ctx.isDestroyed) { dialog.show(); PanelRegistry.dialog(ctx, dialog); host.addCountsListener(countsListener) } }
+            onFirstShown = {
+                if (!stale() && !ctx.isFinishing && !ctx.isDestroyed) {
+                    dialog.show(); PanelRegistry.dialog(ctx, dialog); host.addCountsListener(countsListener)
+                } else {
+                    thumbsTab?.stop() // never shown: no dismiss will stop the tab's own counts listener
+                }
+            }
             select(tab)
         } else {
             select(tab)
@@ -244,6 +250,9 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 if (tab == 3 && !stale()) {
                     showTabBody(3, t.view)
                     val ready = onFirstShown; onFirstShown = null; ready?.invoke()
+                } else if (onFirstShown != null) {
+                    onFirstShown = null // the dialog was never shown (no dismiss will come): stop the tab here
+                    t.stop()
                 }
             }
             return

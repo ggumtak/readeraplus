@@ -139,4 +139,21 @@ class BookCopiesTest {
             }
         }
     }
+
+    @Test
+    fun sweepTempsDeletesOnlyOldPartFiles() {
+        val old = System.currentTimeMillis() - 2 * 60 * 60 * 1000L
+        for (n in listOf(".copy-1.part", ".import-2.part", ".upload-3.part", ".copy-old.txt", "book.part", "a.txt")) {
+            file(n, "x").setLastModified(old)
+        }
+        file(".copy-fresh.part", "x")
+        file(".upload-fresh.part", "x")
+        BookCopies.sweepTemps(dir)
+        assertEquals(setOf(".copy-old.txt", "book.part", "a.txt", ".copy-fresh.part", ".upload-fresh.part"), dir.list()!!.toSet())
+        // An explicit age: a part file ten minutes old goes with a five-minute limit.
+        File(dir, ".copy-fresh.part").setLastModified(System.currentTimeMillis() - 10 * 60 * 1000L)
+        File(dir, ".upload-fresh.part").setLastModified(System.currentTimeMillis() - 10 * 60 * 1000L)
+        BookCopies.sweepTemps(dir, 5 * 60 * 1000L)
+        assertEquals(setOf(".copy-old.txt", "book.part", "a.txt"), dir.list()!!.toSet())
+    }
 }

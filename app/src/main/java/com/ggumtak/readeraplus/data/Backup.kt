@@ -341,11 +341,12 @@ object Backup {
                 )
                 // Newer wins: an older backup doesn't move a position read later on this device.
                 if (r.applyPosition) {
-                    // The backup's own read time is the guard too: a row already read later keeps its place.
+                    // The backup's own read time is the guard too: a row already read later keeps its place. Never
+                    // later than now (a backup from a device with a fast clock must not stamp the row in the future).
+                    val at = minOf(b.lastReadAt, now)
                     exec(
                         LibrarySql.UPDATE_POSITION,
-                        b.posSection, b.posOffset, b.progress, b.lastReadAt, id, b.lastReadAt,
-                        b.lastReadAt + LibrarySql.FUTURE_STAMP_MS,
+                        b.posSection, b.posOffset, b.progress, at, id, at, at + LibrarySql.FUTURE_STAMP_MS,
                     )
                     if (BackupJson.remapsTextPosition(data.txtParseVersion, b)) remap += id to b.progress
                 }

@@ -206,7 +206,7 @@ internal object LibraryText {
 
     /** "휴지통 비우기" question; [books] = the books in the trash. */
     fun emptyTrashMessage(notes: Int, books: Int): String =
-        "휴지통을 비울까요? 휴지통의 책이 모두 서재에서 삭제됩니다." + notesWarning(notes, books)
+        "휴지통을 비울까요? 휴지통의 책이 모두 서재에서 삭제되고, 읽은 위치·기록도 지워집니다." + notesWarning(notes, books)
 
     // ---- auto backup and the restore offer (scroll SPEC §3.2, §3.4)
 

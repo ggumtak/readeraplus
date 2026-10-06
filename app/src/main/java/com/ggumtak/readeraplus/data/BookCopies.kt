@@ -20,6 +20,12 @@ internal object BookCopies {
     private const val MAX_VARIANTS = 50
     private const val BUFFER_BYTES = 64 * 1024
 
+    /** Temp files written next to the books before [settle]: file-picker copies, imports, LAN uploads. */
+    internal const val COPY_PREFIX = ".copy-"
+    internal const val IMPORT_PREFIX = ".import-"
+    internal const val PART_SUFFIX = ".part"
+    private const val STALE_TEMP_MS = 60 * 60 * 1000L
+
     /** Equal length and equal bytes; streams both files, stops at the first difference. */
     fun sameContent(a: File, b: File): Boolean {
         if (!a.isFile || !b.isFile) return false
@@ -102,5 +108,24 @@ internal object BookCopies {
             return it
         }
         return place(tmp, dir, fileName)
+    }
+
+    /**
+     * Deletes the `.copy-*.part`, `.import-*.part` and `.upload-*.part` files in [dir] that were last written more
+     * than [olderThanMs] ago: what a killed process left behind. A copy still being written keeps a fresh
+     * modification time, so it is never touched. Best effort.
+     */
+    fun sweepTemps(dir: File, olderThanMs: Long = STALE_TEMP_MS) {
+        try {
+            val limit = System.currentTimeMillis() - olderThanMs
+            dir.listFiles()?.forEach { f ->
+                val n = f.name
+                val temp = n.endsWith(PART_SUFFIX) &&
+                    (n.startsWith(COPY_PREFIX) || n.startsWith(IMPORT_PREFIX) || n.startsWith(LanExchange.TEMP_PREFIX))
+                if (temp && f.isFile && f.lastModified() < limit) f.delete()
+            }
+        } catch (t: Throwable) {
+            // A leftover hidden temp file costs only its space.
+        }
     }
 }

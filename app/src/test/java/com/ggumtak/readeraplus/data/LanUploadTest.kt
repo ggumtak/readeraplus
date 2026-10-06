@@ -735,10 +735,14 @@ class LanUploadTest {
     @Test
     fun staleTempFilesAreRemoved() {
         val h = harness()
-        File(h.dir, "${LanExchange.TEMP_PREFIX}123${LanExchange.TEMP_SUFFIX}").writeText("x")
+        val stale = File(h.dir, "${LanExchange.TEMP_PREFIX}123${LanExchange.TEMP_SUFFIX}")
+        stale.writeText("x")
+        stale.setLastModified(System.currentTimeMillis() - 2 * 60 * 60 * 1000L)
+        // An upload still being written is left alone.
+        File(h.dir, "${LanExchange.TEMP_PREFIX}456${LanExchange.TEMP_SUFFIX}").writeText("x")
         File(h.dir, "keep.txt").writeText("x")
         File(h.dir, ".upload-note.txt").writeText("x")
         h.exchange.removeStaleTemps()
-        assertEquals(listOf(".upload-note.txt", "keep.txt"), names(h.dir))
+        assertEquals(listOf(".upload-456.part", ".upload-note.txt", "keep.txt"), names(h.dir))
     }
 }

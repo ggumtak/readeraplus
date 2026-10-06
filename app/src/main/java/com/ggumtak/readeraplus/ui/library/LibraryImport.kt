@@ -93,7 +93,7 @@ internal object LibraryImport {
         val mime = knownMime ?: try { context.contentResolver.getType(uri) } catch (t: Throwable) { null }
         val fileName = LibraryText.importFileName(ns.name, mime) ?: return null
         val dir = booksDir(context)
-        val part = File(dir, ".import-${System.nanoTime()}.part")
+        val part = File(dir, "${BookCopies.IMPORT_PREFIX}${System.nanoTime()}${BookCopies.PART_SUFFIX}")
         val target = try {
             val input = context.contentResolver.openInputStream(uri) ?: return null
             input.use { ins ->

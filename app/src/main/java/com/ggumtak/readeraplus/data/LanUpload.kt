@@ -488,16 +488,8 @@ internal class LanExchange(
         }
     }
 
-    /** Temp files an earlier run left behind (process killed mid-upload): only one server writes here at a time. */
-    fun removeStaleTemps() {
-        try {
-            destDir.list()?.forEach { n ->
-                if (n.startsWith(TEMP_PREFIX) && n.endsWith(TEMP_SUFFIX)) File(destDir, n).delete()
-            }
-        } catch (t: Throwable) {
-            // Best effort: a leftover hidden temp file costs only its space.
-        }
-    }
+    /** Temp files an earlier run left behind (process killed mid-upload); a recent one may still be written. */
+    fun removeStaleTemps() = BookCopies.sweepTemps(destDir)
 
     companion object {
         /**

@@ -311,7 +311,7 @@ class ScanPlanTest {
         val sql = LibrarySql.SELECT_IDS_KEPT_WHEN_MISSING
         for (t in listOf(
             "FROM quotes", "FROM bookmarks", "review <> ''", "FROM lookups", "progress > 0", "have_read = 1",
-            "reading_seconds > 0", "finished_at > 0", "FROM book_prefs", "FROM reading_log",
+            "reading_seconds > 0", "last_read_at > 0", "finished_at > 0", "FROM book_prefs", "FROM reading_log",
         )) {
             assertTrue(t, sql.contains(t))
         }
