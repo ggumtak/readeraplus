@@ -15,6 +15,7 @@ import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.format.SectionInfo
 import com.ggumtak.readeraplus.format.TocEntry
 import java.io.File
+import java.io.IOException
 
 /**
  * An opened EPUB: one section per spine item, except that oversized items (whole-book files from TXT→EPUB
@@ -326,7 +327,13 @@ internal class EpubBook private constructor(
      */
     private fun anchorsOf(item: Int): Map<String, Int> {
         synchronized(cache) { anchorCache[item]?.let { return it } }
-        return if (parts[item] == 1) loadSection(firstSection[item]).anchors else splitItem(item).content.anchors
+        return try {
+            if (parts[item] == 1) loadSection(firstSection[item]).anchors else splitItem(item).content.anchors
+        } catch (_: DocumentException) { // unreadable item (nothing cached): the link / TOC entry lands at its start
+            emptyMap()
+        } catch (_: IOException) {
+            emptyMap()
+        }
     }
 
     /** Section position of item-wide offset [off] in spine item [item]. */
@@ -348,7 +355,9 @@ internal class EpubBook private constructor(
             return SectionContent(OBJECT_CHAR.toString(), listOf(ImageBlock(0, item.path)))
         }
         return try {
-            val bytes = zip.read(item.path) ?: return SectionContent.EMPTY
+            // The section's own file must be readable: a failure throws (DocumentException / IOException, which no
+            // caller caches) instead of becoming an empty page that the caches and the page counter would keep.
+            val bytes = zip.readOrThrow(item.path)
             XhtmlConverter(options.epubPublisherStyles, resources).convert(EpubText.decode(bytes), item.path)
         } catch (_: RuntimeException) {
             errorSection()

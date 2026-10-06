@@ -317,6 +317,34 @@ ${if (withNamed) "<item id=\"i2\" href=\"MyCover.PNG\" media-type=\"image/png\"/
     }
 
     @Test
+    fun unreadableSectionThrowsInsteadOfBecomingAnEmptyCachedPage() {
+        val f = epub2()
+        val doc = EpubDocuments.open(f, ParseOptions())
+        val good = doc.loadSection(0)
+        assertTrue(good.length > 0)
+        doc.close() // empties the section cache; later reads reopen the file
+        val aside = File(f.parentFile, "aside.epub")
+        assertTrue(f.renameTo(aside))
+        try {
+            // the file is unreadable now: the section throws (BookSession shows its error page and marks it failed)
+            // rather than returning SectionContent.EMPTY, and a link into it still resolves to the section start
+            try {
+                doc.loadSection(0)
+                fail("expected the unreadable section to throw")
+            } catch (_: java.io.IOException) {
+            } catch (_: DocumentException) {
+            }
+            assertNotNull(doc.resolveLink(0, "ch2.xhtml#top"))
+        } finally {
+            assertTrue(aside.renameTo(f))
+        }
+        // the failure was not cached: once the file is back the section loads with its real content
+        val again = doc.loadSection(0)
+        assertEquals(good.text, again.text)
+        assertSame(again, doc.loadSection(0))
+    }
+
+    @Test
     fun sectionCacheReturnsSameInstanceAndSurvivesClose() {
         val f = epub2()
         val doc = EpubDocuments.open(f, ParseOptions())
