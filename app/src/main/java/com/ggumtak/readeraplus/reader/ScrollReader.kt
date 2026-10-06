@@ -126,8 +126,8 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     override val sectionCount: Int get() = shownCount
     private val height: Float get() = navigation.height
     /**
-     * The last move was a tap / key step (user, 2026-10-06: "탭을 눌렀을 때도 … 글씨가 잘리는 일은 없도록"): until the next
-     * drag or fling the text ends at its last whole line, as in [Motion.STEP]; a drag shows the cut line again.
+     * The last move was a tap / key step or a jump (user, 2026-10-06: "탭을 눌렀을 때도 … 글씨가 잘리는 일은 없도록"):
+     * until the next drag the text ends at its last whole line, as in [Motion.STEP]; a drag shows the cut line again.
      */
     private var stepped = false
     private val clip: Float get() =
@@ -240,6 +240,8 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         for (i in sections.indices) { sections[i] = -1; layouts[i] = null }
         for (i in quoteSections.indices) clearQuotes(i)
         window.clear(); spare.clear(); remember(section, layout)
+        // A jump (TOC, search, TTS follow, a relayout) lands like a step: whole lines only, whatever came before.
+        stepped = true
         navigation.place(section, layout, offset, placement, kind)
         if (window.count == 0) rebuildWindow()
         return top
@@ -249,8 +251,12 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         // A key or wheel step during a fling: the text stops where it is (one settle), then moves one screen from there.
         if (flinging) stopMotion()
         direction = if (next) 1 else -1
+        // Only a step that moves clips: at the book's edge nothing redraws, so a later tick must not hide a line.
+        val was = stepped
         stepped = true
-        return navigation.step(next)
+        val r = navigation.step(next)
+        if (r == Step.EDGE) stepped = was
+        return r
     }
     fun onSectionStored(section: Int, layout: SectionLayout) {
         if (frozen || detached || session?.generation !== generation) return
