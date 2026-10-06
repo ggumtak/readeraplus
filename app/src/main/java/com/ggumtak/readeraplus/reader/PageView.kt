@@ -16,6 +16,7 @@ import android.view.VelocityTracker
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeProvider
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.render.PageDecor
 import com.ggumtak.readeraplus.render.PageRenderer
@@ -78,8 +79,10 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         fun onWheel(next: Boolean)
         /** TalkBack scroll action: the turn a key makes. False when nothing turned (the book's first / last page). */
         fun onAccessibilityTurn(next: Boolean): Boolean { onWheel(next); return true }
-        /** The text of the page shown, for screen readers (asked only while one is on); null when there is none. */
-        fun accessibilityText(): CharSequence? = null
+        /** The page shown (paged: the page; scroll: the virtual page), for the screen-reader tree; null when there is none. */
+        fun accessibilitySource(): A11ySource? = null
+        /** A screen reader clicked a link of [section]: the same handler a tap on the link reaches. */
+        fun onAccessibilityLink(section: Int, href: String) {}
     }
 
     /** The next page replaces the frame at once: no fade, slide, curl or timed interpolation. */
@@ -502,9 +505,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
 
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
-        // Built here, when a service asks: nothing is prepared per draw or turn. Only for a screen reader (touch
-        // exploration on): a UI dump or another service would otherwise see the whole page as one node's text.
-        if (accessibilityManager?.isTouchExplorationEnabled == true) cb.accessibilityText()?.let { info.text = it }
+        // No text here: the page's words are the children of [PageA11y] (touch exploration on); a UI dump or another
+        // service sees a plain view and never the whole page as one node's text.
         // Both modes turn by the same commands as the keys (the scroll viewport steps one screen).
         info.isScrollable = true
         info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
@@ -529,17 +531,54 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
 
     private val accessibilityManager by lazy { context.getSystemService(AccessibilityManager::class.java) }
 
+    private fun touchExploring(): Boolean = accessibilityManager?.isTouchExplorationEnabled == true
+
+    private var a11y: PageA11y? = null
+
+    /** The page tree for a screen reader, only while touch exploration is on; otherwise the plain view (null). */
+    override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider? {
+        if (!touchExploring()) {
+            a11y?.reset()
+            return null
+        }
+        return a11y ?: PageA11y(this, cb).also { a11y = it }
+    }
+
+    /** Touch exploration's hover finds the text under the finger (a node enter / exit), see [PageA11y.onHover]. */
+    override fun dispatchHoverEvent(event: MotionEvent): Boolean {
+        if (touchExploring() && a11y?.onHover(event) == true) return true
+        return super.dispatchHoverEvent(event)
+    }
+
+    private var pageEventPending = false
+    private val pageEvent = Runnable {
+        pageEventPending = false
+        flushPageChanged()
+    }
+
     /**
      * A new page is on screen (a turn, jump or open; a scroll settle): tells a screen reader to read the text again.
-     * One event, and only while an accessibility service is on; decoration repaints and background count updates
-     * never call it. Draws nothing.
+     * The tree's nodes are dropped at once; one event follows on the next frame however many pages were set before
+     * it, and only while an accessibility service is on. Decoration repaints and background count updates never call
+     * it. Draws nothing.
      */
-    @Suppress("DEPRECATION")
     fun notifyPageChanged() {
+        a11y?.invalidate()
+        if (accessibilityManager?.isEnabled != true || pageEventPending) return
+        pageEventPending = true
+        postOnAnimation(pageEvent)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun flushPageChanged() {
         if (accessibilityManager?.isEnabled != true) return
+        val tree = if (touchExploring()) a11y else null
         val e = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
-        e.contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT
+        // With the tree the children are new; without it the page's one text changed.
+        e.contentChangeTypes =
+            if (tree != null) AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE else AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT
         sendAccessibilityEventUnchecked(e)
+        tree?.afterPageChange()
     }
 
     /** The first finger of the gesture lifted (pointer index [i] of [ev]): tap, swipe or the end of a drag. */
@@ -635,6 +674,9 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
 
     override fun onDetachedFromWindow() {
         removeCallbacks(longPress)
+        removeCallbacks(pageEvent)
+        pageEventPending = false
+        a11y?.reset()
         if (scrollDragging) scroll?.cancelDrag()
         scrollDragging = false; tracking = false
         velocityTracker?.recycle()

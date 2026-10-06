@@ -3812,21 +3812,25 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             return userTurn(next)
         }
 
-        override fun accessibilityText(): CharSequence? {
-            // The page drawn (paged: its frame; scroll: the virtual page, S §1.6).
-            val f = page.frame
-            val l: SectionLayout
-            val p: PageInfo
+        override fun accessibilitySource(): A11ySource? {
+            val s = session ?: return null
+            // The page drawn (paged: its frame; scroll: the virtual page, S §1.6), with its content box in the view.
             if (scroll != null) {
                 val vp = vpage() ?: return null
-                l = vp.layout
-                p = vp.page
-            } else {
-                if (f == null) return null
-                l = f.layout
-                p = l.pages.getOrNull(f.pageIndex) ?: return null
+                val gen = s.generation ?: return null
+                return A11ySource(
+                    s, gen.id, vp.section, vp.layout, vp.page,
+                    gen.geometry.contentLeft.toFloat(), gen.geometry.contentTop.toFloat(),
+                )
             }
-            return A11yText.page(l.content.text, p.start, p.end)
+            val f = page.frame ?: return null
+            val p = f.layout.pages.getOrNull(f.pageIndex) ?: return null
+            return A11ySource(s, displayedGenId, curSection, f.layout, p, f.left, f.top)
+        }
+
+        override fun onAccessibilityLink(section: Int, href: String) {
+            keeper.poke()
+            followLink(href, section)
         }
     }
 
