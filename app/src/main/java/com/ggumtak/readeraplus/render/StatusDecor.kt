@@ -13,18 +13,22 @@ class StatusSlot {
      * holds the level in its bars' steps (`BatteryMath.stepLevel`), so only a step changes the slot.
      */
     @JvmField var batteryFirst = false
+    /** The phone is charging: a lightning bolt in the battery icon. */
+    @JvmField var charging = false
     /** A [text] too wide for its slot is shortened at its start, keeping the end (`StatusItem.keepsEnd`). */
     @JvmField var keepEnd = false
     val isEmpty: Boolean get() = length == 0 && text == null && battery < 0
 
-    fun set(src: CharArray, n: Int, battery: Int, batteryFirst: Boolean = false): Boolean {
+    fun set(src: CharArray, n: Int, battery: Int, batteryFirst: Boolean = false, charging: Boolean = false): Boolean {
         val count = n.coerceIn(0, minOf(src.size, CAPACITY))
         val level = if (battery < 0) -1 else battery.coerceAtMost(100)
         val first = batteryFirst && level >= 0
-        var changed = text != null || length != count || this.battery != level || this.batteryFirst != first
+        val charge = charging && level >= 0
+        var changed = text != null || length != count || this.battery != level || this.batteryFirst != first ||
+            this.charging != charge
         for (i in 0 until count) if (chars[i] != src[i]) changed = true
         src.copyInto(chars, 0, 0, count)
-        length = count; text = null; this.battery = level; this.batteryFirst = first; keepEnd = false
+        length = count; text = null; this.battery = level; this.batteryFirst = first; this.charging = charge; keepEnd = false
         batteryLength = when { level < 0 || first -> 0; level < 10 -> 1; level < 100 -> 2; else -> 3 }
         var value = level
         for (i in batteryLength - 1 downTo 0) { batteryChars[i] = ('0'.code + value % 10).toChar(); value /= 10 }
@@ -35,7 +39,7 @@ class StatusSlot {
         val title = t?.takeIf { it.isNotEmpty() }
         val end = keepEnd && title != null
         val changed = text != title || length != 0 || battery >= 0 || this.keepEnd != end
-        text = title; length = 0; battery = -1; batteryLength = 0; batteryFirst = false; this.keepEnd = end
+        text = title; length = 0; battery = -1; batteryLength = 0; batteryFirst = false; charging = false; this.keepEnd = end
         return changed
     }
 

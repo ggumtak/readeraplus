@@ -433,4 +433,21 @@ class StatusModelTest {
         assertEquals(30_000, changes)                             // every call of the three runs changed something visible
         assertEquals("10 000 updates allocated $bytes bytes", 0L, bytes)
     }
+
+    @Test
+    fun chargingIsAChangeAndReachesTheBatterySlot() {
+        val m = StatusModel()
+        val s = ReaderSettings(headerLeft = StatusItem.CLOCK_BATTERY, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
+        val plain = inputs()
+        assertTrue(m.update(s, plain, track))
+        assertFalse(m.decor.header.left.charging)
+        val plugged = inputs().apply { charging = true }
+        assertTrue(m.update(s, plugged, track))
+        assertTrue(m.decor.header.left.charging)
+        assertFalse(m.update(s, plugged, track)) // the same state again: nothing to redraw
+        // No battery known: no bolt either.
+        val none = inputs().apply { charging = true; battery = -1 }
+        m.update(s, none, track)
+        assertFalse(m.decor.header.left.charging)
+    }
 }

@@ -123,6 +123,9 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     }
     /** The status lines' battery icon, in the palette's status colour. */
     private val statusLine = Paint().apply { style = Paint.Style.FILL }
+    /** The charging bolt: the page colour around it (so it reads over the bars) and its path, reused. */
+    private val boltHalo = Paint().apply { style = Paint.Style.FILL_AND_STROKE }
+    private val boltPath = Path()
     private val statusOutline = Paint().apply {
         style = Paint.Style.STROKE
         strokeWidth = onePx
@@ -188,6 +191,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         ribbonPaint.color = RibbonMath.color(eink, fg)
         ribbonHalo.color = bg
         statusLine.color = palette.status
+        boltHalo.color = palette.background
         statusOutline.color = palette.status
         batteryFirst.color = palette.status
         // On e-ink, greys on the panel's own levels. Unknown (no probe yet) counts as e-ink, as for the chrome
@@ -441,7 +445,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             var sx = x + slotGeometry[index * 2] - if (i == 2) shift else 0f
             if (s.battery >= 0 && s.batteryFirst) {
                 // MaruViewer's corner: the icon, then the time.
-                drawFirstBattery(canvas, s.battery, sx, baseline, ts)
+                drawFirstBattery(canvas, s.battery, sx, baseline, ts, s.charging)
                 sx += BatteryMath.iconWidth(ts, true) + BatteryMath.firstGap(ts)
             }
             val text = slotText[index]
@@ -474,6 +478,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val inL = bodyLeft + inset
         val fillR = BatteryMath.fillRight(inL, bodyRight - inset, slot.battery)
         if (fillR > inL && bodyBottom - inset > bodyTop + inset) canvas.drawRect(inL, bodyTop + inset, fillR, bodyBottom - inset, statusLine)
+        if (slot.charging) drawBolt(canvas, (bodyLeft + bodyRight) / 2f, (bodyTop + bodyBottom) / 2f, bodyH - 2f * inset, sw, statusLine.color)
     }
 
     /**
@@ -481,7 +486,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
      * outline and its bars as whole-px rects, the bars from the far end, [level] in its 25 % steps. At one bar the whole
      * icon turns slightly red on phones ([PagePalette.batteryLow]); e-ink keeps the status colour (greys only).
      */
-    private fun drawFirstBattery(canvas: Canvas, level: Int, x: Float, baseline: Float, ts: Float) {
+    private fun drawFirstBattery(canvas: Canvas, level: Int, x: Float, baseline: Float, ts: Float, charging: Boolean = false) {
         val p = batteryFirst
         p.color = BatteryMath.firstColor(eink, level, palette.status, palette.batteryLow)
         val s = BatteryMath.firstStroke(ts)
@@ -503,6 +508,33 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             val r = BatteryMath.barRight(bodyRight, ts, k)
             canvas.drawRect(r - bar, bodyTop + 2f * s, r, bodyBottom - 2f * s, p)
         }
+        if (charging) drawBolt(canvas, (bodyLeft + bodyRight) / 2f, (bodyTop + bodyBottom) / 2f, bodyH - 2f * s, s, p.color)
+    }
+
+    /**
+     * The charging bolt centred at ([cx], [cy]), [h] high: the page colour around it, so it shows over the bars, then
+     * [color]. No allocation: one reused path.
+     */
+    private fun drawBolt(canvas: Canvas, cx: Float, cy: Float, h: Float, pad: Float, color: Int) {
+        if (h < 4f) return
+        val w = h * 0.62f
+        val l = cx - w / 2f
+        val t = cy - h / 2f
+        val path = boltPath
+        path.rewind()
+        path.moveTo(l + w * 0.68f, t)
+        path.lineTo(l + w * 0.05f, t + h * 0.56f)
+        path.lineTo(l + w * 0.46f, t + h * 0.56f)
+        path.lineTo(l + w * 0.30f, t + h)
+        path.lineTo(l + w * 0.95f, t + h * 0.40f)
+        path.lineTo(l + w * 0.54f, t + h * 0.40f)
+        path.close()
+        boltHalo.strokeWidth = maxOf(1f, pad)
+        canvas.drawPath(path, boltHalo)
+        val keep = statusLine.color
+        statusLine.color = color
+        canvas.drawPath(path, statusLine)
+        statusLine.color = keep
     }
 
     /**

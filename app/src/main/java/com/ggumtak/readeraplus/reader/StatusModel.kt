@@ -20,6 +20,7 @@ internal class StatusInputs {
     @JvmField var tocIndex = -1; @JvmField var tocCount = 0
     @JvmField var minuteOfDay = -1; @JvmField var is24 = true
     @JvmField var battery = -1
+    @JvmField var charging = false
 
     /**
      * R2 "2/32": global page [cur] in the chapter that begins on page [first] (1 for the front matter before the first
@@ -98,15 +99,15 @@ internal class StatusModel {
             StatusItem.NONE -> slot.clear()
             StatusItem.CHAPTER -> if (inp.chapterStartsHere) slot.clear() else slot.setText(inp.chapterTitle)
             StatusItem.BOOK_TITLE -> slot.setText(inp.bookTitle, keepEnd = item.keepsEnd)
-            StatusItem.BATTERY -> if (inp.battery < 0) slot.clear() else slot.set(b, 0, inp.battery)
+            StatusItem.BATTERY -> if (inp.battery < 0) slot.clear() else slot.set(b, 0, inp.battery, charging = inp.charging)
             // MaruViewer's corner: the battery icon (no number; its level in the bars' 25 % steps, so a level within a
             // step changes nothing), then the time as the phone shows it ("오전 08:53").
             StatusItem.CLOCK_BATTERY -> {
                 val level = BatteryMath.stepLevel(inp.battery)
                 when {
                     inp.minuteOfDay < 0 && level < 0 -> slot.clear()
-                    inp.minuteOfDay < 0 -> slot.set(b, 0, level, batteryFirst = true)
-                    else -> slot.set(b, StatusText.clockKo(b, 0, inp.minuteOfDay, inp.is24), level, batteryFirst = true)
+                    inp.minuteOfDay < 0 -> slot.set(b, 0, level, batteryFirst = true, charging = inp.charging)
+                    else -> slot.set(b, StatusText.clockKo(b, 0, inp.minuteOfDay, inp.is24), level, batteryFirst = true, charging = inp.charging)
                 }
             }
             else -> {

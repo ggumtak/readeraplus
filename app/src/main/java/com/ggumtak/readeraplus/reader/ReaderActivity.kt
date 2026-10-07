@@ -379,6 +379,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /** Last value written to [textPosPrefs] ("b<id>" to value), to skip identical writes. */
     private var lastTextPos: Pair<String, String>? = null
     private var batteryLevel = -1
+    private var batteryCharging = false
     private var batteryAt = 0L
     /** The sticky battery broadcast's filter, built once (the battery is read at most once a minute). */
     private val batteryFilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
@@ -3141,7 +3142,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             inp.is24 = clock24
         }
         val batteryShown = all || st.shows(StatusItem.BATTERY) || st.shows(StatusItem.CLOCK_BATTERY)
-        if (!batteryShown) inp.battery = -1 else if (sample || inp.battery < 0) inp.battery = battery()
+        if (!batteryShown) {
+            inp.battery = -1
+            inp.charging = false
+        } else if (sample || inp.battery < 0) {
+            inp.battery = battery()
+            inp.charging = batteryCharging
+        }
     }
 
     /**
@@ -3292,8 +3299,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             val i = registerReceiver(null, batteryFilter)
             val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
             val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+            batteryCharging = i?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) == BatteryManager.BATTERY_STATUS_CHARGING
             if (level >= 0 && scale > 0) level * 100 / scale else -1
         } catch (t: Throwable) {
+            batteryCharging = false
             -1
         }
         return batteryLevel
