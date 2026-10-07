@@ -112,6 +112,16 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun ignoreBookSizesIsOnByDefaultAndRoundTrips() {
+        val p = fresh() // prefs of an older release: no key
+        assertTrue(Settings.reader.epubIgnoreBookSizes)
+        Settings.saveReader(Settings.reader.copy(epubIgnoreBookSizes = false))
+        assertEquals(false, p.map["r.epubIgnoreBookSizes"])
+        Settings.initForTest(p)
+        assertFalse(Settings.reader.epubIgnoreBookSizes)
+    }
+
+    @Test
     fun pageThemeIsStoredByName() {
         val p = fresh()
         // Prefs of the releases before 화면 색: the white page.

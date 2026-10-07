@@ -31,6 +31,8 @@ internal interface XhtmlResources {
 internal class XhtmlConverter(
     private val publisherStyles: Boolean,
     private val resources: XhtmlResources?,
+    /** The book's font-size declarations count on headings only; every other element keeps its parent's size. */
+    private val ignoreBookSizes: Boolean = false,
 ) {
     // ---------------------------------------------------------------- output
     private val sb = StringBuilder(4096)
@@ -952,7 +954,7 @@ internal class XhtmlConverter(
                 shift = decl.vAlign
                 factor = if (shift != 0) 0.75f else 1f
             }
-            if (decl.has(CssDecl.SIZE) && name != "body" && name != "html") {
+            if (decl.has(CssDecl.SIZE) && name != "body" && name != "html" && !(ignoreBookSizes && headingLevel(name) == 0)) {
                 if (decl.sizeAbs) {
                     scale = decl.size
                     factor = 1f

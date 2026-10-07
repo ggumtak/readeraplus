@@ -146,11 +146,11 @@ object LayoutKeys {
 
     /**
      * [layoutPart] for a book of [format]: the other format's options are normalised away too. EPUB ignores every
-     * txt* option; a TXT layout always honours block hints (see [config]), so epubPublisherStyles is moot there.
+     * txt* option; a TXT layout always honours block hints (see [config]), so the epub* options are moot there.
      */
     private fun layoutPart(s: ReaderSettings, format: BookFormat): ReaderSettings {
         val base = layoutPart(s)
-        if (format != BookFormat.EPUB) return base.copy(epubPublisherStyles = true)
+        if (format != BookFormat.EPUB) return base.copy(epubPublisherStyles = true, epubIgnoreBookSizes = true)
         val d = ReaderSettings()
         return base.copy(
             txtBlankLines = d.txtBlankLines,
@@ -188,13 +188,14 @@ object LayoutKeys {
 
     /**
      * The parse options a book of [format] actually depends on, with every other field at its default: EPUB reads
-     * only epubPublisherStyles; TXT reads the txt* options and the encoding (and always keeps block hints).
+     * only epubPublisherStyles and epubIgnoreBookSizes; TXT reads the txt* options and the encoding (and always keeps
+     * block hints).
      */
     fun parseOptionsFor(s: ReaderSettings, format: BookFormat, encoding: String): ParseOptions =
         if (format == BookFormat.EPUB) {
-            ParseOptions(epubPublisherStyles = s.epubPublisherStyles)
+            ParseOptions(epubPublisherStyles = s.epubPublisherStyles, epubIgnoreBookSizes = s.epubIgnoreBookSizes)
         } else {
-            s.parseOptions(encoding).copy(epubPublisherStyles = true)
+            s.parseOptions(encoding).copy(epubPublisherStyles = true, epubIgnoreBookSizes = true)
         }
 
     /**
@@ -294,7 +295,7 @@ object LayoutKeys {
         sb.append("|d=").append(density)
         sb.append("|p=").append(parse.txtBlankLines).append(',').append(parse.txtStripIndent)
             .append(',').append(parse.txtJoinWrappedLines).append(',').append(parse.txtDetectChapters)
-            .append(',').append(parse.txtEmphasizeHeadings).append(',').append(parse.epubPublisherStyles)
+            .append(',').append(parse.txtEmphasizeHeadings).append(',').append(parse.epubPublisherStyles).append(',').append(parse.epubIgnoreBookSizes)
             .append(",enc=").append(parse.txtEncoding)
             .append(",re=").append(parse.txtChapterRegex.length).append(':').append(parse.txtChapterRegex)
             .append(",rr=").append(parse.txtReplaceRules.length).append(':').append(parse.txtReplaceRules)

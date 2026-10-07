@@ -109,6 +109,7 @@ object Settings {
             putBoolean("r.txtEmphasizeHeadings", s.txtEmphasizeHeadings)
             putString("r.txtReplaceRules", s.txtReplaceRules)
             putBoolean("r.epubPublisherStyles", s.epubPublisherStyles)
+            putBoolean("r.epubIgnoreBookSizes", s.epubIgnoreBookSizes)
         }.apply()
         notifyListeners()
     }
@@ -229,6 +230,7 @@ object Settings {
             txtEmphasizeHeadings = p.getBoolean("r.txtEmphasizeHeadings", d.txtEmphasizeHeadings),
             txtReplaceRules = p.getString("r.txtReplaceRules", d.txtReplaceRules) ?: "",
             epubPublisherStyles = p.getBoolean("r.epubPublisherStyles", d.epubPublisherStyles),
+            epubIgnoreBookSizes = p.getBoolean("r.epubIgnoreBookSizes", d.epubIgnoreBookSizes),
         ).let { if (p.contains(MaruHeader.KEY)) it else MaruHeader.applyTo(it) } // saved before MaruViewer's header
             .let { before ->
                 // MaruViewer's status size for an untouched 11 sp (not while 여백 사용 is off: its minimal margin could not

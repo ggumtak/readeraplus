@@ -67,6 +67,8 @@ data class ReaderSettings(
     val txtEmphasizeHeadings: Boolean = true,
     val txtReplaceRules: String = "",
     val epubPublisherStyles: Boolean = true,
+    /** EPUB: body text is exactly the reader's size (the book's own font-size declarations count for headings only). */
+    val epubIgnoreBookSizes: Boolean = true,
 ) {
     val hasHeader: Boolean get() = headerLeft != StatusItem.NONE || headerCenter != StatusItem.NONE || headerRight != StatusItem.NONE
     val hasFooterText: Boolean get() = footerLeft != StatusItem.NONE || footerCenter != StatusItem.NONE || footerRight != StatusItem.NONE
@@ -89,6 +91,7 @@ data class ReaderSettings(
         txtReplaceRules = txtReplaceRules,
         txtEncoding = txtEncoding,
         epubPublisherStyles = epubPublisherStyles,
+        epubIgnoreBookSizes = epubIgnoreBookSizes,
     )
 
     companion object {

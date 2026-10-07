@@ -89,6 +89,9 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         body.addView(stepper("글자 간격", r.letterSpacingPm.toFloat(), -100f, 200f, 10f, { Fmt.letterSpacing(it.toInt()) }) { v ->
             edit { it.copy(letterSpacingPm = v.toInt()) }
         })
+        body.addView(ctx.toggleRow("책의 글자 크기 무시", "EPUB 본문은 모든 책에서 같은 크기 · 제목은 그대로", r.epubIgnoreBookSizes) { v ->
+            edit { it.copy(epubIgnoreBookSizes = v) }
+        })
 
         body.section("문단")
         body.addView(stepper("줄 간격", r.lineHeightPct.toFloat(), 100f, 300f, 5f, { Fmt.pct(it.toInt()) }) { v ->

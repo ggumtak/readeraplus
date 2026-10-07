@@ -103,6 +103,7 @@ internal object SettingsJson {
         .put("r.txtEmphasizeHeadings", s.txtEmphasizeHeadings)
         .put("r.txtReplaceRules", s.txtReplaceRules)
         .put("r.epubPublisherStyles", s.epubPublisherStyles)
+        .put("r.epubIgnoreBookSizes", s.epubIgnoreBookSizes)
 
     /**
      * Fields missing from [o] keep their value from [base] (as do fields this mapper doesn't name), except the 화면 색
@@ -145,6 +146,7 @@ internal object SettingsJson {
         txtEmphasizeHeadings = BackupJson.bool(o, "r.txtEmphasizeHeadings", base.txtEmphasizeHeadings),
         txtReplaceRules = BackupJson.str(o, "r.txtReplaceRules", base.txtReplaceRules),
         epubPublisherStyles = BackupJson.bool(o, "r.epubPublisherStyles", base.epubPublisherStyles),
+        epubIgnoreBookSizes = BackupJson.bool(o, "r.epubIgnoreBookSizes", base.epubIgnoreBookSizes),
     ).let { loaded ->
         val hasSlots = listOf("r.headerLeft", "r.headerCenter", "r.headerRight", "r.footerLeft", "r.footerCenter", "r.footerRight").any(o::has)
         val migrated = if (!hasSlots && StatusMigration.LEGACY_KEYS.any(o::has))

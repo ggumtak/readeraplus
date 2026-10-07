@@ -408,6 +408,22 @@ ${if (withNamed) "<item id=\"i2\" href=\"MyCover.PNG\" media-type=\"image/png\"/
     }
 
     @Test
+    fun ignoreBookSizesOptionReachesConverter() {
+        val css = "<style>p.s { font-size: 0.8em } h1 { font-size: 2em }</style>"
+        val opf = """<package><metadata><dc:title>크기</dc:title></metadata>
+<manifest><item id="x" href="x.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="x"/></spine></package>"""
+        val f = writeEpub(listOf(text("OEBPS/book.opf", opf),
+            text("OEBPS/x.xhtml", xhtml("x", "<h1>제목</h1><p class=\"s\">내용</p>", css))))
+        fun scales(o: ParseOptions): Pair<Float, Float> = EpubDocuments.open(f, o).use { doc ->
+            val c = doc.loadSection(0)
+            c.styleAt(c.text.indexOf("제목")).sizeScale to c.styleAt(c.text.indexOf("내용")).sizeScale
+        }
+        assertEquals(2f to 1f, scales(ParseOptions(epubIgnoreBookSizes = true)))
+        assertEquals(2f to 0.8f, scales(ParseOptions(epubIgnoreBookSizes = false)))
+        assertEquals(2f to 1f, scales(ParseOptions())) // on by default
+    }
+
+    @Test
     fun noContainerUsesOpfFromListing() {
         val opf = """<package><metadata><dc:title>컨테이너 없음</dc:title></metadata>
 <manifest><item id="x" href="x.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="x"/></spine></package>"""

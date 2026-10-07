@@ -24,13 +24,14 @@ internal object EpubTestUtil {
         path: String = "OEBPS/Text/ch1.xhtml",
         css: Map<String, String> = emptyMap(),
         missingImages: Set<String> = emptySet(),
+        ignoreBookSizes: Boolean = false,
     ): SectionContent {
         val res = object : XhtmlResources {
             override fun imagePath(path: String): String? = if (path in missingImages) null else path
             override fun styleSheets(path: String): List<CssSheet> =
                 css[path]?.let { listOf(CssParser.parse(it)) } ?: emptyList()
         }
-        val c = XhtmlConverter(publisherStyles, res).convert(xhtml, path)
+        val c = XhtmlConverter(publisherStyles, res, ignoreBookSizes).convert(xhtml, path)
         checkInvariants(c)
         return c
     }

@@ -358,7 +358,7 @@ internal class EpubBook private constructor(
             // The section's own file must be readable: a failure throws (DocumentException / IOException, which no
             // caller caches) instead of becoming an empty page that the caches and the page counter would keep.
             val bytes = zip.readOrThrow(item.path)
-            XhtmlConverter(options.epubPublisherStyles, resources).convert(EpubText.decode(bytes), item.path)
+            XhtmlConverter(options.epubPublisherStyles, resources, options.epubIgnoreBookSizes).convert(EpubText.decode(bytes), item.path)
         } catch (_: RuntimeException) {
             errorSection()
         } catch (_: StackOverflowError) {

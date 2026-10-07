@@ -27,6 +27,7 @@ class SettingsJsonTest {
         footerCenter = StatusItem.CHAPTER_PAGES_LEFT, statusFontSizeSp = 12.5f, widowOrphanControl = false, txtBlankLines = 2,
         txtStripIndent = false, txtJoinWrappedLines = 0, txtDetectChapters = false, txtChapterRegex = "^제\\d+장$",
         txtEmphasizeHeadings = false, txtReplaceRules = "a => b\n# c", epubPublisherStyles = false,
+        epubIgnoreBookSizes = false,
     )
 
     private val app = AppSettings(

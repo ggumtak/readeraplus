@@ -41,6 +41,22 @@ class ReaderReviewFixesTest {
     }
 
     @Test
+    fun ignoreBookSizesReparsesAndRelayoutsAnEpubOnly() {
+        val t = s.copy(epubIgnoreBookSizes = !s.epubIgnoreBookSizes)
+        assertTrue(LayoutKeys.parseChanged(s, t, BookFormat.EPUB, ""))
+        assertTrue(LayoutKeys.layoutChanged(s, t, BookFormat.EPUB))
+        assertNotEquals(LayoutKeys.parseOptionsFor(s, BookFormat.EPUB, ""), LayoutKeys.parseOptionsFor(t, BookFormat.EPUB, ""))
+        assertFalse(LayoutKeys.parseChanged(s, t, BookFormat.TXT, ""))
+        assertFalse(LayoutKeys.layoutChanged(s, t, BookFormat.TXT))
+        assertEquals(s.epubIgnoreBookSizes, s.parseOptions().epubIgnoreBookSizes)
+        // The page-count / layout key follows the option for an EPUB, never for a TXT.
+        fun key(x: ReaderSettings, f: BookFormat) = LayoutKeys.keyFor(x, f, "", g, density, font, 1)
+        assertNotEquals(key(s, BookFormat.EPUB), key(t, BookFormat.EPUB))
+        assertEquals(key(s, BookFormat.TXT), key(t, BookFormat.TXT))
+        assertEquals(LayoutKeys.textSignature(s, BookFormat.TXT, ""), LayoutKeys.textSignature(t, BookFormat.TXT, ""))
+    }
+
+    @Test
     fun encodingOnlyMattersForTxt() {
         assertEquals(LayoutKeys.parseOptionsFor(s, BookFormat.EPUB, "MS949"), LayoutKeys.parseOptionsFor(s, BookFormat.EPUB, ""))
         assertNotEquals(LayoutKeys.parseOptionsFor(s, BookFormat.TXT, "MS949"), LayoutKeys.parseOptionsFor(s, BookFormat.TXT, ""))

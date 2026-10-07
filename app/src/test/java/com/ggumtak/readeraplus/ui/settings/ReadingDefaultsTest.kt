@@ -14,7 +14,8 @@ class ReadingDefaultsTest {
         val mine = d.copy(
             fontSizeSp = 24f, fontWeight = 700, lineHeightPct = 200, paragraphSpacingPct = 80, indentPct = 200,
             align = if (d.align == Align.LEFT) Align.JUSTIFY else Align.LEFT, marginLeftDp = 10, marginRightDp = 10,
-            epubPublisherStyles = !d.epubPublisherStyles, pageTheme = PageTheme.MARU,
+            epubPublisherStyles = !d.epubPublisherStyles,
+            epubIgnoreBookSizes = !d.epubIgnoreBookSizes, pageTheme = PageTheme.MARU,
             invert = true, footerCenter = StatusItem.CLOCK, progressBar = !d.progressBar, statusFontSizeSp = 14f,
             txtBlankLines = 3, txtDetectChapters = !d.txtDetectChapters, txtReplaceRules = "a=>b",
         )
@@ -28,6 +29,7 @@ class ReadingDefaultsTest {
         assertEquals(d.align, out.align)
         assertEquals(d.marginLeftDp, out.marginLeftDp)
         assertEquals(d.epubPublisherStyles, out.epubPublisherStyles)
+        assertEquals(d.epubIgnoreBookSizes, out.epubIgnoreBookSizes)
         // 화면 색 is on this page (스타일): back to 흰 바탕.
         assertEquals(PageTheme.PAPER, out.pageTheme)
         // 흑백 반전, 화면·밝기's status settings and the TXT options are kept.
