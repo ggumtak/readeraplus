@@ -116,6 +116,9 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         }.also(body::addView)
 
         addPage(body, r)
+        // The status bands live on 화면·밝기: reachable from here too, where the reading look is set.
+        body.section("상태 표시줄")
+        body.addView(ctx.navRow("상태 표시줄", "위·아래 표시 항목 · 진행 막대 · 글자 크기") { activity.push(SettingsActivity.PAGE_SCREEN) })
         addFiles(body, r)
 
         // Opened straight from the quick options (no main list below it): one way on to every other page (the main

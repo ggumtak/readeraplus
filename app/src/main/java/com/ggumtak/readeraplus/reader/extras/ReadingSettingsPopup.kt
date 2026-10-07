@@ -211,7 +211,23 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         }
         all.addView(ctx.label(ALL_SETTINGS, Compact.LABEL_SP, bold = true, maxLines = 1))
         all.addView(ctx.icon(R.drawable.ic_chevron_right, 24))
-        row.addView(all, lp(0, ctx.dp(Compact.BAR_DP), 1f))
+        row.addView(all, lp(WRAP_CONTENT, ctx.dp(Compact.BAR_DP)))
+        // 상태 표시줄 (설정 → 화면·밝기, whose first sections are the two bands) beside it: no extra row, the popup
+        // keeps its height.
+        val status = ctx.horizontal {
+            setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
+            background = pressableBackground()
+            contentDescription = STATUS_SETTINGS
+            setOnClickListener {
+                flush()
+                popup?.dismiss()
+                openSettings(SettingsActivity.PAGE_SCREEN)
+            }
+        }
+        status.addView(ctx.label(STATUS_SETTINGS, Compact.LABEL_SP, bold = true, maxLines = 1))
+        status.addView(ctx.icon(R.drawable.ic_chevron_right, 24))
+        row.addView(status, lp(WRAP_CONTENT, ctx.dp(Compact.BAR_DP)))
+        row.addView(View(ctx), lp(0, 1, 1f))
         row.addView(ctx.compactIcon(R.drawable.ic_close, "닫기") { dismiss() })
         return row
     }
@@ -343,6 +359,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         private const val THEME_DP = 64
         private const val THEME_H_DP = 40
         const val ALL_SETTINGS = "전체 읽기 설정"
+        const val STATUS_SETTINGS = "상태 표시줄"
         /** Weak: a popup left open when the reader is destroyed must not pin the activity. */
         private var current: WeakReference<ReadingSettingsPopup>? = null
 
