@@ -578,7 +578,8 @@ internal abstract class BookAdapter : BaseAdapter() {
 
     override fun getCount(): Int = rows.size
     override fun getItem(position: Int): Any = rows[position]
-    override fun getItemId(position: Int): Long = rows[position].book.id
+    // AbsListView.setSelection asks a stable-id adapter for the id even when it is empty (a search with no hits).
+    override fun getItemId(position: Int): Long = rows.getOrNull(position)?.book?.id ?: -1L
     override fun hasStableIds(): Boolean = true
 }
 

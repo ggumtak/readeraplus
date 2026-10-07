@@ -1212,7 +1212,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             gridView.visibility = View.VISIBLE
             if (!sameRows(gridAdapter.rows, rows)) gridAdapter.submit(rows)
             gridPager?.bindBar()
+            // An empty list takes no selection (AbsListView asks a stable-id adapter for row 0's id).
             when {
+                rows.isEmpty() -> {}
                 scrollTop -> gridView.setSelection(0)
                 keepFirst >= 0 -> gridView.setSelection(pageStart(keepFirst, gridPager))
             }
@@ -1228,8 +1230,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             }
             listPager.bindBar()
             when {
+                rows.isEmpty() -> {}
                 scrollTop -> listView.setSelection(0)
-                keepFirst >= 0 -> listView.setSelection(keepFirst.coerceIn(0, (rows.size - 1).coerceAtLeast(0)))
+                keepFirst >= 0 -> listView.setSelection(keepFirst.coerceIn(0, rows.size - 1))
             }
         }
         if (rows.isEmpty()) showEmptyState() else hideEmptyState()
@@ -1258,8 +1261,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val restore = groupScroll
         if (restore != null) {
             groupScroll = null
-            listView.setSelectionFromTop(restore[0], restore[1])
-        } else if (scrollTop) {
+            if (groups.isNotEmpty()) listView.setSelectionFromTop(restore[0].coerceIn(0, groups.size - 1), restore[1])
+        } else if (scrollTop && groups.isNotEmpty()) {
             listView.setSelection(0)
         }
         if (groups.isEmpty()) showEmptyState() else hideEmptyState()
