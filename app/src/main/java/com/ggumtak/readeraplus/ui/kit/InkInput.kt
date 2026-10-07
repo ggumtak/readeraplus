@@ -113,14 +113,19 @@ open class InkEditText(context: Context) : EditText(context) {
         if (!stillCaret || !isFocused || isCursorVisible) return
         val l = layout ?: return
         val at = selectionStart
-        if (at < 0 || at != selectionEnd) return
-        // Content coordinates, as TextView draws its text: the layout sits at the compound padding, the line box
-        // (with the vertical gravity offset) comes from getLineBounds, the scroll is already on the canvas.
-        val baseline = getLineBounds(l.getLineForOffset(at), lineBox)
-        val w = maxOf(2f, resources.displayMetrics.density * CARET_DP)
-        val x = (compoundPaddingLeft + l.getPrimaryHorizontal(at)).coerceAtMost(scrollX + width - w)
-        caretPaint.color = currentTextColor
-        canvas.drawRect(x, baseline + paint.ascent(), x + w, baseline + paint.descent(), caretPaint)
+        if (at < 0 || at != selectionEnd || at > l.text.length) return
+        // A keyboard's composing text can leave the layout a step behind the selection: the caret is decoration,
+        // never worth a crash.
+        try {
+            // Content coordinates, as TextView draws its text: the layout sits at the compound padding, the line box
+            // (with the vertical gravity offset) comes from getLineBounds, the scroll is already on the canvas.
+            val baseline = getLineBounds(l.getLineForOffset(at), lineBox)
+            val w = maxOf(2f, resources.displayMetrics.density * CARET_DP)
+            val x = (compoundPaddingLeft + l.getPrimaryHorizontal(at)).coerceAtMost(scrollX + width - w)
+            caretPaint.color = currentTextColor
+            canvas.drawRect(x, baseline + paint.ascent(), x + w, baseline + paint.descent(), caretPaint)
+        } catch (_: RuntimeException) {
+        }
     }
 
     private companion object {

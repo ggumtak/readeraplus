@@ -782,16 +782,23 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
                 override fun afterTextChanged(s: Editable?) {
-                    handler.removeCallbacks(searchRunnable)
-                    handler.postDelayed(searchRunnable, SEARCH_DEBOUNCE_MS)
+                    // The activity's handler (inside apply, a bare `handler` is the view's, which closeSearch and
+                    // onDestroy never cancel and which is null while the field is detached).
+                    this@LibraryActivity.handler.removeCallbacks(searchRunnable)
+                    this@LibraryActivity.handler.postDelayed(searchRunnable, SEARCH_DEBOUNCE_MS)
                     restartAutoScanWait() // soft-keyboard typing reaches no activity input hook
                 }
             })
-            setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                    handler.removeCallbacks(searchRunnable)
-                    applySearch(text.toString())
-                    hideKeyboard()
+            // Search, Done or an Enter key (down and up both consumed: an unconsumed Enter on a single-line field makes
+            // TextView move the focus down, which can throw when nothing below takes it).
+            setOnEditorActionListener { _, actionId, ev ->
+                val enter = ev != null && ev.keyCode == KeyEvent.KEYCODE_ENTER
+                if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE || enter) {
+                    if (ev == null || ev.action == KeyEvent.ACTION_DOWN) {
+                        this@LibraryActivity.handler.removeCallbacks(searchRunnable)
+                        applySearch(text.toString())
+                        hideKeyboard()
+                    }
                     true
                 } else {
                     false

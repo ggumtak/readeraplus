@@ -202,11 +202,11 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
             background = null
             setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
             inkCursor(singleLine = true)
+            // Enter's down starts the search and its up is consumed too (an unconsumed Enter moves the focus down).
             setOnEditorActionListener { _, actionId, ev ->
-                if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE ||
-                    (ev != null && ev.keyCode == KeyEvent.KEYCODE_ENTER && ev.action == KeyEvent.ACTION_DOWN)
-                ) {
-                    startSearch(text.toString())
+                val enter = ev != null && ev.keyCode == KeyEvent.KEYCODE_ENTER
+                if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE || enter) {
+                    if (ev == null || ev.action == KeyEvent.ACTION_DOWN) startSearch(text.toString())
                     true
                 } else {
                     false
