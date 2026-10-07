@@ -416,3 +416,16 @@ internal fun LibraryActivity.showNoPermissionScreen() {
         .setNegativeButton("닫기", null)
         .showNoAnim()
 }
+
+/** "앱이 종료되었습니다": the last crash's record, with 복사 so it can be sent. */
+internal fun LibraryActivity.crashDialog(text: String) {
+    alert().setTitle("지난번에 앱이 갑자기 종료되었습니다")
+        .setMessage("아래 내용을 복사해 보내 주시면 원인을 찾는 데 도움이 됩니다.\n\n" + text.take(1500))
+        .setPositiveButton("복사") { _, _ ->
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            cm?.setPrimaryClip(ClipData.newPlainText("ReaderaPlus crash", text))
+            toast("복사했습니다")
+        }
+        .setNegativeButton("닫기", null)
+        .showNoAnim()
+}

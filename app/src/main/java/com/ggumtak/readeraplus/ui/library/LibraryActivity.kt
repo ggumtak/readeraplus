@@ -388,12 +388,20 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         ensureUi() // back from the reader opened at start
         releaseDrawHold() // a reopen from onNewIntent held an already built library
         refreshVisible()
+        showLastCrash()
     }
 
     /** Builds the library (if needed) and runs the per-visit refresh that onResume skipped while deciding. */
     private fun showLibrary() {
         ensureUi()
         refreshVisible()
+        showLastCrash()
+    }
+
+    /** An earlier run crashed: its stack trace once, to copy and send (no logcat on a phone). */
+    private fun showLastCrash() {
+        val text = com.ggumtak.readeraplus.CrashLog.take(this) ?: return
+        crashDialog(text)
     }
 
     /**
