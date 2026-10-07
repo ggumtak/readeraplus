@@ -3,6 +3,7 @@ package com.ggumtak.readeraplus.reader.extras
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
+import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -292,8 +293,8 @@ internal object Overlay {
 /** Text actions shared by the selection popup and the quotes list. */
 internal object TextActions {
     const val SHARE_MAX_CHARS = 50_000
-    private const val PREF_LAST_DICT = "extras.lastDictApp"
-    private const val NAVER_LABEL = "네이버 사전 (창)"
+    /** The keys ([LookupList.Entry.key]) of the 사전·번역 entries the user hid; absent until first used (then seeded). */
+    private const val PREF_HIDDEN = "extras.lookupHidden"
 
     /**
      * Copies [text]. Android 13+ confirms a copy itself, so by default the toast is only shown below that; a caller
@@ -325,7 +326,7 @@ internal object TextActions {
 
     private fun webSearchTemplate(): String? = runCatching { Settings.app.webSearchUrl }.getOrNull()
 
-    /** Installed ACTION_PROCESS_TEXT handlers (dictionaries, translators), last used first. */
+    /** Installed ACTION_PROCESS_TEXT handlers (dictionaries, translators); the Naver Dictionary app has its own entry. */
     fun processTextApps(ctx: Context): List<ResolveInfo> {
         val pm = ctx.packageManager
         val intent = Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain")
@@ -336,40 +337,67 @@ internal object TextActions {
             emptyList()
         }
         val own = ctx.packageName
-        val last = lastDict()
-        return list.filter { it.activityInfo != null && it.activityInfo.packageName != own }
-            .sortedWith(compareBy({ key(it) != last }, { it.loadLabel(pm).toString() }))
+        return list.filter {
+            it.activityInfo != null && it.activityInfo.packageName != own && it.activityInfo.packageName != LookupList.NAVERDIC_PKG
+        }
     }
 
     private fun key(ri: ResolveInfo): String = ri.activityInfo.packageName + "/" + ri.activityInfo.name
 
+    private fun naverInstalled(ctx: Context): Boolean =
+        runCatching { ctx.packageManager.getLaunchIntentForPackage(LookupList.NAVERDIC_PKG) != null }.getOrDefault(false)
+
+    private fun entries(ctx: Context, apps: List<ResolveInfo>): List<LookupList.Entry> {
+        val pm = ctx.packageManager
+        val list = apps.map { ri ->
+            val label = ri.loadLabel(pm)?.toString().orEmpty()
+            val app = runCatching { ri.activityInfo.applicationInfo.loadLabel(pm).toString() }.getOrDefault("")
+            LookupList.Entry(key(ri), label, app)
+        }.filter { it.label.isNotBlank() }
+        val naver = if (naverInstalled(ctx)) LookupList.Entry(LookupList.NAVERDIC_KEY, LookupList.NAVERDIC_LABEL) else null
+        return LookupList.order(naver, list)
+    }
+
+    /** Every 사전·번역 entry before "웹 검색", in the chooser's order, hidden or not (the settings page lists them). */
+    fun lookupEntries(ctx: Context): List<LookupList.Entry> = entries(ctx, processTextApps(ctx))
+
+    /** The hidden entry keys; the first time (nothing stored) the labels of [all] seed it, and that is stored. */
+    fun hiddenEntries(all: List<LookupList.Entry>): Set<String> {
+        val stored = runCatching { Settings.raw().getStringSet(PREF_HIDDEN, null)?.toSet() }.getOrNull()
+        val hidden = LookupList.hidden(stored, all)
+        if (stored == null) setHiddenEntries(hidden)
+        return hidden
+    }
+
+    fun setHiddenEntries(keys: Set<String>) {
+        runCatching { Settings.raw().edit().putStringSet(PREF_HIDDEN, HashSet(keys)).apply() }
+    }
+
     /**
-     * Dictionary / translate: always a list — "네이버 사전" (the floating [LookupPanel], the selection + " 뜻"), the
-     * PROCESS_TEXT apps and "웹 검색"; the last used entry first ([LookupQuery.order]). [onPicked] (main thread) runs
-     * once the pick was started — an app ([Lookups.VIA_APP], its label), the Naver window or "웹 검색"
-     * ([Lookups.VIA_WEB], the site host) — and never when the chooser is cancelled or nothing could be started.
+     * Dictionary / translate: always a list in a fixed order — the Naver Dictionary app ("네이버 사전", the plain word),
+     * the PROCESS_TEXT apps by name (the selection + " 뜻", [LookupQuery.appText]) and "웹 검색" (the floating
+     * [LookupPanel]) — without the entries hidden on the 사전·번역·검색 page. [onPicked] (main thread) runs once the
+     * pick was started — an app ([Lookups.VIA_APP], its label) or "웹 검색" ([Lookups.VIA_WEB], the site host) — and
+     * never when the chooser is cancelled or nothing could be started.
      */
     fun lookUp(activity: Activity, text: String, onPicked: ((via: Int, app: String) -> Unit)? = null) {
-        val pm = activity.packageManager
         val apps = processTextApps(activity).associateBy { key(it) }
-        val query = LookupQuery.query(text)
-        val keys = LookupQuery.order(apps.keys.toList(), lastDict()).filter { it != LookupQuery.NAVER_KEY || query.isNotEmpty() }
-        val labels = keys.map { k -> apps[k]?.loadLabel(pm)?.toString() ?: NAVER_LABEL } + "웹 검색"
+        val all = entries(activity, apps.values.toList())
+        val word = LookupQuery.word(text)
+        val shown = LookupList.visible(all, hiddenEntries(all)).filter { it.key != LookupList.NAVERDIC_KEY || word.isNotEmpty() }
+        val labels = shown.map { it.label } + "웹 검색"
         activity.alert().setTitle("사전·번역")
             .setItems(labels.toTypedArray()) { _, which ->
-                val k = keys.getOrNull(which)
-                if (k == null) {
-                    // The chooser's 웹 검색: the user's search site in the same floating window, the query + " 뜻".
+                val e = shown.getOrNull(which)
+                if (e == null) {
+                    // The chooser's 웹 검색: the user's search site in the floating window, the query + " 뜻".
                     val q = LookupQuery.query(text).ifEmpty { text }
                     val url = WebSearchTemplate.url(webSearchTemplate(), q)
                     if (LookupPanel.show(activity, q, url)) onPicked?.invoke(Lookups.VIA_WEB, webSearchHost())
-                } else if (k == LookupQuery.NAVER_KEY) {
-                    if (LookupPanel.show(activity, query, LookupQuery.naverUrl(query))) {
-                        runCatching { Settings.raw().edit().putString(PREF_LAST_DICT, k).apply() }
-                        onPicked?.invoke(Lookups.VIA_WEB, LookupQuery.NAVER_HOST)
-                    }
-                } else if (launchProcessText(activity, apps.getValue(k), text)) {
-                    onPicked?.invoke(Lookups.VIA_APP, labels[which])
+                } else if (e.key == LookupList.NAVERDIC_KEY) {
+                    if (openNaverDic(activity, word)) onPicked?.invoke(Lookups.VIA_APP, e.label)
+                } else if (launchProcessText(activity, apps.getValue(e.key), e.label, text)) {
+                    onPicked?.invoke(Lookups.VIA_APP, e.label)
                 }
             }
             .setNegativeButton("취소", null)
@@ -378,35 +406,67 @@ internal object TextActions {
             .also { d -> PanelRegistry.dialog(activity, d) }
     }
 
-    private fun lastDict(): String? = runCatching { Settings.raw().getString(PREF_LAST_DICT, null) }.getOrNull()
-
-    private fun launchProcessText(ctx: Context, ri: ResolveInfo, text: String): Boolean {
-        runCatching { Settings.raw().edit().putString(PREF_LAST_DICT, key(ri)).apply() }
+    private fun launchProcessText(ctx: Context, ri: ResolveInfo, label: String, text: String): Boolean {
         val pkg = ri.activityInfo.packageName
         val i = Intent(Intent.ACTION_PROCESS_TEXT)
             .setType("text/plain")
             .setComponent(ComponentName(pkg, ri.activityInfo.name))
-            .putExtra(Intent.EXTRA_PROCESS_TEXT, LookupQuery.appText(pkg, text))
+            .putExtra(Intent.EXTRA_PROCESS_TEXT, LookupQuery.appText(pkg, label, text))
             .putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
         if (LookupQuery.isAnki(pkg) || ctx !is Activity) return start(ctx, i)
-        // Asked as a floating window over the lower part of the screen, like the 네이버 사전 window: a system with
-        // pop-up / freeform windows honours the bounds, any other opens the app as before.
+        return launchFloating(ctx, i)
+    }
+
+    /**
+     * Opens the Naver Dictionary app with [word]: the first of PROCESS_TEXT, SEND, SEARCH and WEB_SEARCH the app
+     * answers; an app that answers none gets the word on the clipboard and is just opened.
+     */
+    private fun openNaverDic(activity: Activity, word: String): Boolean {
+        val pkg = LookupList.NAVERDIC_PKG
+        val pm = activity.packageManager
+        val tries = listOf(
+            Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain")
+                .putExtra(Intent.EXTRA_PROCESS_TEXT, word).putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true),
+            Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, word),
+            Intent(Intent.ACTION_SEARCH).putExtra(SearchManager.QUERY, word),
+            Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, word),
+        )
+        for (i in tries) {
+            i.setPackage(pkg)
+            if (i.resolveActivity(pm) != null && launchFloating(activity, i, quiet = true)) return true
+        }
+        val launch = pm.getLaunchIntentForPackage(pkg) ?: run {
+            activity.toast("네이버 사전 앱을 열 수 없습니다")
+            return false
+        }
+        copy(activity, word, confirm = false)
+        if (!launchFloating(activity, launch)) return false
+        activity.toast("단어를 복사했습니다. 검색창에 붙여 넣으세요")
+        return true
+    }
+
+    /**
+     * Starts [intent] in a floating window over the lower part of the screen, like the 웹 검색 window: a system with
+     * pop-up / freeform windows honours the bounds, any other opens the app as before. False when it could not be
+     * started; a [quiet] caller tries something else, any other gets a message.
+     */
+    private fun launchFloating(activity: Activity, intent: Intent, quiet: Boolean = false): Boolean {
         return try {
-            val dm = ctx.resources.displayMetrics
+            val dm = activity.resources.displayMetrics
             val side = (8 * dm.density).toInt()
             val h = LookupQuery.startHeight(dm.heightPixels, LookupPanel.savedPct())
             val bounds = android.graphics.Rect(side, dm.heightPixels - h, dm.widthPixels - side, dm.heightPixels)
             val opts = android.app.ActivityOptions.makeBasic().setLaunchBounds(bounds)
-            ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), opts.toBundle())
+            activity.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), opts.toBundle())
             true
         } catch (_: ActivityNotFoundException) {
-            ctx.toast("실행할 앱이 없습니다")
+            if (!quiet) activity.toast("실행할 앱이 없습니다")
             false
         } catch (_: SecurityException) {
-            ctx.toast("앱을 열 수 없습니다")
+            if (!quiet) activity.toast("앱을 열 수 없습니다")
             false
         } catch (_: RuntimeException) {
-            start(ctx, i.setFlags(0))
+            if (quiet) runCatching { activity.startActivity(intent.setFlags(0)) }.isSuccess else start(activity, intent.setFlags(0))
         }
     }
 

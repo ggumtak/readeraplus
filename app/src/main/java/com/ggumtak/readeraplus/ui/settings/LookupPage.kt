@@ -3,26 +3,32 @@ package com.ggumtak.readeraplus.ui.settings
 import android.content.Intent
 import android.net.Uri
 import android.view.View
+import android.widget.LinearLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.data.Lookups
+import com.ggumtak.readeraplus.reader.extras.LookupList
+import com.ggumtak.readeraplus.reader.extras.TextActions
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.toast
+import com.ggumtak.readeraplus.ui.kit.vertical
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * "사전·번역·검색": the web search site for selected text (a preset or a typed address), the installed PROCESS_TEXT
- * apps the selection menu's "사전·번역" lists beside its always-present "네이버 사전" window (listed, not tappable), and the 단어장 (whether lookups are recorded,
- * clearing it; the notes open it from the drawer and the reader's ⋮).
+ * "사전·번역·검색": the web search site for selected text (a preset or a typed address), the entries the selection
+ * menu's "사전·번역" can list (the Naver Dictionary app when installed and every PROCESS_TEXT app, one toggle each; the
+ * order is fixed by name and "웹 검색" is always last), and the 단어장 (whether lookups are recorded, clearing it; the
+ * notes open it from the drawer and the reader's ⋮).
  */
 internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_LOOKUP, "사전·번역·검색") {
     private val engineRows = ArrayList<View>()
     private var customRow: View? = null
     private lateinit var appsText: TextView
+    private lateinit var appsBox: LinearLayout
     private var recordRow: View? = null
     private var clearing = false
     /** Left the stack: a count that arrives later shows no dialog. */
@@ -52,9 +58,10 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         body.addView(ctx.row("검색해 보기", null) { testSearch() })
         updateRadios()
 
-        body.section("사전·번역 앱")
-        body.addView(ctx.note("선택 메뉴의 ‘사전·번역’은 항상 ‘네이버 사전’(창으로 보기, 검색어 뒤에 ‘뜻’)을 함께 보여 주고, 아래 앱이 있으면 같이 고를 수 있습니다."))
+        body.section("사전·번역 목록")
+        body.addView(ctx.note("선택 메뉴의 ‘사전·번역’에 보일 항목입니다. 순서는 이름순으로 고정됩니다. ‘웹 검색’은 항상 맨 아래에 있습니다."))
         appsText = ctx.note("불러오는 중…").also(body::addView)
+        appsBox = ctx.vertical().also(body::addView)
         loadApps()
 
         // ---- 단어장 (NOTES §11)
@@ -118,27 +125,25 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         }
     }
 
-    /** The apps as one note ("· 파파고"): they are only listed, so no rows that look tappable. */
+    /** One toggle per entry (checked = shown); the list and the first-use hidden set are read on IO. */
     private fun loadApps() {
         activity.scope.launch {
-            val names = withContext(Dispatchers.IO) {
+            val (entries, hidden) = withContext(Dispatchers.IO) {
                 runCatching {
-                    val pm = activity.packageManager
-                    val intent = Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain")
-                    @Suppress("DEPRECATION")
-                    pm.queryIntentActivities(intent, 0)
-                        .filter { it.activityInfo.packageName != activity.packageName }
-                        .map { ri ->
-                            val label = ri.loadLabel(pm)?.toString().orEmpty()
-                            val app = runCatching { ri.activityInfo.applicationInfo.loadLabel(pm).toString() }.getOrDefault("")
-                            if (app.isNotEmpty() && app != label) "$label ($app)" else label
-                        }
-                        .filter { it.isNotBlank() }
-                        .distinct()
-                        .sorted()
-                }.getOrDefault(emptyList())
+                    val all = TextActions.lookupEntries(activity)
+                    all to TextActions.hiddenEntries(all)
+                }.getOrDefault(emptyList<LookupList.Entry>() to emptySet())
             }
-            appsText.text = if (names.isEmpty()) "설치된 앱이 없습니다. ‘네이버 사전’과 ‘웹 검색’을 고를 수 있습니다." else names.joinToString("\n") { "· $it" }
+            if (destroyed) return@launch
+            appsText.text = "설치된 앱이 없습니다. ‘웹 검색’만 보입니다."
+            appsText.setShown(entries.isEmpty())
+            val off = HashSet(hidden)
+            for (e in entries) {
+                appsBox.addView(ctx.toggleRow(LookupList.title(e), null, e.key !in off) { shown ->
+                    if (shown) off.remove(e.key) else off.add(e.key)
+                    TextActions.setHiddenEntries(off)
+                })
+            }
         }
     }
 }

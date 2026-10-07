@@ -32,7 +32,7 @@ import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 
 /**
- * The floating lookup window (the "네이버 사전" pick of 사전·번역): a bottom sheet-like dialog over the page, ~60% of
+ * The floating lookup window (the "웹 검색" pick of 사전·번역): a bottom sheet-like dialog over the page, ~60% of
  * the screen high, with a slim title bar (the query, "브라우저", "닫기") and a WebView. Dragging the title bar resizes
  * it (30–90%); the window changes once, when the finger lifts. No animation, no per-percent progress drawing.
  */
