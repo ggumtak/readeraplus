@@ -58,6 +58,12 @@ internal object LookupQuery {
         return listOf(NAVER_KEY) + appKeys
     }
 
+    /** AnkiDroid ("Anki에 넣기"): it gets the selection as is, in its own full window. */
+    fun isAnki(pkg: String): Boolean = pkg.startsWith("com.ichi2.anki")
+
+    /** The text another app's 사전·번역 entry gets: [query] (" 뜻" added) except for Anki, which keeps [text]. */
+    fun appText(pkg: String, text: String): String = if (isAnki(pkg)) text else query(text).ifEmpty { text }
+
     fun startHeight(screen: Int): Int = screen * START_PCT / 100
 
     /** [height] within [MIN_PCT]..[MAX_PCT] of [screen]. */

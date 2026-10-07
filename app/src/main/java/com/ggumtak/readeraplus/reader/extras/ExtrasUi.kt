@@ -359,7 +359,10 @@ internal object TextActions {
             .setItems(labels.toTypedArray()) { _, which ->
                 val k = keys.getOrNull(which)
                 if (k == null) {
-                    webSearch(activity, text) { onPicked?.invoke(Lookups.VIA_WEB, webSearchHost()) }
+                    // The chooser's 웹 검색: the user's search site in the same floating window, the query + " 뜻".
+                    val q = LookupQuery.query(text).ifEmpty { text }
+                    val url = WebSearchTemplate.url(webSearchTemplate(), q)
+                    if (LookupPanel.show(activity, q, url)) onPicked?.invoke(Lookups.VIA_WEB, webSearchHost())
                 } else if (k == LookupQuery.NAVER_KEY) {
                     if (LookupPanel.show(activity, query, LookupQuery.naverUrl(query))) {
                         runCatching { Settings.raw().edit().putString(PREF_LAST_DICT, k).apply() }
@@ -379,12 +382,32 @@ internal object TextActions {
 
     private fun launchProcessText(ctx: Context, ri: ResolveInfo, text: String): Boolean {
         runCatching { Settings.raw().edit().putString(PREF_LAST_DICT, key(ri)).apply() }
+        val pkg = ri.activityInfo.packageName
         val i = Intent(Intent.ACTION_PROCESS_TEXT)
             .setType("text/plain")
-            .setComponent(ComponentName(ri.activityInfo.packageName, ri.activityInfo.name))
-            .putExtra(Intent.EXTRA_PROCESS_TEXT, text)
+            .setComponent(ComponentName(pkg, ri.activityInfo.name))
+            .putExtra(Intent.EXTRA_PROCESS_TEXT, LookupQuery.appText(pkg, text))
             .putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
-        return start(ctx, i)
+        if (LookupQuery.isAnki(pkg) || ctx !is Activity) return start(ctx, i)
+        // Asked as a floating window over the lower part of the screen, like the 네이버 사전 window: a system with
+        // pop-up / freeform windows honours the bounds, any other opens the app as before.
+        return try {
+            val dm = ctx.resources.displayMetrics
+            val side = (8 * dm.density).toInt()
+            val h = LookupQuery.startHeight(dm.heightPixels)
+            val bounds = android.graphics.Rect(side, dm.heightPixels - h, dm.widthPixels - side, dm.heightPixels)
+            val opts = android.app.ActivityOptions.makeBasic().setLaunchBounds(bounds)
+            ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), opts.toBundle())
+            true
+        } catch (_: ActivityNotFoundException) {
+            ctx.toast("실행할 앱이 없습니다")
+            false
+        } catch (_: SecurityException) {
+            ctx.toast("앱을 열 수 없습니다")
+            false
+        } catch (_: RuntimeException) {
+            start(ctx, i.setFlags(0))
+        }
     }
 
     /** Starts [intent]; false (with a message) when no app takes it or it may not be opened. */

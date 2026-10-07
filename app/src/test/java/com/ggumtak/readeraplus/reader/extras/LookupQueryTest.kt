@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.reader.extras
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -52,5 +53,13 @@ class LookupQueryTest {
         assertEquals(600, LookupQuery.clampHeight(100, 2000))
         assertEquals(1800, LookupQuery.clampHeight(5000, 2000))
         assertEquals(1000, LookupQuery.clampHeight(1000, 2000))
+    }
+
+    @Test
+    fun otherAppsGetMeaningExceptAnki() {
+        assertEquals("사과 뜻", LookupQuery.appText("com.naver.labs.translator", " 사과 "))
+        assertEquals(" 사과 ", LookupQuery.appText("com.ichi2.anki", " 사과 "))
+        assertTrue(LookupQuery.isAnki("com.ichi2.anki"))
+        assertFalse(LookupQuery.isAnki("com.google.android.apps.translate"))
     }
 }
