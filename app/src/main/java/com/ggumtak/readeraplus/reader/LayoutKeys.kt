@@ -146,7 +146,7 @@ object LayoutKeys {
 
     /**
      * [layoutPart] for a book of [format]: the other format's options are normalised away too. EPUB ignores every
-     * txt* option; a TXT layout always honours block hints (see [config]), so the epub* options are moot there.
+     * txt* option for its layout (those that change its text, chapter detection, re-parse it: [parseOptionsFor]); a TXT layout always honours block hints (see [config]), so the epub* options are moot there.
      */
     private fun layoutPart(s: ReaderSettings, format: BookFormat): ReaderSettings {
         val base = layoutPart(s)
@@ -188,12 +188,19 @@ object LayoutKeys {
 
     /**
      * The parse options a book of [format] actually depends on, with every other field at its default: EPUB reads
-     * only epubPublisherStyles and epubIgnoreBookSizes; TXT reads the txt* options and the encoding (and always keeps
-     * block hints).
+     * epubPublisherStyles and epubIgnoreBookSizes and, for the chapters it detects when its own TOC is poor
+     * (`EpubHeadings`), txtDetectChapters, txtChapterRegex and txtEmphasizeHeadings; TXT reads the txt* options and
+     * the encoding (and always keeps block hints).
      */
     fun parseOptionsFor(s: ReaderSettings, format: BookFormat, encoding: String): ParseOptions =
         if (format == BookFormat.EPUB) {
-            ParseOptions(epubPublisherStyles = s.epubPublisherStyles, epubIgnoreBookSizes = s.epubIgnoreBookSizes)
+            ParseOptions(
+                txtDetectChapters = s.txtDetectChapters,
+                txtChapterRegex = s.txtChapterRegex,
+                txtEmphasizeHeadings = s.txtEmphasizeHeadings,
+                epubPublisherStyles = s.epubPublisherStyles,
+                epubIgnoreBookSizes = s.epubIgnoreBookSizes,
+            )
         } else {
             s.parseOptions(encoding).copy(epubPublisherStyles = true, epubIgnoreBookSizes = true)
         }

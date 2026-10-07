@@ -323,4 +323,35 @@ class TxtChaptersTest {
         val one = ParseOptions(txtChapterRegex = "^<시작>$")
         assertTrue(titles(TxtTestUtil.parse(book(hs), one)).isEmpty())
     }
+
+    @Test
+    fun headingsAfterDecorativeSymbols() {
+        // "◈ 002. [STAGE 0] 제목" (a numbered title after a symbol), "◆ 3화", "■ 제5장", "★ 프롤로그"
+        val numbered = listOf("◈ 001. [STAGE 0] 튜토리얼 시작합니다", "◈ 002. [STAGE 0] 첫 번째 시험", "◈ 003. [STAGE 1] 던전 입구", "◈ 004. [STAGE 1] 마지막 문")
+        assertEquals(numbered, titles(TxtTestUtil.parse(book(numbered))))
+        for (sym in listOf("◆", "■", "★", "▶", "※", "❖")) {
+            val hs = (1..3).map { "$sym ${it}화 제목" }
+            assertEquals("$sym 화", hs, titles(TxtTestUtil.parse(book(hs))))
+        }
+        val chapters = listOf("■ 제1장 시작", "■ 제2장 중간", "■ 제3장 끝")
+        assertEquals(chapters, titles(TxtTestUtil.parse(book(chapters))))
+        val special = listOf("★ 프롤로그", "★ 에필로그", "★ 외전")
+        assertEquals(special, titles(TxtTestUtil.parse(book(special))))
+        // the shape is read after the symbols
+        assertTrue(TxtChapters.builtinMask("◈ 002. [STAGE 0] 튜토리얼") and TxtChapters.R_K4 != 0)
+        assertTrue(TxtChapters.builtinMask("◆ 3화") and TxtChapters.R_K1 != 0)
+        assertEquals(0, TxtChapters.builtinMask("◆ ◇"))
+    }
+
+    @Test
+    fun aBodyLineAfterASymbolIsNoHeading() {
+        val hs = listOf("제1화", "제2화", "제3화")
+        val r = Random(5)
+        val sb = StringBuilder()
+        for (h in hs) {
+            sb.append(h).append("\n\n").append("◆ 그는 말했다.").append("\n\n").append("★ 별이 떴다")
+            sb.append("\n\n").append(TxtTestUtil.body(r, 1500, "\n\n")).append("\n\n")
+        }
+        assertEquals(hs, titles(TxtTestUtil.parse(sb.toString())))
+    }
 }

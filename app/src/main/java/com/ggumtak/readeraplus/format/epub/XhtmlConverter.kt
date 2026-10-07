@@ -1185,6 +1185,9 @@ internal class XhtmlConverter(
             "summary", "fieldset", "legend", "form", "dir", "menu", "listing", "plaintext", "xmp",
         )
 
+        /** Block-level element names: the converter closes the open paragraph at each (also read by [EpubSplit.scan]). */
+        fun isBlockTag(name: String): Boolean = name in BLOCK
+
         private val TABLE_STRUCT = hashSetOf("table", "tr", "thead", "tbody", "tfoot", "caption")
         private val LIST_BOUNDARY = hashSetOf("ul", "ol", "menu", "dir", "table")
 

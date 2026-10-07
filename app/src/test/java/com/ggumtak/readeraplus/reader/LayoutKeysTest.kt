@@ -277,6 +277,26 @@ class LayoutKeysTest {
     }
 
     @Test
+    fun epubChapterDetectionOptionsChangeTheKeyAndReparse() {
+        // An EPUB with a poor TOC gets detected chapters (page breaks, heading look, split points): these options
+        // re-parse it, and its cached counts follow them. The other TXT options still do not touch an EPUB.
+        val g = LayoutKeys.geometry(s, 720, 1440, density)
+        val font = "BUNDLED:fonts/NanumMyeongjo.ttf"
+        val k = LayoutKeys.keyFor(s, BookFormat.EPUB, "", g, density, font)
+        for (changed in listOf(s.copy(txtDetectChapters = false), s.copy(txtChapterRegex = "^-\\d+-$"), s.copy(txtEmphasizeHeadings = false))) {
+            assertNotEquals(k, LayoutKeys.keyFor(changed, BookFormat.EPUB, "", g, density, font))
+            assertTrue(LayoutKeys.parseChanged(s, changed, BookFormat.EPUB, ""))
+            assertFalse("no new layout of the old parse", LayoutKeys.layoutChanged(s, changed, BookFormat.EPUB))
+        }
+        val o = LayoutKeys.parseOptionsFor(s.copy(txtChapterRegex = "x", txtDetectChapters = false), BookFormat.EPUB, "")
+        assertEquals("x", o.txtChapterRegex)
+        assertFalse(o.txtDetectChapters)
+        val other = s.copy(txtBlankLines = 2, txtJoinWrappedLines = 0, txtReplaceRules = "a => b", txtStripIndent = false)
+        assertFalse(LayoutKeys.parseChanged(s, other, BookFormat.EPUB, ""))
+        assertEquals(k, LayoutKeys.keyFor(other, BookFormat.EPUB, "", g, density, font))
+    }
+
+    @Test
     fun effectiveTxtOptionsOfOneBookChangeOnlyThatBooksKey() {
         // T1-9: the session keys its counts with the book's effective settings (global + its own TXT options).
         val g = LayoutKeys.geometry(s, 720, 1440, density)

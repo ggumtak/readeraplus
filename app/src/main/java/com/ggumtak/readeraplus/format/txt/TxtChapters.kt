@@ -6,7 +6,8 @@ import java.util.regex.Pattern
  * Korean web-novel chapter detection over processed lines.
  *
  * 1. Candidates: non-blank lines of at most 60 chars that pass a cheap structural prefilter (first significant
- *    char is a digit / 제 / a keyword initial / a separator, or the line ends with 화).
+ *    char, after brackets and decorative symbols such as "◈ ", is a digit / 제 / a keyword initial / a separator,
+ *    or the line ends with 화).
  * 2. Every built-in rule (K1..K6, see ARCHITECTURE.md) is tried on the candidate, and the user rule ([HeadingRule]:
  *    a simple pattern or a regex).
  * 3. Scoring: per rule, count matches spaced more than 1000 chars apart; the best built-in rule wins (K4 "1. title"
@@ -139,6 +140,48 @@ internal object TxtChapters {
         return Result(lines, titles)
     }
 
+    /**
+     * [detect] over lines that did not come from a text file (an EPUB's block texts): [texts] are the lines' collapsed
+     * texts in order, [positions] their char positions (the spacing scores compare them). A text longer than
+     * [MAX_HEADING_CHARS] is body that no rule looks at: only its length class counts (all such lines share one
+     * buffer region, so a book of long paragraphs costs no text); an empty or whitespace-only one is a blank line.
+     * The result's lines index [texts]. The same rules, scoring and pruning as for a TXT file.
+     */
+    fun detectLines(texts: List<String>, positions: IntArray, userRegex: String): Result {
+        val n = texts.size
+        if (n < 2 || positions.size < n) return EMPTY
+        var total = 0
+        for (s in texts) if (s.length <= MAX_HEADING_CHARS) total += s.length
+        val buf = CharArray(total + MAX_HEADING_CHARS + 1)
+        java.util.Arrays.fill(buf, total, buf.size, 'x')
+        val t = LineTable(buf, n)
+        var at = 0
+        for (i in 0 until n) {
+            val s = texts[i]
+            val len = s.length
+            if (len > MAX_HEADING_CHARS) {
+                t.start[i] = total
+                t.end[i] = buf.size
+            } else {
+                s.toCharArray(buf, at, 0, len)
+                t.start[i] = at
+                t.end[i] = at + len
+                var blank = true
+                for (k in 0 until len) {
+                    if (!TxtChars.isWs(s[k])) {
+                        blank = false
+                        break
+                    }
+                }
+                if (blank) t.flags[i] = LineFlags.BLANK
+                at += len
+            }
+            t.rawPos[i] = positions[i]
+        }
+        t.count = n
+        return detect(t, userRegex)
+    }
+
     private val EMPTY = Result(IntArray(0), emptyArray())
 
     /** User regex (find semantics); a line the regex engine fails on simply doesn't match. */
@@ -153,6 +196,9 @@ internal object TxtChapters {
     /** Bitmask of the built-in rules matching [s] (already trimmed and normalised). */
     internal fun builtinMask(s: String): Int {
         if (s.isEmpty()) return 0
+        // "◈ 002. [STAGE 0] 제목", "◆ 3화": the decorative symbols are no part of the heading shape (K5 has its own bars)
+        val lead = symbolLead(s)
+        if (lead > 0) return if (lead >= s.length) 0 else builtinMask(s.substring(lead)) and R_K5.inv()
         var mask = 0
         var k = 0
         while (k < s.length && (isOpener(s[k]) || s[k] == ' ')) k++
@@ -179,6 +225,27 @@ internal object TxtChapters {
         return mask
     }
 
+    /**
+     * A decorative symbol that web novels put before a heading ("◈ 002. 제목", "◆ 3화", "■ 제5장", "★ 프롤로그"): the
+     * Geometric Shapes, Miscellaneous Symbols and Dingbats blocks (◈◆◇■□▣●○◎★☆▶▷►▸♦♢❖✦✧◐◑ …) plus ※ • ·.
+     */
+    internal fun isSymbol(c: Char): Boolean {
+        val x = c.code
+        return x in 0x25A0..0x25FF || x in 0x2600..0x26FF || x in 0x2700..0x27BF || x == 0x203B || x == 0x2022 || x == 0x00B7
+    }
+
+    /** Length of a leading run of decorative symbols and spaces in [s] (it holds at least one symbol), else 0. */
+    private fun symbolLead(s: String): Int {
+        var k = 0
+        var sym = false
+        while (k < s.length) {
+            val c = s[k]
+            if (isSymbol(c)) sym = true else if (c != ' ' && !TxtChars.isWs(c)) break
+            k++
+        }
+        return if (sym) k else 0
+    }
+
     private fun isOpener(c: Char): Boolean = when (c) {
         '<', '〈', '《', '[', '【', '「', '『', '(', '（' -> true
         else -> false
@@ -192,7 +259,7 @@ internal object TxtChapters {
     /** Cheap structural check on the raw trimmed line before any regex runs. */
     private fun prefilter(a: CharArray, s: Int, e: Int): Boolean {
         var k = s
-        while (k < e && (isOpener(a[k]) || TxtChars.isWs(a[k]))) k++
+        while (k < e && (isOpener(a[k]) || isSymbol(a[k]) || TxtChars.isWs(a[k]))) k++
         if (k >= e) return false
         val c0 = a[k]
         if (c0 in '0'..'9' || c0 in '０'..'９' || c0 == '제' || c0 == '第' || c0 == '#' || c0 == 'C' || c0 == 'c') return true
@@ -382,6 +449,7 @@ internal object TxtChapters {
         if (s == null) return -1
         var v = -1
         for (c in s) {
+            if (v < 0 && (isSymbol(c) || isOpener(c) || TxtChars.isWs(c))) continue // "◈ 002. 제목"
             if (c !in '0'..'9') break
             v = (if (v < 0) 0 else v) * 10 + (c - '0')
             if (v > 99999) break
@@ -474,7 +542,7 @@ internal object TxtChapters {
     private fun normKey(s: String?): String {
         if (s == null) return ""
         val sb = StringBuilder(s.length)
-        for (c in s) if (!TxtChars.isWs(c) && !isOpener(c) && !isCloser(c)) sb.append(c)
+        for (c in s) if (!TxtChars.isWs(c) && !isOpener(c) && !isCloser(c) && !isSymbol(c)) sb.append(c)
         return sb.toString()
     }
 

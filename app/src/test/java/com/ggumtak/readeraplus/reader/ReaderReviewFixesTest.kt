@@ -22,7 +22,7 @@ class ReaderReviewFixesTest {
 
     @Test
     fun txtOptionNeverReparsesOrRelayoutsAnEpub() {
-        val t = s.copy(txtBlankLines = 3, txtStripIndent = false, txtReplaceRules = "광고 => ", txtDetectChapters = false)
+        val t = s.copy(txtBlankLines = 3, txtStripIndent = false, txtReplaceRules = "광고 => ")
         assertFalse(LayoutKeys.parseChanged(s, t, BookFormat.EPUB, ""))
         assertFalse(LayoutKeys.layoutChanged(s, t, BookFormat.EPUB))
         assertTrue(LayoutKeys.parseChanged(s, t, BookFormat.TXT, ""))
@@ -65,7 +65,7 @@ class ReaderReviewFixesTest {
     @Test
     fun pageCountKeyIgnoresTheOtherFormatsOptions() {
         fun key(t: ReaderSettings, f: BookFormat, enc: String = "") = LayoutKeys.keyFor(t, f, enc, g, density, font, 1)
-        val txtChange = s.copy(txtBlankLines = 3, txtReplaceRules = "a => b", txtEmphasizeHeadings = false)
+        val txtChange = s.copy(txtBlankLines = 3, txtReplaceRules = "a => b", txtJoinWrappedLines = 0)
         val pubChange = s.copy(epubPublisherStyles = !s.epubPublisherStyles)
         // A TXT option keeps every EPUB's counts; publisher styles keep every TXT's counts.
         assertEquals(key(s, BookFormat.EPUB), key(txtChange, BookFormat.EPUB))
