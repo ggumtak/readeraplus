@@ -75,5 +75,11 @@ class HeadingRuleTest {
         assertFalse(matches("simple:* * * * *화", "가".repeat(59) + "나"))
         assertTrue(HeadingRule.looksLikeRegex("^제\\d+화"))
         assertFalse(HeadingRule.looksLikeRegex("< N > | (N) *"))
+        assertFalse(HeadingRule.looksLikeRegex("[N] *"))
+        assertFalse(HeadingRule.looksLikeRegex("{N} *"))
+        assertFalse(HeadingRule.looksLikeRegex("N.*"))
+        assertTrue(HeadingRule.looksLikeRegex("제\\s*N"))
+        assertTrue(matches(HeadingRule.simple("[N] *"), "[2] 마법을 만나다 (2)"))
+        assertFalse(matches(HeadingRule.simple("[N] *"), "그는 [2]번 말했다"))
     }
 }

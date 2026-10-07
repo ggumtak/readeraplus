@@ -63,8 +63,15 @@ object HeadingRule {
 
     private fun isSpace(c: Char): Boolean = c.isWhitespace() || c == '　' || c == ' '
 
-    /** True when easy-pattern [text] looks like a regex (one of ^ $ \ [ ] { } + ?), which it would match only literally. */
-    fun looksLikeRegex(text: String): Boolean = text.any { it in "^$\\[]{}+?" }
+    /**
+     * True when easy-pattern [text] is plainly a regex (a backslash escape such as \d, ^ at the start or $ at the end):
+     * it would only match literally. Brackets, braces, dots, + and ? are ordinary title characters ("[2] 마법을 만나다",
+     * "{외전}", "N.*" = a number, a dot, anything), so they never count.
+     */
+    fun looksLikeRegex(text: String): Boolean {
+        val t = text.trim()
+        return t.contains('\\') || t.startsWith("^") || (t.endsWith("$") && t.length > 1)
+    }
 
     /** The pattern [stored] stands for, or null for no rule (blank) and for a regex that does not compile. */
     fun compile(stored: String): Pattern? {
