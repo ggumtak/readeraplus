@@ -13,6 +13,7 @@ import com.ggumtak.readeraplus.engine.Typesetter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -160,6 +161,83 @@ class PageA11yModelTest {
         assertEquals(0, A11yFragments.indexAt(n, n[0].left + 1f, cy))
         assertEquals(-1, A11yFragments.indexAt(n, -5f, -5f))
         assertEquals(-1, A11yFragments.indexAt(n, n[0].right.toFloat(), cy))
+    }
+
+    @Test fun linkOverSeveralLinesIsOnlyWhereItsLinesAre() {
+        // A link that starts late on one line and ends early on the next: the box around it holds plain text too.
+        val l = layout(width = 100) { paraWithRun("가나다라마바사아자차카타파하", 4, 11, RunStyle(link = "t")) }
+        val n = nodes(l)
+        val link = n.first { it.role == A11yRole.LINK }
+        val parts = link.parts
+        assertNotNull(parts)
+        assertTrue(parts!!.size >= 2)
+        // The middle of each line rectangle hits; the corner of the union that no line rectangle covers does not.
+        for (r in parts) assertTrue(link.contains((r[0] + r[2]) / 2f, (r[1] + r[3]) / 2f))
+        val last = parts.last()
+        val x = last[2] + 1f
+        val y = (last[1] + last[3]) / 2f
+        assertTrue(x >= link.left && x < link.right && y >= link.top && y < link.bottom)
+        assertFalse(link.contains(x, y))
+        // The paragraph keeps its whole box; a one-line link has no parts.
+        assertNull(n.first { it.role == A11yRole.PARAGRAPH }.parts)
+        val one = nodes(layout { paraWithRun("앞 링크글자 뒤", 2, 6, RunStyle(link = "u")) }).first { it.role == A11yRole.LINK }
+        assertNull(one.parts)
+    }
+
+    // -- several entries ----------------------------------------------------------------------------------------
+
+    @Test fun everyEntryOfAScreenGivesItsNodesInOrderWithItsSection() {
+        // The end of section 3 above, the start of section 4 below: a seam of a scroll screen.
+        val a = layout { para("앞 구역 끝 문단"); paraWithRun("링크 문단", 0, 2, RunStyle(link = "x")) }
+        val b = layout { para("다음 구역 첫 문단"); para("그다음") }
+        val ea = A11yEntry(3, a, a.pages[0], 0f, 0f)
+        val eb = A11yEntry(4, b, b.pages[0], 0f, 500f)
+        val n = A11yFragments.buildAll(listOf(ea, eb), 400, 1000)
+        assertEquals(listOf("앞 구역 끝 문단", "링크 문단", "링크", "다음 구역 첫 문단", "그다음"), n.map { it.text })
+        assertEquals(listOf(3, 3, 3, 4, 4), n.map { it.section })
+        assertTrue(n.filter { it.section == 4 }.all { it.top >= 500 })
+        // Both sections start at char 0: only the section tells their ids apart.
+        val ids = A11yIds()
+        val got = n.map { ids.idFor(A11yKey(it.section, it.start, it.role)) }
+        assertEquals(n.size, got.toSet().size)
+        assertEquals(1, A11yFragments.buildAll(listOf(ea), 400, 1000).count { it.role == A11yRole.LINK })
+        assertTrue(A11yFragments.buildAll(emptyList(), 400, 1000).isEmpty())
+    }
+
+    @Test fun hitTestAcrossEntriesFindsTheSectionUnderTheFinger() {
+        val a = layout { para("위 구역") }
+        val b = layout { para("아래 구역") }
+        val n = A11yFragments.buildAll(listOf(A11yEntry(0, a, a.pages[0], 0f, 0f), A11yEntry(1, b, b.pages[0], 0f, 400f)), 400, 1000)
+        assertEquals(0, n[A11yFragments.indexAt(n, n[0].left + 1f, n[0].top + 1f)].section)
+        assertEquals(1, n[A11yFragments.indexAt(n, n[1].left + 1f, n[1].top + 1f)].section)
+    }
+
+    @Test fun sourcesAreTheSameOnlyForTheSamePagesOfTheSameLayouts() {
+        val a = layout { para("가") }
+        val b = layout { para("가") }
+        val owner = Any()
+        fun src(l: SectionLayout, left: Float = 0f, vararg more: A11yEntry) =
+            A11ySource(owner, 1, listOf(A11yEntry(0, l, l.pages[0], left, 0f)) + more)
+        assertTrue(src(a).sameAs(src(a)))
+        assertFalse(src(a).sameAs(src(b)))
+        assertFalse(src(a).sameAs(src(a, 1f)))
+        assertFalse(src(a).sameAs(src(a, 0f, A11yEntry(1, b, b.pages[0], 0f, 300f))))
+    }
+
+    @Test fun shownTracksLayoutGenerationAndMode() {
+        val l1 = layout { para("가") }
+        val l2 = layout { para("가") }
+        val s = A11yShown()
+        assertTrue(s.changed(l1, 1, false))
+        // A redraw of the same layout (a relayout that found the same one) announces nothing.
+        assertFalse(s.changed(l1, 1, false))
+        assertTrue(s.changed(l2, 1, false))
+        assertTrue(s.changed(l2, 2, false))
+        // The mode switch builds other nodes from the same layout.
+        assertTrue(s.changed(l2, 2, true))
+        assertFalse(s.changed(l2, 2, true))
+        s.clear()
+        assertTrue(s.changed(l2, 2, true))
     }
 
     // -- ids ------------------------------------------------------------------------------------------------

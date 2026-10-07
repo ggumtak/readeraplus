@@ -52,6 +52,9 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     private var held = false
     private var virtual: VirtualPage? = null
     private var virtualDirty = true
+    /** Every section's virtual page on screen (the screen-reader tree); rebuilt when the window changed. */
+    private var virtuals: List<VirtualPage> = emptyList()
+    private var virtualsDirty = true
     private var window = ScrollWindow()
     private var spare = ScrollWindow()
     private val sections = IntArray(8) { -1 }
@@ -109,7 +112,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     private val navigation: ScrollNavigation = ScrollNavigation(this, object : ScrollNavigation.Events {
         override fun changed() { rebuildWindow(); updateTop(); invalidate(false) }
         override fun settled(kind: SettleKind, distance: Float) {
-            focus = -1; virtual = null; virtualDirty = true
+            focus = -1; virtual = null; virtualDirty = true; virtualsDirty = true
             updateTop()
             host.onSettled(kind, distance)
             decor = host.decor()
@@ -270,8 +273,13 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
             // S §1.8: only a frame that changed (a visible or blocked section) redraws; an off-window neighbour
             // prefetch (s ± 1 after the first page and after every settle) is not an e-ink update.
             val v = frameVersion
-            rebuildWindow(); virtualDirty = true
-            if (frameVersion != v) invalidate(true)
+            rebuildWindow(); virtualDirty = true; virtualsDirty = true
+            if (frameVersion != v) {
+                invalidate(true)
+                // A section stored into the screen (or a new layout of one) changes the text a screen reader walks;
+                // while a finger moves the text, its settle tells.
+                if (!userMoving()) view.notifyPageChanged()
+            }
         }
     }
     fun onGenerationChanged() {
@@ -307,6 +315,14 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
             virtual = window.virtualPage(s, geometry?.contentTop?.toFloat() ?: 0f, clip); virtualDirty = false
         }
         return virtual
+    }
+    /** All the virtual pages the screen shows ([virtualPage] gives the focused section's); stale while the text moves. */
+    fun virtualPages(): List<VirtualPage> {
+        if (userMoving()) return virtuals
+        if (virtualsDirty) {
+            virtuals = window.virtualPages(geometry?.contentTop?.toFloat() ?: 0f, clip); virtualsDirty = false
+        }
+        return virtuals
     }
     fun focusAt(y: Float): Boolean {
         if (userMoving() || frozen) return false
@@ -354,7 +370,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     fun detach() {
         stopMotion(); detached = true
         view.removeCallbacks(afterDraw); afterPosted = false
-        window.clear(); spare.clear(); virtual = null
+        window.clear(); spare.clear(); virtual = null; virtuals = emptyList()
         layouts.fill(null); sections.fill(-1); imageLayouts.fill(null)
         for (i in quoteSections.indices) clearQuotes(i)
         session = null; generation = null; renderer = null; geometry = null

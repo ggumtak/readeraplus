@@ -269,6 +269,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var curSection = 0
     private var curPageIdx = 0
     private var curLayout: SectionLayout? = null
+    /** The layout, generation and mode the screen-reader tree was last announced for. */
+    private val a11yShown = A11yShown()
     /** Where the reader is (survives relayouts without drifting): a page start or an exact jump target. */
     private var anchor = DocPosition.START
     /** A jump whose layout is still pending; a relayout meanwhile must go there, not back to [anchor]. */
@@ -1561,9 +1563,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         pausedSection = -1
         turnedInBackground = false
         curLayout = null
+        a11yShown.clear()
         curSection = 0
         curPageIdx = 0
         anchor = DocPosition.START
+        anchorHeld = false
+        rebindDue = false
         displayedGenId = -1
         lastChapterIdx = Int.MIN_VALUE
         bookmarks = emptyList()
@@ -1807,20 +1812,43 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     /**
-     * N §6.2: [e] may end a peek; then normal saving resumes with the page now shown (the turn / jump that ended it
-     * already passed its own save while the peek was on). Scroll mode calls it with SCROLL_SETTLE at the first user
-     * settle.
+     * N §6.2: [e] may end a peek; then normal saving resumes. A turn / jump that ended it ran its own save while the
+     * peek was still on (none), so the page now shown is saved here, with the text signature of the parse shown (a
+     * re-parse during the peek skipped it). When that turn or jump has not landed yet (its section or picture is
+     * still on its way, or a re-parse has not shown its page) [anchor] is still the note's place: nothing is saved
+     * here, the page that lands saves itself (showPage, the scroll settle) and records the signature ([anchorLanded]).
+     * Scroll mode calls it with SCROLL_SETTLE at the first user settle.
      */
     private fun endPeek(e: PeekRule.Event) {
         if (!peek.on(e)) return
         // The note's anchor search must not move a page the user now reads (TTS, auto turn, 여기부터 듣기).
         anchorJob?.cancel()
         if (curLayout == null) return
+        if (anchorDeferred()) {
+            rebindDue = true
+            return
+        }
         schedulePositionSave()
-        // A re-parse during the peek skipped the text signature: record it with the parse now shown.
         val b = bookRef
         val s = session
         if (b != null && s != null) rebindTextPosition(b, s, anchor)
+    }
+
+    /** A turn, jump or re-parse has not shown its page yet: [anchor] is not where the reader will be. */
+    private fun anchorDeferred(): Boolean =
+        anchorHeld || navJob?.isActive == true || pendingJump != null || scroll?.pending == true
+
+    /**
+     * [anchor] was just set from a page shown (showPage, a scroll settle): saves held for a re-parse resume, and a
+     * signature record that waited for this page ([endPeek]) is made now.
+     */
+    private fun anchorLanded() {
+        anchorHeld = false
+        if (!rebindDue) return
+        rebindDue = false
+        val b = bookRef ?: return
+        val s = session ?: return
+        rebindTextPosition(b, s, anchor)
     }
 
     /** Removes the note mark (a manual turn, a new note jump). */
@@ -1917,7 +1945,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 if (chromeVisible) bindChrome()
                 else if (DeviceClass.cached(this@ReaderActivity) != true) returnNav.bind()
                 // Open panels that show 쪽수 계산 중 (phone only, like the status line; e-ink: their next action).
-                if (!countsListeners.isEmpty && DeviceClass.cached(this@ReaderActivity) != true) countsListeners.fire()
+                if (DeviceClass.cached(this@ReaderActivity) != true) {
+                    if (!countsListeners.isEmpty) countsListeners.fire()
+                } else {
+                    // E-ink: the search-results bar over the page alone reads its page number now (one small label
+                    // update, once: it was kept as it was while counting, and nothing is redrawn when the text is the
+                    // same); the dialogs above wait for their next action.
+                    safely { ReaderPanels.refreshSearchBar() }
+                }
                 return
             }
             val now = SystemClock.uptimeMillis()
@@ -2013,6 +2048,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             return false
         }
         val sectionChanged = section != curSection || curLayout == null
+        // Whether a screen reader's tree is another one than the last announced (see A11yShown).
+        val treeChanged = a11yShown.changed(layout, gen.id, false)
         curSection = section
         curLayout = layout
         curPageIdx = idx
@@ -2020,6 +2057,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         s.touch(section)
         val p = layout.pages.getOrNull(idx)
         anchor = DocPosition(section, if (anchorOffset >= 0) anchorOffset else p?.start ?: 0)
+        anchorLanded()
         cancelLoadingText()
         errorPanel.visibility = View.GONE
         page.frame = PageFrame(
@@ -2027,8 +2065,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             buildDecor(sample = true),
         )
         page.invalidate()
-        // A relayout shows the same place again: only a new page is announced.
-        if (kind != Nav.RELAYOUT) page.notifyPageChanged()
+        // A relayout shows the same place again: announced only when its layout or generation is another one (a
+        // re-parse, a font size, a switch from scroll mode: the tree's nodes are new), not for a redraw of the same.
+        if (kind != Nav.RELAYOUT || treeChanged) page.notifyPageChanged()
         if (kind == Nav.OPEN) page.traceOpen(bookRef?.id ?: -1L, openStartedAt)
         if (ReaderPerf.turns) {
             val started = when (kind) {
@@ -2127,6 +2166,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         curPageIdx = idx
         displayedGenId = gen.id
         anchor = DocPosition(ScrollWiring.section(a), ScrollWiring.offset(a))
+        anchorLanded()
         scrollSettledTop = top
         if (scrollFlushing) {
             // S §1.10: the steps of one flush are one drawn screen, bookkept once at its end (flushScrollTurns).
@@ -2176,6 +2216,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val chapterChanged = if (s.chapters.size > 0) chapterIdx != lastChapterIdx else sectionChanged
         lastChapterIdx = chapterIdx
         val moved = movedPx != 0f || pageChanged
+        val treeChanged = a11yShown.changed(l, gen.id, true)
         when (kind) {
             // One cadence turn per step, release or fling; live SMOOTH frames never count.
             SettleKind.STEP, SettleKind.DRAG, SettleKind.FLING -> if (moved) onTurnShown(Nav.TURN, chapterChanged, l, idx)
@@ -2187,7 +2228,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             endPeek(PeekRule.Event.SCROLL_SETTLE)
         }
         if (!relayout) schedulePositionSave()
-        if (!relayout && moved) page.notifyPageChanged()
+        // A relayout / mode switch announces only a layout, generation or mode the tree was not built for (a new
+        // parse, a font size, a switch from paged); a redraw of the same layout stays silent. A background section
+        // stored into the screen announces itself (ScrollReader.onSectionStored).
+        if ((!relayout && moved) || (relayout && treeChanged)) page.notifyPageChanged()
+        // The search bar's page number belonged to the old layout (as showPage does in paged mode).
+        if (relayout) safely { ReaderPanels.refreshSearchBar() }
         keeper.poke()
         if (chromeVisible) bindChrome() else returnNav.bind()
         if (kind == SettleKind.DRAG || kind == SettleKind.FLING) {
@@ -3526,7 +3572,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 // Where the needle was found again (the anchored break), else the estimate.
                 val off = if (l.anchorBreak >= 0) l.anchorBreak else target.offset.coerceIn(0, l.content.length)
                 // Positions saved from now on are in the new parse's coordinates.
-                rebindTextPosition(b, s, DocPosition(sec, off))
+                rebindTextPosition(b, s, DocPosition(sec, off), reparsed = true)
                 val (nw, nh) = pageTargetSize()
                 // A layout change made after this session was built (settings) or a resize that went to the old one:
                 // lay the target out again instead of showing a stale layout.
@@ -3834,18 +3880,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
         override fun accessibilitySource(): A11ySource? {
             val s = session ?: return null
-            // The page drawn (paged: its frame; scroll: the virtual page, S §1.6), with its content box in the view.
-            if (scroll != null) {
-                val vp = vpage() ?: return null
+            // The page drawn (paged: its frame; scroll: the virtual page of every section the screen shows, S §1.6, so a
+            // seam gives both), with its content box in the view.
+            val sc = scroll
+            if (sc != null) {
+                val vps = sc.virtualPages()
+                if (vps.isEmpty()) return null
                 val gen = s.generation ?: return null
-                return A11ySource(
-                    s, gen.id, vp.section, vp.layout, vp.page,
-                    gen.geometry.contentLeft.toFloat(), gen.geometry.contentTop.toFloat(),
-                )
+                val left = gen.geometry.contentLeft.toFloat()
+                val top = gen.geometry.contentTop.toFloat()
+                return A11ySource(s, gen.id, vps.map { A11yEntry(it.section, it.layout, it.page, left, top) })
             }
             val f = page.frame ?: return null
             val p = f.layout.pages.getOrNull(f.pageIndex) ?: return null
-            return A11ySource(s, displayedGenId, curSection, f.layout, p, f.left, f.top)
+            return A11ySource(s, displayedGenId, listOf(A11yEntry(curSection, f.layout, p, f.left, f.top)))
         }
 
         override fun onAccessibilityLink(section: Int, href: String) {
@@ -4752,9 +4800,17 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private val saveRunnable = Runnable { savePositionNow() }
 
+    /**
+     * A re-parse replaced the document and [anchor] is still in the old one's coordinates (the new page is not shown
+     * yet): nothing is saved ([schedulePositionSave], [savePositionNow]) until a page shown sets it ([anchorLanded]).
+     */
+    private var anchorHeld = false
+    /** [endPeek] ran before the page it should record landed: [anchorLanded] records the text signature then. */
+    private var rebindDue = false
+
     private fun schedulePositionSave() {
         handler.removeCallbacks(saveRunnable)
-        if (!peek.savesPosition) return
+        if (!peek.savesPosition || anchorHeld) return
         handler.postDelayed(saveRunnable, SAVE_DELAY_MS)
     }
 
@@ -4766,8 +4822,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     private fun savePositionNow(persistText: Boolean = false) {
         handler.removeCallbacks(saveRunnable)
-        // N §6.2: a note being peeked at leaves the saved position, progress and last-read time as they were.
-        if (!peek.savesPosition) return
+        // N §6.2: a note being peeked at leaves the saved position, progress and last-read time as they were. A
+        // re-parse whose page is not shown yet has no anchor in its coordinates to save.
+        if (!peek.savesPosition || anchorHeld) return
         val b = bookRef ?: return
         val s = session ?: return
         if (curLayout == null) return
@@ -4785,20 +4842,31 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /**
      * The parse shown changed (re-parse, remapped open, end of a peek): records [s]'s signature with [pos] like
-     * [writeTextPosition], and first saves the library row in the same (new) coordinates. Prefs alone would pair the
-     * new signature with the old parse's (section, offset) if the process died before the delayed save, and the next
-     * open would read that place as belonging to the new parse ([TextPositions.remapFraction] sees equal signatures).
-     * Nothing is saved while a note peek holds the position ([PeekRule]); the signature then waits for [endPeek].
+     * [writeTextPosition], and first saves the library row in the same (new) coordinates when the signature differs.
+     * Prefs alone would pair the new signature with the old parse's (section, offset) if the process died before the
+     * delayed save, and the next open would read that place as belonging to the new parse
+     * ([TextPositions.remapFraction] sees equal signatures). The row's progress is the page's by the exact counts,
+     * else by characters, as [progress] gives it for the page shown.
+     *
+     * [reparsed]: the document was replaced and [pos] is the first position in its coordinates, while [anchor] and the
+     * page shown are still the old ones. Whatever the signature, the pending timer save is cancelled and nothing is
+     * saved until a page shown sets [anchor] again ([anchorHeld]). A call that finds [anchor] not landed yet waits for
+     * it. Nothing is saved while a note peek holds the position ([PeekRule]); the signature then waits for [endPeek].
      */
-    private fun rebindTextPosition(b: Book, s: BookSession, pos: DocPosition) {
+    private fun rebindTextPosition(b: Book, s: BookSession, pos: DocPosition, reparsed: Boolean = false) {
+        if (reparsed) {
+            handler.removeCallbacks(saveRunnable)
+            anchorHeld = true
+        } else if (anchorHeld) {
+            rebindDue = true
+            return
+        }
         if (!peek.savesPosition) return
         try {
             val sig = LayoutKeys.textSignature(s.settings, s.document.format, b.encoding)
             val stored = TextPositions.decode(readTextPosition(b.id))
             if (sig != null && stored != null && stored.first != sig) {
-                // A pending save would carry the old parse's anchor.
-                handler.removeCallbacks(saveRunnable)
-                val prog = s.counts.charProgress(pos.section, pos.offset)
+                val prog = progressAt(s, pos)
                 val at = System.currentTimeMillis()
                 ReaderIo.launch { Library.savePosition(b.id, pos.section, pos.offset, prog, at) }
             }
@@ -4806,6 +4874,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             Log.w(TAG, "text position rebind failed", t)
         }
         writeTextPosition(b, s, pos)
+    }
+
+    /** Progress (0..1) of [pos] in [s]: by pages once all are counted (last page = 1), else by characters. */
+    private fun progressAt(s: BookSession, pos: DocPosition): Float {
+        val c = s.counts
+        return if (c.isComplete) PageProgress.of(globalPageOf(pos), c.total()) else c.charProgress(pos.section, pos.offset)
     }
 
     /** (signature|fraction) recorded for [bookId], or null (IO thread safe). */

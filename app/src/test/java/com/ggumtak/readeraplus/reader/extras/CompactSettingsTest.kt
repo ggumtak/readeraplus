@@ -31,6 +31,21 @@ class CompactSettingsTest {
     }
 
     @Test
+    fun retainKeepsTheShownPageOnlyWhileTheCountRuns() {
+        // The exact page replaces whatever was shown.
+        assertEquals("12", PageLabel.retain("12", "7", counting = true))
+        assertEquals("12", PageLabel.retain(" 12 ", "", counting = false))
+        // While counting (no exact page yet) the label keeps its last page instead of going blank.
+        assertEquals("7", PageLabel.retain("", "7", counting = true))
+        assertEquals("7", PageLabel.retain(null, "7", counting = true))
+        assertEquals("7", PageLabel.retain("-", "7", counting = true))
+        // Nothing to keep, or no count under way (a stopped count): blank.
+        assertEquals("", PageLabel.retain("", "", counting = true))
+        assertEquals("", PageLabel.retain("", "-", counting = true))
+        assertEquals("", PageLabel.retain("", "7", counting = false))
+    }
+
+    @Test
     fun cleanRemovesEveryTilde() {
         assertEquals("12 / 3260", PageLabel.clean("~12 / ~3260"))
         assertEquals("12 / 3260", PageLabel.clean("12 / ～3260"))

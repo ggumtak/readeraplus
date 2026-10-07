@@ -201,6 +201,17 @@ internal object PageLabel {
         return if (p.page < 0) clean(label).trim() else p.page.toString()
     }
 
+    /**
+     * The page text a label that is read again should show: the [exact] page when there is one; else, while the pages
+     * are still [counting], the [previous] text it showed (a label that had a page does not go blank for the seconds
+     * a count takes); else (no count under way, or it failed) nothing.
+     */
+    fun retain(exact: String?, previous: String?, counting: Boolean): String = when {
+        hasPage(exact) -> exact!!.trim()
+        counting && hasPage(previous) -> previous!!.trim()
+        else -> ""
+    }
+
     /** True when [page] is a real page number: not empty, not the "-" placeholder shown while the pages are counted. */
     fun hasPage(page: String?): Boolean = !page.isNullOrBlank() && page.trim() != "-"
 

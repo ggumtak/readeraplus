@@ -541,7 +541,10 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
             a11y?.reset()
             return null
         }
-        return a11y ?: PageA11y(this, cb).also { a11y = it }
+        return a11y ?: PageA11y(this, cb).also {
+            a11y = it
+            if (isAttachedToWindow) it.attach()
+        }
     }
 
     /** Touch exploration's hover finds the text under the finger (a node enter / exit), see [PageA11y.onHover]. */
@@ -672,11 +675,16 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         cb.onBrightness(Gestures.brightness(brightnessFrom, y - downY, height), true)
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        a11y?.attach()
+    }
+
     override fun onDetachedFromWindow() {
         removeCallbacks(longPress)
         removeCallbacks(pageEvent)
         pageEventPending = false
-        a11y?.reset()
+        a11y?.detach()
         if (scrollDragging) scroll?.cancelDrag()
         scrollDragging = false; tracking = false
         velocityTracker?.recycle()

@@ -32,8 +32,7 @@ internal class PageA11y(private val view: PageView, private val cb: PageView.Cal
         val nodes: List<A11yNode>,
     ) {
         fun matches(s: A11ySource, w: Int, h: Int): Boolean =
-            s.page === source.page && s.layout === source.layout && s.left == source.left && s.top == source.top &&
-                w == width && h == height
+            w == width && h == height && s.owner === source.owner && s.generation == source.generation && s.sameAs(source)
     }
 
     private val ids = A11yIds()
@@ -41,8 +40,14 @@ internal class PageA11y(private val view: PageView, private val cb: PageView.Cal
     private var owner: Any? = null
     private var generation = -1
     private var focusedId = NONE
+    /** The text of the focused node when it got focus (the node itself is gone once the page changed). */
+    private var focusedText: String? = null
     private var hoveredId = NONE
     private val loc = IntArray(2)
+    private var listening = false
+
+    /** Touch exploration went off while the view stays: nothing of the tree or its hover is meant any more. */
+    private val touchListener = AccessibilityManager.TouchExplorationStateChangeListener { on -> if (!on) reset() }
 
     private val manager: AccessibilityManager? get() = view.context.getSystemService(AccessibilityManager::class.java)
 
@@ -55,7 +60,22 @@ internal class PageA11y(private val view: PageView, private val cb: PageView.Cal
     fun reset() {
         snap = null
         focusedId = NONE
+        focusedText = null
         hoveredId = NONE
+    }
+
+    /** The view is in a window: follows touch exploration being switched off (see [reset]). */
+    fun attach() {
+        if (listening) return
+        manager?.addTouchExplorationStateChangeListener(touchListener)
+        listening = true
+    }
+
+    /** The view left its window: stops listening and forgets everything. */
+    fun detach() {
+        if (listening) manager?.removeTouchExplorationStateChangeListener(touchListener)
+        listening = false
+        reset()
     }
 
     private fun snapshot(): Snapshot? {
@@ -70,11 +90,12 @@ internal class PageA11y(private val view: PageView, private val cb: PageView.Cal
             owner = src.owner
             generation = src.generation
             focusedId = NONE
+            focusedText = null
             hoveredId = NONE
         }
-        val nodes = A11yFragments.build(src.layout, src.page, src.left, src.top, w, h)
+        val nodes = A11yFragments.buildAll(src.entries, w, h)
         val entries = ArrayList<Entry>(nodes.size)
-        for (n in nodes) entries += Entry(ids.idFor(A11yKey(src.section, n.start, n.role)), n)
+        for (n in nodes) entries += Entry(ids.idFor(A11yKey(n.section, n.start, n.role)), n)
         ids.trim(nodes.size)
         return Snapshot(src, w, h, entries, nodes).also { snap = it }
     }
@@ -127,6 +148,7 @@ internal class PageA11y(private val view: PageView, private val cb: PageView.Cal
                 if (focusedId == virtualViewId) return false
                 val old = focusedId
                 focusedId = virtualViewId
+                focusedText = e.node.text
                 if (old != NONE) send(old, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED)
                 send(virtualViewId, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED)
                 true
@@ -134,13 +156,14 @@ internal class PageA11y(private val view: PageView, private val cb: PageView.Cal
             AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS -> {
                 if (focusedId != virtualViewId) return false
                 focusedId = NONE
+                focusedText = null
                 send(virtualViewId, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED)
                 true
             }
             AccessibilityNodeInfo.ACTION_CLICK -> {
                 val href = e.node.href ?: return false
                 // The same handler a tap on the link reaches.
-                cb.onAccessibilityLink(s.source.section, href)
+                cb.onAccessibilityLink(e.node.section, href)
                 true
             }
             else -> false
@@ -184,22 +207,30 @@ internal class PageA11y(private val view: PageView, private val cb: PageView.Cal
 
     /**
      * After the host's tree-changed event for a page change: when a node had accessibility focus, it moves to the
-     * first paragraph of the new page (the old node is gone). No focus before: nothing is moved or announced here.
+     * first paragraph of the new page (the old node is gone: its focus is cleared). The new node is announced also
+     * when its id is the old one but its text is not (a paragraph keeps its id across a re-parse or relayout). No
+     * focus before: nothing is moved or announced here.
      */
     fun afterPageChange() {
         if (focusedId == NONE) return
+        val old = focusedId
+        val oldText = focusedText
         val first = snapshot()?.entries?.firstOrNull { it.node.role == A11yRole.PARAGRAPH }
         if (first == null) {
             focusedId = NONE
+            focusedText = null
+            send(old, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED, oldText)
             return
         }
-        if (first.id == focusedId) return
+        if (first.id == old && first.node.text == oldText) return
         focusedId = first.id
+        focusedText = first.node.text
+        if (first.id != old) send(old, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED, oldText)
         send(first.id, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED)
     }
 
     @Suppress("DEPRECATION")
-    private fun send(id: Int, type: Int) {
+    private fun send(id: Int, type: Int, text: String? = null) {
         if (manager?.isEnabled != true) return
         val e = AccessibilityEvent.obtain(type)
         val en = snap?.entries?.firstOrNull { it.id == id }
@@ -209,6 +240,8 @@ internal class PageA11y(private val view: PageView, private val cb: PageView.Cal
         if (en != null) {
             e.className = className(en.node)
             e.text.add(en.node.text)
+        } else if (text != null) {
+            e.text.add(text)
         }
         view.parent?.requestSendAccessibilityEvent(view, e)
     }

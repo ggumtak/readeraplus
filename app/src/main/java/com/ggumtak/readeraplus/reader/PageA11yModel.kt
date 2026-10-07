@@ -9,20 +9,64 @@ import kotlin.math.ceil
 import kotlin.math.floor
 
 /**
- * What the reader hands the screen-reader tree ([PageA11y]): the page (or the scroll viewport's virtual page) with
- * its section and where its content box sits inside the view. [owner] (the book session) and [generation] (the
- * layout generation) tell the tree when old ids and focus no longer mean anything.
+ * One page of one section on screen: [page] of [layout] with the content box's origin ([left], [top]) inside the
+ * view (px). Paged mode: the page shown. Scroll mode: the wholly visible lines of one section (lines already
+ * shifted to where they are drawn, see [ScrollWindow.virtualPages]).
+ */
+class A11yEntry(
+    val section: Int,
+    val layout: SectionLayout,
+    val page: PageInfo,
+    val left: Float,
+    val top: Float,
+) {
+    fun sameAs(o: A11yEntry): Boolean =
+        section == o.section && page === o.page && layout === o.layout && left == o.left && top == o.top
+}
+
+/**
+ * What the reader hands the screen-reader tree ([PageA11y]): everything on screen as entries in reading order (paged:
+ * one; scroll: one per section a screen shows, so a seam between two sections exposes both). [owner] (the book
+ * session) and [generation] (the layout generation) tell the tree when old ids and focus no longer mean anything.
  */
 class A11ySource(
     val owner: Any,
     val generation: Int,
-    val section: Int,
-    val layout: SectionLayout,
-    val page: PageInfo,
-    /** Content box origin inside the view (px). */
-    val left: Float,
-    val top: Float,
-)
+    val entries: List<A11yEntry>,
+) {
+    /** The same pages of the same layouts at the same place (a cached tree built from [o] still holds). */
+    fun sameAs(o: A11ySource): Boolean {
+        if (entries.size != o.entries.size) return false
+        for (i in entries.indices) if (!entries[i].sameAs(o.entries[i])) return false
+        return true
+    }
+}
+
+/**
+ * What the screen-reader tree was last announced for. A relayout or a mode switch that shows the same layout object
+ * again sends nothing; a new layout (a re-parse, a font size) or the other mode (the tree has other nodes) does.
+ */
+internal class A11yShown {
+    private var layout: Any? = null
+    private var generation = -1
+    private var scroll = false
+
+    /** True when ([layout], [generation], [scroll]) differ from the last call's (the first call always); remembers them. */
+    fun changed(layout: Any, generation: Int, scroll: Boolean): Boolean {
+        val same = this.layout === layout && this.generation == generation && this.scroll == scroll
+        this.layout = layout
+        this.generation = generation
+        this.scroll = scroll
+        return !same
+    }
+
+    /** A book closed: the next call counts as changed (and no layout is held). */
+    fun clear() {
+        layout = null
+        generation = -1
+        scroll = false
+    }
+}
 
 /** Kinds of virtual node. */
 internal enum class A11yRole { PARAGRAPH, LINK }
@@ -35,6 +79,7 @@ internal data class A11yKey(val section: Int, val start: Int, val role: A11yRole
  * paragraph (a link: of the link's text on this page); [textStart, textEnd) is the text read.
  */
 internal class A11yNode(
+    val section: Int,
     val role: A11yRole,
     val start: Int,
     val textStart: Int,
@@ -47,14 +92,32 @@ internal class A11yNode(
     val top: Int,
     val right: Int,
     val bottom: Int,
+    /**
+     * Hit-test rectangles ([left, top, right, bottom] each, clipped to the view) when the bounds above are not the
+     * shape: a link over several lines is only where its lines are, not the box around them. Null = the bounds.
+     */
+    val parts: List<IntArray>? = null,
 ) {
-    fun contains(x: Float, y: Float): Boolean = x >= left && x < right && y >= top && y < bottom
+    fun contains(x: Float, y: Float): Boolean {
+        if (!(x >= left && x < right && y >= top && y < bottom)) return false
+        val p = parts ?: return true
+        for (r in p) if (x >= r[0] && x < r[2] && y >= r[1] && y < r[3]) return true
+        return false
+    }
 }
 
 /** Pure: splits a page into the nodes a screen reader walks (paragraph parts, each followed by its links). */
 internal object A11yFragments {
 
     private class Group(var start: Int, var end: Int)
+
+    /** Nodes of every entry in order ([build] each; ids carry the section, so entries never collide). */
+    fun buildAll(entries: List<A11yEntry>, viewW: Int, viewH: Int): List<A11yNode> {
+        if (entries.size == 1) return entries[0].let { build(it.layout, it.page, it.left, it.top, viewW, viewH, it.section) }
+        val out = ArrayList<A11yNode>()
+        for (e in entries) out += build(e.layout, e.page, e.left, e.top, viewW, viewH, e.section)
+        return out
+    }
 
     /**
      * Nodes of [page] of [layout] (section [section]) with the content box at ([left], [top]) in a view of
@@ -70,6 +133,7 @@ internal object A11yFragments {
         top: Float,
         viewW: Int,
         viewH: Int,
+        section: Int = 0,
     ): List<A11yNode> {
         val content = layout.content
         val blocks = content.blocks
@@ -98,16 +162,16 @@ internal object A11yFragments {
             val heading = (block as? ParagraphBlock)?.style?.headingLevel?.let { it > 0 } == true
             val r = bounds(layout, page, g.start, g.end, left, top, viewW, viewH)
             if (r != null) {
-                out += A11yNode(A11yRole.PARAGRAPH, block.start, g.start, g.end, read, null, heading, r[0], r[1], r[2], r[3])
+                out += A11yNode(section, A11yRole.PARAGRAPH, block.start, g.start, g.end, read, null, heading, r.l, r.t, r.r, r.b)
             }
-            links(layout, page, g.start, g.end, left, top, viewW, viewH, out)
+            links(section, layout, page, g.start, g.end, left, top, viewW, viewH, out)
         }
         return out
     }
 
     /** The links inside [start, end): contiguous runs of one target are one node. */
     private fun links(
-        layout: SectionLayout, page: PageInfo, start: Int, end: Int,
+        section: Int, layout: SectionLayout, page: PageInfo, start: Int, end: Int,
         left: Float, top: Float, viewW: Int, viewH: Int, out: MutableList<A11yNode>,
     ) {
         val runs = layout.content.styleRuns
@@ -128,7 +192,7 @@ internal object A11yFragments {
             val read = A11yText.page(layout.content.text, a, b)
             if (read.isEmpty()) return
             val r = bounds(layout, page, a, b, left, top, viewW, viewH) ?: return
-            out += A11yNode(A11yRole.LINK, a, a, b, read, h, false, r[0], r[1], r[2], r[3])
+            out += A11yNode(section, A11yRole.LINK, a, a, b, read, h, false, r.l, r.t, r.r, r.b, if (r.parts.size > 1) r.parts else null)
         }
         var i = lo
         while (i < runs.size && runs[i].start < end) {
@@ -149,25 +213,31 @@ internal object A11yFragments {
         flush()
     }
 
-    /** Union of the line rectangles of [start, end) in view px, clipped to the view; null when nothing is left. */
+    /** A range's box in view px: the union of its line rectangles and the rectangles themselves (all clipped). */
+    private class Box(val l: Int, val t: Int, val r: Int, val b: Int, val parts: List<IntArray>)
+
+    /** The line rectangles of [start, end) in view px, clipped to the view; null when nothing is left. */
     private fun bounds(
         layout: SectionLayout, page: PageInfo, start: Int, end: Int,
         left: Float, top: Float, viewW: Int, viewH: Int,
-    ): IntArray? {
+    ): Box? {
         val rects = LineGeometry.rangeRects(layout, page, start, end)
         if (rects.isEmpty()) return null
-        var l = Float.MAX_VALUE
-        var t = Float.MAX_VALUE
-        var r = -Float.MAX_VALUE
-        var b = -Float.MAX_VALUE
+        var l = Int.MAX_VALUE
+        var t = Int.MAX_VALUE
+        var r = Int.MIN_VALUE
+        var b = Int.MIN_VALUE
+        val parts = ArrayList<IntArray>(rects.size)
         for (q in rects) {
-            l = minOf(l, q.left); t = minOf(t, q.top); r = maxOf(r, q.right); b = maxOf(b, q.bottom)
+            val il = maxOf(0, floor(q.left + left).toInt())
+            val iTop = maxOf(0, floor(q.top + top).toInt())
+            val ir = minOf(viewW, ceil(q.right + left).toInt())
+            val ib = minOf(viewH, ceil(q.bottom + top).toInt())
+            if (ir <= il || ib <= iTop) continue
+            parts += intArrayOf(il, iTop, ir, ib)
+            l = minOf(l, il); t = minOf(t, iTop); r = maxOf(r, ir); b = maxOf(b, ib)
         }
-        val il = maxOf(0, floor(l + left).toInt())
-        val iTop = maxOf(0, floor(t + top).toInt())
-        val ir = minOf(viewW, ceil(r + left).toInt())
-        val ib = minOf(viewH, ceil(b + top).toInt())
-        return if (ir > il && ib > iTop) intArrayOf(il, iTop, ir, ib) else null
+        return if (parts.isEmpty()) null else Box(l, t, r, b, parts)
     }
 
     /** Index of the node under ([x], [y]) in view px, or -1. Later nodes win: a link lies over its paragraph. */

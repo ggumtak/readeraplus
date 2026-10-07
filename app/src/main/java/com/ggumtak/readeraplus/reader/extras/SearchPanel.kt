@@ -26,6 +26,7 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.KeyMap
+import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
@@ -435,12 +436,22 @@ internal object SearchNavBar {
     private var stateRef: WeakReference<SearchPanel.State>? = null
     private var labelRef: WeakReference<TextView>? = null
     private var shownIndex = 0
+    /** The page text the label shows for [shownIndex] (kept while the pages are counted again, see [PageLabel.retain]). */
+    private var shownPage = ""
     /** While the bar is shown: the pages are counted, so its page number is read again. */
     private val countsListener: () -> Unit = { refresh() }
 
+    /**
+     * The label of hit [index]: its place among the hits and its page. While the pages are being counted (a relayout
+     * made the old numbers stale) the page the label showed stays until the exact one is known: no blank flicker, and
+     * the exact page replaces it in one update.
+     */
     private fun labelText(host: ReaderHost, state: SearchPanel.State, index: Int): String {
         val more = if (state.complete) "" else "+"
-        return PageLabel.withPage("${index + 1} / ${state.hits.size}$more", SearchPanel.pageOf(host, state.hits[index]))
+        val counting = runCatching { host.pagesPending() }.getOrNull() == ReaderFormat.PAGES_COUNTING
+        val page = PageLabel.retain(SearchPanel.pageOf(host, state.hits[index]), shownPage, counting)
+        shownPage = page
+        return PageLabel.withPage("${index + 1} / ${state.hits.size}$more", page)
     }
 
     /** Reads the bar's page number again (the pages were counted, or the layout changed); no-op without a bar. */
@@ -460,6 +471,7 @@ internal object SearchNavBar {
         remove()
         if (index !in state.hits.indices) return
         shownIndex = index
+        shownPage = ""
         val row = Overlay.bar(ctx)
         row.addView(ctx.flatIcon(R.drawable.ic_close, "검색 닫기") {
             SearchPanel.clearHighlight(host)
@@ -504,5 +516,6 @@ internal object SearchNavBar {
         hostRef = null
         stateRef = null
         labelRef = null
+        shownPage = ""
     }
 }

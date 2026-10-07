@@ -73,6 +73,23 @@ internal class ScrollWindow {
         }
         return -1
     }
+    /**
+     * The virtual page of every section the screen shows, in reading order (a screen over a seam gives two): what a
+     * screen reader walks, where [virtualPage] gives the one section the reader is in.
+     */
+    fun virtualPages(contentTop: Float, clip: Float): List<VirtualPage> {
+        var out: ArrayList<VirtualPage>? = null
+        var seen = -1
+        for (i in 0 until count) {
+            val s = sections[i]
+            if (s == seen) continue
+            seen = s
+            val vp = virtualPage(s, contentTop, clip) ?: continue
+            if (out == null) out = ArrayList(2)
+            out.add(vp)
+        }
+        return out ?: emptyList()
+    }
     fun virtualPage(section: Int, contentTop: Float, clip: Float): VirtualPage? {
         var layout: SectionLayout? = null
         var pageIndex = -1

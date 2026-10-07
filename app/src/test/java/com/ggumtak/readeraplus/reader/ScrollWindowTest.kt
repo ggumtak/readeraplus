@@ -46,6 +46,29 @@ class ScrollWindowTest {
             }
         }
     }
+    @Test fun virtualPagesGiveEverySectionOnScreenInOrderAndAgreeWithTheSingleVirtualPage() {
+        val l = layout(); val source = Source(l); val w = ScrollWindow(); val pos = ScrollPos()
+        val r = Random(2209)
+        var seams = 0
+        repeat(2000) {
+            pos.section = r.nextInt(3); pos.page = r.nextInt(5); pos.dy = r.nextFloat() * 40f
+            val ct = r.nextInt(15, 90).toFloat(); val h = r.nextInt(80, 150).toFloat()
+            w.fill(source, pos, h, ct)
+            val all = w.virtualPages(ct, h)
+            assertEquals(all.map { it.section }.sorted(), all.map { it.section })
+            assertEquals(all.size, all.map { it.section }.distinct().size)
+            for (s in 0..2) {
+                val one = w.virtualPage(s, ct, h)
+                val got = all.firstOrNull { it.section == s }
+                if (one == null) { assertNull(got); continue }
+                assertNotNull(got)
+                assertEquals(one.page.lines.map { it.start to it.top }, got!!.page.lines.map { it.start to it.top })
+            }
+            if (all.size > 1) seams++
+        }
+        // The screen over a seam (the end of one section, the start of the next) is the case the tree must cover.
+        assertTrue(seams > 0)
+    }
     @Test fun stepClipEndsAtARoundedWholeLineAndClearedWindowsReleaseLayouts() {
         val l = layout(); val w = ScrollWindow(); val pos = ScrollPos()
         pos.dy = 7.35f
