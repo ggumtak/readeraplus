@@ -394,7 +394,7 @@ internal object TextActions {
         return try {
             val dm = ctx.resources.displayMetrics
             val side = (8 * dm.density).toInt()
-            val h = LookupQuery.startHeight(dm.heightPixels)
+            val h = LookupQuery.startHeight(dm.heightPixels, LookupPanel.savedPct())
             val bounds = android.graphics.Rect(side, dm.heightPixels - h, dm.widthPixels - side, dm.heightPixels)
             val opts = android.app.ActivityOptions.makeBasic().setLaunchBounds(bounds)
             ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), opts.toBundle())

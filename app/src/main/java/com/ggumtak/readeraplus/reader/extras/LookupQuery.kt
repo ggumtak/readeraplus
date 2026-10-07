@@ -64,7 +64,11 @@ internal object LookupQuery {
     /** The text another app's 사전·번역 entry gets: [query] (" 뜻" added) except for Anki, which keeps [text]. */
     fun appText(pkg: String, text: String): String = if (isAnki(pkg)) text else query(text).ifEmpty { text }
 
-    fun startHeight(screen: Int): Int = screen * START_PCT / 100
+    fun startHeight(screen: Int, pct: Int = START_PCT): Int = screen * pct.coerceIn(MIN_PCT, MAX_PCT) / 100
+
+    /** [height] of [screen] as the percentage kept for the next window (within [MIN_PCT]..[MAX_PCT]). */
+    fun heightPct(height: Int, screen: Int): Int =
+        if (screen <= 0) START_PCT else (height * 100 / screen).coerceIn(MIN_PCT, MAX_PCT)
 
     /** [height] within [MIN_PCT]..[MAX_PCT] of [screen]. */
     fun clampHeight(height: Int, screen: Int): Int = height.coerceIn(screen * MIN_PCT / 100, screen * MAX_PCT / 100)

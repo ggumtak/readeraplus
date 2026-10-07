@@ -65,7 +65,7 @@ internal object LookupPanel {
 
         // Re-read on every use: the reader keeps running through a rotation.
         val screen = { activity.resources.displayMetrics.heightPixels }
-        var height = LookupQuery.startHeight(screen())
+        var height = LookupQuery.startHeight(screen(), savedPct())
         var destroyed = false
         // A WebView outlives its dialog unless it is taken apart: on dismiss, and when the window goes away with
         // its activity (no dismiss then).
@@ -117,6 +117,7 @@ internal object LookupPanel {
         }
         attachResize(bar, screen, { height }) { h ->
             height = h
+            savePct(LookupQuery.heightPct(h, screen()))
             dialog.window?.setLayout(MATCH_PARENT, h)
         }
 
@@ -182,4 +183,16 @@ internal object LookupPanel {
 
     private fun openInBrowser(activity: Activity, url: String): Boolean =
         TextActions.start(activity, Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+
+    private const val PREF_HEIGHT_PCT = "extras.lookupHeightPct"
+
+    /** The height the window was last dragged to (a share of the screen); the next window, and other apps' pop-up
+     * windows, open at it. */
+    fun savedPct(): Int = runCatching {
+        com.ggumtak.readeraplus.settings.Settings.raw().getInt(PREF_HEIGHT_PCT, LookupQuery.START_PCT)
+    }.getOrDefault(LookupQuery.START_PCT)
+
+    private fun savePct(pct: Int) {
+        runCatching { com.ggumtak.readeraplus.settings.Settings.raw().edit().putInt(PREF_HEIGHT_PCT, pct).apply() }
+    }
 }
