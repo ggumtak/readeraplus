@@ -129,6 +129,33 @@ jobs:
             --title "ReaderaPlus build ${GITHUB_RUN_NUMBER}" \
             --notes "Automatic build from ${GITHUB_REF_NAME} @ ${GITHUB_SHA} · signing certificate SHA-256 ${{ steps.cert.outputs.sha }}"
 
+      # Optional: the APK also goes to Google Drive (see docs/DRIVE_UPLOAD.md). Needs the repository secret
+      # RCLONE_CONFIG_B64 (an rclone config with a Google Drive remote, base64); without it this step does nothing.
+      # Never fails the build: a Drive problem only shows as a warning here.
+      - name: Upload APK to Google Drive
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        env:
+          RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG_B64 }}
+          DRIVE_DEST: ${{ vars.DRIVE_DEST }}
+          DRIVE_KEEP: ${{ vars.DRIVE_KEEP }}
+        run: |
+          if [ -z "$RCLONE_CONFIG_B64" ]; then
+            echo "RCLONE_CONFIG_B64 is not set: skipping the Google Drive upload."
+            exit 0
+          fi
+          dest="${DRIVE_DEST:-gdrive:ReaderaPlus}"
+          keep="${DRIVE_KEEP:-5}"
+          sudo apt-get install -y -qq rclone > /dev/null
+          mkdir -p ~/.config/rclone
+          echo "$RCLONE_CONFIG_B64" | base64 -d > ~/.config/rclone/rclone.conf
+          rclone copy dist/ "$dest" --include "ReaderaPlus-*.apk" -v
+          # Only the newest builds stay (each APK is ~11 MB).
+          rclone lsf "$dest" --include "ReaderaPlus-*.apk" | sort -V | head -n "-$keep" | while read -r old; do
+            rclone deletefile "$dest/$old" -v || true
+          done
+          echo "::notice::Uploaded ReaderaPlus-${GITHUB_RUN_NUMBER}.apk to $dest"
+
   # Scheduled only: touches the cached signing key so it is never evicted between builds.
   keep-signing-key:
     if: github.event_name == 'schedule'
