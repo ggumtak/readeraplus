@@ -65,7 +65,7 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val w = (if (kind == PEN || kind == HIGHLIGHTER) 32f else 38f) * d
+        val w = (if (kind == PEN || kind == HIGHLIGHTER) 30f else 34f) * d
         setMeasuredDimension(w.toInt(), (PdfChrome.TOOLBAR_DP * d).toInt())
     }
 

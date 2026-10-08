@@ -381,8 +381,8 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
     private fun divider(): View = View(activity).apply {
         setBackgroundColor(0xFF555555.toInt())
         layoutParams = LinearLayout.LayoutParams(activity.dp(1), activity.dp(20)).apply {
-            leftMargin = activity.dp(4)
-            rightMargin = activity.dp(4)
+            leftMargin = activity.dp(3)
+            rightMargin = activity.dp(3)
         }
     }
 
@@ -395,7 +395,7 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
         const val TOP_DP = 48
         const val TOP_ICON_DP = 42
         const val TOOLBAR_DP = 44
-        const val TOOL_ICON_DP = 38
+        const val TOOL_ICON_DP = 36
         const val MODE_DP = 34
         const val FLOAT_GAP_DP = 6
     }

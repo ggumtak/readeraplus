@@ -16,8 +16,10 @@ kids_ref = []
 page_ids = []
 pages_id = len(objs) + 1 + 2 * len(pages)  # placeholder index computed after
 content_ids = []
-for lines in pages:
+for n, lines in enumerate(pages):
     stream = "BT /F1 18 Tf 60 760 Td 24 TL " + " ".join("(%s) '" % l.replace("(", "\\(").replace(")", "\\)") for l in lines) + " ET"
+    if n == 0:
+        stream += " BT /F1 24 Tf 200 421 Td (dictionary) Tj ET"  # mid-page, for the emulator's lasso loop
     data = stream.encode("latin-1")
     cid = add(b"<< /Length %d >>\nstream\n" % len(data) + data + b"\nendstream")
     content_ids.append(cid)
