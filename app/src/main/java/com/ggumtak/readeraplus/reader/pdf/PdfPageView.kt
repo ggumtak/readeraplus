@@ -18,6 +18,8 @@ import android.widget.OverScroller
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.dp
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 
 /**
  * One PDF page, fitted inside the view (minus padding), with phone-style motion: pinch zoom that follows the
@@ -85,6 +87,12 @@ internal class PdfPageView(context: Context) : View(context) {
     private var slideAnim: ValueAnimator? = null
     private var zoomAnim: ValueAnimator? = null
     private val scroller = OverScroller(context)
+    /** Exact (float) end of a running reading step: the scroller works in whole pixels. NaN = none. */
+    private var stepTargetY = Float.NaN
+    /** The running slide is a page turn (taps / keys / a released drag), not a return to rest. */
+    private var slideTurns = false
+    /** A pinch happened during the current touch: lifting the fingers never turns the page. */
+    private var pinched = false
     private val gap = context.dp(16).toFloat()
 
     private val dst = RectF()
@@ -203,12 +211,19 @@ internal class PdfPageView(context: Context) : View(context) {
             // A step during a step: jump to where the running one ends, then step on from there.
             scroller.abortAnimation()
             offX = scroller.finalX.toFloat()
-            offY = scroller.finalY.toFloat()
+            offY = if (stepTargetY.isNaN()) scroller.finalY.toFloat() else stepTargetY
+            stepTargetY = Float.NaN
             clampOffsets()
         }
         val next = PdfMath.stepOffset(offY, pageH * scale, areaH.toFloat(), dir)
         if (next.isNaN()) return false
         val dy = next - offY
+        if (abs(dy) < 1f) {
+            offY = next
+            viewportChanged()
+            return true
+        }
+        stepTargetY = next
         scroller.startScroll(offX.toInt(), offY.toInt(), 0, dy.toInt(), PdfMath.animMs(dy, areaH.toFloat()).toInt())
         postInvalidateOnAnimation()
         return true
@@ -233,7 +248,8 @@ internal class PdfPageView(context: Context) : View(context) {
         if (!scroller.isFinished) {
             scroller.abortAnimation()
             offX = scroller.finalX.toFloat()
-            offY = scroller.finalY.toFloat()
+            offY = if (stepTargetY.isNaN()) scroller.finalY.toFloat() else stepTargetY
+            stepTargetY = Float.NaN
             viewportChanged()
         }
     }
@@ -242,6 +258,12 @@ internal class PdfPageView(context: Context) : View(context) {
         stopSlide()
         zoomAnim?.cancel()
         scroller.forceFinished(true)
+        stepTargetY = Float.NaN
+        // A spring-back cut short must not leave the page smaller than fitted.
+        if (zoom < PdfMath.MIN_ZOOM) {
+            zoom = PdfMath.MIN_ZOOM
+            clampOffsets()
+        }
     }
 
     private fun stopSlide() {
@@ -302,6 +324,8 @@ internal class PdfPageView(context: Context) : View(context) {
         if (!scroller.computeScrollOffset()) return
         offX = scroller.currX.toFloat()
         offY = scroller.currY.toFloat()
+        if (scroller.isFinished && !stepTargetY.isNaN()) offY = stepTargetY
+        if (scroller.isFinished) stepTargetY = Float.NaN
         clampOffsets()
         if (detailFor != null) dropDetail()
         postInvalidateOnAnimation()
@@ -364,8 +388,12 @@ internal class PdfPageView(context: Context) : View(context) {
     // ------------------------------------------------------------------------------------------- page slide
 
     /** Animates the slide to the page in [dir] (+1 next, -1 previous) or back to rest (0). */
-    private fun settle(dir: Int) {
+    private fun settle(wanted: Int) {
         slideAnim?.cancel()
+        // The page it lands on, fixed now: the neighbours may be replaced while it slides.
+        val img = if (wanted > 0) nextImg else if (wanted < 0) prevImg else null
+        val dir = if (img != null && img.index == page + wanted) wanted else 0
+        slideTurns = dir != 0
         val target = -dir * slideFull
         val anim = ValueAnimator.ofFloat(slide, target)
         anim.duration = PdfMath.animMs(target - slide, slideFull)
@@ -382,13 +410,15 @@ internal class PdfPageView(context: Context) : View(context) {
             }
 
             override fun onAnimationEnd(animation: Animator) {
-                if (slideAnim === anim) slideAnim = null
+                if (slideAnim === anim) {
+                    slideAnim = null
+                    slideTurns = false
+                }
                 if (canceled) return
                 slide = 0f
                 invalidate()
                 // The neighbour is now exactly where the current page was: the host swaps it in.
-                val img = if (dir > 0) nextImg else if (dir < 0) prevImg else null
-                if (img != null) host?.onPageSettled(img)
+                if (dir != 0 && img != null) host?.onPageSettled(img)
             }
         })
         slideAnim = anim
@@ -445,6 +475,10 @@ internal class PdfPageView(context: Context) : View(context) {
 
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(d: ScaleGestureDetector): Boolean {
+            pinched = true
+            zoomAnim?.cancel()
+            scroller.forceFinished(true)
+            stepTargetY = Float.NaN
             if (dragging || slide != 0f) {
                 dragging = false
                 settle(0)
@@ -513,12 +547,13 @@ internal class PdfPageView(context: Context) : View(context) {
         }
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
-            if (scaleDetector.isInProgress) return false
+            if (scaleDetector.isInProgress || zoomAnim != null) return false
             if (zoomed) {
-                val minX = PdfMath.clampOffset(Float.NEGATIVE_INFINITY, pageW * scale, areaW.toFloat()).toInt()
-                val minY = PdfMath.clampOffset(Float.NEGATIVE_INFINITY, pageH * scale, areaH.toFloat()).toInt()
-                val maxX = PdfMath.clampOffset(Float.POSITIVE_INFINITY, pageW * scale, areaW.toFloat()).toInt()
-                val maxY = PdfMath.clampOffset(Float.POSITIVE_INFINITY, pageH * scale, areaH.toFloat()).toInt()
+                // Whole-pixel bounds just past the float edges; clampOffsets lands exactly on them.
+                val minX = floor(PdfMath.clampOffset(Float.NEGATIVE_INFINITY, pageW * scale, areaW.toFloat())).toInt()
+                val minY = floor(PdfMath.clampOffset(Float.NEGATIVE_INFINITY, pageH * scale, areaH.toFloat())).toInt()
+                val maxX = ceil(PdfMath.clampOffset(Float.POSITIVE_INFINITY, pageW * scale, areaW.toFloat())).toInt()
+                val maxY = ceil(PdfMath.clampOffset(Float.POSITIVE_INFINITY, pageH * scale, areaH.toFloat())).toInt()
                 scroller.fling(offX.toInt(), offY.toInt(), vx.toInt(), vy.toInt(), minX, maxX, minY, maxY)
                 postInvalidateOnAnimation()
                 return true
@@ -538,10 +573,17 @@ internal class PdfPageView(context: Context) : View(context) {
                 scroller.forceFinished(true)
                 host?.onViewportChanged()
             }
+            pinched = false
             if (slideAnim != null) {
-                slideAnim?.cancel()
-                dragging = true
-                flingDir = 0
+                if (slideTurns) {
+                    // A page turn in flight lands first: quick taps each turn a page.
+                    slideAnim?.end()
+                } else {
+                    // A page springing back is picked up where it is.
+                    slideAnim?.cancel()
+                    dragging = true
+                    flingDir = 0
+                }
             }
         }
         scaleDetector.onTouchEvent(event)
@@ -551,7 +593,7 @@ internal class PdfPageView(context: Context) : View(context) {
                 dragging = false
                 val hasPrev = prevImg?.index == page - 1
                 val hasNext = nextImg?.index == page + 1
-                val dir = if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                val dir = if (event.actionMasked == MotionEvent.ACTION_CANCEL || pinched) {
                     0
                 } else {
                     PdfMath.settleDir(slide, slideFull, flingDir, hasPrev, hasNext)

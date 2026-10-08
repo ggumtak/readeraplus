@@ -230,6 +230,12 @@ class PdfMathTest {
         // Clamped to one page step.
         assertEquals(-1000f, PdfMath.dragSlide(-990f, -50f, 1000f, hasPrev = true, hasNext = true), eps)
         assertEquals(1000f, PdfMath.dragSlide(990f, 50f, 1000f, hasPrev = true, hasNext = true), eps)
+        // Dragged into the resisted side (no previous page), then back past 0: continuous, no jump.
+        val r = PdfMath.EDGE_RESISTANCE
+        val pulled = PdfMath.dragSlide(0f, 100f, 1000f, hasPrev = false, hasNext = true)
+        assertEquals(100f * r, pulled, eps)
+        assertEquals(-30f, PdfMath.dragSlide(pulled, -130f, 1000f, hasPrev = false, hasNext = true), eps)
+        assertEquals(50f * r, PdfMath.dragSlide(pulled, -50f, 1000f, hasPrev = false, hasNext = true), eps)
     }
 
     @Test

@@ -141,8 +141,11 @@ internal object PdfMath {
      * [EDGE_RESISTANCE] of the way. Clamped to ±[full] (the width of one page step).
      */
     fun dragSlide(slide: Float, dx: Float, full: Float, hasPrev: Boolean, hasNext: Boolean): Float {
-        var s = slide + dx
-        if ((s > 0f && !hasPrev) || (s < 0f && !hasNext)) s = slide + dx * EDGE_RESISTANCE
+        // Work on the finger's own distance, so a drag back across 0 out of a resisted side stays continuous.
+        val resistedNow = (slide > 0f && !hasPrev) || (slide < 0f && !hasNext)
+        val raw = (if (resistedNow) slide / EDGE_RESISTANCE else slide) + dx
+        val resisted = (raw > 0f && !hasPrev) || (raw < 0f && !hasNext)
+        val s = if (resisted) raw * EDGE_RESISTANCE else raw
         return if (s < -full) -full else if (s > full) full else s
     }
 
