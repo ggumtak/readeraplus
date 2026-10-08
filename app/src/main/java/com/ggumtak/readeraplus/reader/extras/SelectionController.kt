@@ -38,6 +38,7 @@ import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.LayoutKeys
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.reader.ReaderIo
+import com.ggumtak.readeraplus.reader.ShownPage
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
 import com.ggumtak.readeraplus.render.PagePalette
@@ -160,6 +161,7 @@ class SelectionController(private val host: ReaderHost) {
         }
     }
 
+    private val knownOrigin = FloatArray(2)
     private var originKey: Any? = null
     private var originX = 0f
     private var originY = 0f
@@ -181,13 +183,14 @@ class SelectionController(private val host: ReaderHost) {
      * its slop, never a space next to it); where it finds none nothing happens, and a selection already shown stays.
      */
     fun startAt(x: Float, y: Float): Boolean {
-        val layout = host.currentLayout ?: return false
-        val page = host.currentPage ?: return false
         val find = glyphAt
         val off = if (find != null) find(x, y) else host.hitTest(x, y)
+        // The page under the finger: in a landscape spread either of the two (its section may be the next one's).
+        val sec = host.hitSection(x)
+        val under = host.shownPages().firstOrNull { it.section == sec && off >= it.page.start && off < it.page.end } ?: return false
+        val layout = under.layout
         val text = layout.content.text
-        if (off < 0 || off >= text.length || off < page.start || off >= page.end) return false
-        val sec = host.currentPosition().section
+        if (off < 0 || off >= text.length) return false
         ensureQuotes()
 
         // Only a quote the page draws (K2): one whose place changed is not drawn here, and a press on its old range
@@ -342,20 +345,28 @@ class SelectionController(private val host: ReaderHost) {
 
     // ------------------------------------------------------------------ selection geometry
 
-    private fun validPage(): Pair<SectionLayout, PageInfo>? {
-        val layout = host.currentLayout ?: return null
-        val page = host.currentPage ?: return null
-        if (host.currentPosition().section != section) return null
-        return layout to page
+    /** The pages on screen that belong to the selection's section: one, or in a landscape spread up to two. */
+    private fun sectionPages(): List<ShownPage> = host.shownPages().filter { it.section == section }
+
+    /** The chars of the selection's section on screen: [start] to [end] of [layout] (a spread: both pages joined). */
+    private class Span(val layout: SectionLayout, val start: Int, val end: Int)
+
+    private fun validSpan(): Span? {
+        val pages = sectionPages()
+        val first = pages.firstOrNull() ?: return null
+        return Span(first.layout, pages.minOf { it.page.start }, pages.maxOf { it.page.end })
     }
+
+    /** The selection can turn pages only from the section of the page the host calls current (a spread's left page). */
+    private fun onCurrentSection(): Boolean = host.currentPosition().section == section
 
     /** The press's drag: the word picked grows to the char under (x, y) on the page shown (clusters stay whole). */
     private fun extendTo(x: Float, y: Float) {
-        val (layout, page) = validPage() ?: return
+        val span = validSpan() ?: return
         val off = host.hitTest(x, y)
-        if (off < 0) return
-        val text = layout.content.text
-        val o = off.coerceIn(page.start, page.end - 1)
+        if (off < 0 || host.hitSection(x) != section) return
+        val text = span.layout.content.text
+        val o = off.coerceIn(span.start, span.end - 1)
         val s = minOf(anchorStart, clusterStart(text, o))
         val e = maxOf(anchorEnd, clusterEnd(text, o))
         setRange(s, e)
@@ -369,16 +380,16 @@ class SelectionController(private val host: ReaderHost) {
     /** The dragged handle's hit point (its anchor moved up into the glyph band) to a char; the selection follows. */
     private fun moveDraggedHandle() {
         val h = dragHandle ?: return
-        val (layout, page) = validPage() ?: return
+        val span = validSpan() ?: return
         val pv = host.pageView
         val px = dragRawX + dragGrabDx - pv.left - pv.translationX
         val py = dragRawY + dragGrabDy - pv.top - pv.translationY - h.lineHalf
         dragX = px
         dragY = py
         val off = host.hitTest(px, py)
-        if (off < 0) return
-        val text = layout.content.text
-        val o = off.coerceIn(page.start, page.end - 1)
+        if (off < 0 || host.hitSection(px) != section) return
+        val text = span.layout.content.text
+        val o = off.coerceIn(span.start, span.end - 1)
         if (h.start) setRange(clusterStart(text, o.coerceAtMost(selEnd - 1)), selEnd)
         else setRange(selStart, maxOf(clusterEnd(text, o), clusterEnd(text, selStart)))
     }
@@ -388,7 +399,8 @@ class SelectionController(private val host: ReaderHost) {
     /** The zone the held point is in, NONE where the page may not turn that way (a handle's other way, a section's end). */
     private fun zoneNow(): Zone {
         if (!dragging) return Zone.NONE
-        val page = validPage()?.second ?: return Zone.NONE
+        val page = validSpan() ?: return Zone.NONE
+        if (!onCurrentSection()) return Zone.NONE
         val len = sectionText?.length ?: return Zone.NONE
         val v = host.pageView
         val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density, host.pageCutoutTop)
@@ -437,7 +449,7 @@ class SelectionController(private val host: ReaderHost) {
     private fun fireDwell() {
         val zone = dwell.fire() ?: return
         val next = zone == Zone.BOTTOM
-        val page = validPage()?.second
+        val page = validSpan()?.takeIf { onCurrentSection() }
         val len = sectionText?.length ?: 0
         // A dialog took the window's focus, the finger is gone, or the section has no page that way.
         if (!active || !dragging || page == null || !ctx.hasWindowFocus() || !SelectionSpan.canTurn(next, page.start, page.end, len)) {
@@ -454,7 +466,8 @@ class SelectionController(private val host: ReaderHost) {
         turnPending = true
         turnLayout = host.currentLayout
         turnNext = next
-        turnPageStart = page.start
+        // The page the host calls current (a spread's left one) is what turnLanded compares after the turn.
+        turnPageStart = host.currentPage?.start ?: page.start
         main.removeCallbacks(turnTimeout)
         main.postDelayed(turnTimeout, EDGE_TURN_WAIT_MS)
         val ok = runCatching { if (next) host.nextPage() else host.prevPage() }.getOrDefault(false)
@@ -494,6 +507,13 @@ class SelectionController(private val host: ReaderHost) {
      * layout config and view size; the margin-formula fallback is never cached (another page may calibrate).
      */
     private fun origin(layout: SectionLayout, page: PageInfo) {
+        // A landscape spread: the host knows the box (the calibration below would also see the other column).
+        if (host.pageOrigin(knownOrigin)) {
+            originX = knownOrigin[0]
+            originY = knownOrigin[1]
+            originKey = null
+            return
+        }
         val v = host.pageView
         val key = listOf(layout.config, v.width, v.height, v.paddingLeft, v.paddingTop)
         if (key == originKey) return
@@ -533,21 +553,33 @@ class SelectionController(private val host: ReaderHost) {
 
     private fun showHandles() {
         val parent = Overlay.parentOf(host) ?: return
-        val shown = validPage()
-        val rects = shown?.let { visibleRects(it.first, it.second) }
-        if (shown == null || rects == null) {
+        // The pages on screen that hold some of the selection: its start is on the first, its end on the last (one
+        // page, or two of a landscape spread).
+        var firstPage: ShownPage? = null
+        var lastPage: ShownPage? = null
+        var firstRects: List<RectPx>? = null
+        var lastRects: List<RectPx>? = null
+        for (sp in sectionPages()) {
+            val r = visibleRects(sp.layout, sp.page) ?: continue
+            if (firstPage == null) {
+                firstPage = sp
+                firstRects = r
+            }
+            lastPage = sp
+            lastRects = r
+        }
+        if (firstPage == null || lastPage == null || firstRects == null || lastRects == null) {
             // Nothing of the selection is on this page: the handles and the popup wait for a page that has it.
             hideHandles()
             hideActions()
             return
         }
-        val (layout, page) = shown
-        origin(layout, page)
+        origin(firstPage.layout, firstPage.page)
         val pv = host.pageView
         val baseX = pv.left + pv.translationX + originX
         val baseY = pv.top + pv.translationY + originY
-        val first = rects.first()
-        val last = rects.last()
+        val first = firstRects.first()
+        val last = lastRects.last()
         val sh = startHandle ?: HandleView(ctx, start = true).also { h ->
             startHandle = h
             parent.addView(h, FrameLayout.LayoutParams(h.sizePx, h.sizePx))
@@ -559,10 +591,12 @@ class SelectionController(private val host: ReaderHost) {
             h.setOnTouchListener(HandleDrag(h))
         }
         // Anchored under the letters (the glyph band), not under the line box's blank leading.
-        sh.place(baseX + first.left, baseY + HandleAnchor.bottom(layout, page, first), HandleAnchor.halfHeight(layout, page, first))
-        eh.place(baseX + last.right, baseY + HandleAnchor.bottom(layout, page, last), HandleAnchor.halfHeight(layout, page, last))
-        sh.visibility = if (SelectionSpan.startShown(selStart, selEnd, page.start, page.end)) View.VISIBLE else View.INVISIBLE
-        eh.visibility = if (SelectionSpan.endShown(selStart, selEnd, page.start, page.end)) View.VISIBLE else View.INVISIBLE
+        sh.place(baseX + firstPage.dx + first.left, baseY + HandleAnchor.bottom(firstPage.layout, firstPage.page, first),
+            HandleAnchor.halfHeight(firstPage.layout, firstPage.page, first))
+        eh.place(baseX + lastPage.dx + last.right, baseY + HandleAnchor.bottom(lastPage.layout, lastPage.page, last),
+            HandleAnchor.halfHeight(lastPage.layout, lastPage.page, last))
+        sh.visibility = if (SelectionSpan.startShown(selStart, selEnd, firstPage.page.start, firstPage.page.end)) View.VISIBLE else View.INVISIBLE
+        eh.visibility = if (SelectionSpan.endShown(selStart, selEnd, lastPage.page.start, lastPage.page.end)) View.VISIBLE else View.INVISIBLE
     }
 
     /** Drags a handle; the hit point is the handle's anchor moved up into the middle of the glyph band. */
@@ -655,10 +689,13 @@ class SelectionController(private val host: ReaderHost) {
      */
     private fun showActions() {
         if (!active) return
-        val (layout, page) = validPage() ?: return
-        // Anchored to the part of the selection on the page shown.
-        val rects = visibleRects(layout, page) ?: return
-        origin(layout, page)
+        // Anchored to the part of the selection on the page(s) shown.
+        val onScreen = sectionPages()
+        val rects = ArrayList<RectPx>()
+        for (sp in onScreen) visibleRects(sp.layout, sp.page)?.let { rects += it }
+        val anchorPage = onScreen.firstOrNull() ?: return
+        if (rects.isEmpty()) return
+        origin(anchorPage.layout, anchorPage.page)
         hideActions()
 
         val dm = ctx.resources.displayMetrics

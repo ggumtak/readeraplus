@@ -93,8 +93,37 @@ interface ReaderHost {
      */
     fun holdSection(section: Int) {}
 
-    /** Converts view coordinates to (section offset) on the current page, or -1. */
+    /**
+     * Converts view coordinates to (section offset) on the page under (x, y), or -1: the current page, or in a landscape
+     * spread (two pages side by side) the right page from the middle of the gutter on, whose section is [hitSection].
+     */
     fun hitTest(x: Float, y: Float): Int
+
+    /** The section the page under view x belongs to: [currentPosition]'s, except a spread's right page of the next section. */
+    fun hitSection(x: Float): Int = currentPosition().section
+
+    /**
+     * Writes the content box's origin in the page view (x, y) of the current page into [out] and returns true when the
+     * host knows it for sure (a landscape spread, where the right column would confuse the hit-test calibration); false
+     * leaves [out] alone and the caller finds it by hit testing.
+     */
+    fun pageOrigin(out: FloatArray): Boolean = false
+
+    /**
+     * The pages on screen, left to right: the current page, and in a landscape spread its right page when it has text
+     * (its [ShownPage.dx] is that page's x from the left page's). Empty while nothing is shown.
+     */
+    fun shownPages(): List<ShownPage> {
+        val l = currentLayout ?: return emptyList()
+        val p = currentPage ?: return emptyList()
+        return listOf(ShownPage(currentPosition().section, l, p, currentPageIndex, 0f))
+    }
+
+    /** Pages one [nextPage] / [prevPage] moves: 1, or 2 in a landscape spread. */
+    val pageStep: Int get() = 1
+
+    /** End of the text on screen in [currentPosition]'s section: the current page's, a spread's right page's when it is of that section. */
+    val visibleEnd: Int get() = currentPage?.end ?: 0
 
     /** Text of [section] between [start] and [end] (loads the section if needed; main-thread safe only if cached). */
     fun textOf(section: Int, start: Int, end: Int): String
@@ -104,3 +133,6 @@ interface ReaderHost {
 
     fun redraw()
 }
+
+/** One page on screen: page [pageIndex] ([page]) of [layout], section [section], its text box [dx] px right of the current page's. */
+class ShownPage(val section: Int, val layout: SectionLayout, val page: PageInfo, val pageIndex: Int, val dx: Float)

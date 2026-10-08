@@ -8,6 +8,7 @@ import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.NotesTab
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
+import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.MenuItem
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
@@ -141,11 +142,19 @@ private fun ReaderActivity.showCollections(id: Long) {
     }
 }
 
-/** Long-press on the rotation button: pick a fixed orientation or follow the sensor (설정's 화면 방향 choices). */
+/**
+ * Long-press on the rotation button: pick a fixed orientation or follow the sensor (설정's 화면 방향 choices). The button
+ * next to 취소 switches the 가로 화면 between one page across the width and two side by side (읽기 설정's 가로 화면): it
+ * names the other choice, and the reader lays out again from the first character shown.
+ */
 internal fun ReaderActivity.showOrientationChooser() {
     val options = SettingsFormat.ORIENTATIONS
     val selected = options.indexOfFirst { it.second == app.orientationLock }.coerceAtLeast(0)
-    chooser("화면 방향", options.map { it.first }, selected) { which -> setOrientationLock(options[which].second) }
+    val two = Settings.reader.landscapePages == 2
+    chooser("화면 방향", options.map { it.first }, selected,
+        extraButton = if (two) "가로: 한 쪽으로" else "가로: 두 쪽으로",
+        onExtra = { applySettings(Settings.reader.copy(landscapePages = if (two) 1 else 2)) },
+    ) { which -> setOrientationLock(options[which].second) }
 }
 
 private inline fun ReaderActivity.guarded(block: () -> Unit) {

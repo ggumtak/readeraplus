@@ -555,9 +555,10 @@ class TtsController(private val host: ReaderHost) {
         val p = UtteranceId.parse(id) ?: return
         if (p[4] != uttGen || !playing) return
         val u = itemAt(p[3]) ?: return
-        val page = host.currentPage ?: return
+        host.currentPage ?: return
         val off = u.start + start
-        if (host.currentPosition().section == u.sec && off >= page.end) follow(u.sec, off)
+        // A landscape spread follows once the voice leaves its right page too (visibleEnd).
+        if (host.currentPosition().section == u.sec && off >= host.visibleEnd) follow(u.sec, off)
     }
 
     /** Drops sentences of sections already finished (keeps memory flat over a long book). */
@@ -582,9 +583,10 @@ class TtsController(private val host: ReaderHost) {
             if (cur.section != sec) {
                 host.goTo(DocPosition(sec, off), remember = false)
                 if (background) spoken.addPage()
-            } else if (page != null && layout != null && (off >= page.end || off < page.start)) {
+            } else if (page != null && layout != null && (off >= host.visibleEnd || off < page.start)) {
                 val target = layout.pageForOffset(off)
-                val turned = if (target == host.currentPageIndex + 1) {
+                // One turn moves pageStep pages (2 in a landscape spread): the next spread's left page is the target.
+                val turned = if (target == host.currentPageIndex + host.pageStep) {
                     host.nextPage()
                 } else {
                     host.goTo(DocPosition(sec, off), remember = false)
@@ -629,7 +631,7 @@ class TtsController(private val host: ReaderHost) {
             val cur = host.currentPosition()
             val u = itemAt(pos)
             // Our own page turn echoed back by the host: still on the page being spoken.
-            if (u != null && u.sec == cur.section && u.start >= page.start && u.start < page.end) return
+            if (u != null && u.sec == cur.section && u.start >= page.start && u.start < host.visibleEnd) return
             val autoplay = playing || pendingPlay
             flushEngine()
             playing = false

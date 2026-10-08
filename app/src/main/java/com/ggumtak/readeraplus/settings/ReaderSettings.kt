@@ -58,6 +58,12 @@ data class ReaderSettings(
     val statusFontSizeSp: Float = StatusBands.DEFAULT_SP,
     val widowOrphanControl: Boolean = true,
     val pageBreak: PageBreakMode = PageBreakMode.LINE,
+    /**
+     * Pages across a landscape screen: 1 = one page over the whole width ("한 쪽", "온전히", the default), 2 = two pages side
+     * by side ("두 쪽", "반 페이지씩"). Only a paged view wider than tall counts ([columnsFor][com.ggumtak.readeraplus.reader.LayoutKeys.columnsFor]);
+     * portrait and the scroll mode ignore it.
+     */
+    val landscapePages: Int = 1,
     // --- parsing options (TXT / EPUB) ---
     val txtBlankLines: Int = ParseOptions.BLANK_AUTO,
     val txtStripIndent: Boolean = true,
@@ -99,6 +105,9 @@ data class ReaderSettings(
         const val MAX_FONT_SP = 60f
 
         const val PROGRESS_LANE_DP = 12
+
+        /** [landscapePages]: stored values other than 2 mean one page. */
+        fun cleanLandscapePages(n: Int): Int = if (n == 2) 2 else 1
     }
 }
 

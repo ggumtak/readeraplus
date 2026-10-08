@@ -150,9 +150,10 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         strokeJoin = Paint.Join.ROUND
     }
     private val rect = RectF()
-    private val ribbon = Path()
-    private var ribbonForWidth = -1
-    private var ribbonForHeight = -1f
+    /** The bookmark ribbon's path, per slot (0 = the view's right edge, 1 = a spread's left page) with what it was built for. */
+    private val ribbons = arrayOf(Path(), Path())
+    private val ribbonForWidth = intArrayOf(-1, -1)
+    private val ribbonForHeight = floatArrayOf(-1f, -1f)
 
     private var xs = FloatArray(256)
     private var lineChars = CharArray(0)
@@ -201,7 +202,11 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         progressDot.color = if (eink) palette.inkProgressDot else palette.progressDot
     }
 
-    /** Draws page [pageIndex] of [layout] (background, status lines, highlights, text, images, ribbon). */
+    /**
+     * Draws page [pageIndex] of [layout] (background, status lines, highlights, text, images, ribbon). With a [right]
+     * page (a landscape spread, [PageGeometry.columns] 2) both pages are painted in this one call, one frame: [layout]'s
+     * page at [contentLeft], [right]'s at its own x; the status bands and the progress line span the whole view.
+     */
     fun draw(
         canvas: Canvas,
         layout: SectionLayout,
@@ -211,9 +216,15 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         viewWidth: Int,
         viewHeight: Int,
         decor: PageDecor,
+        right: SpreadPage? = null,
     ) {
         canvas.drawColor(bg)
         val cw = layout.config.width.toFloat()
+        if (right != null) {
+            drawSpread(canvas, layout, pageIndex, contentLeft, contentTop, cw, viewWidth, viewHeight, decor, right)
+            if (images != null) prefetchNeighbours(layout, pageIndex)
+            return
+        }
         val ribbonH = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + cw, viewWidth) else 0f
         drawStatus(canvas, decor, contentLeft, contentTop, cw, viewWidth, viewHeight, ribbonH)
         if (pageIndex in 0 until layout.pages.size) {
@@ -224,6 +235,37 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         }
         if (decor.bookmarked) drawRibbon(canvas, viewWidth, ribbonH)
         if (images != null) prefetchNeighbours(layout, pageIndex)
+    }
+
+    /**
+     * The two pages of a landscape spread. The header, the footer and the progress line are those of the whole view (the
+     * footer over both columns); each page keeps its own bookmark ribbon: the left page's at its column's right edge, the
+     * right page's at the view's, where the single page's hangs.
+     */
+    private fun drawSpread(
+        canvas: Canvas, layout: SectionLayout, pageIndex: Int, contentLeft: Float, contentTop: Float, cw: Float,
+        viewWidth: Int, viewHeight: Int, decor: PageDecor, right: SpreadPage,
+    ) {
+        val span = right.left + cw - contentLeft
+        val rightRibbon = if (right.decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + span, viewWidth) else 0f
+        drawStatus(canvas, decor, contentLeft, contentTop, span, viewWidth, viewHeight, rightRibbon)
+        drawPageBody(canvas, layout, pageIndex, contentLeft, contentTop, cw, decor.highlights)
+        val rl = right.layout
+        if (rl != null) drawPageBody(canvas, rl, right.pageIndex, right.left, contentTop, rl.config.width.toFloat(), right.decor.highlights)
+        if (decor.bookmarked) {
+            val edge = right.boundary.toInt()
+            drawRibbon(canvas, edge, RibbonMath.height(density, contentTop, contentLeft + cw, edge), 1)
+        }
+        if (right.decor.bookmarked) drawRibbon(canvas, viewWidth, rightRibbon)
+    }
+
+    /** The highlights under the text and the text of page [pageIndex] with its box at ([left], [top]). */
+    private fun drawPageBody(canvas: Canvas, layout: SectionLayout, pageIndex: Int, left: Float, top: Float, cw: Float,
+                             highlights: List<Highlight>) {
+        if (pageIndex !in 0 until layout.pages.size) return
+        val lines = layout.pages[pageIndex].lines
+        if (highlights.isNotEmpty()) drawHighlights(canvas, layout, lines, highlights, left, top)
+        for (i in 0 until lines.size) drawLine(canvas, layout, pageIndex, lines[i], left, top, cw)
     }
 
     /**
@@ -803,8 +845,9 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
      * ReadEra's ribbon ([RibbonMath]) [h] px tall from the page view's very top, over a display cutout's band too (the
      * S25's camera band in fullscreen; the bookmark's tap corner covers it there: `TapZones.corner`).
      */
-    private fun drawRibbon(canvas: Canvas, viewWidth: Int, h: Float) {
-        if (ribbonForWidth != viewWidth || ribbonForHeight != h) {
+    private fun drawRibbon(canvas: Canvas, viewWidth: Int, h: Float, slot: Int = 0) {
+        val ribbon = ribbons[slot]
+        if (ribbonForWidth[slot] != viewWidth || ribbonForHeight[slot] != h) {
             val l = RibbonMath.left(viewWidth, density)
             val r = RibbonMath.right(viewWidth, density)
             ribbon.reset()
@@ -814,8 +857,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             ribbon.lineTo((l + r) / 2f, h - RibbonMath.notch(h))
             ribbon.lineTo(l, h)
             ribbon.close()
-            ribbonForWidth = viewWidth
-            ribbonForHeight = h
+            ribbonForWidth[slot] = viewWidth
+            ribbonForHeight[slot] = h
         }
         if (RibbonMath.halo(eink)) canvas.drawPath(ribbon, ribbonHalo)
         canvas.drawPath(ribbon, ribbonPaint)

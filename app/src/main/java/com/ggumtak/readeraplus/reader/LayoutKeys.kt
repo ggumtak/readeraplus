@@ -26,7 +26,26 @@ data class PageGeometry(
      * from the view's top over it (`RibbonMath`), and a thumbnail leaves it out.
      */
     val cutoutTop: Int = 0,
-)
+    /**
+     * Pages across the view: 1, or 2 for a landscape spread ([LayoutKeys.columnsFor]). Then [contentWidth] is ONE page's
+     * column (the width the sections are typeset at), [contentLeft] the left column's x, and the right column starts a
+     * [gutter] after the left one ([columnLeft]); the status bands, the progress line and the header still span the view.
+     */
+    val columns: Int = 1,
+    /** Px between two columns (0 with one). */
+    val gutter: Int = 0,
+    /**
+     * Width of the view a single page would have with these margins ([viewWidth] with one column; a spread's left
+     * margin, one column and the right margin): what a thumbnail of one page shows ([PageThumbs]).
+     */
+    val pageWidth: Int = viewWidth,
+) {
+    /** Left edge (px) of column [i] (0 = left page). */
+    fun columnLeft(i: Int): Int = contentLeft + i * (contentWidth + gutter)
+
+    /** Width of all columns and the gutters between them: the text box of a single page of the same view. */
+    val spanWidth: Int get() = columns * contentWidth + (columns - 1) * gutter
+}
 
 /** Pure derivation of page geometry, LayoutConfig and the page-count cache key from settings (unit-tested). */
 object LayoutKeys {
@@ -65,6 +84,15 @@ object LayoutKeys {
     private val DEFAULTS = ReaderSettings()
     /** Margin used when the "페이지 여백" switch is off. */
     const val TINY_MARGIN_DP = 4
+    /** The space between the two pages of a landscape spread is at least this wide (twice the side margin otherwise). */
+    const val MIN_GUTTER_DP = 24
+
+    /**
+     * Pages across the view: 2 for a paged view wider than tall whose [landscapePages] is 2, else 1. The scroll mode
+     * ([paged] false) and portrait never split the width. [geometry] still falls back to 1 when a column would be too narrow.
+     */
+    fun columnsFor(landscapePages: Int, viewW: Int, viewH: Int, paged: Boolean): Int =
+        if (paged && landscapePages == 2 && viewW > viewH) 2 else 1
 
     /**
      * The content box of a [viewW] × [viewH] page view. From the top: [extraTop], px that a display cutout covers
@@ -76,7 +104,7 @@ object LayoutKeys {
      * (Comet row 80); under the S25's 87 px band it starts one 15 dp margin below it (row 129). Only settings decide the
      * bands: nothing shown or hidden on the page moves the box.
      */
-    fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, extraTop: Int = 0): PageGeometry {
+    fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, extraTop: Int = 0, columns: Int = 1): PageGeometry {
         fun px(dp: Int): Int = Math.round(dp * density)
         fun margin(dp: Int): Int = if (s.pageMargins) dp.coerceAtLeast(0) else TINY_MARGIN_DP
         val ml = px(margin(s.marginLeftDp))
@@ -90,6 +118,21 @@ object LayoutKeys {
             w = minOf(minBox, viewW).coerceAtLeast(1)
             left = ((viewW - w) / 2).coerceAtLeast(0)
         }
+        // Two columns: the text box splits into two pages with a gutter of twice the side margin (at least 24 dp) between
+        // them; a column that would be narrower than the minimum box leaves the view a single page.
+        var cols = 1
+        var gutter = 0
+        var pageW = viewW
+        if (columns >= 2) {
+            val g = maxOf(ml + mr, px(MIN_GUTTER_DP))
+            val colW = (w - g) / 2
+            if (colW >= minBox) {
+                cols = 2
+                gutter = g
+                pageW = ml + colW + mr
+                w = colW
+            }
+        }
         val band = extraTop.coerceIn(0, viewH)
         val below = viewH - band
         // Under a display cutout the header is drawn inside the cutout's band (StatusFit.headerBaseline), so its own band
@@ -102,7 +145,7 @@ object LayoutKeys {
             h = minOf(minBox, below).coerceAtLeast(1)
             top = band + ((below - h) / 2).coerceAtLeast(0)
         }
-        return PageGeometry(viewW, viewH, left, top, w, h, band)
+        return PageGeometry(viewW, viewH, left, top, w, h, band, cols, gutter, pageW)
     }
 
     /** [txt]: TXT books always honour their parser's block hints (centred scene breaks, headings). */
@@ -138,6 +181,9 @@ object LayoutKeys {
      */
     private fun layoutPart(s: ReaderSettings): ReaderSettings = s.copy(
         invert = false,
+        // The page width a spread makes is part of the geometry (and so of the key), and [columnsFor] decides it with the
+        // view and the read mode: the setting alone changes nothing about the layout.
+        landscapePages = DEFAULTS.landscapePages,
         pageTheme = DEFAULTS.pageTheme,
         headerLeft = DEFAULTS.headerLeft, headerCenter = DEFAULTS.headerCenter, headerRight = DEFAULTS.headerRight,
         footerLeft = DEFAULTS.footerLeft, footerCenter = DEFAULTS.footerCenter, footerRight = DEFAULTS.footerRight,
@@ -299,6 +345,7 @@ object LayoutKeys {
         if (s.pageBreak != PageBreakMode.LINE) sb.append("|pb=").append(s.pageBreak.name)
         sb.append("|pub=").append(s.epubPublisherStyles)
         sb.append("|box=").append(g.contentWidth).append('x').append(g.contentHeight)
+        if (g.columns > 1) sb.append("|cols=").append(g.columns)
         sb.append("|d=").append(density)
         sb.append("|p=").append(parse.txtBlankLines).append(',').append(parse.txtStripIndent)
             .append(',').append(parse.txtJoinWrappedLines).append(',').append(parse.txtDetectChapters)

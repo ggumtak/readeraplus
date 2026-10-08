@@ -20,6 +20,7 @@ import android.view.accessibility.AccessibilityNodeProvider
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.render.PageDecor
 import com.ggumtak.readeraplus.render.PageRenderer
+import com.ggumtak.readeraplus.render.SpreadPage
 
 /** Everything needed to draw one page; immutable so a stale frame keeps drawing consistently during relayout. */
 class PageFrame(
@@ -30,7 +31,16 @@ class PageFrame(
     val left: Float,
     val top: Float,
     val decor: PageDecor,
-)
+    /** The right page of a landscape spread (drawn with the left one in the same frame); null with a single page. */
+    val right: SpreadPage? = null,
+) {
+    /** The same frame with another [decor] (and [right] page's), e.g. after a highlight or bookmark changed. */
+    fun withDecor(decor: PageDecor, right: SpreadPage? = this.right, renderer: PageRenderer = this.renderer): PageFrame =
+        PageFrame(renderer, layout, pageIndex, left, top, decor, right)
+
+    /** True when the view x [x] belongs to the right page of a spread. */
+    fun isRightAt(x: Float): Boolean = right != null && x >= right.boundary
+}
 
 /**
  * The page surface. Draws [frame] with its PageRenderer and turns raw touches into taps, swipes, long-presses
@@ -218,7 +228,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
             return
         }
         try {
-            f.renderer.draw(canvas, f.layout, f.pageIndex, f.left, f.top, width, height, f.decor)
+            f.renderer.draw(canvas, f.layout, f.pageIndex, f.left, f.top, width, height, f.decor, f.right)
             drawFailed = false
         } catch (t: Throwable) {
             if (!drawFailed) Log.w(TAG, "page draw failed", t)

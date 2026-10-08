@@ -195,6 +195,16 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         widowRow = ctx.toggleRow("외톨이 줄 방지", StatusUi.widowSummary(r.pageBreak), r.widowOrphanControl) { v ->
             edit { it.copy(widowOrphanControl = v) }
         }.also(body::addView)
+        // Two pages side by side on a landscape screen (the reader lays out again from the first character shown).
+        var landscapeRow: View? = null
+        landscapeRow = ctx.valueRow("가로 화면", R3Rows.landscapePages(r.landscapePages)) {
+            val opts = R3Rows.LANDSCAPE_PAGES
+            ctx.chooser("가로 화면", opts.map { R3Rows.landscapePagesChoice(it) }, opts.indexOf(Settings.reader.landscapePages)) { i ->
+                edit { it.copy(landscapePages = opts[i]) }
+                landscapeRow?.setSummary(R3Rows.landscapePages(opts[i]))
+            }
+        }.also(body::addView)
+        body.addView(ctx.note(R3Rows.LANDSCAPE_NOTE))
     }
 
     /** The two margin steppers and their note show only while "여백 사용" is on (one update with the switch). */
@@ -370,7 +380,7 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         const val DEFAULT_STYLE = "기본"
         const val RESET_TITLE = "기본값으로 되돌리기"
         const val RESET_SUMMARY = "흑백 반전 · TXT 정리는 그대로"
-        const val RESET_MESSAGE = "글꼴 · 글자 크기 · 간격 · 여백 · 화면 색을 기본값으로 되돌릴까요?\n흑백 반전과 TXT 정리는 그대로 둡니다."
+        const val RESET_MESSAGE = "글꼴 · 글자 크기 · 간격 · 여백 · 가로 화면 · 화면 색을 기본값으로 되돌릴까요?\n흑백 반전과 TXT 정리는 그대로 둡니다."
         private val ALIGNS = listOf(Align.LEFT, Align.JUSTIFY)
         private val BREAKS = listOf(LineBreakMode.WORD, LineBreakMode.CHAR)
     }

@@ -513,6 +513,13 @@ Owns `reader/` except `reader/ReaderHost.kt` and `reader/extras/`. `ReaderActivi
     counted sections' pages/char ratio (blended with a geometry prior) × `SectionInfo.approxChars`; labels never
     show a "~" (user request) — estimates are plain numbers.
   - Global page (1-based) = Σ counts[0 until section] + pageInSection + 1.
+- **Landscape spread** (`ReaderSettings.landscapePages` = 2, a paged view wider than tall; `LayoutKeys.columnsFor`):
+  the content box splits into two columns with a gutter of twice the side margin (at least 24 dp), sections are
+  typeset at the column width (`PageGeometry.contentWidth`; the key and the page counts carry the column count), and
+  one frame paints page i (left) and i + 1 (right) of the same layout (the next section's page 0 when the left page
+  ends its section and that layout is cached, else blank). The current page is the left one, spreads start at even
+  pages (`SpreadMath`), a turn moves two pages, touches right of the gutter's middle belong to the right page
+  (`PageFrame.right`), and the status line reads "12-13 / 3259". The scroll mode and thumbnails stay one column.
 - Navigation: next/prev within the section; crossing sections uses the prefetched layout (else lay out,
   showing nothing new until ready — no spinner flash for < 300 ms). `goTo(pos, remember)`: remember pushes the
   previous position to a stack; show the "← 돌아가기 (p. N)" chip until used, dismissed (its × button) or

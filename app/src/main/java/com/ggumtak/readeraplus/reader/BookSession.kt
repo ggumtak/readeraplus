@@ -68,6 +68,11 @@ class BookSession(
     val book: Book,
     val document: BookDocument,
     initialSettings: ReaderSettings,
+    /**
+     * Whether the book is read paged right now (false = the scroll mode, which keeps one column however wide the view):
+     * asked whenever a generation is made, with the view's size, for the landscape spread ([LayoutKeys.columnsFor]).
+     */
+    private val paged: () -> Boolean = { true },
 ) {
     /** Main-thread callbacks. */
     interface Listener {
@@ -247,15 +252,42 @@ class BookSession(
         val relayout = LayoutKeys.layoutChanged(forLayout(settings), forLayout(new), document.format)
         val same = PagePalette.drawSame(settings, new)
         settings = new
-        if (!relayout) return if (same) Change.NONE else Change.REPAINT
+        // 가로 화면 한 쪽 ↔ 두 쪽 changes the column width, not a layout field: only where the view is landscape and paged.
+        val spreadChanged = !relayout && columnsChanged()
+        if (!relayout && !spreadChanged) return if (same) Change.NONE else Change.REPAINT
         rebuild(anchor)
         return Change.RELAYOUT
+    }
+
+    /** The geometry the settings, the view and the read mode make now. */
+    private fun geometryNow(): PageGeometry {
+        val dm = context.resources.displayMetrics
+        val cols = LayoutKeys.columnsFor(settings.landscapePages, viewW, viewH, paged())
+        return LayoutKeys.geometry(settings, viewW, viewH, dm.density, viewCutoutTop, cols)
+    }
+
+    /** True when the current generation's page columns are not the ones the view and settings make now. */
+    private fun columnsChanged(): Boolean {
+        val g = generation ?: return false
+        if (closed || viewW <= 0 || viewH <= 0) return false
+        return geometryNow().columns != g.geometry.columns
+    }
+
+    /**
+     * The read mode changed (scroll ↔ paged) while the view is landscape with two pages: a new generation at the other
+     * column width, keeping [anchor]. False (nothing done) when the columns stay as they are, so the other cases switch
+     * mode without laying anything out.
+     */
+    fun modeChanged(anchor: AnchorSpec? = null): Boolean {
+        if (!columnsChanged()) return false
+        rebuild(anchor)
+        return true
     }
 
     private fun rebuild(anchor: AnchorSpec?) {
         if (closed || viewW <= 0 || viewH <= 0) return
         val dm = context.resources.displayMetrics
-        val g = LayoutKeys.geometry(settings, viewW, viewH, dm.density, viewCutoutTop)
+        val g = geometryNow()
         genCounter++
         liveGenId = genCounter
         generationBornAt = SystemClock.uptimeMillis()

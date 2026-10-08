@@ -414,6 +414,17 @@ object R3Rows {
     fun pageBreakChoice(m: PageBreakMode): String =
         if (m == PageBreakMode.PARAGRAPH) "문단 단위 (페이지 아래가 빌 수 있음)" else pageBreak(m) + SettingsFormat.DEFAULT_MARK
 
+    /** 가로 화면 (landscape): pages across the width ([ReaderSettings.landscapePages]). */
+    val LANDSCAPE_PAGES: List<Int> = listOf(1, 2)
+
+    fun landscapePages(n: Int): String = if (n == 2) "두 쪽 (나눠 보기)" else "한 쪽"
+
+    fun landscapePagesChoice(n: Int): String =
+        if (n == 2) "두 쪽 (나눠 보기 · 반 페이지씩)" else landscapePages(n) + SettingsFormat.DEFAULT_MARK
+
+    /** Under the 가로 화면 row: where it applies. */
+    const val LANDSCAPE_NOTE = "화면을 가로로 돌렸을 때만 적용됩니다. 스크롤로 볼 때는 한 쪽입니다."
+
     // ---- 화면 색 (읽기 설정 → 스타일; 웹소설 = 마루뷰어, 2026-10-04)
 
     val PAGE_THEMES: List<PageTheme> = listOf(PageTheme.PAPER, PageTheme.MARU, PageTheme.BLACK)

@@ -9,6 +9,7 @@ import com.ggumtak.readeraplus.settings.StatusItem
 /** Inputs of one status update for the page on screen. Reused, primitives and existing references only. */
 internal class StatusInputs {
     @JvmField var page = 0; @JvmField var total = 0              // globalPage / counts.total()
+    @JvmField var pageEnd = 0                                     // a landscape spread's right page (> page): "12-13 / 3259"; 0 = one page
     @JvmField var pages = PAGES_EXACT                             // PAGES_*: the page numbers are shown only when exact
     @JvmField var percent = 0                                     // ReaderFormat.percent(progress())
     @JvmField var bar = -1f                                       // char progress of the page start; last page = 1; -1 = off
@@ -125,7 +126,7 @@ internal class StatusModel {
         StatusItem.PAGE -> when {
             inp.pages != StatusInputs.PAGES_EXACT -> StatusText.pagesPending(b, 0, inp.pages)
             inp.page <= 0 -> 0
-            else -> StatusText.page(b, 0, inp.page, inp.total)
+            else -> StatusText.page(b, 0, inp.page, inp.total, inp.pageEnd)
         }
         StatusItem.PERCENT -> if (inp.percent < 0) 0 else StatusText.percent(b, 0, inp.percent)
         StatusItem.CHAPTER_PAGES_LEFT -> when {
@@ -179,10 +180,12 @@ internal object StatusText {
     private const val AM = "오전 "
     private const val PM = "오후 "
 
-    fun page(buf: CharArray, at: Int, page: Int, total: Int): Int {        // "12 / 3259" (total ≥ page)
+    /** "12 / 3259" (total ≥ page); with a [pageEnd] past [page] (a landscape spread) "12-13 / 3259". */
+    fun page(buf: CharArray, at: Int, page: Int, total: Int, pageEnd: Int = 0): Int {
         var n = int(buf, at, page)
+        if (pageEnd > page) n = int(buf, put(buf, n, '-'), pageEnd)
         n = put(buf, n, PAGE_SEP)
-        return int(buf, n, maxOf(total, page))
+        return int(buf, n, maxOf(total, page, pageEnd))
     }
 
     fun percent(buf: CharArray, at: Int, p: Int): Int = put(buf, int(buf, at, p), '%')   // "34%"

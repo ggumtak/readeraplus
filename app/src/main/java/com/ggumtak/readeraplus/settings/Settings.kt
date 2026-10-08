@@ -94,6 +94,7 @@ object Settings {
             putString("r.footerRight", s.footerRight.name)
             putBoolean("r.progressBar", s.progressBar)
             putString("r.pageBreak", s.pageBreak.name)
+            putInt("r.landscapePages", s.landscapePages)
             putInt(SideMargin.KEY, SideMargin.ZERO_DP)
             putInt(VerticalMargin.KEY, VerticalMargin.BANDS)
             putBoolean(MaruHeader.KEY, true)
@@ -220,6 +221,7 @@ object Settings {
             footerRight = mig?.footerRight ?: enumOr(p.getString("r.footerRight", null), d.footerRight),
             progressBar = p.getBoolean("r.progressBar", d.progressBar),
             pageBreak = enumOr(p.getString("r.pageBreak", null), d.pageBreak),
+            landscapePages = ReaderSettings.cleanLandscapePages(p.getInt("r.landscapePages", d.landscapePages)),
             statusFontSizeSp = p.getFloat("r.statusFontSizeSp", d.statusFontSizeSp),
             widowOrphanControl = p.getBoolean("r.widowOrphanControl", d.widowOrphanControl),
             txtBlankLines = p.getInt("r.txtBlankLines", d.txtBlankLines),

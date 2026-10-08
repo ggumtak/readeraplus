@@ -82,6 +82,7 @@ import com.ggumtak.readeraplus.render.PagePalette
 import com.ggumtak.readeraplus.render.PageRenderer
 import com.ggumtak.readeraplus.render.ProgressMath
 import com.ggumtak.readeraplus.render.QuoteLook
+import com.ggumtak.readeraplus.render.SpreadPage
 import com.ggumtak.readeraplus.render.StatusFit
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.KeyHold
@@ -169,6 +170,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         private const val HOLD_PAGES = 10
         private const val MIN_LONG_PRESS_MS = 200
         private const val MAX_LONG_PRESS_MS = 2000
+        /** [toggleBookmark]: the spread's left page, its right page, or what is on screen (a single page, or both). */
+        private const val SIDE_BOTH = 0
+        private const val SIDE_LEFT = 1
+        private const val SIDE_RIGHT = 2
     }
 
     private enum class Nav { OPEN, TURN, JUMP, RELAYOUT }
@@ -269,6 +274,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var curSection = 0
     private var curPageIdx = 0
     private var curLayout: SectionLayout? = null
+    /** The page on screen is the left one of a landscape spread (two columns, [PageGeometry.columns]); false = a single page. */
+    private var curSpread = false
+    /** The spread's right page (null with a single page); a null [RightShown.layout] = blank (the next section is not laid out). */
+    private var curRight: RightShown? = null
     /** The layout, generation and mode the screen-reader tree was last announced for. */
     private val a11yShown = A11yShown()
     /** Where the reader is (survives relayouts without drifting): a page start or an exact jump target. */
@@ -307,6 +316,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var scrollEmPx = 0f
 
     /** [fraction]: a go-to-percent jump (re-resolved once the target section's real length is known), else NaN. */
+    private class RightShown(val section: Int, val layout: SectionLayout?, val pageIndex: Int)
     private class PendingNav(val section: Int, val offset: Int, val pageIndex: Int, val fraction: Float)
     private var displayedGenId = -1
     private var lastChapterIdx = Int.MIN_VALUE
@@ -337,8 +347,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     override fun thumbCurrent(): Int = session?.counts?.globalPage(curSection, curPageIdx) ?: 0
     override fun thumbAspect(): Float {
         val g = session?.generation?.geometry ?: return 0f
-        // The page below the camera band (PageThumbs draws that part): no empty strip of paper on top.
-        return if (g.viewWidth > 0) (g.viewHeight - g.cutoutTop).toFloat() / g.viewWidth else 0f
+        // The page below the camera band (PageThumbs draws that part): no empty strip of paper on top. A spread's
+        // thumbnail is one page: the width of a single page with these margins.
+        return if (g.pageWidth > 0) (g.viewHeight - g.cutoutTop).toFloat() / g.pageWidth else 0f
     }
     override fun requestThumbs(first: Int, count: Int, widthPx: Int, heightPx: Int, progressive: Boolean, onBatch: (ThumbBatch) -> Unit) {
         val s = session ?: return
@@ -992,7 +1003,19 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         scroll?.onDeviceClass()
         if (want == scrollWanted) return
         scrollWanted = want
-        if (session != null && curLayout != null) switchMode()
+        if (session == null || curLayout == null) return
+        // A landscape spread is typeset at half the width, the scroll mode at the whole: the other mode needs another
+        // generation (laid out again from the first character shown). Everywhere else the same layouts serve both.
+        val s = session
+        if (s != null && !reopening) {
+            scroll?.stopMotion()
+            if (s.modeChanged(keepHere())) {
+                onNewGeneration()
+                relayout()
+                return
+            }
+        }
+        switchMode()
     }
 
     /**
@@ -1278,7 +1301,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 OpenBook.take(b.id)
                 readerTarget = eff
                 chrome.setTitle(b.title)
-                val s = BookSession(this@ReaderActivity, b, d, eff)
+                val s = BookSession(this@ReaderActivity, b, d, eff) { !scrollMode }
                 // PLAN §1.6.1: restored place > note jump > TXT fraction remap > DB row, all before the session is
                 // published (A §5.5: a resize during the open anchors at the same start).
                 val place = restoredPlace
@@ -1970,9 +1993,19 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             // it) or a closed book keeps the bitmap in the cache and paints nothing.
             val f = page.frame ?: return
             val open = session?.isClosed == false
-            if (!ImageRepaint.shouldRepaint(open, page.scroll == null, layout, f.layout, pageIndex, f.pageIndex)) return
-            val ln = PageImages.find(f.layout, f.pageIndex, src, w, h) ?: return
-            PageImages.bounds(ln, f.left, f.top, repaintBox)
+            val paged = page.scroll == null
+            if (ImageRepaint.shouldRepaint(open, paged, layout, f.layout, pageIndex, f.pageIndex)) {
+                val ln = PageImages.find(f.layout, f.pageIndex, src, w, h) ?: return
+                PageImages.bounds(ln, f.left, f.top, repaintBox)
+                page.invalidate(repaintBox[0], repaintBox[1], repaintBox[2], repaintBox[3])
+                return
+            }
+            // A spread's right page (its layout is the same one, or the next section's).
+            val r = f.right ?: return
+            if (!ImageRepaint.shouldRepaint(open, paged, layout, r.layout, pageIndex, r.pageIndex)) return
+            val rl = r.layout ?: return
+            val ln = PageImages.find(rl, r.pageIndex, src, w, h) ?: return
+            PageImages.bounds(ln, r.left, f.top, repaintBox)
             page.invalidate(repaintBox[0], repaintBox[1], repaintBox[2], repaintBox[3])
         }
 
@@ -1990,7 +2023,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             val s = session ?: return
             val l = curLayout ?: return
             if (s.peek(section) !== layout || layoutStale()) return
-            if (section == curSection + 1 && curPageIdx == l.pageCount - 1) {
+            // A spread whose left page ends the section shows the next section's first page on its right as soon as that
+            // section is laid out (it was blank: a turn never waits for it).
+            if (curSpread && section == curSection + 1 && curRight?.layout == null && curPageIdx + 1 >= l.pageCount) {
+                curRight = rightOf(s, curSection, l, curPageIdx)
+                refreshDecor(onlyIfChanged = true)
+            }
+            if (section == curSection + 1 && lastShownIdx(l) == l.pageCount - 1) {
                 prefetchImages(s, layout, 0)
             } else if (section == curSection - 1 && curPageIdx == 0) {
                 prefetchImages(s, layout, layout.pageCount - 1)
@@ -2037,10 +2076,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val s = session ?: return false
         if (scrollWanted != (scroll != null)) attachScroll(scrollWanted)
         scroll?.let {
+            curSpread = false
+            curRight = null
             return showScroll(it, s, section, layout, pageIndex, kind, anchorOffset)
         }
         val gen = s.generation ?: return false
-        val idx = pageIndex.coerceIn(0, (layout.pageCount - 1).coerceAtLeast(0))
+        // A landscape spread starts at an even page: the page a jump names is shown as the spread that holds it.
+        val spread = gen.geometry.columns > 1
+        val idx = pageIndex.coerceIn(0, (layout.pageCount - 1).coerceAtLeast(0)).let { if (spread) SpreadMath.start(it) else it }
         val renderer = try {
             s.renderer()
         } catch (t: Throwable) {
@@ -2054,8 +2097,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         curSection = section
         curLayout = layout
         curPageIdx = idx
+        curSpread = spread
+        curRight = if (spread) rightOf(s, section, layout, idx) else null
         displayedGenId = gen.id
-        s.touch(section)
+        // A right page of the next section keeps that layout cached while it is on screen.
+        val rs = curRight?.takeIf { it.layout != null }?.section ?: section
+        s.touch(section, rs)
         val p = layout.pages.getOrNull(idx)
         anchor = DocPosition(section, if (anchorOffset >= 0) anchorOffset else p?.start ?: 0)
         anchorLanded()
@@ -2063,7 +2110,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         errorPanel.visibility = View.GONE
         page.frame = PageFrame(
             renderer, layout, idx, gen.geometry.contentLeft.toFloat(), gen.geometry.contentTop.toFloat(),
-            buildDecor(sample = true),
+            buildDecor(sample = true), buildRight(),
         )
         page.invalidate()
         // A relayout shows the same place again: announced only when its layout or generation is another one (a
@@ -2098,11 +2145,27 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         s.prefetch(section + 1)
         s.prefetch(section - 1)
         // The renderer pre-decodes the neighbouring pages of this section only: at a section boundary, decode the
-        // page of the cached neighbour section a turn would show (a pending neighbour does it on arrival).
-        if (idx == layout.pageCount - 1) s.peek(section + 1)?.let { prefetchImages(s, it, 0) }
+        // page of the cached neighbour section a turn would show (a pending neighbour does it on arrival). A spread
+        // turns on from its right page.
+        val lastShown = if (spread) minOf(idx + 1, layout.pageCount - 1) else idx
+        if (lastShown == layout.pageCount - 1) s.peek(section + 1)?.let { prefetchImages(s, it, 0) }
         if (idx == 0) s.peek(section - 1)?.let { prefetchImages(s, it, it.pageCount - 1) }
         keeper.poke()
         return true
+    }
+
+    /**
+     * The right page of the spread whose left page is [idx] of [layout] (section [section]): the next page of the layout,
+     * else the first page of the next section when it is laid out already, else blank. Never waits for a layout.
+     */
+    private fun rightOf(s: BookSession, section: Int, layout: SectionLayout, idx: Int): RightShown {
+        val hasNext = section + 1 < s.sectionCount
+        val next = if (hasNext) s.peek(section + 1) else null
+        return when (SpreadMath.right(idx, layout.pageCount, hasNext, next != null)) {
+            SpreadMath.Right.SAME_SECTION -> RightShown(section, layout, idx + 1)
+            SpreadMath.Right.NEXT_SECTION -> RightShown(section + 1, next, 0)
+            SpreadMath.Right.BLANK -> RightShown(section + 1, null, 0)
+        }
     }
 
     /**
@@ -2481,10 +2544,22 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             preloadScrollImages(s, l, pageIndex)
             return
         }
+        if (spreadGen(s)) {
+            // A spread paints two pages of this layout.
+            val a = SpreadMath.start(pageIndex.coerceIn(0, (l.pageCount - 1).coerceAtLeast(0)))
+            val due = (a..minOf(a + 1, l.pageCount - 1)).filter { needsImageDecode(s, l, it) }
+            if (due.isEmpty()) return
+            val r = safely { s.renderer() } ?: return
+            withContext(Dispatchers.IO) { for (i in due) runCatching { r.preload(l, i) } }
+            return
+        }
         if (!needsImageDecode(s, l, pageIndex)) return
         val r = safely { s.renderer() } ?: return
         withContext(Dispatchers.IO) { runCatching { r.preload(l, pageIndex) } }
     }
+
+    /** The generation on screen (or about to be) lays out a landscape spread and the book is read paged. */
+    private fun spreadGen(s: BookSession): Boolean = !scrollWanted && (s.generation?.geometry?.columns ?: 1) > 1
 
     /**
      * Scroll (S §1.10): the first viewport can show the next page too (and the one above for a CONTEXT placement),
@@ -2503,6 +2578,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /** [preloadImages] has work to do: the page itself, and in scroll mode also the pages above and below it. */
     private fun needsPreload(s: BookSession, l: SectionLayout, pageIndex: Int): Boolean {
+        if (spreadGen(s)) {
+            val a = SpreadMath.start(pageIndex.coerceIn(0, (l.pageCount - 1).coerceAtLeast(0)))
+            return needsImageDecode(s, l, a) || (a + 1 < l.pageCount && needsImageDecode(s, l, a + 1))
+        }
         if (!scrollWanted) return needsImageDecode(s, l, pageIndex)
         for (i in (pageIndex - 1).coerceAtLeast(0)..(pageIndex + 1).coerceAtMost(l.pageCount - 1)) {
             if (needsImageDecode(s, l, i)) return true
@@ -2578,8 +2657,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val s = session ?: return false
         if (scroll != null || scrollWanted || layoutStale()) return false
         val n = backlog.net
-        val walk = TurnMath.walkInSection(sec, idx, n, s.sectionCount, l.pageCount)
-        if (walk.section != sec || walk.pageIndex == idx || !needsPreload(s, l, walk.pageIndex)) return false
+        val spread = spreadGen(s)
+        val from = if (spread) SpreadMath.start(idx) else idx
+        val walk = if (spread) SpreadMath.walkInSection(sec, from, n, s.sectionCount, l.pageCount)
+        else TurnMath.walkInSection(sec, idx, n, s.sectionCount, l.pageCount)
+        if (walk.section != sec || walk.pageIndex == from || !needsPreload(s, l, walk.pageIndex)) return false
         startQueuedPerf()
         backlog.take()
         if (walk.hitEdge) backlog.restore(if (n > 0) 1 else -1)
@@ -2709,6 +2791,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         if (layoutStale()) return false
         scroll?.let { return scrollTurn(it, next) }
+        if (curSpread) return spreadTurn(s, l, next)
         if (next) {
             if (curPageIdx < l.pageCount - 1) {
                 turnTo(s, l, curPageIdx + 1)
@@ -2724,6 +2807,21 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             if (curSection <= 0) return false
             navigateTo(curSection - 1, 0, -2, Nav.TURN)
         }
+        return true
+    }
+
+    /**
+     * One spread forward / back ([SpreadMath]): two pages inside the section, from a section's last spread to the next
+     * section's page 0 on the left (the previous section's last spread backwards). Shown at once like a single page.
+     */
+    private fun spreadTurn(s: BookSession, l: SectionLayout, next: Boolean): Boolean {
+        val w = SpreadMath.walkInSection(curSection, curPageIdx, if (next) 1 else -1, s.sectionCount, l.pageCount)
+        if (w.hitEdge) return false
+        if (w.section == curSection) {
+            if (w.pageIndex != curPageIdx) turnTo(s, l, w.pageIndex)
+            return true
+        }
+        navigateTo(w.section, 0, if (w.pageIndex == TurnMath.LAST_PAGE) -2 else w.pageIndex, Nav.TURN)
         return true
     }
 
@@ -2772,12 +2870,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         startQueuedPerf()
         val n = backlog.take()
-        val walk = TurnMath.walk(curSection, curPageIdx, n, s.sectionCount) { sec ->
+        val pagesOf = { sec: Int ->
             when {
                 sec == curSection -> l.pageCount
                 else -> s.peek(sec)?.pageCount ?: if (s.counts.isKnown(sec)) s.counts.pages(sec) else -1
             }
         }
+        val walk = if (curSpread) SpreadMath.walk(curSection, curPageIdx, n, s.sectionCount, pagesOf)
+        else TurnMath.walk(curSection, curPageIdx, n, s.sectionCount, pagesOf)
         // Kept before navigating: a synchronous display of the next section flushes the rest right away.
         backlog.restore(walk.remaining)
         if (walk.section == curSection) {
@@ -2889,14 +2989,21 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         scroll?.let { return !layoutStale() && it.lineWhollyVisible(pos.section, pos.offset) }
         val l = curLayout ?: return false
         val p = currentPage ?: return false
-        return pos.section == curSection && !layoutStale() && onPage(pos.offset, p, curPageIdx == l.pageCount - 1)
+        if (layoutStale()) return false
+        if (pos.section == curSection && onPage(pos.offset, p, curPageIdx == l.pageCount - 1)) return true
+        // The spread's right page counts as the page on screen too.
+        val r = curRight ?: return false
+        val rl = r.layout ?: return false
+        val rp = rl.pages.getOrNull(r.pageIndex) ?: return false
+        return curSpread && pos.section == r.section && onPage(pos.offset, rp, r.pageIndex == rl.pageCount - 1)
     }
 
     /** Jump to a page of a section (seek bar, 페이지 이동): one exact draw, laid out first when needed. */
     override fun goToPage(section: Int, pageIndex: Int, remember: Boolean) {
         if (session == null) return
         // Scroll: the text may sit mid-page, so the jump (to that page's start) always counts as one.
-        val here = scroll == null && section == curSection && pageIndex == curPageIdx && !layoutStale()
+        val shownAt = if (curSpread) SpreadMath.start(pageIndex) else pageIndex
+        val here = scroll == null && section == curSection && shownAt == curPageIdx && !layoutStale()
         if (remember && curLayout != null && !here) returnNav.onJump(currentPosition())
         jumpTo(section, 0, pageIndex.coerceAtLeast(0))
     }
@@ -3005,7 +3112,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             return
         }
         val p = currentPage ?: return
-        chapterTarget(curSection, curPageIdx, p.start, p.end, next)?.let { goTo(it, remember = false) }
+        // A spread looks for the next chapter past both its pages.
+        chapterTarget(curSection, curPageIdx, p.start, visibleEnd, next)?.let { goTo(it, remember = false) }
     }
 
     /**
@@ -3063,6 +3171,34 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     /**
+     * The right page of the spread on screen with its own highlights and bookmark mark, or null with a single page
+     * (the frame then draws one). Its x is the second column's; touches from [SpreadPage.boundary] on are its.
+     */
+    private fun buildRight(): SpreadPage? {
+        if (!curSpread || scroll != null) return null
+        val g = session?.generation?.geometry ?: return null
+        val r = curRight ?: return null
+        val left = g.columnLeft(1).toFloat()
+        val boundary = left - g.gutter / 2f
+        val l = r.layout
+        val p = l?.pages?.getOrNull(r.pageIndex)
+        if (l == null || p == null) return SpreadPage(r.section, null, 0, left, boundary)
+        var hl: ArrayList<Highlight>? = null
+        if (quoteRows.isNotEmpty()) hl = addOverlapping(hl, quotesFor(r.section, l.content.text), p)
+        if (ownerHighlights.isNotEmpty()) {
+            for ((sec, list) in ownerHighlights.values) if (sec == r.section) hl = addOverlapping(hl, list, p)
+        }
+        val marked = isBookmarkedAt(r.section, l, r.pageIndex, p)
+        return SpreadPage(r.section, l, r.pageIndex, left, boundary, PageDecor(hl ?: emptyList(), marked))
+    }
+
+    /** True when the spread's right page draws what [b] does (same page, same highlights and bookmark mark). */
+    private fun sameRight(a: SpreadPage?, b: SpreadPage?): Boolean {
+        if (a == null || b == null) return a === b
+        return a.layout === b.layout && a.pageIndex == b.pageIndex && a.left == b.left && DecorDiff.same(a.decor, b.decor)
+    }
+
+    /**
      * The display's rounded top corners relative to the page view, for the header's side insets (MaruViewer's line:
      * the corners, not the text margins). The view's place in the window only when a corner is rounded.
      */
@@ -3109,11 +3245,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 pageIdx = al.pageForOffset(at)
             }
         }
-        val lastOfBook = if (sc != null) sc.atBookEnd() else curSection == s.sectionCount - 1 && curPageIdx == l.pageCount - 1
+        // A spread holding the book's last page is at its end (the right page is that page, or the left one is).
+        val lastOfBook = if (sc != null) sc.atBookEnd() else curSection == s.sectionCount - 1 && lastShownIdx(l) == l.pageCount - 1
         inp.pages = pagesState(s)
+        inp.pageEnd = 0
         if (all || st.shows(StatusItem.PAGE)) {
             inp.page = c.globalPage(sec, pageIdx)
             inp.total = c.total()
+            // The status line names both pages of a spread: "12-13 / 3259" (everything else counts the left page).
+            val r = curRight
+            if (sc == null && curSpread && r?.layout != null) inp.pageEnd = c.globalPage(r.section, r.pageIndex)
         }
         if (all || st.shows(StatusItem.PERCENT)) inp.percent = ReaderFormat.percent(progress())
         inp.bar = if (st.progressBar) (if (lastOfBook) 1f else c.charProgress(sec, at)) else -1f
@@ -3214,8 +3355,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // changed under it.
         if (f.layout !== curLayout || f.pageIndex != curPageIdx || layoutStale()) return
         val d = buildDecor(sample)
-        if (onlyIfChanged && sameDecor(d, f.decor)) return
-        page.frame = PageFrame(f.renderer, f.layout, f.pageIndex, f.left, f.top, d)
+        val r = buildRight()
+        if (onlyIfChanged && sameDecor(d, f.decor) && sameRight(r, f.right)) return
+        page.frame = f.withDecor(d, r)
         page.invalidate()
     }
 
@@ -3234,9 +3376,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     private fun isBookmarked(l: SectionLayout, p: PageInfo): Boolean {
         scroll?.let { return anyVisibleBookmark(it) }
-        val last = curPageIdx == l.pageCount - 1
+        return isBookmarkedAt(curSection, l, curPageIdx, p)
+    }
+
+    /** A bookmark sits on page [idx] ([p]) of [l], section [section] (the last page also holds one at its very end). */
+    private fun isBookmarkedAt(section: Int, l: SectionLayout, idx: Int, p: PageInfo): Boolean {
+        val last = idx == l.pageCount - 1
         val list = bookmarks
-        for (i in list.indices) if (list[i].section == curSection && onPage(list[i].offset, p, last)) return true
+        for (i in list.indices) if (list[i].section == section && onPage(list[i].offset, p, last)) return true
         return false
     }
 
@@ -3308,13 +3455,17 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         return batteryLevel
     }
 
+    /** Index of the last page of [l] on screen: the page itself, or a spread's right page. */
+    private fun lastShownIdx(l: SectionLayout): Int =
+        if (curSpread && scroll == null) minOf(curPageIdx + 1, l.pageCount - 1) else curPageIdx
+
     /** 0..1 reading progress: by pages once counted, else by characters (last page = 1). */
     private fun progress(): Float {
         val s = session ?: return 0f
         if (scroll?.atBookEnd() == true) return 1f
         val c = s.counts
         val l = curLayout ?: return c.charProgress(anchor.section, anchor.offset)
-        if (curSection == s.sectionCount - 1 && curPageIdx == l.pageCount - 1) return 1f
+        if (curSection == s.sectionCount - 1 && lastShownIdx(l) == l.pageCount - 1) return 1f
         if (c.isComplete) return PageProgress.of(c.globalPage(curSection, curPageIdx), c.total())
         val p = l.pages.getOrNull(curPageIdx)
         return c.charProgress(curSection, p?.start ?: anchor.offset)
@@ -3489,7 +3640,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         val f = page.frame ?: return
         if (layoutStale() || f.layout !== curLayout || f.pageIndex != curPageIdx) return
-        page.frame = PageFrame(s.renderer(), f.layout, f.pageIndex, f.left, f.top, buildDecor())
+        page.frame = f.withDecor(buildDecor(), buildRight(), s.renderer())
         page.invalidate()
     }
 
@@ -3531,7 +3682,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 if (d.sections.isEmpty()) throw DocumentException("내용이 없는 책입니다")
                 // Layout-only changes made while parsing (same parse options) are taken along.
                 val use = readerTarget?.takeIf { !LayoutKeys.parseChanged(newSettings, it, d.format, b.encoding) } ?: newSettings
-                val s = BookSession(this@ReaderActivity, b, d, use)
+                val s = BookSession(this@ReaderActivity, b, d, use) { !scrollMode }
                 fresh = s
                 s.listener = sessionListener
                 val target = if (s.sectionCount == oldCount) pos else s.counts.locateFraction(ratio)
@@ -3695,14 +3846,62 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
         }
         val f = page.frame ?: return -1
-        val p = f.layout.pages.getOrNull(f.pageIndex) ?: return -1
+        // A spread: the column under x (a blank right side has no layout).
+        val l = layoutAt(f, x) ?: return -1
+        val p = l.pages.getOrNull(pageIndexAt(f, x)) ?: return -1
         return try {
-            LineGeometry.hitTest(f.layout, p, x - f.left, y - f.top)
+            LineGeometry.hitTest(l, p, x - leftAt(f, x), y - f.top)
         } catch (t: Throwable) {
             Log.w(TAG, "hitTest failed", t)
             -1
         }
     }
+
+    // The page of the frame under view x: the right page of a spread from its boundary on, else the frame's own page.
+    // Plain returns, no objects: the selection's calibration asks ~1,400 times.
+    private fun layoutAt(f: PageFrame, x: Float): SectionLayout? = if (f.isRightAt(x)) f.right?.layout else f.layout
+    private fun pageIndexAt(f: PageFrame, x: Float): Int = if (f.isRightAt(x)) f.right?.pageIndex ?: 0 else f.pageIndex
+    private fun leftAt(f: PageFrame, x: Float): Float = if (f.isRightAt(x)) f.right?.left ?: f.left else f.left
+    private fun sectionAt(f: PageFrame, x: Float): Int = if (f.isRightAt(x)) f.right?.section ?: curSection else curSection
+
+    /** The section whose page is under view x (a spread's right page can belong to the next section). */
+    override fun hitSection(x: Float): Int {
+        val f = page.frame
+        return if (scroll == null && f?.right != null) sectionAt(f, x) else currentPosition().section
+    }
+
+    /** The content box's origin in the view when the host knows it for sure (a spread's left page), else null. */
+    override fun pageOrigin(out: FloatArray): Boolean {
+        val f = page.frame ?: return false
+        if (scroll != null || f.right == null) return false
+        out[0] = f.left
+        out[1] = f.top
+        return true
+    }
+
+    /** The pages on screen, left to right, as the selection and the dictionary see them (a spread: up to two). */
+    override fun shownPages(): List<ShownPage> {
+        val l = currentLayout ?: return emptyList()
+        val p = currentPage ?: return emptyList()
+        val first = ShownPage(currentPosition().section, l, p, currentPageIndex, 0f)
+        val r = curRight
+        val f = page.frame
+        val fr = f?.right
+        if (scroll != null || !curSpread || r == null || fr == null) return listOf(first)
+        val rl = r.layout ?: return listOf(first)
+        val rp = rl.pages.getOrNull(r.pageIndex) ?: return listOf(first)
+        return listOf(first, ShownPage(r.section, rl, rp, r.pageIndex, fr.left - f.left))
+    }
+
+    override val pageStep: Int get() = if (curSpread && scroll == null) 2 else 1
+
+    override val visibleEnd: Int
+        get() {
+            val end = currentPage?.end ?: 0
+            val r = curRight
+            if (scroll != null || !curSpread || r == null || r.section != curSection) return end
+            return r.layout?.pages?.getOrNull(r.pageIndex)?.end ?: end
+        }
 
     /**
      * The visible char whose glyph box (advance × the line's glyph band, [slopPx] wider on each side) holds (x, y) in
@@ -3720,11 +3919,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
         }
         val f = page.frame ?: return -1
-        val p = f.layout.pages.getOrNull(f.pageIndex) ?: return -1
+        val l = layoutAt(f, x) ?: return -1
+        val p = l.pages.getOrNull(pageIndexAt(f, x)) ?: return -1
         return try {
             // Sideways slop only: above and below, the band's own air is the margin (a vertical slop would reach
             // across most of the white gap between two lines).
-            LineGeometry.glyphAt(f.layout, p, x - f.left, y - f.top, slopPx, slopY = 0f)
+            LineGeometry.glyphAt(l, p, x - leftAt(f, x), y - f.top, slopPx, slopY = 0f)
         } catch (t: Throwable) {
             Log.w(TAG, "glyphAt failed", t)
             -1
@@ -3744,16 +3944,43 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         return content.text.substring(a, e)
     }
 
-    override fun toggleBookmark() {
+    override fun toggleBookmark() = toggleBookmark(SIDE_BOTH)
+
+    /**
+     * Bookmark toggling for one page of a spread ([SIDE_LEFT], [SIDE_RIGHT]: the page's bookmarks go, else one is added at
+     * its start) or, as for a single page, for what is on screen ([SIDE_BOTH]: every bookmark of the pages shown goes,
+     * else one is added at the left page's start).
+     */
+    private fun toggleBookmark(side: Int) {
         val b = bookRef ?: return
         // Scroll: the virtual page (the lines wholly on screen); a bookmark anywhere on screen is removed.
         val vp = vpage()
-        val l = vp?.layout ?: curLayout ?: return
-        val p = currentPage ?: return
-        val sec = vp?.section ?: curSection
+        var l = vp?.layout ?: curLayout ?: return
+        var p = currentPage ?: return
+        var sec = vp?.section ?: curSection
+        val spread = scroll == null && curSpread
+        val r = curRight
+        val rl = r?.layout
+        val rp = rl?.pages?.getOrNull(r?.pageIndex ?: 0)
+        if (spread && side == SIDE_RIGHT) {
+            // The right page (nothing to mark when it is blank).
+            if (r == null || rl == null || rp == null) return
+            l = rl
+            p = rp
+            sec = r.section
+        }
         val hits = scroll?.let { visibleBookmarks(it) } ?: run {
-            val last = curPageIdx == l.pageCount - 1
-            bookmarks.filter { it.section == curSection && onPage(it.offset, p, last) }
+            val out = ArrayList<Bookmark>()
+            if (!spread || side != SIDE_RIGHT) {
+                val last = curPageIdx == (curLayout?.pageCount ?: 0) - 1
+                val lp = currentPage
+                if (lp != null) for (m in bookmarks) if (m.section == curSection && onPage(m.offset, lp, last)) out += m
+            }
+            if (spread && side != SIDE_LEFT && r != null && rl != null && rp != null) {
+                val last = r.pageIndex == rl.pageCount - 1
+                for (m in bookmarks) if (m.section == r.section && onPage(m.offset, rp, last) && m !in out) out += m
+            }
+            out
         }
         bumpThumbDecor(sec)
         for (mark in hits) if (mark.section != sec) bumpThumbDecor(mark.section)
@@ -3902,7 +4129,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
             val f = page.frame ?: return null
             val p = f.layout.pages.getOrNull(f.pageIndex) ?: return null
-            return A11ySource(s, displayedGenId, listOf(A11yEntry(curSection, f.layout, p, f.left, f.top)))
+            val first = A11yEntry(curSection, f.layout, p, f.left, f.top)
+            // A spread reads as two pages: the left, then the right (when it has text).
+            val r = f.right
+            val rl = r?.layout
+            val rp = rl?.pages?.getOrNull(r.pageIndex)
+            if (r == null || rl == null || rp == null) return A11ySource(s, displayedGenId, listOf(first))
+            return A11ySource(s, displayedGenId, listOf(first, A11yEntry(r.section, rl, rp, r.left, f.top)))
         }
 
         override fun onAccessibilityLink(section: Int, href: String) {
@@ -3916,14 +4149,17 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             closeChrome()
             return
         }
-        val l = curLayout ?: return
+        val l0 = curLayout ?: return
         if (session == null) return
         scroll?.let { if (scrollLinkTap(it, x, y)) return }
         val off = if (scroll == null) hitTest(x, y) else -1
+        // A spread: the link of the page under the finger, in that page's own section.
+        val fr = page.frame
+        val l = (if (scroll == null && fr != null) layoutAt(fr, x) else null) ?: l0
         if (off in 0 until l.content.length) {
             val link = l.content.styleAt(off).link
             if (link != null && fingerOnChar(off, x, y)) {
-                followLink(link)
+                followLink(link, if (scroll == null && fr != null) sectionAt(fr, x) else curSection)
                 return
             }
         }
@@ -3934,7 +4170,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val zh = (page.height - band).coerceAtLeast(1)
         when (TapZones.corner(x, zy, page.width, zh)) {
             Corner.TOP_RIGHT -> if (app.bookmarkByTouch) {
-                toggleBookmark()
+                toggleBookmark(if (curSpread && scroll == null) SIDE_RIGHT else SIDE_BOTH)
                 return
             }
             Corner.TOP_LEFT -> if (app.invertByTouch) {
@@ -3942,6 +4178,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 return
             }
             Corner.NONE -> {}
+        }
+        // A spread's left page has a bookmark corner of its own, where its ribbon hangs: the top right of its column.
+        val middle = page.frame?.right?.boundary
+        if (app.bookmarkByTouch && scroll == null && middle != null && x < middle &&
+            TapZones.corner(x, zy, middle.toInt(), zh) == Corner.TOP_RIGHT
+        ) {
+            toggleBookmark(SIDE_LEFT)
+            return
         }
         runTapAction(TapZones.actionAt(app, x, zy, page.width, zh))
     }
@@ -3995,12 +4239,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
         }
         val f = page.frame ?: return false
-        val p = f.layout.pages.getOrNull(f.pageIndex) ?: return false
+        val l = layoutAt(f, x) ?: return false
+        val p = l.pages.getOrNull(pageIndexAt(f, x)) ?: return false
         val slop = dp(slopDp).toFloat()
-        val cx = x - f.left
+        val cx = x - leftAt(f, x)
         val cy = y - f.top
         return try {
-            LineGeometry.rangeRects(f.layout, p, offset, offset + 1).any {
+            LineGeometry.rangeRects(l, p, offset, offset + 1).any {
                 cx >= it.left - slop && cx <= it.right + slop && cy >= it.top - slop && cy <= it.bottom + slop
             }
         } catch (t: Throwable) {
@@ -4132,7 +4377,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         holdSection = curSection
         holdPageIdx = curPageIdx
         holdStart = p?.start ?: anchor.offset
-        holdEnd = p?.end ?: anchor.offset
+        holdEnd = if (p != null) visibleEnd else anchor.offset
     }
 
     /** The hold action ([KeyHold.CHAPTER] / [KeyHold.TEN]) relative to where the key went down. */
@@ -4147,7 +4392,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
             KeyHold.TEN -> {
                 // The other pages of the ten, applied at once like a burst of taps (queued behind a pending layout).
-                val n = HOLD_PAGES - if (holdTurned) 1 else 0
+                // Ten pages: five spreads of a landscape spread.
+                val n = (if (curSpread && scroll == null) HOLD_PAGES / 2 else HOLD_PAGES) - if (holdTurned) 1 else 0
                 backlog.restore(if (next) n else -n)
                 if (navJob?.isActive != true) flushTurns()
                 if (ttsSpeaking()) safely { tts?.onUserNavigated() }
@@ -4206,7 +4452,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             chrome.setPage(label, 1000, (progress() * 1000f + 1e-4f).toInt(), shown)
         }
         val p = l.pages.getOrNull(curPageIdx)
-        chrome.setBookmarked(p != null && isBookmarked(l, p))
+        chrome.setBookmarked(p != null && (isBookmarked(l, p) || rightBookmarked()))
         chrome.setRotationLocked(app.orientationLock != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
         returnNav.bind()
         chrome.setPinned(returnNav.pinnedHere())
@@ -4525,7 +4771,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         scroll?.let { return anyVisibleBookmark(it) }
         val l = curLayout ?: return false
         val p = currentPage ?: return false
-        return isBookmarked(l, p)
+        return isBookmarked(l, p) || rightBookmarked()
+    }
+
+    /** A spread's right page carries a bookmark. */
+    private fun rightBookmarked(): Boolean {
+        val r = curRight ?: return false
+        val rl = r.layout ?: return false
+        val rp = rl.pages.getOrNull(r.pageIndex) ?: return false
+        return curSpread && scroll == null && isBookmarkedAt(r.section, rl, r.pageIndex, rp)
     }
 
     /** The reader closes its chrome (tap, BACK, menu key): like any closed panel, one turn toward the cadence. */

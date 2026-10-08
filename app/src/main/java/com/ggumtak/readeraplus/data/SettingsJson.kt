@@ -91,6 +91,7 @@ internal object SettingsJson {
         .put("r.footerRight", s.footerRight.name)
         .put("r.progressBar", s.progressBar)
         .put("r.pageBreak", s.pageBreak.name)
+        .put("r.landscapePages", s.landscapePages)
         .put(SideMargin.KEY, SideMargin.ZERO_DP)
         .put(VerticalMargin.KEY, VerticalMargin.BANDS)
         .put("r.statusFontSizeSp", s.statusFontSizeSp.toDouble())
@@ -136,6 +137,7 @@ internal object SettingsJson {
         footerRight = enumOf(BackupJson.strOrNull(o, "r.footerRight"), base.footerRight),
         progressBar = BackupJson.bool(o, "r.progressBar", base.progressBar),
         pageBreak = enumOf(BackupJson.strOrNull(o, "r.pageBreak"), base.pageBreak),
+        landscapePages = ReaderSettings.cleanLandscapePages(BackupJson.int(o, "r.landscapePages", base.landscapePages)),
         statusFontSizeSp = BackupJson.float(o, "r.statusFontSizeSp", base.statusFontSizeSp).coerceIn(6f, 40f),
         widowOrphanControl = BackupJson.bool(o, "r.widowOrphanControl", base.widowOrphanControl),
         txtBlankLines = BackupJson.int(o, "r.txtBlankLines", base.txtBlankLines).coerceIn(0, 3),

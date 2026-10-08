@@ -388,7 +388,8 @@ class PageThumbs(
         if (closed || lruGen != t.key.genId) return null
         return try {
             val g = t.gen.geometry
-            val viewW = g.viewWidth
+            // A landscape spread's thumbnail is one page (its left margin, one column and the right margin).
+            val viewW = g.pageWidth
             val viewH = g.viewHeight
             // The page below the camera band (fullscreen S25): the band holds only paper, left out here.
             val band = g.cutoutTop.coerceIn(0, maxOf(0, viewH - 1))
