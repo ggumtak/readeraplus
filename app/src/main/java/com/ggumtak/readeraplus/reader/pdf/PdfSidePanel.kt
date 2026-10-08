@@ -88,9 +88,13 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
     val isShown: Boolean get() = overlay != null
 
     /** Slides the panel out and releases everything it holds (thumbnails, callbacks). */
+    /** Called when the panel starts to close (the host stops work that only the panel shows). */
+    var onHidden: (() -> Unit)? = null
+
     fun hide() {
         val ov = overlay ?: return
         if (hiding) return
+        onHidden?.invoke()
         hideKeyboard()
         releaseModes()
         hiding = true
@@ -809,6 +813,8 @@ private class PageThumbList(
 
     /** Pages whose cell is currently bound (visible); read from the render thread through `wanted`. */
     private val bound = ConcurrentHashMap<Int, Boolean>()
+    /** The cell bound to each page (main thread). */
+    private val holders = HashMap<Int, ThumbHolder>()
 
     /** Pages with a request in flight. Main thread only. */
     private val pending = HashSet<Int>()
@@ -864,10 +870,14 @@ private class PageThumbList(
 
     private fun bind(h: ThumbHolder, page: Int) {
         if (h.page != page) {
-            if (h.page >= 0) bound.remove(h.page)
+            if (h.page >= 0) {
+                bound.remove(h.page)
+                if (holders[h.page] === h) holders.remove(h.page)
+            }
             h.page = page
         }
         bound[page] = true
+        holders[page] = h
         val isCurrent = page == current
         (h.card.background as GradientDrawable).setStroke(
             if (isCurrent) ctx.dp(3) else ctx.dp(1).coerceAtLeast(1),
@@ -903,7 +913,9 @@ private class PageThumbList(
         pending.remove(page)
         if (bmp != null) {
             cache.put(page, bmp)
-            if (h.page == page) h.image.setImageBitmap(bmp)
+            // The cell that shows the page now (it may have scrolled away and come back in another cell).
+            val target = if (h.page == page) h else holders[page]
+            if (target != null && target.page == page) target.image.setImageBitmap(bmp)
         } else if (req.skipped && h.page == page && bound.containsKey(page)) {
             // The cell scrolled away and came back before this skipped request was reported: ask again.
             request(h, page)

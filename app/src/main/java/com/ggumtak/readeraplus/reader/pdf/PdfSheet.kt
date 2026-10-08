@@ -55,7 +55,9 @@ internal object PdfSheet {
                 setPadding(0, ctx.dp(16), 0, ctx.dp(8))
             }, lp())
         }
-        val scroll = MaxHeightScroll(ctx, (ctx.resources.displayMetrics.heightPixels * 0.72f).toInt()).apply {
+        // Room for the title, the 닫기 bar and margins stays on screen, landscape included.
+        val maxScroll = (ctx.resources.displayMetrics.heightPixels - ctx.dp(if (title == null) 120 else 170)).coerceAtLeast(ctx.dp(160))
+        val scroll = MaxHeightScroll(ctx, maxScroll).apply {
             isVerticalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
             addView(content, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -81,7 +83,29 @@ internal object PdfSheet {
         }
         if (onDismiss != null) dialog.setOnDismissListener { onDismiss() }
         dialog.show()
+        keepBars(dialog, activity)
         return dialog
+    }
+
+    /**
+     * A full-screen reader keeps its bars hidden while a sheet is open: the sheet's window hides the same system bars
+     * as the activity's (else they would show, change the page area and re-render the page).
+     */
+    private fun keepBars(dialog: Dialog, activity: Activity) {
+        if (android.os.Build.VERSION.SDK_INT < 30) return
+        val owner = activity.window ?: return
+        val ownerDecor = owner.peekDecorView() ?: return
+        val w = dialog.window ?: return
+        if (w.peekDecorView() == null) return
+        val c = w.insetsController ?: return
+        val insets = ownerDecor.rootWindowInsets ?: return
+        var hide = 0
+        if (!insets.isVisible(android.view.WindowInsets.Type.statusBars())) hide = hide or android.view.WindowInsets.Type.statusBars()
+        if (!insets.isVisible(android.view.WindowInsets.Type.navigationBars())) hide = hide or android.view.WindowInsets.Type.navigationBars()
+        if (hide != 0) {
+            c.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            c.hide(hide)
+        }
     }
 
     fun rounded(ctx: Context, color: Int, radiusDp: Float): GradientDrawable = GradientDrawable().apply {

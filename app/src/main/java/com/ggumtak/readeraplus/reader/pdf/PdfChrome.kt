@@ -27,7 +27,8 @@ internal class PdfChrome(private val activity: Activity, root: FrameLayout, priv
 
     interface Listener {
         fun onBack()
-        fun onPages()
+        /** The page navigator on [tab] (PdfSidePanel.TAB_*). */
+        fun onPages(tab: Int)
         fun onSearch()
         fun onBookmark()
         fun onSettings()
@@ -53,8 +54,8 @@ internal class PdfChrome(private val activity: Activity, root: FrameLayout, priv
     private var insetBottom = 0
     private var shown = true
 
-    /** Height the bars take at the top (inset included) while shown. */
-    val topSpace: Int get() = if (!shown) insetTop else insetTop + activity.dp(TOP_DP) + activity.dp(TOOLBAR_DP + 2 * TOOLBAR_MARGIN_DP)
+    /** Height kept free for the bars at the top (inset included), shown or not: hiding them re-renders nothing. */
+    val topSpace: Int get() = insetTop + activity.dp(TOP_DP) + activity.dp(TOOLBAR_DP + 2 * TOOLBAR_MARGIN_DP)
 
     init {
         val ctx = activity
@@ -64,7 +65,7 @@ internal class PdfChrome(private val activity: Activity, root: FrameLayout, priv
             minimumHeight = ctx.dp(TOP_DP)
         }
         top.addView(icon(R.drawable.ic_arrow_back, "닫기") { listener.onBack() })
-        top.addView(icon(R.drawable.ic_grid_view, "페이지 탐색") { listener.onPages() })
+        top.addView(icon(R.drawable.ic_grid_view, "페이지 탐색") { listener.onPages(PdfSidePanel.TAB_PAGES) })
         title = ctx.label("", 16f, color = 0xFFE0E0E0.toInt(), maxLines = 1).apply { setPadding(ctx.dp(8), 0, ctx.dp(8), 0) }
         top.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         top.addView(icon(R.drawable.ic_search, "찾기") { listener.onSearch() })
@@ -164,7 +165,7 @@ internal class PdfChrome(private val activity: Activity, root: FrameLayout, priv
         toolRow.addView(divider())
         toolRow.addView(PdfToolIcon(activity, PdfToolIcon.LASSO).apply { setOnClickListener { listener.onTool(PdfPageView.MODE_LASSO) } })
         toolRow.addView(icon(R.drawable.ic_ink_highlighter, "형광펜") { listener.onTool(PdfPageView.MODE_HIGHLIGHTER) })
-        toolRow.addView(icon(R.drawable.ic_bookmark_add, "책갈피 목록") { listener.onPages() })
+        toolRow.addView(icon(R.drawable.ic_bookmark_add, "책갈피 목록") { listener.onPages(PdfSidePanel.TAB_BOOKMARKS) })
     }
 
     /** Writing: the 필기 button (yellow: off again), the [presets] ([selected] raised when a pen is in use), eraser, lasso, undo. */

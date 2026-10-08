@@ -270,6 +270,8 @@ class PdfActivity : Activity() {
 
         chrome = PdfChrome(this, root, chromeListener)
         side = PdfSidePanel(this, root)
+        // A search only the panel shows stops with it: the render thread is free for the pages again.
+        side.onHidden = { searchRun++ }
 
         root.setOnApplyWindowInsetsListener { _, wi ->
             insets = ReaderWindow.insetsOf(wi, app.fullscreen)
@@ -296,16 +298,18 @@ class PdfActivity : Activity() {
         handler.post { onAreaChanged() }
     }
 
-    /** Full-screen reading on / off (a tap in the middle of the page). */
+    /**
+     * Bars on / off (a tap in the middle of the page). The page keeps its place under them, so this never
+     * re-renders the page: only the bars come and go.
+     */
     private fun toggleBars() {
         chrome.setShown(!chrome.isShown)
-        placePage()
         updateBadge()
     }
 
     private val chromeListener = object : PdfChrome.Listener {
         override fun onBack() = finish()
-        override fun onPages() = showPages(PdfSidePanel.TAB_PAGES)
+        override fun onPages(tab: Int) = showPages(tab)
         override fun onSearch() = askSearch()
         override fun onBookmark() = toggleBookmark()
         override fun onSettings() = showSettings()
@@ -972,14 +976,14 @@ class PdfActivity : Activity() {
             pxPerPoint = pageView.pxPerPoint,
             pressure = if (hl) null else pr.pressure,
             recent = prefs.recentColors,
+            // Applied to the pen at once; stored and shown in the tool bar when the sheet closes (slider drags stay smooth).
             onChange = { color, width, pressure ->
                 presets[i] = presets[i].with(color = color, width = PenPresets.clampWidth(pr.tool, width), pressure = pressure)
-                prefs.presets = presets
                 if (i == selected) applyPreset()
-                refreshTools()
             },
-            // The colour chosen in the end joins the recent ones (not every step of a slider drag).
             onClose = {
+                prefs.presets = presets
+                refreshTools()
                 val c = presets[i].color
                 if (c != pr.color) prefs.recentColors = PenPresets.pushRecent(prefs.recentColors, c)
             },
@@ -1135,8 +1139,9 @@ class PdfActivity : Activity() {
                     val found = try {
                         p.search(i, query)
                     } catch (t: Throwable) {
+                        // A page the platform can't search is skipped; the rest still count.
                         Log.w(TAG, "search failed on page $i", t)
-                        break
+                        emptyList()
                     }
                     if (found.isNotEmpty()) hits += SearchHit(i, found.flatten())
                     done = i + 1

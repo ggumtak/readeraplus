@@ -21,6 +21,12 @@
   Android 14 `MotionPredictor` 예측 꼬리, 스타일러스 중 손바닥 무시. 펜 프리셋(펜 3·형광펜 1, 다시 누르면
   `PenPanel`: 굵기·팔레트·HSV·감압). ⚙ PDF 보기 설정(`PdfPrefs`): 문서 색상(기본/어둡게/세피아), 쪽 번호 배지,
   밀어서 넘기기 손가락 수, 손가락으로 필기(끄면 펜만), 펜 입력 감도, 이 쪽/모든 필기 지우기.
+- PDF 튕김 원인(에뮬레이터 재현): `ui/kit/Ui.kt` `matchSystemBars`가 show() 전 대화상자 창의 insetsController를
+  읽어 Android 14에서 NPE(톱니바퀴·펜 설정에서 종료). decor가 생기기 전에는 건너뛰도록 가드(사용자 요청으로 동결 파일 수정).
+  `[pdf]`가 커밋 메시지에 있으면 CI가 `tools/ci/pdf_check.sh`로 PDF 화면을 눌러 보고 크래시 로그를 job 로그에 남긴다.
+- PDF UI를 Flexcil 사진에 맞춤: `PdfChrome`(어두운 상단 바·떠 있는 도구 막대·쪽 배지), `PdfSidePanel`(오른쪽 검색·
+  페이지 탐색), `PdfSheet`(어두운 하단 시트, 노란 스위치, 닫기 바), `PdfToolIcon`(펜 모양 아이콘). 바를 숨겨도 페이지
+  영역은 그대로(재렌더 없음).
 - 앱 최적화 검토(같은 날): 큰 문제 없음. 반영: TXT 섹션 중복 디코딩 방지(줄무늬 락), e-ink 벤더 탐지를 IO로 선행.
   보류(측정 후 판단): 같은 섹션 안 쪽 넘김의 이미지 디코드 확인, 패널 닫을 때 주석 재조회, 서재 onResume 재조회.
 
