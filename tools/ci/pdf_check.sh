@@ -50,7 +50,15 @@ loop() { # a closed loop around the middle of the page (a lasso)
 
 log "tools straight from reading (highlighter, lasso)"
 descs
-tap_label "형광펜"; adb shell input swipe $((CX - 120)) $CY $((CX + 120)) $CY 400; shot 04a_hl_read 1; inklog; crashes hl_read
+tap_label "형광펜"
+# Screenshot while the highlighter is still down (the live layer), then lift: no black tiles around the line.
+shot 04a0_before 0; log "dark share before: $(python3 tools/ci/dark_share.py shots/04a0_before.png $((CY - 120)) $((CY + 120)))"
+adb shell input motionevent DOWN $((CX - 120)) $CY
+for dx in -90 -60 -30 0 30 60 90 120; do adb shell input motionevent MOVE $((CX + dx)) $CY; done
+shot 04a1_live 0; log "dark share live: $(python3 tools/ci/dark_share.py shots/04a1_live.png $((CY - 120)) $((CY + 120)))"
+adb shell input motionevent UP $((CX + 120)) $CY
+shot 04a_hl_read 1; log "dark share after: $(python3 tools/ci/dark_share.py shots/04a_hl_read.png $((CY - 120)) $((CY + 120)))"
+inklog; crashes hl_read
 tap_label "필기 끝내기"; sleep 1; inklog
 tap_label "선택"; loop; shot 04b_lasso 2; inklog; crashes lasso
 adb shell input keyevent KEYCODE_BACK; sleep 1; tap_label "필기 끝내기"; sleep 1
