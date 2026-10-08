@@ -101,7 +101,9 @@ class NextPartTest {
         assertEquals("소설A 101-200화.epub", NextPart.pickNext("소설A 1-100화.epub", folder))
         assertNull(NextPart.pickNext("소설A 101-200화.epub", folder))
         // Unknown current format: nothing to continue with.
-        assertNull(NextPart.pickNext("소설A 1-100화.pdf", folder + "소설A 101-200화.pdf"))
+        assertNull(NextPart.pickNext("소설A 1-100화.docx", folder + "소설A 101-200화.docx"))
+        // PDF parts only continue with PDF parts.
+        assertNull(NextPart.pickNext("소설A 1-100화.txt", listOf("소설A 101-200화.pdf")))
     }
 
     @Test
