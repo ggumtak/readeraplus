@@ -61,6 +61,7 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
             else -> "선택"
         }
         isClickable = true
+        isFocusable = false
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {

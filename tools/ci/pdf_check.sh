@@ -51,7 +51,8 @@ tap_label "필기 끝내기"; shot 10_done 1; crashes done
 log "side panels"
 tap_label "페이지 탐색"; shot 11_pages 3; crashes pages
 adb shell input keyevent KEYCODE_BACK; sleep 1
-tap_label "찾기"; sleep 1; adb shell input text lighthouse; adb shell input keyevent KEYCODE_ENTER; shot 12_search 4; crashes search
+tap_label "찾기"; sleep 2; adb shell input text lighthouse; adb shell input keyevent KEYCODE_ENTER; shot 12_search 4; crashes search
+adb shell input keyevent KEYCODE_ENTER; sleep 1; crashes enter_again
 adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE_BACK; sleep 1
 tap_label "책갈피"; crashes bookmark
 adb shell input keyevent KEYCODE_DPAD_RIGHT; sleep 1; adb shell input keyevent KEYCODE_DPAD_LEFT; shot 13_keys 1; crashes keys

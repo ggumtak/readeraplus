@@ -103,6 +103,7 @@ internal class PdfChrome(private val activity: Activity, root: FrameLayout, priv
             }
             visibility = View.GONE
             setOnClickListener { listener.onBadge() }
+            isFocusable = false
         }
         root.addView(badge, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END))
         setReading()
@@ -203,6 +204,8 @@ internal class PdfChrome(private val activity: Activity, root: FrameLayout, priv
             contentDescription = description
             background = null
             scaleType = ImageView.ScaleType.CENTER
+            // Never a keyboard focus: Enter / D-pad centre from a Bluetooth keyboard must not "click" 닫기.
+            isFocusable = false
             layoutParams = LinearLayout.LayoutParams(activity.dp(46), activity.dp(46))
             setOnClickListener { onClick() }
         }
