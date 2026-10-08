@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -33,15 +34,20 @@ import com.ggumtak.readeraplus.reader.IntentFiles
 import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderIo
 import com.ggumtak.readeraplus.reader.ReaderWindow
+import com.ggumtak.readeraplus.reader.extras.TextActions
 import com.ggumtak.readeraplus.reader.ReadingDelta
 import com.ggumtak.readeraplus.reader.ReadingTracker
 import com.ggumtak.readeraplus.reader.ResumeState
 import com.ggumtak.readeraplus.reader.ScreenOnKeeper
 import com.ggumtak.readeraplus.render.PdfPages
+import com.ggumtak.readeraplus.render.PdfText
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.InkNumPad
+import com.ggumtak.readeraplus.ui.kit.alert
+import com.ggumtak.readeraplus.ui.kit.prompt
+import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.ToolbarAction
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.hairline
@@ -65,6 +71,11 @@ import kotlin.math.abs
  * an ACTION_VIEW uri (like the text reader, through [IntentFiles]); saves the page as the book's position
  * (section = page index, offset 0), its progress and reading time.
  *
+ * Study tools (Flexcil-like): pen / highlighter / eraser strokes and bookmarks per page ([PdfNotes], saved as a
+ * per-book file, the PDF itself is never changed), a page grid ([PdfThumbs]), text search, and a selection loop —
+ * drawn with a stylus at any time or with a finger after 선택 — whose text goes to 사전·번역 / 웹 검색 / 복사.
+ * Text needs the platform PDF text API ([PdfPages.canReadText]: Android 15, or 12–14 with the PDF system module).
+ *
  * Every [PdfPages] call runs on one render thread ([worker]); results come back through [handler] tagged with the
  * document generation, so a late result for a closed document is dropped.
  */
@@ -80,6 +91,14 @@ class PdfActivity : Activity() {
         /** A zoomed viewport is rendered sharp this long after the last zoom / pan change. */
         private const val DETAIL_DELAY_MS = 120L
         private const val SAVE_DELAY_MS = 800L
+        private const val NOTES_SAVE_DELAY_MS = 1000L
+        private const val NOTES_DIR = "pdf_notes"
+        /** Longest selected text shown as the action dialog's title. */
+        private const val SELECTION_TITLE_CHARS = 200
+        private const val NO_TEXT_API =
+            "이 폰에서는 PDF 글자를 읽을 수 없습니다.\n(Android 15 이상, 또는 Google Play 시스템 업데이트가 필요합니다)"
+        private val PEN_COLORS = intArrayOf(0xFF000000.toInt(), 0xFFD32F2F.toInt(), 0xFF1565C0.toInt())
+        private val HIGHLIGHT_COLORS = intArrayOf(0xFFFFF176.toInt(), 0xFFA5D6A7.toInt(), 0xFFF8BBD0.toInt())
 
         /** Opens library book [bookId] (a PDF) in the viewer. */
         fun open(context: Context, bookId: Long) {
@@ -137,6 +156,21 @@ class PdfActivity : Activity() {
 
     private val app: AppSettings get() = Settings.app
 
+    /** The open book's annotations (main thread); saved on [worker] in order. */
+    private var notes: PdfNotes? = null
+    private var canReadText = false
+    private lateinit var annotBar: View
+    private lateinit var toolRow: android.widget.LinearLayout
+    private lateinit var colorRow: android.widget.LinearLayout
+    private var bookmarkButton: View? = null
+
+    /** Last search: its query and the pages with matches (rectangles in page points). */
+    private var searchQuery = ""
+    private var searchHits: List<SearchHit> = emptyList()
+    @Volatile private var searchRun = 0
+
+    private class SearchHit(val page: Int, val rects: List<RectF>)
+
     // ================================================================== lifecycle
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -193,7 +227,19 @@ class PdfActivity : Activity() {
         ReaderPresence.inFront = false
         tracker.pause(SystemClock.elapsedRealtime())?.let { writeReading(it) }
         flushPosition()
+        flushNotes()
         if (book != null && current >= 0) ResumeState.paused()
+    }
+
+    @Deprecated("Activity.onBackPressed: kept for API 26–32 and simple back handling")
+    override fun onBackPressed() {
+        // Back first leaves the pen tools, then closes the viewer.
+        if (::annotBar.isInitialized && annotBar.visibility == View.VISIBLE) {
+            stopAnnotating()
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
     }
 
     override fun finish() {
@@ -233,16 +279,27 @@ class PdfActivity : Activity() {
             navIcon = R.drawable.ic_arrow_back,
             navLabel = "닫기",
             onNav = { finish() },
-            actions = listOf(ToolbarAction(R.drawable.ic_find_in_page, "쪽 이동") { askPage() }),
+            actions = listOf(
+                ToolbarAction(R.drawable.ic_search, "찾기") { askSearch() },
+                ToolbarAction(R.drawable.ic_bookmark, "책갈피") { toggleBookmark() },
+                ToolbarAction(R.drawable.ic_grid_view, "쪽 목록") { showThumbs() },
+                ToolbarAction(R.drawable.ic_edit, "필기") { startAnnotating() },
+            ),
         ).apply {
             isClickable = true
             visibility = View.GONE
         }
+        bookmarkButton = ArrayList<View>().also {
+            topBar.findViewsWithText(it, "책갈피", View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+        }.firstOrNull()
         root.addView(topBar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
         pageLabel = label("", 15f).apply {
             minWidth = dp(88)
             gravity = Gravity.CENTER
+            minHeight = dp(48)
+            contentDescription = "쪽 이동"
+            setOnClickListener { askPage() }
         }
         slider = SeekBar(this).apply {
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -271,12 +328,15 @@ class PdfActivity : Activity() {
             }, lp())
         }
         root.addView(bottomBar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        annotBar = buildAnnotationBar()
+        root.addView(annotBar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
 
         root.setOnApplyWindowInsetsListener { _, insets ->
             val i = ReaderWindow.insetsOf(insets, app.fullscreen)
             pageView.setPadding(i[0], i[1], i[2], i[3])
             topBar.setPadding(i[0], i[1], i[2], 0)
             bottomBar.setPadding(i[0], 0, i[2], i[3])
+            annotBar.setPadding(i[0], 0, i[2], i[3])
             // Padding changes the page area without a layout-bounds change: re-fit like a resize.
             handler.post { onAreaChanged() }
             insets
@@ -330,9 +390,11 @@ class PdfActivity : Activity() {
                 val p = PdfPages.open(f)
                 pages = p
                 val count = p.pageCount
+                val text = p.canReadText
+                val loaded = PdfNotesStore.load(notesDir(), b.id)
                 handler.post {
                     if (gen != generation || isDestroyed) return@post
-                    onOpened(b, count)
+                    onOpened(b, count, loaded, text)
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "open failed", t)
@@ -346,9 +408,12 @@ class PdfActivity : Activity() {
         }
     }
 
-    private fun onOpened(b: Book, count: Int) {
+    private fun onOpened(b: Book, count: Int, loaded: PdfNotes, text: Boolean) {
         book = b
         pageCount = count
+        notes = loaded
+        canReadText = text
+        pageView.notes = loaded
         (topBar.findViewWithTag<TextView>("title"))?.text = b.title
         val start = if (restoredPage >= 0) restoredPage else b.posSection
         restoredPage = -1
@@ -360,6 +425,12 @@ class PdfActivity : Activity() {
     private fun closeDocument() {
         tracker.flush(SystemClock.elapsedRealtime())?.let { writeReading(it) }
         flushPosition()
+        flushNotes()
+        stopAnnotating()
+        notes = null
+        searchRun++
+        searchHits = emptyList()
+        searchQuery = ""
         generation++
         book = null
         pageCount = 0
@@ -433,6 +504,7 @@ class PdfActivity : Activity() {
         showMessage(null)
         pageView.setPage(p.index, p.w, p.h, p.bitmap, fromEnd)
         updateNeighbors()
+        showPageMarks()
         if (book != null) ResumeState.opened(book!!.id)
         scheduleDetail()
     }
@@ -624,6 +696,8 @@ class PdfActivity : Activity() {
         override fun onPageTap(x: Float) = pageTap(x)
         override fun onPageSettled(image: PdfPageView.PageImage) = pageSettled(image)
         override fun onViewportChanged() = viewportChanged()
+        override fun onInkChanged(page: Int) = scheduleNotesSave()
+        override fun onLasso(page: Int, poly: FloatArray) = runLasso(page, poly)
     }
 
     private fun pageTap(x: Float) {
@@ -690,6 +764,387 @@ class PdfActivity : Activity() {
                 "${n}쪽이 없습니다"
             }
         }
+    }
+
+    // ================================================================== notes: bookmarks, strokes
+
+    private fun notesDir(): File = File(filesDir, NOTES_DIR)
+
+    private val notesSaveRunnable = Runnable { flushNotes() }
+
+    private fun scheduleNotesSave() {
+        handler.removeCallbacks(notesSaveRunnable)
+        handler.postDelayed(notesSaveRunnable, NOTES_SAVE_DELAY_MS)
+    }
+
+    /** Writes changed notes on the render thread (in order with every other save of this viewer). */
+    private fun flushNotes() {
+        handler.removeCallbacks(notesSaveRunnable)
+        val n = notes ?: return
+        val id = book?.id ?: return
+        if (!n.dirty) return
+        val json = if (n.isEmpty) null else n.toJson()
+        n.dirty = false
+        val dir = notesDir()
+        try {
+            worker.execute { if (!PdfNotesStore.save(dir, id, json)) Log.w(TAG, "notes save failed") }
+        } catch (t: Throwable) {
+            Log.w(TAG, "notes save not queued", t)
+        }
+    }
+
+    /** The page's bookmark ribbon and search matches. */
+    private fun showPageMarks() {
+        val marked = notes?.isBookmarked(current) == true
+        pageView.bookmarked = marked
+        (bookmarkButton as? android.widget.ImageButton)?.setImageResource(
+            if (marked) R.drawable.ic_bookmark_fill else R.drawable.ic_bookmark,
+        )
+        pageView.setSearchMarks(current, searchHits.firstOrNull { it.page == current }?.rects ?: emptyList())
+    }
+
+    private fun toggleBookmark() {
+        val n = notes ?: return
+        if (current < 0) return
+        val on = n.toggleBookmark(current)
+        showPageMarks()
+        toast(if (on) "책갈피를 꽂았습니다" else "책갈피를 뺐습니다")
+        scheduleNotesSave()
+    }
+
+    private fun showThumbs() {
+        val b = book ?: return
+        if (pageCount <= 0) return
+        showChrome(false)
+        val gen = generation
+        PdfThumbs(
+            activity = this,
+            title = b.title,
+            pageCount = pageCount,
+            current = current,
+            bookmarks = { notes?.bookmarks() ?: IntArray(0) },
+            requestThumb = { page, w, h, wanted, done -> requestThumb(gen, page, w, h, wanted, done) },
+            onPick = { page ->
+                pageView.resetZoom()
+                goTo(page, fromEnd = false)
+            },
+        ).show()
+    }
+
+    /** A page fitted inside w×h for the page grid, rendered on the render thread when still [wanted]. */
+    private fun requestThumb(gen: Int, page: Int, w: Int, h: Int, wanted: () -> Boolean, done: (Bitmap?) -> Unit) {
+        try {
+            worker.execute {
+                val p = pages
+                val bmp = if (p == null || !wanted()) null else try {
+                    val pw = p.pageWidth(page)
+                    val ph = p.pageHeight(page)
+                    val size = PdfMath.renderSize(pw, ph, PdfMath.fitScale(pw, ph, w, h), w * h)
+                    Bitmap.createBitmap(PdfMath.packedW(size), PdfMath.packedH(size), Bitmap.Config.ARGB_8888)
+                        .also { p.renderWhole(page, it) }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "thumb $page failed", t)
+                    null
+                }
+                handler.post { if (gen == generation && !isDestroyed) done(bmp) else done(null) }
+            }
+        } catch (t: Throwable) {
+            done(null)
+        }
+    }
+
+    // ================================================================== annotating (pen, highlighter, eraser, 선택)
+
+    private fun buildAnnotationBar(): View {
+        toolRow = horizontal { gravity = Gravity.CENTER_VERTICAL }
+        colorRow = horizontal { gravity = Gravity.CENTER_VERTICAL }
+        val row = horizontal {
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(56)
+            setPadding(dp(4), 0, dp(4), 0)
+            addView(toolRow)
+            addView(colorRow)
+        }
+        val scroll = android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(row)
+        }
+        return vertical {
+            setBackgroundColor(Ink.WHITE)
+            isClickable = true
+            visibility = View.GONE
+            addView(hairline())
+            addView(scroll, lp())
+        }
+    }
+
+    /** Shows the tools (pen first): one finger draws, two fingers move and zoom the page. */
+    private fun startAnnotating() {
+        if (notes == null) return
+        showChrome(false)
+        if (pageView.mode == PdfPageView.MODE_NONE) pageView.mode = PdfPageView.MODE_PEN
+        annotBar.visibility = View.VISIBLE
+        refreshAnnotationBar()
+    }
+
+    private fun stopAnnotating() {
+        pageView.mode = PdfPageView.MODE_NONE
+        if (::annotBar.isInitialized) annotBar.visibility = View.GONE
+        flushNotes()
+    }
+
+    private fun refreshAnnotationBar() {
+        toolRow.removeAllViews()
+        fun tool(text: String, mode: Int) = toolRow.addView(chip(text, pageView.mode == mode) {
+            pageView.mode = mode
+            refreshAnnotationBar()
+        })
+        tool("펜", PdfPageView.MODE_PEN)
+        tool("형광펜", PdfPageView.MODE_HIGHLIGHTER)
+        tool("지우개", PdfPageView.MODE_ERASER)
+        tool("선택", PdfPageView.MODE_LASSO)
+        toolRow.addView(chip("되돌리기", false) { undoInk() })
+        toolRow.addView(chip("◀", false) { turn(-1) })
+        toolRow.addView(chip("▶", false) { turn(1) })
+        toolRow.addView(chip("완료", false) { stopAnnotating() })
+        colorRow.removeAllViews()
+        val (colors, chosen) = when (pageView.mode) {
+            PdfPageView.MODE_PEN -> PEN_COLORS to pageView.penColor
+            PdfPageView.MODE_HIGHLIGHTER -> HIGHLIGHT_COLORS to pageView.highlighterColor
+            else -> return
+        }
+        for (c in colors) colorRow.addView(swatch(c, c == chosen) {
+            if (pageView.mode == PdfPageView.MODE_PEN) pageView.penColor = c else pageView.highlighterColor = c
+            refreshAnnotationBar()
+        })
+    }
+
+    /** A text button of the tool bar; [on] = the chosen tool (inverted). */
+    private fun chip(text: String, on: Boolean, onClick: () -> Unit): View = label(text, 15f, bold = on).apply {
+        gravity = Gravity.CENTER
+        minWidth = dp(44)
+        minHeight = dp(40)
+        setPadding(dp(12), 0, dp(12), 0)
+        setTextColor(if (on) Ink.WHITE else Ink.BLACK)
+        background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(20).toFloat()
+            setColor(if (on) Ink.BLACK else Ink.WHITE)
+            setStroke(dp(1), Ink.BLACK)
+        }
+        layoutParams = android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, dp(40),
+        ).apply { setMargins(dp(3), 0, dp(3), 0) }
+        setOnClickListener { onClick() }
+    }
+
+    /** A colour choice: a filled circle, ringed when chosen. */
+    private fun swatch(color: Int, on: Boolean, onClick: () -> Unit): View = View(this).apply {
+        background = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            setColor(color)
+            setStroke(dp(if (on) 3 else 1), if (on) Ink.BLACK else Ink.LINE_LIGHT)
+        }
+        contentDescription = "색"
+        layoutParams = android.widget.LinearLayout.LayoutParams(dp(30), dp(30)).apply { setMargins(dp(6), 0, dp(6), 0) }
+        setOnClickListener { onClick() }
+    }
+
+    private fun undoInk() {
+        val n = notes ?: return
+        val page = n.undo()
+        if (page < 0) {
+            toast("되돌릴 것이 없습니다")
+            return
+        }
+        pageView.inkChanged()
+        if (page != current) goTo(page, fromEnd = false)
+        scheduleNotesSave()
+    }
+
+    // ================================================================== selection loop → 사전 · 검색
+
+    /** The text inside a loop drawn on [page] ([poly] in page points), found on the render thread. */
+    private fun runLasso(page: Int, poly: FloatArray) {
+        if (!canReadText) {
+            pageView.clearLasso()
+            toast(NO_TEXT_API)
+            return
+        }
+        val gen = generation
+        worker.execute {
+            val p = pages
+            val found = if (p == null) null else try {
+                lassoText(p, page, poly)
+            } catch (t: Throwable) {
+                Log.w(TAG, "selection failed", t)
+                null
+            }
+            handler.post { if (gen == generation && !isDestroyed) showSelection(page, found) }
+        }
+    }
+
+    /** Render thread: the loop's text — between its first and last characters, else the lines it crosses. */
+    private fun lassoText(p: PdfPages, page: Int, poly: FloatArray): PdfText? {
+        val n = poly.size / 2
+        val runs = p.textRuns(page) ?: return null
+        // Each run's rectangles as "lines", remembering which run each came from.
+        var count = 0
+        for (r in runs) count += r.rects.size
+        val lines = FloatArray(count * 4)
+        val owner = IntArray(count)
+        var k = 0
+        runs.forEachIndexed { ri, r ->
+            for (rect in r.rects) {
+                lines[k * 4] = rect.left
+                lines[k * 4 + 1] = rect.top
+                lines[k * 4 + 2] = rect.right
+                lines[k * 4 + 3] = rect.bottom
+                owner[k] = ri
+                k++
+            }
+        }
+        val ends = PdfLasso.ends(poly, n, lines, count)
+        if (ends != null) {
+            p.selectBetween(page, ends[0], ends[1], ends[2], ends[3])?.let { return it }
+        }
+        if (count == 0) {
+            // No run rectangles from this device: select between the loop's corners.
+            val b = InkMath.bounds(poly, n)
+            return p.selectBetween(page, b[0], b[1], b[2], b[3])
+        }
+        val crossed = PdfLasso.crossed(poly, n, lines, count)
+        if (crossed.isEmpty()) return null
+        val text = StringBuilder()
+        val rects = ArrayList<RectF>()
+        var lastRun = -1
+        for (i in crossed) {
+            if (owner[i] != lastRun) {
+                if (text.isNotEmpty()) text.append('\n')
+                text.append(runs[owner[i]].text.trim())
+                lastRun = owner[i]
+            }
+            rects += RectF(lines[i * 4], lines[i * 4 + 1], lines[i * 4 + 2], lines[i * 4 + 3])
+        }
+        return text.toString().trim().takeIf { it.isNotEmpty() }?.let { PdfText(it, rects) }
+    }
+
+    private fun showSelection(page: Int, found: PdfText?) {
+        pageView.clearLasso()
+        if (found == null || found.text.isBlank()) {
+            toast("고른 곳에서 글자를 찾지 못했습니다 (스캔한 PDF에는 글자 정보가 없습니다)")
+            return
+        }
+        val text = found.text
+        pageView.setSelectionMarks(page, found.rects)
+        val title = if (text.length > SELECTION_TITLE_CHARS) text.take(SELECTION_TITLE_CHARS) + "…" else text
+        val items = arrayOf("사전 · 번역", "웹 검색", "복사", "공유", "형광펜 칠하기")
+        alert().setTitle(title)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> TextActions.lookUp(this, text)
+                    1 -> TextActions.webSearch(this, text)
+                    2 -> TextActions.copy(this, text)
+                    3 -> TextActions.share(this, text)
+                    4 -> highlight(page, found.rects)
+                }
+            }
+            .setNegativeButton("닫기", null)
+            .setOnDismissListener { pageView.setSelectionMarks(page, emptyList()) }
+            .showNoAnim()
+    }
+
+    /** Highlighter strokes over the selected text's rectangles (one stroke per rectangle). */
+    private fun highlight(page: Int, rects: List<RectF>) {
+        val n = notes ?: return
+        for (r in rects) {
+            if (r.width() <= 0f || r.height() <= 0f) continue
+            val cy = (r.top + r.bottom) / 2f
+            n.add(page, InkStroke(InkTool.HIGHLIGHTER, pageView.highlighterColor, r.height(), floatArrayOf(r.left, cy, r.right, cy)))
+        }
+        pageView.inkChanged()
+        scheduleNotesSave()
+    }
+
+    // ================================================================== search
+
+    private fun askSearch() {
+        if (pageCount <= 0) return
+        if (!canReadText) {
+            toast(NO_TEXT_API)
+            return
+        }
+        if (searchHits.isNotEmpty()) {
+            showSearchResults()
+            return
+        }
+        prompt("PDF에서 찾기", searchQuery, "찾을 낱말") { q -> if (q.isNotBlank()) runSearch(q.trim()) }
+    }
+
+    /** Searches every page on the render thread with a progress dialog (취소 stops it). */
+    private fun runSearch(query: String) {
+        val run = ++searchRun
+        val gen = generation
+        val total = pageCount
+        val progress = alert().setTitle("‘$query’ 찾는 중")
+            .setMessage("0 / ${total}쪽")
+            .setNegativeButton("취소") { _, _ -> searchRun++ }
+            .setCancelable(false)
+            .showNoAnim()
+        worker.execute {
+            val hits = ArrayList<SearchHit>()
+            val p = pages
+            var done = 0
+            if (p != null) {
+                for (i in 0 until total) {
+                    if (searchRun != run) break
+                    val found = p.search(i, query)
+                    if (found.isNotEmpty()) hits += SearchHit(i, found.flatten())
+                    done = i + 1
+                    if (done % 10 == 0) {
+                        val d = done
+                        handler.post { if (searchRun == run) progress.setMessage("$d / ${total}쪽") }
+                    }
+                }
+            }
+            val finished = done == total
+            handler.post {
+                progress.dismiss()
+                if (gen != generation || isDestroyed || searchRun != run || !finished) return@post
+                searchQuery = query
+                searchHits = hits
+                showPageMarks()
+                if (hits.isEmpty()) {
+                    toast("‘$query’을(를) 찾지 못했습니다")
+                } else {
+                    showSearchResults()
+                }
+            }
+        }
+    }
+
+    private fun showSearchResults() {
+        val hits = searchHits
+        val labels = ArrayList<String>(hits.size + 2)
+        labels += "새로 찾기…"
+        labels += "찾기 결과 지우기"
+        for (h in hits) labels += "${h.page + 1}쪽 · ${h.rects.size}곳"
+        val total = hits.sumOf { it.rects.size }
+        alert().setTitle("‘$searchQuery’ ${hits.size}쪽 · ${total}곳")
+            .setItems(labels.toTypedArray()) { _, which ->
+                when (which) {
+                    0 -> prompt("PDF에서 찾기", searchQuery, "찾을 낱말") { q -> if (q.isNotBlank()) runSearch(q.trim()) }
+                    1 -> {
+                        searchHits = emptyList()
+                        showPageMarks()
+                    }
+                    else -> {
+                        showChrome(false)
+                        goTo(hits[which - 2].page, fromEnd = false)
+                    }
+                }
+            }
+            .setNegativeButton("닫기", null)
+            .showNoAnim()
     }
 
     // ================================================================== position & reading time

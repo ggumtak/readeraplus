@@ -135,7 +135,7 @@ object Covers {
     }
 
     /** The first page of a PDF, fitted on white inside w×h (never cropped: it is the page itself, not a cover). */
-    private fun pdfPage(file: File, w: Int, h: Int): Bitmap? = PdfPages.open(file).use { pdf ->
+    private fun pdfPage(file: File, w: Int, h: Int): Bitmap? = PdfPages.open(file, withText = false).use { pdf ->
         val pw = pdf.pageWidth(0)
         val ph = pdf.pageHeight(0)
         val scale = minOf(w.toFloat() / pw, h.toFloat() / ph)

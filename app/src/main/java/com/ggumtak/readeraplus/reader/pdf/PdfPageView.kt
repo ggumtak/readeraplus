@@ -7,7 +7,12 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.DashPathEffect
+import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -42,6 +47,10 @@ internal class PdfPageView(context: Context) : View(context) {
         fun onPageSettled(image: PageImage)
         /** Zoom or pan changed (the host asks for a new detail bitmap once it settles). */
         fun onViewportChanged()
+        /** Strokes of [page] changed (drawn, erased): the host saves the notes. */
+        fun onInkChanged(page: Int)
+        /** A selection loop was drawn on [page]: [poly] = x, y pairs in page points. The loop stays shown until [clearLasso]. */
+        fun onLasso(page: Int, poly: FloatArray)
     }
 
     /** A page's fitted bitmap: page [index] of [w]×[h] points. */
@@ -104,6 +113,106 @@ internal class PdfPageView(context: Context) : View(context) {
         strokeWidth = 1f
     }
 
+    // ------------------------------------------------------------------------------------------- annotations
+
+    /** The book's annotations, drawn over the pages and edited by the pen tools; null until loaded. */
+    var notes: PdfNotes? = null
+        set(v) {
+            field = v
+            inkPaths.clear()
+            invalidate()
+        }
+
+    /** What a single finger or pen does: [MODE_NONE] = reading (a stylus still draws a selection loop). */
+    var mode = MODE_NONE
+        set(v) {
+            if (field == v) return
+            cancelInk()
+            field = v
+        }
+    var penColor = 0xFF000000.toInt()
+    /** Opaque: highlights multiply onto the page, so the text under them stays black. */
+    var highlighterColor = 0xFFFFF176.toInt()
+
+    /** The page on screen is bookmarked: a ribbon at its top-right corner. */
+    var bookmarked = false
+        set(v) {
+            if (field == v) return
+            field = v
+            invalidate()
+        }
+
+    /** The tool of the touch in progress (MODE_NONE = not drawing). */
+    private var inkGesture = MODE_NONE
+    /** The last touch drew (its taps are not page taps). */
+    private var inkTouched = false
+    private var inkPage = -1
+    private var inkPts = FloatArray(512)
+    private var inkCount = 0
+    private var inkErased = false
+    /** The stroke or loop being drawn, in page points. */
+    private val livePath = Path()
+    private var lassoShown = false
+    private val viewPath = Path()
+    private val toView = Matrix()
+    private val inkPaths = HashMap<InkStroke, Path>()
+    private var selPage = -1
+    private var selRects: List<RectF> = emptyList()
+    private var findPage = -1
+    private var findRects: List<RectF> = emptyList()
+    private val markRect = RectF()
+    private val ribbon = Path()
+
+    private val inkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.BUTT
+        strokeJoin = Paint.Join.ROUND
+        // Multiply: the text under a highlight stays black.
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
+    }
+    private val lassoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = 0xFF1E6FD9.toInt()
+        strokeWidth = context.dp(2).toFloat()
+        pathEffect = DashPathEffect(floatArrayOf(context.dp(6).toFloat(), context.dp(4).toFloat()), 0f)
+    }
+    private val selectionPaint = Paint().apply { color = 0x553D8BFF }
+    private val findPaint = Paint().apply { color = 0x66FF9800 }
+    private val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFD32F2F.toInt() }
+
+    /** Highlights the selected text (page points) on [page]; an empty list clears it. */
+    fun setSelectionMarks(page: Int, rects: List<RectF>) {
+        selPage = if (rects.isEmpty()) -1 else page
+        selRects = rects
+        invalidate()
+    }
+
+    /** Marks the search matches (page points) on [page]; an empty list clears them. */
+    fun setSearchMarks(page: Int, rects: List<RectF>) {
+        findPage = if (rects.isEmpty()) -1 else page
+        findRects = rects
+        invalidate()
+    }
+
+    /** Hides the selection loop kept after [Host.onLasso]. */
+    fun clearLasso() {
+        if (!lassoShown) return
+        lassoShown = false
+        livePath.rewind()
+        invalidate()
+    }
+
+    /** Annotations changed outside the view (undo, highlight from a selection): redraw them. */
+    fun inkChanged() {
+        inkPaths.clear()
+        invalidate()
+    }
+
     /** Called with the bitmap the view no longer draws, so the host can reuse it for the next detail render. */
     var onDetailDropped: ((Bitmap) -> Unit)? = null
 
@@ -131,6 +240,9 @@ internal class PdfPageView(context: Context) : View(context) {
         base = bitmap
         dropDetail()
         if (!samePage) {
+            cancelInk()
+            clearLasso()
+            if (inkPaths.size > MAX_CACHED_PATHS) inkPaths.clear()
             stopSlide()
             scroller.forceFinished(true)
             offY = if (fromEnd) Float.NEGATIVE_INFINITY else Float.POSITIVE_INFINITY
@@ -149,6 +261,12 @@ internal class PdfPageView(context: Context) : View(context) {
     /** Shows nothing (the document closed): drops the page, its bitmaps and the zoom. */
     fun clear() {
         stopMotion()
+        cancelInk()
+        clearLasso()
+        inkPaths.clear()
+        selPage = -1
+        findPage = -1
+        bookmarked = false
         dropDetail()
         base = null
         prevImg = null
@@ -280,6 +398,19 @@ internal class PdfPageView(context: Context) : View(context) {
     }
 
     companion object {
+        const val MODE_NONE = -1
+        const val MODE_PEN = InkTool.PEN
+        const val MODE_HIGHLIGHTER = InkTool.HIGHLIGHTER
+        const val MODE_ERASER = 2
+        const val MODE_LASSO = 3
+
+        /** Pen and highlighter widths in page points (they zoom with the page). */
+        private const val PEN_WIDTH_PT = 1.4f
+        private const val HIGHLIGHT_WIDTH_PT = 11f
+        private const val ERASER_RADIUS_DP = 10
+        /** Cached stroke paths kept across page turns before the cache is dropped. */
+        private const val MAX_CACHED_PATHS = 400
+
         /** Around the page: light grey, so the page's white edge shows. */
         private const val BACKGROUND = 0xFFE6E6E6.toInt()
 
@@ -348,9 +479,44 @@ internal class PdfPageView(context: Context) : View(context) {
         if (n != null) drawFitted(canvas, n, slide + (if (slide < 0f) slideFull else -slideFull))
     }
 
+    /** Whether the fitted bitmap is drawn 1:1 at a whole-pixel origin (unzoomed, matching size). */
+    private fun oneToOne(b: Bitmap, s: Float): Boolean =
+        !zoomed && abs(b.width - pageW * s) <= 1f && abs(b.height - pageH * s) <= 1f
+
+    /** View x of the current page's left edge (slide excluded). */
+    private fun originX(b: Bitmap, s: Float): Float =
+        if (oneToOne(b, s)) (paddingLeft + (areaW - b.width) / 2).toFloat() else paddingLeft + offX
+
+    /** View y of the current page's top edge. */
+    private fun originY(b: Bitmap, s: Float): Float =
+        if (oneToOne(b, s)) (paddingTop + (areaH - b.height) / 2).toFloat() else paddingTop + offY
+
     private fun drawCurrent(canvas: Canvas, b: Bitmap) {
+        drawPage(canvas, b)
         val s = scale
-        if (!zoomed && abs(b.width - pageW * s) <= 1f && abs(b.height - pageH * s) <= 1f) {
+        val ox = originX(b, s)
+        val oy = originY(b, s)
+        drawInk(canvas, page, ox, oy, s)
+        if (findPage == page) drawMarks(canvas, findRects, findPaint, ox, oy, s)
+        if (selPage == page) drawMarks(canvas, selRects, selectionPaint, ox, oy, s)
+        if (inkGesture == MODE_PEN || inkGesture == MODE_HIGHLIGHTER) {
+            canvas.save()
+            canvas.translate(ox, oy)
+            canvas.scale(s, s)
+            canvas.drawPath(livePath, strokePaint(inkGesture, if (inkGesture == MODE_PEN) penColor else highlighterColor, widthOf(inkGesture)))
+            canvas.restore()
+        } else if (inkGesture == MODE_LASSO || lassoShown) {
+            toView.setScale(s, s)
+            toView.postTranslate(ox, oy)
+            livePath.transform(toView, viewPath)
+            canvas.drawPath(viewPath, lassoPaint)
+        }
+        if (bookmarked) drawRibbon(canvas, ox + pageW * s, oy)
+    }
+
+    private fun drawPage(canvas: Canvas, b: Bitmap) {
+        val s = scale
+        if (oneToOne(b, s)) {
             // The fitted bitmap 1:1 on whole pixels, centred: no resampling blur on text.
             val l = (paddingLeft + (areaW - b.width) / 2).toFloat()
             val t = (paddingTop + (areaH - b.height) / 2).toFloat()
@@ -383,6 +549,51 @@ internal class PdfPageView(context: Context) : View(context) {
         canvas.drawRect(dst, pagePaint)
         canvas.drawBitmap(img.bitmap, null, dst, bitmapPaint)
         canvas.drawRect(dst, edgePaint)
+        drawInk(canvas, img.index, l, t, fit)
+    }
+
+    /** The strokes of [index], page points mapped by origin ([ox], [oy]) and scale [s]. */
+    private fun drawInk(canvas: Canvas, index: Int, ox: Float, oy: Float, s: Float) {
+        val list = notes?.strokes(index) ?: return
+        if (list.isEmpty()) return
+        canvas.save()
+        canvas.translate(ox, oy)
+        canvas.scale(s, s)
+        for (st in list) {
+            val path = inkPaths.getOrPut(st) { pathOf(st) }
+            canvas.drawPath(path, strokePaint(st.tool, st.color, st.width))
+        }
+        canvas.restore()
+    }
+
+    private fun strokePaint(tool: Int, color: Int, width: Float): Paint {
+        val p = if (tool == InkTool.HIGHLIGHTER) highlightPaint else inkPaint
+        p.color = color
+        p.strokeWidth = width
+        return p
+    }
+
+    private fun drawMarks(canvas: Canvas, rects: List<RectF>, paint: Paint, ox: Float, oy: Float, s: Float) {
+        for (r in rects) {
+            markRect.set(ox + r.left * s, oy + r.top * s, ox + r.right * s, oy + r.bottom * s)
+            canvas.drawRect(markRect, paint)
+        }
+    }
+
+    /** A small ribbon hanging from the page's top edge, left of its right edge [right]. */
+    private fun drawRibbon(canvas: Canvas, right: Float, top: Float) {
+        val w = context.dp(12).toFloat()
+        val h = context.dp(20).toFloat()
+        val l = right - context.dp(12) - w
+        val t = maxOf(top, paddingTop.toFloat())
+        ribbon.rewind()
+        ribbon.moveTo(l, t)
+        ribbon.lineTo(l + w, t)
+        ribbon.lineTo(l + w, t + h)
+        ribbon.lineTo(l + w / 2f, t + h - w / 2f)
+        ribbon.lineTo(l, t + h)
+        ribbon.close()
+        canvas.drawPath(ribbon, ribbonPaint)
     }
 
     // ------------------------------------------------------------------------------------------- page slide
@@ -476,6 +687,7 @@ internal class PdfPageView(context: Context) : View(context) {
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(d: ScaleGestureDetector): Boolean {
             pinched = true
+            cancelInk()
             zoomAnim?.cancel()
             scroller.forceFinished(true)
             stepTargetY = Float.NaN
@@ -503,16 +715,19 @@ internal class PdfPageView(context: Context) : View(context) {
         // Side taps turn pages at once (no wait for a possible double tap); only the middle, where a double tap
         // zooms, waits to know which it is.
         override fun onSingleTapUp(e: MotionEvent): Boolean {
+            if (mode != MODE_NONE || inkTouched) return true
             if (PdfMath.tapZone(e.x, width) != 0) host?.onPageTap(e.x)
             return true
         }
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            if (mode != MODE_NONE || inkTouched) return true
             if (PdfMath.tapZone(e.x, width) == 0) host?.onPageTap(e.x)
             return true
         }
 
         override fun onDoubleTap(e: MotionEvent): Boolean {
+            if (mode != MODE_NONE || inkTouched) return true
             if (PdfMath.tapZone(e.x, width) != 0) {
                 // Quick taps on a side are two page turns.
                 host?.onPageTap(e.x)
@@ -524,14 +739,16 @@ internal class PdfPageView(context: Context) : View(context) {
         }
 
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
-            if (scaleDetector.isInProgress || zoomAnim != null) return false
+            if (scaleDetector.isInProgress || zoomAnim != null || inkGesture != MODE_NONE) return false
+            // With a tool, one finger draws: moving the page takes two.
+            if (mode != MODE_NONE && e2.pointerCount < 2) return false
             if (zoomed) {
                 offX -= dx
                 offY -= dy
                 viewportChanged()
                 return true
             }
-            if (!swipeEnabled || areaW <= 0) return false
+            if (!swipeEnabled || areaW <= 0 || mode != MODE_NONE) return false
             if (!dragging) {
                 // Mostly horizontal: the page starts to slide.
                 if (abs(dx) <= abs(dy)) return false
@@ -547,7 +764,7 @@ internal class PdfPageView(context: Context) : View(context) {
         }
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
-            if (scaleDetector.isInProgress || zoomAnim != null) return false
+            if (scaleDetector.isInProgress || zoomAnim != null || inkGesture != MODE_NONE || mode != MODE_NONE) return false
             if (zoomed) {
                 // Whole-pixel bounds just past the float edges; clampOffsets lands exactly on them.
                 val minX = floor(PdfMath.clampOffset(Float.NEGATIVE_INFINITY, pageW * scale, areaW.toFloat())).toInt()
@@ -565,8 +782,154 @@ internal class PdfPageView(context: Context) : View(context) {
         }
     })
 
+    // ------------------------------------------------------------------------------------------- drawing input
+
+    /** The tool a touch starting with [e] uses: the pen's eraser end erases; a stylus draws a loop while reading. */
+    private fun inkToolFor(e: MotionEvent): Int {
+        if (page < 0 || base == null || pageW <= 0) return MODE_NONE
+        val type = e.getToolType(0)
+        val tool = when {
+            type == MotionEvent.TOOL_TYPE_ERASER -> MODE_ERASER
+            mode != MODE_NONE -> mode
+            type == MotionEvent.TOOL_TYPE_STYLUS -> MODE_LASSO
+            else -> MODE_NONE
+        }
+        // Strokes need the notes loaded; the loop does not.
+        if ((tool == MODE_PEN || tool == MODE_HIGHLIGHTER || tool == MODE_ERASER) && notes == null) return MODE_NONE
+        return tool
+    }
+
+    private fun handleInk(e: MotionEvent) {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                clearLasso()
+                inkPage = page
+                inkCount = 0
+                inkErased = false
+                livePath.rewind()
+                addInkPoint(e.x, e.y, first = true)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (inkPage != page) return
+                for (h in 0 until e.historySize) addInkPoint(e.getHistoricalX(0, h), e.getHistoricalY(0, h), first = false)
+                addInkPoint(e.x, e.y, first = false)
+            }
+            MotionEvent.ACTION_UP -> finishInk()
+            MotionEvent.ACTION_CANCEL -> cancelInk()
+        }
+    }
+
+    /** View point (x, y) of the current page, appended in page points (or erased at, for the eraser). */
+    private fun addInkPoint(x: Float, y: Float, first: Boolean) {
+        val b = base ?: return
+        val s = scale
+        if (s <= 0f) return
+        val px = (x - slide - originX(b, s)) / s
+        val py = (y - originY(b, s)) / s
+        if (inkGesture == MODE_ERASER) {
+            val n = notes ?: return
+            if (n.eraseAt(page, px, py, context.dp(ERASER_RADIUS_DP) / s)) {
+                inkErased = true
+                invalidate()
+            }
+            return
+        }
+        if (inkCount * 2 + 2 > inkPts.size) inkPts = inkPts.copyOf(inkPts.size * 2)
+        inkPts[inkCount * 2] = px
+        inkPts[inkCount * 2 + 1] = py
+        inkCount++
+        if (first) livePath.moveTo(px, py) else livePath.lineTo(px, py)
+        invalidate()
+    }
+
+    private fun finishInk() {
+        val tool = inkGesture
+        inkGesture = MODE_NONE
+        val p = inkPage
+        if (p != page || p < 0) {
+            livePath.rewind()
+            invalidate()
+            return
+        }
+        when (tool) {
+            MODE_PEN, MODE_HIGHLIGHTER -> {
+                val n = notes
+                if (n != null && inkCount > 0) {
+                    // Points closer than about a screen pixel add nothing.
+                    val pts = InkMath.simplify(inkPts, inkCount, 1f / scale)
+                    val color = if (tool == MODE_PEN) penColor else highlighterColor
+                    n.add(p, InkStroke(tool, color, widthOf(tool), pts))
+                    host?.onInkChanged(p)
+                }
+                livePath.rewind()
+            }
+            MODE_ERASER -> if (inkErased) {
+                inkPaths.clear()
+                host?.onInkChanged(p)
+            }
+            MODE_LASSO -> {
+                val poly = inkPts.copyOf(inkCount * 2)
+                if (PdfLasso.isSelection(poly, inkCount)) {
+                    livePath.close()
+                    lassoShown = true
+                    host?.onLasso(p, poly)
+                } else {
+                    livePath.rewind()
+                }
+            }
+        }
+        inkCount = 0
+        invalidate()
+    }
+
+    /** Drops the stroke or loop being drawn (erasing done so far stays). */
+    private fun cancelInk() {
+        if (inkGesture == MODE_NONE) return
+        if (inkGesture == MODE_ERASER && inkErased) {
+            inkPaths.clear()
+            host?.onInkChanged(inkPage)
+        }
+        inkGesture = MODE_NONE
+        inkCount = 0
+        if (!lassoShown) livePath.rewind()
+        invalidate()
+    }
+
+    private fun widthOf(tool: Int): Float = if (tool == MODE_HIGHLIGHTER) HIGHLIGHT_WIDTH_PT else PEN_WIDTH_PT
+
+    private fun pathOf(st: InkStroke): Path {
+        val path = Path()
+        val pts = st.points
+        path.moveTo(pts[0], pts[1])
+        if (pts.size < 4) {
+            // A dot: a zero-length line drawn with round caps.
+            path.lineTo(pts[0] + 0.01f, pts[1])
+        } else {
+            var i = 2
+            while (i + 1 < pts.size) {
+                path.lineTo(pts[i], pts[i + 1])
+                i += 2
+            }
+        }
+        return path
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            // A page still sliding lands first, so the stroke goes on the page that stays.
+            if (slideAnim != null && inkToolFor(event) != MODE_NONE) slideAnim?.end()
+            inkGesture = inkToolFor(event)
+            inkTouched = inkGesture != MODE_NONE
+        }
+        if (inkGesture != MODE_NONE) {
+            if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+                // A second finger: zoom / move instead; the stroke so far is dropped.
+                cancelInk()
+            } else {
+                handleInk(event)
+            }
+        }
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             // A touch catches a moving page: inertia stops; a sliding page is picked up where it is.
             if (!scroller.isFinished) {
@@ -574,7 +937,7 @@ internal class PdfPageView(context: Context) : View(context) {
                 host?.onViewportChanged()
             }
             pinched = false
-            if (slideAnim != null) {
+            if (slideAnim != null && !inkTouched) {
                 if (slideTurns) {
                     // A page turn in flight lands first: quick taps each turn a page.
                     slideAnim?.end()
