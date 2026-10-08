@@ -26,8 +26,13 @@ adb shell appops set $PKG MANAGE_EXTERNAL_STORAGE allow 2>/dev/null
 adb logcat -c; adb logcat -c -b crash
 
 log "open"
-adb shell am start -W -a android.intent.action.VIEW -t application/pdf -d file:///sdcard/Download/test.pdf -n $PKG/.reader.pdf.PdfActivity
-shot 01_open 5; crashes open
+open_pdf() { adb shell am start -W -a android.intent.action.VIEW -t application/pdf -d file:///sdcard/Download/test.pdf -n $PKG/.reader.pdf.PdfActivity; }
+sleep 2; open_pdf; sleep 4
+# The storage grant can land late on a fresh emulator: one more try when the file could not be read.
+if adb logcat -d -s PdfActivity:W | grep -q "open failed"; then
+  log "open failed once, retrying"; adb shell am force-stop $PKG; adb shell appops set $PKG MANAGE_EXTERNAL_STORAGE allow; sleep 2; open_pdf; sleep 4
+fi
+shot 01_open 1; crashes open
 
 log "gear (settings sheet)"
 tap_label "PDF 설정"; shot 03_settings 2; crashes gear
