@@ -19,6 +19,19 @@ internal object PdfMath {
 
     private const val EDGE_EPSILON = 0.5f
 
+    /** Smallest zoom a pinch may reach for a moment (it springs back to [MIN_ZOOM] when the fingers lift). */
+    const val PINCH_MIN_ZOOM = 0.6f
+
+    /** Share of the page width a released drag must pass to turn the page (a fling turns it anyway). */
+    const val TURN_FRACTION = 0.25f
+
+    /** How much of a drag moves the page toward a side with no page to show (rubber band). */
+    const val EDGE_RESISTANCE = 0.3f
+
+    /** Longest page slide / zoom animation. */
+    const val MAX_ANIM_MS = 250L
+    private const val MIN_ANIM_MS = 80L
+
     /** Scale (px per PDF point) that fits a pageW×pageH page entirely inside viewW×viewH. 0 when any size <= 0. */
     fun fitScale(pageW: Int, pageH: Int, viewW: Int, viewH: Int): Float {
         if (pageW <= 0 || pageH <= 0 || viewW <= 0 || viewH <= 0) return 0f
@@ -121,6 +134,40 @@ internal object PdfMath {
 
     /** Height part of a value returned by [renderSize]. */
     fun packedH(p: Long): Int = (p and 0xFFFFFFFFL).toInt()
+
+    /**
+     * The page slide after a drag of [dx] px (finger moved right = positive): [slide] < 0 shows the next page coming
+     * in from the right, > 0 the previous one from the left. Toward a side with no page the drag moves only
+     * [EDGE_RESISTANCE] of the way. Clamped to ±[full] (the width of one page step).
+     */
+    fun dragSlide(slide: Float, dx: Float, full: Float, hasPrev: Boolean, hasNext: Boolean): Float {
+        var s = slide + dx
+        if ((s > 0f && !hasPrev) || (s < 0f && !hasNext)) s = slide + dx * EDGE_RESISTANCE
+        return if (s < -full) -full else if (s > full) full else s
+    }
+
+    /**
+     * Where a page released at [slide] goes: +1 next page, -1 previous, 0 back. A fling ([flingDir] +1 = toward the
+     * next page) decides; else passing [TURN_FRACTION] of [full]. Never toward a missing page or against the drag.
+     */
+    fun settleDir(slide: Float, full: Float, flingDir: Int, hasPrev: Boolean, hasNext: Boolean): Int {
+        val dir = when {
+            flingDir != 0 -> flingDir
+            slide <= -full * TURN_FRACTION -> 1
+            slide >= full * TURN_FRACTION -> -1
+            else -> 0
+        }
+        if (dir > 0 && (!hasNext || slide > 0f)) return 0
+        if (dir < 0 && (!hasPrev || slide < 0f)) return 0
+        return dir
+    }
+
+    /** Duration of an animation covering [distance] of a [full] move: proportional, [MIN_ANIM_MS]..[MAX_ANIM_MS]. */
+    fun animMs(distance: Float, full: Float): Long {
+        if (full <= 0f || distance.isNaN()) return MIN_ANIM_MS
+        val ms = (MAX_ANIM_MS * (kotlin.math.abs(distance) / full)).toLong()
+        return ms.coerceIn(MIN_ANIM_MS, MAX_ANIM_MS)
+    }
 
     /** "12 / 340" for 0-based [page] (1-based in the text). count <= 0 → "0 / 0". */
     fun pageLabel(page: Int, count: Int): String {
