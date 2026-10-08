@@ -18,6 +18,9 @@ import android.os.ParcelFileDescriptor
 import android.os.ext.SdkExtensions
 import android.util.Log
 import com.ggumtak.readeraplus.format.DocumentException
+import com.ggumtak.readeraplus.render.pdftext.PageGlyphs
+import com.ggumtak.readeraplus.render.pdftext.PageGlyphsOps
+import com.ggumtak.readeraplus.render.pdftext.PdfTextReader
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
@@ -30,14 +33,22 @@ class PdfText(val text: String, val rects: List<RectF>)
  * must come from the same single background thread (the viewer's render thread, or the cover worker that opened it).
  * Page sizes are in PDF points and are read once per page, on use.
  *
- * Text (selection, search) needs the platform's PDF text API: [PdfRenderer] from Android 15, or [PdfRendererPreV]
- * on Android 12–14 with the PDF system module (SDK extension S ≥ 13, delivered by Google Play system updates).
- * [canReadText] says whether this device has it; text calls return null / empty without it.
+ * Text (selection, search) comes from the platform's PDF text API where there is one: [PdfRenderer] from Android 15,
+ * or [PdfRendererPreV] on Android 12–14 with the PDF system module (SDK extension S ≥ 13, from Google Play system
+ * updates). Elsewhere the app's own reader ([PdfTextReader]) reads the text layer. [canReadText] says whether either
+ * works for this file; text calls return null / empty without it.
  */
-class PdfPages private constructor(private val fd: ParcelFileDescriptor, private val backend: Backend) : Closeable {
+class PdfPages private constructor(
+    private val fd: ParcelFileDescriptor,
+    private val backend: Backend,
+    private val own: PdfTextReader?,
+) : Closeable {
     val pageCount: Int = backend.pageCount
-    /** The device can read text layers (selection, search). A scanned PDF still has no text. */
-    val canReadText: Boolean get() = backend.hasText
+    /** Text layers can be read (selection, search). A scanned PDF still has no text. */
+    val canReadText: Boolean get() = backend.hasText || own != null
+    /** The last pages read by [own] (a lasso reads the lines, then selects on the same page). */
+    private var ownPage = -1
+    private var ownGlyphs: PageGlyphs = PageGlyphs.EMPTY
     private val widths = IntArray(pageCount)
     private val heights = IntArray(pageCount)
     private var closed = false
@@ -77,16 +88,63 @@ class PdfPages private constructor(private val fd: ParcelFileDescriptor, private
         backend.render(index, target, clip, transform)
     }
 
-    /** The page's text with one entry per text run the platform reports (usually lines), or null without text. */
-    fun textRuns(index: Int): List<PdfText>? = if (!backend.hasText) null else safely { backend.allText(index) }
+    /** The page's text with one entry per text run (usually lines), or null without text. */
+    fun textRuns(index: Int): List<PdfText>? = when {
+        backend.hasText -> safely { backend.allText(index) }
+        own != null -> safely {
+            val g = ownText(index)
+            val sx = ownScaleX(index)
+            val sy = ownScaleY(index)
+            PageGlyphsOps.lineBoxes(g).map { PdfText(g.text.substring(it.start, it.end), listOf(rect(it.box, sx, sy))) }
+        }
+        else -> null
+    }
 
     /** Text from the character at (x0, y0) to the one at (x1, y1) in reading order (page points), or null. */
-    fun selectBetween(index: Int, x0: Float, y0: Float, x1: Float, y1: Float): PdfText? =
-        if (!backend.hasText) null else safely { backend.select(index, x0, y0, x1, y1) }
+    fun selectBetween(index: Int, x0: Float, y0: Float, x1: Float, y1: Float): PdfText? = when {
+        backend.hasText -> safely { backend.select(index, x0, y0, x1, y1) }
+        own != null -> safely {
+            val sx = ownScaleX(index)
+            val sy = ownScaleY(index)
+            PageGlyphsOps.select(ownText(index), x0 / sx, y0 / sy, x1 / sx, y1 / sy)
+                ?.let { sel -> PdfText(sel.text, sel.boxes.map { rect(it, sx, sy) }) }
+        }
+        else -> null
+    }
 
     /** Rectangles (page points) of each match of [query] on page [index]; empty without text or matches. */
-    fun search(index: Int, query: String): List<List<RectF>> =
-        if (!backend.hasText || query.isBlank()) emptyList() else safely { backend.search(index, query) } ?: emptyList()
+    fun search(index: Int, query: String): List<List<RectF>> = when {
+        query.isBlank() -> emptyList()
+        backend.hasText -> safely { backend.search(index, query) } ?: emptyList()
+        own != null -> safely {
+            val sx = ownScaleX(index)
+            val sy = ownScaleY(index)
+            PageGlyphsOps.search(ownText(index), query).map { m -> m.map { rect(it, sx, sy) } }
+        } ?: emptyList()
+        else -> emptyList()
+    }
+
+    private fun ownText(index: Int): PageGlyphs {
+        val r = own ?: return PageGlyphs.EMPTY
+        if (index != ownPage) {
+            ownGlyphs = PageGlyphs.EMPTY
+            ownPage = -1
+            ownGlyphs = r.page(index)
+            ownPage = index
+        }
+        return ownGlyphs
+    }
+
+    // The app's reader measures the page itself; its points are scaled onto the renderer's should the two differ.
+    private fun ownScaleX(index: Int): Float {
+        val w = own?.pageSize(index)?.get(0) ?: return 1f
+        return if (w > 0f) pageWidth(index) / w else 1f
+    }
+
+    private fun ownScaleY(index: Int): Float {
+        val h = own?.pageSize(index)?.get(1) ?: return 1f
+        return if (h > 0f) pageHeight(index) / h else 1f
+    }
 
     override fun close() {
         if (closed) return
@@ -94,7 +152,11 @@ class PdfPages private constructor(private val fd: ParcelFileDescriptor, private
         try {
             backend.close()
         } finally {
-            fd.close()
+            try {
+                own?.close()
+            } finally {
+                fd.close()
+            }
         }
     }
 
@@ -207,6 +269,8 @@ class PdfPages private constructor(private val fd: ParcelFileDescriptor, private
 
         private fun boundary(x: Float, y: Float) = SelectionBoundary(Point(x.toInt(), y.toInt()))
 
+        private fun rect(b: FloatArray, sx: Float, sy: Float) = RectF(b[0] * sx, b[1] * sy, b[2] * sx, b[3] * sy)
+
         private fun runs(contents: List<PdfPageTextContent>): List<PdfText> =
             contents.filter { it.text.isNotEmpty() }.map { c -> PdfText(c.text, c.bounds.map { RectF(it) }) }
 
@@ -254,7 +318,22 @@ class PdfPages private constructor(private val fd: ParcelFileDescriptor, private
                 fd.close()
                 throw DocumentException("PDF 파일을 열 수 없습니다 (손상되었거나 지원하지 않는 형식).", t)
             }
-            val pages = PdfPages(fd, backend)
+            // Without the platform's text API, the app's own text reader; a file it can't read just has no text.
+            val own = if (!withText || backend.hasText) null else try {
+                val r = PdfTextReader.open(file)
+                if (r.pageCount == backend.pageCount) r else {
+                    // Another page tree than the renderer's: its text would land on the wrong pages.
+                    Log.w(TAG, "own text reader: ${r.pageCount} pages, renderer ${backend.pageCount}; no text")
+                    r.close()
+                    null
+                }
+            } catch (oom: OutOfMemoryError) {
+                null
+            } catch (t: Throwable) {
+                Log.w(TAG, "own text reader failed: ${t.message}")
+                null
+            }
+            val pages = PdfPages(fd, backend, own)
             if (pages.pageCount <= 0) {
                 pages.close()
                 throw DocumentException("쪽이 없는 PDF입니다.")

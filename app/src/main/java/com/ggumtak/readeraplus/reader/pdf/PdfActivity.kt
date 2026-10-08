@@ -64,9 +64,9 @@ import kotlin.math.abs
  * (section = page index, offset 0), its progress and reading time.
  *
  * Study tools (Flexcil-like): pen / highlighter / eraser strokes and bookmarks per page ([PdfNotes], saved as a
- * per-book file, the PDF itself is never changed), a page grid ([PdfThumbs]), text search, and a selection loop —
+ * per-book file, the PDF itself is never changed), a page grid ([PdfSidePanel]), text search, and a selection loop —
  * drawn with a stylus at any time or with a finger after 선택 — whose text goes to 사전·번역 / 웹 검색 / 복사.
- * Text needs the platform PDF text API ([PdfPages.canReadText]: Android 15, or 12–14 with the PDF system module).
+ * Text comes from [PdfPages] (the platform's PDF text API, else the app's own text reader; [PdfPages.canReadText]).
  *
  * Every [PdfPages] call runs on one render thread ([worker]); results come back through [handler] tagged with the
  * document generation, so a late result for a closed document is dropped.
@@ -89,7 +89,7 @@ class PdfActivity : Activity() {
         /** Longest selected text shown as the action dialog's title. */
         private const val SELECTION_TITLE_CHARS = 200
         private const val NO_TEXT_API =
-            "이 폰에서는 PDF 글자를 읽을 수 없습니다.\n(Android 15 이상, 또는 Google Play 시스템 업데이트가 필요합니다)"
+            "이 PDF에서는 글자를 읽을 수 없습니다.\n(암호가 걸렸거나 손상된 파일)"
 
         /** Every notes file read and write, in order, across viewer instances (one closing while another opens). */
         private val notesIo: ExecutorService = Executors.newSingleThreadExecutor { r ->
