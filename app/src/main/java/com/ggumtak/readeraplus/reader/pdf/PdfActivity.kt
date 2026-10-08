@@ -302,12 +302,13 @@ class PdfActivity : Activity() {
     }
 
     /**
-     * Bars on / off (a tap in the middle of the page). The page keeps its place under them, so this never
-     * re-renders the page: only the bars come and go.
+     * Bars on / off (a tap in the middle of the page). Hidden, their room goes to the page: it is re-fitted, which
+     * re-renders it only when its fitted size changes (a page fitted to the width just moves).
      */
     private fun toggleBars() {
         chrome.setShown(!chrome.isShown)
         updateBadge()
+        placePage()
     }
 
     private val chromeListener = object : PdfChrome.Listener {
@@ -857,9 +858,13 @@ class PdfActivity : Activity() {
             chrome.setLayout(it == 0, chrome.folded, p.toolbarX, p.toolbarY)
             toolbarLaidOut(chrome.docked, chrome.folded, p.toolbarX, p.toolbarY)
         })
-        body.addView(PdfSheet.switchRow(ctx, "도구 막대 접기", "펜 모드 버튼만 남깁니다. 버튼을 끌어 옮길 수 있습니다", chrome.folded) {
+        body.addView(PdfSheet.switchRow(ctx, "도구 막대 접기", "손잡이와 펜 모드 버튼만 남깁니다. 손잡이(⋮⋮)를 끌어 옮길 수 있습니다", chrome.folded) {
             chrome.setLayout(chrome.docked, it, p.toolbarX, p.toolbarY)
             toolbarLaidOut(chrome.docked, chrome.folded, p.toolbarX, p.toolbarY)
+        })
+        body.addView(PdfSheet.actionRow(ctx, "도구 막대 위치 초기화", "위에 붙이고 펼칩니다") {
+            chrome.resetLayout()
+            toast("도구 막대를 처음 위치로 되돌렸습니다")
         })
         body.addView(PdfSheet.section(ctx, "제스처"))
         body.addView(PdfSheet.choiceRow(ctx, "밀어서 넘기기", listOf("한 손가락", "두 손가락"), p.swipeFingers - 1) {
@@ -867,7 +872,7 @@ class PdfActivity : Activity() {
             pageView.swipeFingers = it + 1
             if (!app.swipeToTurn) toast("앱 설정에서 '밀어서 넘기기'가 꺼져 있습니다")
         })
-        body.addView(PdfSheet.switchRow(ctx, "한 손가락 패닝(펜)", "켜면 필기 중에도 손가락으로는 넘기고 움직이며, 펜으로만 씁니다", !p.fingerDraws) {
+        body.addView(PdfSheet.switchRow(ctx, "한 손가락 패닝(펜)", "켜면 필기 중에도 손가락으로는 넘기고 움직이며, 펜으로만 씁니다. 펜을 한 번 쓰면 이 화면에서는 자동으로 이렇게 됩니다", !p.fingerDraws) {
             p.fingerDraws = !it
             pageView.fingerDraws = !it
         })

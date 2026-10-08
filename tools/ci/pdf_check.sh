@@ -63,14 +63,31 @@ tap_label "필기 끝내기"; sleep 1; inklog
 tap_label "선택"; loop; shot 04b_lasso 2; inklog; crashes lasso
 adb shell input keyevent KEYCODE_BACK; sleep 1; tap_label "필기 끝내기"; sleep 1
 
+log "dark page: a black pen shows light while drawing too"
+tap_label "PDF 설정"; sleep 1; tap_label "어둡게"; tap_label "닫기"; sleep 1
+tap_label "펜" 0; YP=$((CY + 70))
+shot 04p0_before 0; log "light share before: $(python3 tools/ci/dark_share.py shots/04p0_before.png $((YP - 6)) $((YP + 6)) light)"
+adb shell input motionevent DOWN $((CX - 120)) $YP
+for dx in -90 -60 -30 0 30 60 90 120; do adb shell input motionevent MOVE $((CX + dx)) $YP; done
+shot 04p1_live 0; log "light share live: $(python3 tools/ci/dark_share.py shots/04p1_live.png $((YP - 6)) $((YP + 6)) light)"
+adb shell input motionevent UP $((CX + 120)) $YP
+shot 04p2_after 1; log "light share after: $(python3 tools/ci/dark_share.py shots/04p2_after.png $((YP - 6)) $((YP + 6)) light)"
+crashes dark_pen
+tap_label "필기 끝내기"; tap_label "PDF 설정"; sleep 1; tap_label "기본"; tap_label "닫기"; sleep 1
+
 log "tool bar layout (fold, float, drag, dock)"
 tap_label "도구 접기"; shot 04c_folded 1; descs; crashes fold
 tap_label "도구 펼치기"; sleep 1; crashes unfold
 tap_label "띄우기"; shot 04d_floating 1; crashes float
-dump; xy=$(python3 tools/ci/find_node.py /tmp/ui.xml "필기" exact 0)
+dump; xy=$(python3 tools/ci/find_node.py /tmp/ui.xml "도구 막대 옮기기" exact 0)
 if [ -n "$xy" ]; then adb shell input swipe $xy $CX $((H * 2 / 3)) 700; log "dragged from $xy"; fi
 shot 04e_dragged 1; descs; crashes drag
 tap_label "위에 붙이기"; shot 04f_docked 1; crashes dock
+# The docked strip dragged by its grip comes off and floats; then back to the start via the settings.
+dump; xy=$(python3 tools/ci/find_node.py /tmp/ui.xml "도구 막대 옮기기" exact 0)
+if [ -n "$xy" ]; then adb shell input swipe $xy $CX $((H / 2)) 700; log "undocked by drag from $xy"; fi
+descs; crashes undock
+tap_label "PDF 설정"; sleep 1; tap_label "도구 막대 위치 초기화"; sleep 1; tap_label "닫기"; sleep 1; descs; crashes reset
 
 log "pen tools"
 tap_label "필기"; shot 04_tools 2; crashes tools

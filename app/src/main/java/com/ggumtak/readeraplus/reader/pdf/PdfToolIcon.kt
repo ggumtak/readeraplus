@@ -58,6 +58,7 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
             PEN -> "펜"
             HIGHLIGHTER -> "형광펜"
             ERASER -> "지우개"
+            GRIP -> "도구 막대 옮기기"
             else -> "선택"
         }
         isClickable = true
@@ -65,7 +66,7 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val w = (if (kind == PEN || kind == HIGHLIGHTER) 30f else 34f) * d
+        val w = (if (kind == GRIP) 14f else if (kind == PEN || kind == HIGHLIGHTER) 29f else 34f) * d
         setMeasuredDimension(w.toInt(), (PdfChrome.TOOLBAR_DP * d).toInt())
     }
 
@@ -77,6 +78,7 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
             PEN -> drawPen(canvas, w, h, fg)
             HIGHLIGHTER -> drawMarker(canvas, w, h, fg)
             ERASER -> drawEraser(canvas, w, h, fg)
+            GRIP -> drawGrip(canvas, w, h)
             else -> drawLasso(canvas, w, h, fg)
         }
     }
@@ -177,11 +179,26 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
         canvas.drawCircle(w / 2f - 4f * d, h / 2f + 11f * d, 2f * d, body)
     }
 
+    /** Two columns of three dots: a handle to drag the bar by (brighter while held). */
+    private fun drawGrip(canvas: Canvas, w: Float, h: Float) {
+        body.color = if (isPressed) ACCENT else 0xFF9E9E9E.toInt()
+        val r = 1.6f * d
+        for (cx in 0..1) for (cy in -1..1) {
+            canvas.drawCircle(w / 2f + (cx - 0.5f) * 5f * d, h / 2f + cy * 5f * d, r, body)
+        }
+    }
+
+    override fun drawableStateChanged() {
+        super.drawableStateChanged()
+        if (kind == GRIP) invalidate()
+    }
+
     companion object {
         const val PEN = 0
         const val HIGHLIGHTER = 1
         const val ERASER = 2
         const val LASSO = 3
+        const val GRIP = 4
         /** Icon colour on the dark tool bar, and the chosen tool's accent. */
         const val ICON = 0xFFE0E0E0.toInt()
         const val ACCENT = 0xFFF5B82E.toInt()

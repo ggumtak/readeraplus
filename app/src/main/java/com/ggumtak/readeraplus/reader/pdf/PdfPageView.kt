@@ -6,6 +6,7 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.DashPathEffect
@@ -181,11 +182,12 @@ internal class PdfPageView(context: Context) : View(context) {
             inkPaint.colorFilter = inkFilter
             inkFillPaint.colorFilter = inkFilter
             layerPaint.colorFilter = inkFilter
-            liveStroke.colorFilter = inkFilter
+            // The live layer holds the ink's own colours and gets the filter once, when drawn (tail likewise).
+            tailPaint.colorFilter = inkFilter
             // A dark page would swallow a multiplied highlight: highlights are laid over it, half transparent.
             val dark = v == PdfPrefs.TONE_DARK
-            highlightPaint.xfermode = if (dark) null else PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
-            layerMultiply.xfermode = if (dark) null else PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
+            highlightBlend(highlightPaint, !dark)
+            highlightBlend(layerMultiply, !dark)
             layerMultiply.alpha = if (dark) 0x80 else 0xFF
             highlightAlpha = if (dark) 0x80 else 0xFF
             invalidate()
@@ -194,8 +196,17 @@ internal class PdfPageView(context: Context) : View(context) {
     /** Bitmaps drawn 1:1 (fitted page, detail): no filtering, only the page colour filter. */
     private val plainPaint = Paint()
 
+    /**
+     * A stylus has touched this view: from then on fingers only move, zoom and turn pages (palm rejection, as in
+     * Flexcil), whatever [fingerDraws] says.
+     */
+    private var stylusSeen = false
     /** Whether a finger touch with a tool on draws (else it navigates). */
-    private val fingerTools: Boolean get() = mode != MODE_NONE && fingerDraws
+    private val fingerTools: Boolean get() = mode != MODE_NONE && fingerDraws && !stylusSeen
+    /** The pointer the stroke follows (the pen, or the drawing finger), by id: contacts come and go around it. */
+    private var inkPointerId = -1
+    /** The last raw pressure of the stroke: a lift often reports 0, which must not thin the line's end. */
+    private var lastRawPressure = 1f
 
     /** Steadied pressure per point of the stroke being drawn (when [inkPressure]). */
     private var inkQ = FloatArray(256)
@@ -220,8 +231,14 @@ internal class PdfPageView(context: Context) : View(context) {
         strokeJoin = Paint.Join.ROUND
     }
     private val liveFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    /** The pen line's tail, drawn straight on the view: the 어둡게 ink filter applies here, never in the tiles. */
+    private val tailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
     private val layerPaint = Paint()
-    private val layerMultiply = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY) }
+    private val layerMultiply = Paint().also { highlightBlend(it, true) }
     /** Points the platform predicts the pen will reach next (view px), drawn ahead of the real line (Android 14+). */
     /** The MotionPredictor (Android 14+), false when the device has none, null until the first stroke. */
     internal var predictorSlot: Any? = null
@@ -277,9 +294,7 @@ internal class PdfPageView(context: Context) : View(context) {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
-        // Multiply: the text under a highlight stays black.
-        xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
-    }
+    }.also { highlightBlend(it, true) }
     private val lassoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         color = 0xFF1E6FD9.toInt()
@@ -506,6 +521,20 @@ internal class PdfPageView(context: Context) : View(context) {
     }
 
     companion object {
+        /**
+         * Multiply blending for highlights (the text under them stays black). Never PorterDuff MULTIPLY: it multiplies
+         * alpha too, so the transparent pixels around the line in a live tile cleared the page there (black squares).
+         * BlendMode.MULTIPLY (Android 10+) leaves the page alone where the highlight is transparent; before it,
+         * DARKEN, which composites alpha the same way and looks alike on paper. [on] false: plain source-over.
+         */
+        fun highlightBlend(p: Paint, on: Boolean) {
+            if (Build.VERSION.SDK_INT >= 29) {
+                p.blendMode = if (on) BlendMode.MULTIPLY else null
+            } else {
+                p.xfermode = if (on) PorterDuffXfermode(PorterDuff.Mode.DARKEN) else null
+            }
+        }
+
         const val MODE_NONE = -1
         const val MODE_PEN = InkTool.PEN
         const val MODE_HIGHLIGHTER = InkTool.HIGHLIGHTER
@@ -647,9 +676,9 @@ internal class PdfPageView(context: Context) : View(context) {
         predictPath.moveTo(midVx, midVy)
         predictPath.lineTo(lastVx, lastVy)
         for (i in 0 until predictedCount) predictPath.lineTo(predicted[i * 2], predicted[i * 2 + 1])
-        liveStroke.color = penColor
-        liveStroke.strokeWidth = maxOf(1f, lastHalf * 2f)
-        canvas.drawPath(predictPath, liveStroke)
+        tailPaint.color = penColor
+        tailPaint.strokeWidth = maxOf(1f, lastHalf * 2f)
+        canvas.drawPath(predictPath, tailPaint)
     }
 
     private fun drawPage(canvas: Canvas, b: Bitmap) {
@@ -997,14 +1026,17 @@ internal class PdfPageView(context: Context) : View(context) {
 
     // ------------------------------------------------------------------------------------------- drawing input
 
-    /** The tool a touch starting with [e] uses: the pen's eraser end erases; a stylus draws a loop while reading. */
-    private fun inkToolFor(e: MotionEvent): Int {
+    /**
+     * The tool a touch by pointer [index] of [e] uses: the pen's eraser end erases; a stylus draws a loop while
+     * reading.
+     */
+    private fun inkToolFor(e: MotionEvent, index: Int = 0): Int {
         if (page < 0 || base == null || pageW <= 0) return MODE_NONE
-        val type = e.getToolType(0)
+        val type = e.getToolType(index)
         val stylus = type == MotionEvent.TOOL_TYPE_STYLUS
         val tool = when {
             type == MotionEvent.TOOL_TYPE_ERASER -> MODE_ERASER
-            mode != MODE_NONE && (stylus || fingerDraws) -> mode
+            mode != MODE_NONE && (stylus || (fingerDraws && !stylusSeen)) -> mode
             stylus -> MODE_LASSO
             else -> MODE_NONE
         }
@@ -1013,40 +1045,73 @@ internal class PdfPageView(context: Context) : View(context) {
         return tool
     }
 
+    /** Starts the stroke of [inkGesture] with pointer [index] of [e] (the first contact, or a pen after a palm). */
+    private fun startInk(e: MotionEvent, index: Int) {
+        // Every pen sample as it comes, not batched to the next frame: the line keeps up with the pen.
+        requestUnbufferedDispatch(e)
+        scroller.forceFinished(true)
+        zoomAnim?.end()
+        clearLasso()
+        inkPointerId = e.getPointerId(index)
+        inkPage = page
+        inkCount = 0
+        inkErased = false
+        livePath.rewind()
+        lastQ = Float.NaN
+        lastRawPressure = 1f
+        inkPressure = inkGesture == MODE_PEN && penPressure && e.getToolType(index) == MotionEvent.TOOL_TYPE_STYLUS
+        predictedCount = 0
+        if (inkGesture == MODE_PEN || inkGesture == MODE_HIGHLIGHTER) startLive()
+        if (Build.VERSION.SDK_INT >= 34 && e.pointerCount == 1) Prediction.record(this, e)
+        // One eraser drag is one undo step.
+        if (inkGesture == MODE_ERASER) notes?.beginGroup()
+        addInkPoint(e.getX(index), e.getY(index), e.getPressure(index), first = true)
+    }
+
+    /** The samples of the stroke's pointer in [e] (batched history first), up to its current position. */
+    private fun addInkSamples(e: MotionEvent) {
+        val i = e.findPointerIndex(inkPointerId)
+        if (i < 0) return
+        for (h in 0 until e.historySize) {
+            addInkPoint(e.getHistoricalX(i, h), e.getHistoricalY(i, h), e.getHistoricalPressure(i, h), first = false)
+        }
+        // The lift's own position counts (a quick stroke would lose its end); its pressure is often 0.
+        val p = e.getPressure(i)
+        val lifting = e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_POINTER_UP
+        addInkPoint(e.getX(i), e.getY(i), if (lifting && p <= 0f) lastRawPressure else p, first = false)
+    }
+
     private fun handleInk(e: MotionEvent) {
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                // Every pen sample as it comes, not batched to the next frame: the line keeps up with the pen.
-                requestUnbufferedDispatch(e)
-                scroller.forceFinished(true)
-                zoomAnim?.end()
-                clearLasso()
-                inkPage = page
-                inkCount = 0
-                inkErased = false
-                livePath.rewind()
-                lastQ = Float.NaN
-                inkPressure = inkGesture == MODE_PEN && penPressure && e.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS
-                predictedCount = 0
-                if (inkGesture == MODE_PEN || inkGesture == MODE_HIGHLIGHTER) startLive()
-                if (Build.VERSION.SDK_INT >= 34) Prediction.record(this, e)
-                // One eraser drag is one undo step.
-                if (inkGesture == MODE_ERASER) notes?.beginGroup()
-                addInkPoint(e.x, e.y, e.pressure, first = true)
-            }
+            MotionEvent.ACTION_DOWN -> startInk(e, 0)
             MotionEvent.ACTION_MOVE -> {
                 if (inkPage != page) return
-                for (h in 0 until e.historySize) {
-                    addInkPoint(e.getHistoricalX(0, h), e.getHistoricalY(0, h), e.getHistoricalPressure(0, h), first = false)
-                }
-                addInkPoint(e.x, e.y, e.pressure, first = false)
-                if (liveOn && Build.VERSION.SDK_INT >= 34) {
+                addInkSamples(e)
+                // The platform predicts one pointer: only while the stroke's is the only contact.
+                if (liveOn && Build.VERSION.SDK_INT >= 34 && e.pointerCount == 1) {
                     Prediction.record(this, e)
                     predictedCount = Prediction.predict(this, e, predicted)
                 }
             }
-            MotionEvent.ACTION_UP -> finishInk()
+            MotionEvent.ACTION_UP -> {
+                if (inkPage == page && e.getPointerId(0) == inkPointerId) addInkSamples(e)
+                finishInk()
+            }
             MotionEvent.ACTION_CANCEL -> cancelInk()
+        }
+    }
+
+    /** The touch so far stops being a gesture (a pen took over from a palm): detectors and a dragged page let go. */
+    private fun abandonGesture(e: MotionEvent) {
+        val c = MotionEvent.obtain(e)
+        c.action = MotionEvent.ACTION_CANCEL
+        scaleDetector.onTouchEvent(c)
+        gestures.onTouchEvent(c)
+        c.recycle()
+        if (dragging || slide != 0f) {
+            dragging = false
+            flingDir = 0
+            settle(0)
         }
     }
 
@@ -1057,6 +1122,7 @@ internal class PdfPageView(context: Context) : View(context) {
         if (s <= 0f) return
         val px = (x - slide - originX(b, s)) / s
         val py = (y - originY(b, s)) / s
+        lastRawPressure = if (pressure > 0f) pressure else lastRawPressure
         if (inkGesture == MODE_ERASER) {
             eraserX = x
             eraserY = y
@@ -1286,18 +1352,42 @@ internal class PdfPageView(context: Context) : View(context) {
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val type = event.getToolType(0)
+            val pen = type == MotionEvent.TOOL_TYPE_STYLUS || type == MotionEvent.TOOL_TYPE_ERASER
+            if (pen) stylusSeen = true
             // A page still sliding lands first, so the stroke goes on the page that stays.
             if (slideAnim != null && inkToolFor(event) != MODE_NONE) slideAnim?.end()
             inkGesture = inkToolFor(event)
             inkTouched = inkGesture != MODE_NONE
-            val type = event.getToolType(0)
-            inkStylus = inkTouched && (type == MotionEvent.TOOL_TYPE_STYLUS || type == MotionEvent.TOOL_TYPE_ERASER)
+            inkStylus = inkTouched && pen
+        } else if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && !inkStylus) {
+            // The pen comes down while a palm or finger already touches: the pen wins, the rest is ignored.
+            val i = event.actionIndex
+            val type = event.getToolType(i)
+            if (type == MotionEvent.TOOL_TYPE_STYLUS || type == MotionEvent.TOOL_TYPE_ERASER) {
+                stylusSeen = true
+                val tool = inkToolFor(event, i)
+                if (tool != MODE_NONE) {
+                    cancelInk()
+                    abandonGesture(event)
+                    slideAnim?.end()
+                    inkGesture = tool
+                    inkTouched = true
+                    inkStylus = true
+                    startInk(event, i)
+                    return true
+                }
+            }
         }
         if (inkStylus) {
-            // Palm rejection: only the pen (pointer 0) counts; a palm or finger never zooms, pans or cancels.
+            // Palm rejection: only the pen (by pointer id) counts; a palm or finger never zooms, pans or cancels.
             when (event.actionMasked) {
                 MotionEvent.ACTION_POINTER_DOWN -> {}
-                MotionEvent.ACTION_POINTER_UP -> if (event.actionIndex == 0 && inkGesture != MODE_NONE) finishInk()
+                MotionEvent.ACTION_POINTER_UP ->
+                    if (inkGesture != MODE_NONE && event.getPointerId(event.actionIndex) == inkPointerId) {
+                        if (inkPage == page) addInkSamples(event)
+                        finishInk()
+                    }
                 else -> if (inkGesture != MODE_NONE) handleInk(event)
             }
             if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) inkStylus = false

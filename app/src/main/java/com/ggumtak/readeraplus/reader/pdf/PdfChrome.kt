@@ -62,6 +62,23 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
     private val fold: ImageButton
     private val badge: TextView
     private val pill = GradientDrawable()
+    private val grip: PdfToolIcon
+    private val modeOn = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(PdfToolIcon.ACCENT)
+    }
+    private val modeOff = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(0xFF4A4A4A.toInt())
+    }
+    /** The tool icons of the row, kept between taps: choosing a tool only moves the raised one. */
+    private val presetIcons = ArrayList<PdfToolIcon>()
+    private var presetKey: String? = null
+    private var eraserIcon: PdfToolIcon? = null
+    private var lassoIcon: PdfToolIcon? = null
+    private var annotatingNow = false
+    /** The floating bar is being dragged by its grip: layout passes leave its position alone. */
+    private var dragging = false
     private var insetTop = 0
     private var insetLeft = 0
     private var insetRight = 0
@@ -76,9 +93,12 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
     private var posX = 0.5f
     private var posY = 0f
 
-    /** Height kept free at the top (inset included), shown or not: hiding the bars re-renders nothing. */
+    /**
+     * Height kept free at the top (inset included): the top bar and a docked tool strip while the bars show, nothing
+     * more in full-screen reading (the page takes the room back; it re-renders only if its fitted size changes).
+     */
     val topSpace: Int
-        get() = insetTop + activity.dp(TOP_DP) + if (docked && !folded) activity.dp(TOOLBAR_DP) else 0
+        get() = insetTop + if (!shown) 0 else activity.dp(TOP_DP) + if (docked && !folded) activity.dp(TOOLBAR_DP) else 0
 
     init {
         val ctx = activity
@@ -98,13 +118,12 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
         top.addView(icon(R.drawable.ic_settings, "PDF 설정") { listener.onSettings() })
         root.addView(top, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
+        grip = PdfToolIcon(ctx, PdfToolIcon.GRIP)
         modeButton = ImageButton(ctx).apply {
             scaleType = ImageView.ScaleType.CENTER
             isFocusable = false
-            layoutParams = LinearLayout.LayoutParams(ctx.dp(MODE_DP), ctx.dp(MODE_DP)).apply {
-                leftMargin = ctx.dp(5)
-                rightMargin = ctx.dp(3)
-            }
+            layoutParams = LinearLayout.LayoutParams(ctx.dp(MODE_DP), ctx.dp(MODE_DP)).apply { rightMargin = ctx.dp(2) }
+            setOnClickListener { listener.onAnnotate(!annotatingNow) }
         }
         toolRow = ctx.horizontal { gravity = Gravity.CENTER }
         scroll = HorizontalScrollView(ctx).apply {
@@ -126,6 +145,7 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
         pill.setColor(TOOLBAR)
         toolbar = ctx.horizontal {
             gravity = Gravity.CENTER_VERTICAL
+            addView(grip)
             addView(modeButton)
             // Weighted: a tool row wider than the screen shrinks to it and scrolls.
             addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
@@ -183,6 +203,7 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
         if (!show) badge.visibility = View.GONE
         // A turn while hidden left the old size: placed again once laid out.
         else toolbar.post { position() }
+        // The bars' room is given back to (or taken from) the page: the activity re-fits it.
     }
 
     val isShown: Boolean get() = shown
@@ -227,6 +248,12 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
 
     private fun report() = listener.onToolbarLayout(docked, folded, posX, posY)
 
+    /** 도구 막대 위치 초기화: docked under the top bar, unfolded, the floating spot back at the top middle. */
+    fun resetLayout() {
+        setLayout(docked = true, folded = false, x = 0.5f, y = 0f)
+        report()
+    }
+
     private fun place() {
         top.setPadding(insetLeft + activity.dp(2), insetTop, insetRight + activity.dp(2), 0)
         // Exactly what [topSpace] and the tool bar's margin count on, whatever the inset.
@@ -264,6 +291,7 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
 
     /** Puts the floating bar at its position (the docked strip sits still). */
     private fun position() {
+        if (dragging) return
         if (docked && !folded) {
             toolbar.translationX = 0f
             toolbar.translationY = 0f
@@ -273,52 +301,62 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
         }
     }
 
-    /** The mode button: a tap switches pen mode; a drag moves a floating (or folded) tool bar, like Flexcil's. */
+    /**
+     * The grip at the bar's left end moves it (the mode button next to it only switches pen mode). Dragging the
+     * docked strip lifts it off: it floats where it is let go. The bar stays inside the screen's safe area.
+     */
     @SuppressLint("ClickableViewAccessibility")
     private fun dragHandle() {
         val slop = ViewConfiguration.get(activity).scaledTouchSlop
-        modeButton.setOnTouchListener(object : View.OnTouchListener {
+        val at = IntArray(2)
+        grip.setOnTouchListener(object : View.OnTouchListener {
             var downX = 0f
             var downY = 0f
-            var startX = 0f
-            var startY = 0f
-            var moving = false
+            /** Where in the bar the finger holds it. */
+            var grabX = 0f
+            var grabY = 0f
+            var rootX = 0
+            var rootY = 0
 
             override fun onTouch(v: View, e: MotionEvent): Boolean {
                 when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         downX = e.rawX
                         downY = e.rawY
-                        startX = toolbar.translationX
-                        startY = toolbar.translationY
-                        moving = false
+                        root.getLocationOnScreen(at)
+                        rootX = at[0]
+                        rootY = at[1]
+                        toolbar.getLocationOnScreen(at)
+                        grabX = e.rawX - at[0]
+                        grabY = e.rawY - at[1]
+                        dragging = false
                         v.isPressed = true
                     }
                     MotionEvent.ACTION_MOVE -> {
                         val dx = e.rawX - downX
                         val dy = e.rawY - downY
-                        if (!moving && dx * dx + dy * dy > slop * slop) {
-                            moving = true
-                            v.isPressed = false
+                        if (!dragging && dx * dx + dy * dy > slop * slop) {
+                            dragging = true
+                            if (docked && !folded) {
+                                // Off the top: a floating bar from here on (it lays out again at its own width).
+                                setLayout(docked = false, folded = false, x = posX, y = posY)
+                                report()
+                            }
                         }
-                        // The docked strip stays put; a drag on it is still no tap.
-                        if (moving && !(docked && !folded)) {
-                            toolbar.translationX = (startX + dx).coerceIn(0f, roomX().toFloat())
-                            toolbar.translationY = (startY + dy).coerceIn(0f, roomY().toFloat())
+                        if (dragging) {
+                            val lp = toolbar.layoutParams as FrameLayout.LayoutParams
+                            toolbar.translationX = (e.rawX - rootX - grabX - lp.leftMargin).coerceIn(0f, roomX().toFloat())
+                            toolbar.translationY = (e.rawY - rootY - grabY - lp.topMargin).coerceIn(0f, roomY().toFloat())
                         }
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         v.isPressed = false
-                        if (moving) {
-                            if (!(docked && !folded)) {
-                                posX = PdfMath.fractionOf(toolbar.translationX, roomX())
-                                posY = PdfMath.fractionOf(toolbar.translationY, roomY())
-                                report()
-                            }
-                        } else if (e.actionMasked == MotionEvent.ACTION_UP) {
-                            v.performClick()
+                        if (dragging) {
+                            dragging = false
+                            posX = PdfMath.fractionOf(toolbar.translationX, roomX())
+                            posY = PdfMath.fractionOf(toolbar.translationY, roomY())
+                            report()
                         }
-                        moving = false
                     }
                 }
                 return true
@@ -331,36 +369,44 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
      * tool in use), eraser, lasso and undo. Tapping any tool turns pen mode on with it.
      */
     fun setTools(presets: List<PenPreset>, selected: Int, mode: Int, annotating: Boolean) {
+        annotatingNow = annotating
         modeButton.setImageResource(if (annotating) R.drawable.ic_edit else R.drawable.ic_touch_app)
         modeButton.imageTintList = ColorStateList.valueOf(if (annotating) 0xFF1F1F1F.toInt() else ICON)
-        modeButton.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(if (annotating) PdfToolIcon.ACCENT else 0xFF4A4A4A.toInt())
-        }
+        modeButton.background = if (annotating) modeOn else modeOff
         // Described by what a tap does (also what the emulator check taps).
         modeButton.contentDescription = if (annotating) "필기 끝내기" else "필기"
-        modeButton.setOnClickListener { listener.onAnnotate(!annotating) }
 
-        toolRow.removeAllViews()
+        val key = PenPresets.encode(presets)
+        if (key != presetKey) buildRow(presets, key)
         val drawing = annotating && (mode == PdfPageView.MODE_PEN || mode == PdfPageView.MODE_HIGHLIGHTER)
+        for (i in presetIcons.indices) presetIcons[i].chosen = drawing && i == selected
+        eraserIcon?.chosen = annotating && mode == PdfPageView.MODE_ERASER
+        lassoIcon?.chosen = annotating && mode == PdfPageView.MODE_LASSO
+    }
+
+    /** The row's views for [presets] (made again only when a preset's tool, colour or width changes). */
+    private fun buildRow(presets: List<PenPreset>, key: String) {
+        presetKey = key
+        toolRow.removeAllViews()
+        presetIcons.clear()
         presets.forEachIndexed { i, pr ->
             val kind = if (pr.tool == InkTool.HIGHLIGHTER) PdfToolIcon.HIGHLIGHTER else PdfToolIcon.PEN
-            toolRow.addView(PdfToolIcon(activity, kind).apply {
+            val v = PdfToolIcon(activity, kind).apply {
                 tipColor = pr.color
                 caption = PenColors.formatWidth(pr.width)
-                chosen = drawing && i == selected
-                setOnClickListener { listener.onPreset(i, drawing && i == selected) }
-            })
+            }
+            // Tapped again while it is the tool in use: its settings.
+            v.setOnClickListener { listener.onPreset(i, v.chosen) }
+            presetIcons.add(v)
+            toolRow.addView(v)
         }
         toolRow.addView(divider())
-        toolRow.addView(PdfToolIcon(activity, PdfToolIcon.ERASER).apply {
-            chosen = annotating && mode == PdfPageView.MODE_ERASER
+        eraserIcon = PdfToolIcon(activity, PdfToolIcon.ERASER).apply {
             setOnClickListener { listener.onTool(PdfPageView.MODE_ERASER) }
-        })
-        toolRow.addView(PdfToolIcon(activity, PdfToolIcon.LASSO).apply {
-            chosen = annotating && mode == PdfPageView.MODE_LASSO
+        }.also { toolRow.addView(it) }
+        lassoIcon = PdfToolIcon(activity, PdfToolIcon.LASSO).apply {
             setOnClickListener { listener.onTool(PdfPageView.MODE_LASSO) }
-        })
+        }.also { toolRow.addView(it) }
         toolRow.addView(icon(R.drawable.ic_undo, "되돌리기", size = TOOL_ICON_DP) { listener.onUndo() })
         toolRow.addView(divider())
     }
@@ -396,7 +442,7 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
         const val TOP_ICON_DP = 42
         const val TOOLBAR_DP = 44
         const val TOOL_ICON_DP = 36
-        const val MODE_DP = 34
+        const val MODE_DP = 32
         const val FLOAT_GAP_DP = 6
     }
 }
