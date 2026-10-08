@@ -69,6 +69,12 @@ internal class PdfPageView(context: Context) : View(context) {
     var host: Host? = null
     /** Horizontal drags slide to the neighbour pages (설정 "밀어서 넘기기"). */
     var swipeEnabled = true
+    /**
+     * Fingers a page-turning swipe takes: 1, or 2 (one finger then never turns by dragging; two fingers swipe, and
+     * a two-finger touch becomes a pinch only once the fingers clearly spread or close). With a drawing tool on,
+     * swiping always takes two fingers.
+     */
+    var swipeFingers = 1
 
     /** Current page index (-1 = none yet). */
     var page = -1
@@ -102,6 +108,14 @@ internal class PdfPageView(context: Context) : View(context) {
     private var slideTurns = false
     /** A pinch happened during the current touch: lifting the fingers never turns the page. */
     private var pinched = false
+    /** What the current two-finger gesture is: [TWO_UNDECIDED] until the fingers show it. */
+    private var twoIntent = TWO_PINCH
+    private var twoScale = 1f
+    private var twoDx = 0f
+    private var twoDy = 0f
+    private var lastFocusX = 0f
+    private var lastFocusY = 0f
+    private val swipeSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop * 2f
     private val gap = context.dp(16).toFloat()
 
     private val dst = RectF()
@@ -404,6 +418,12 @@ internal class PdfPageView(context: Context) : View(context) {
         const val MODE_ERASER = 2
         const val MODE_LASSO = 3
 
+        private const val TWO_UNDECIDED = 0
+        private const val TWO_PINCH = 1
+        private const val TWO_SWIPE = 2
+        /** How far two fingers must spread or close (zoom ratio) before the touch counts as a pinch. */
+        private const val PINCH_DECIDE = 0.12f
+
         /** Pen and highlighter widths in page points (they zoom with the page). */
         private const val PEN_WIDTH_PT = 1.4f
         private const val HIGHLIGHT_WIDTH_PT = 11f
@@ -636,6 +656,19 @@ internal class PdfPageView(context: Context) : View(context) {
         anim.start()
     }
 
+    /** Moves the sliding page by a finger movement of [dx] px. */
+    private fun slideBy(dx: Float) {
+        val hasPrev = prevImg?.index == page - 1
+        val hasNext = nextImg?.index == page + 1
+        slide = PdfMath.dragSlide(slide, dx, slideFull, hasPrev, hasNext)
+        invalidate()
+    }
+
+    /** Whether a two-finger touch starting now may be a page swipe (else it is a pinch at once). */
+    private fun twoFingerSwipe(): Boolean =
+        swipeEnabled && !zoomed && areaW > 0 && page >= 0 && !dragging && slide == 0f &&
+            (swipeFingers == 2 || mode != MODE_NONE)
+
     // ------------------------------------------------------------------------------------------- zoom
 
     /** Zooms to [z] around the focus (content-area px) at once: pinch. */
@@ -686,26 +719,69 @@ internal class PdfPageView(context: Context) : View(context) {
 
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(d: ScaleGestureDetector): Boolean {
-            pinched = true
             cancelInk()
             zoomAnim?.cancel()
             scroller.forceFinished(true)
             stepTargetY = Float.NaN
-            if (dragging || slide != 0f) {
-                dragging = false
-                settle(0)
+            lastFocusX = d.focusX
+            lastFocusY = d.focusY
+            twoScale = 1f
+            twoDx = 0f
+            twoDy = 0f
+            twoIntent = if (twoFingerSwipe()) TWO_UNDECIDED else TWO_PINCH
+            if (twoIntent == TWO_PINCH) {
+                pinched = true
+                if (dragging || slide != 0f) {
+                    dragging = false
+                    settle(0)
+                }
             }
             return true
         }
 
         override fun onScale(d: ScaleGestureDetector): Boolean {
-            zoomTo(zoom * d.scaleFactor, d.focusX - paddingLeft, d.focusY - paddingTop)
+            val fx = d.focusX
+            val fy = d.focusY
+            val ddx = fx - lastFocusX
+            val ddy = fy - lastFocusY
+            lastFocusX = fx
+            lastFocusY = fy
+            when (twoIntent) {
+                TWO_UNDECIDED -> {
+                    twoScale *= d.scaleFactor
+                    twoDx += ddx
+                    twoDy += ddy
+                    if (abs(twoScale - 1f) > PINCH_DECIDE) {
+                        twoIntent = TWO_PINCH
+                        pinched = true
+                        zoomTo(zoom * twoScale, fx - paddingLeft, fy - paddingTop)
+                    } else if (abs(twoDx) > swipeSlop && abs(twoDx) > abs(twoDy)) {
+                        twoIntent = TWO_SWIPE
+                        dragging = true
+                        flingDir = 0
+                        slideAnim?.cancel()
+                        slideBy(twoDx)
+                    }
+                }
+                TWO_SWIPE -> slideBy(ddx)
+                else -> {
+                    zoomTo(zoom * d.scaleFactor, fx - paddingLeft, fy - paddingTop)
+                    // Two fingers also move the zoomed page.
+                    if (zoomed && (ddx != 0f || ddy != 0f)) {
+                        offX += ddx
+                        offY += ddy
+                        viewportChanged()
+                    }
+                }
+            }
             return true
         }
 
         override fun onScaleEnd(d: ScaleGestureDetector) {
             // Smaller than the fitted page: spring back.
-            if (zoom < PdfMath.MIN_ZOOM) animateZoom(PdfMath.MIN_ZOOM, d.focusX - paddingLeft, d.focusY - paddingTop)
+            if (twoIntent == TWO_PINCH && zoom < PdfMath.MIN_ZOOM) {
+                animateZoom(PdfMath.MIN_ZOOM, d.focusX - paddingLeft, d.focusY - paddingTop)
+            }
         }
     }).apply { isQuickScaleEnabled = false }
 
@@ -740,6 +816,11 @@ internal class PdfPageView(context: Context) : View(context) {
 
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
             if (scaleDetector.isInProgress || zoomAnim != null || inkGesture != MODE_NONE) return false
+            // A two-finger swipe goes on with the finger left on the glass.
+            if (dragging) {
+                slideBy(-dx)
+                return true
+            }
             // With a tool, one finger draws: moving the page takes two.
             if (mode != MODE_NONE && e2.pointerCount < 2) return false
             if (zoomed) {
@@ -748,22 +829,21 @@ internal class PdfPageView(context: Context) : View(context) {
                 viewportChanged()
                 return true
             }
-            if (!swipeEnabled || areaW <= 0 || mode != MODE_NONE) return false
-            if (!dragging) {
-                // Mostly horizontal: the page starts to slide.
-                if (abs(dx) <= abs(dy)) return false
-                dragging = true
-                flingDir = 0
-                slideAnim?.cancel()
-            }
-            val hasPrev = prevImg?.index == page - 1
-            val hasNext = nextImg?.index == page + 1
-            slide = PdfMath.dragSlide(slide, -dx, slideFull, hasPrev, hasNext)
-            invalidate()
+            if (!swipeEnabled || areaW <= 0 || mode != MODE_NONE || swipeFingers != 1) return false
+            // Mostly horizontal: the page starts to slide.
+            if (abs(dx) <= abs(dy)) return false
+            dragging = true
+            flingDir = 0
+            slideAnim?.cancel()
+            slideBy(-dx)
             return true
         }
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+            if (dragging && abs(vx) >= MIN_FLING_DP_PER_S * resources.displayMetrics.density) {
+                flingDir = if (vx < 0) 1 else -1
+                return true
+            }
             if (scaleDetector.isInProgress || zoomAnim != null || inkGesture != MODE_NONE || mode != MODE_NONE) return false
             if (zoomed) {
                 // Whole-pixel bounds just past the float edges; clampOffsets lands exactly on them.
@@ -774,9 +854,6 @@ internal class PdfPageView(context: Context) : View(context) {
                 scroller.fling(offX.toInt(), offY.toInt(), vx.toInt(), vy.toInt(), minX, maxX, minY, maxY)
                 postInvalidateOnAnimation()
                 return true
-            }
-            if (dragging && abs(vx) >= MIN_FLING_DP_PER_S * resources.displayMetrics.density) {
-                flingDir = if (vx < 0) 1 else -1
             }
             return dragging
         }
@@ -937,6 +1014,7 @@ internal class PdfPageView(context: Context) : View(context) {
                 host?.onViewportChanged()
             }
             pinched = false
+            twoIntent = TWO_PINCH
             if (slideAnim != null && !inkTouched) {
                 if (slideTurns) {
                     // A page turn in flight lands first: quick taps each turn a page.

@@ -46,6 +46,7 @@ import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.InkNumPad
 import com.ggumtak.readeraplus.ui.kit.alert
+import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.ToolbarAction
@@ -93,6 +94,8 @@ class PdfActivity : Activity() {
         private const val SAVE_DELAY_MS = 800L
         private const val NOTES_SAVE_DELAY_MS = 1000L
         private const val NOTES_DIR = "pdf_notes"
+        private const val PREFS = "pdf_viewer"
+        private const val PREF_SWIPE_FINGERS = "swipeFingers"
         /** Longest selected text shown as the action dialog's title. */
         private const val SELECTION_TITLE_CHARS = 200
         private const val NO_TEXT_API =
@@ -218,6 +221,7 @@ class PdfActivity : Activity() {
         if (requestedOrientation != a.orientationLock) requestedOrientation = a.orientationLock
         keeper.enabled = a.keepScreenOn
         pageView.swipeEnabled = a.swipeToTurn
+        pageView.swipeFingers = swipeFingers()
         tracker.resume(SystemClock.elapsedRealtime(), dayClock.day(System.currentTimeMillis()))
     }
 
@@ -284,6 +288,7 @@ class PdfActivity : Activity() {
                 ToolbarAction(R.drawable.ic_bookmark, "책갈피") { toggleBookmark() },
                 ToolbarAction(R.drawable.ic_grid_view, "쪽 목록") { showThumbs() },
                 ToolbarAction(R.drawable.ic_edit, "필기") { startAnnotating() },
+                ToolbarAction(R.drawable.ic_swipe, "밀어 넘기기") { chooseSwipeFingers() },
             ),
         ).apply {
             isClickable = true
@@ -722,18 +727,16 @@ class PdfActivity : Activity() {
         scheduleDetail()
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        val dir = keyDirection(keyCode)
-        if (dir != 0) {
-            turn(dir)
-            return true
-        }
-        return super.onKeyDown(keyCode, event)
-    }
-
-    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyDirection(keyCode) != 0) return true
-        return super.onKeyUp(keyCode, event)
+    /**
+     * Page keys (keyboard arrows, Page Up / Down, Space, volume, learned keys) turn pages before any view sees them:
+     * a focused button, slider or tool bar would otherwise take the arrows for focus moves. Dialogs have their own
+     * windows, so typing in 찾기 is not affected. A held key repeats.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val dir = keyDirection(event.keyCode)
+        if (dir == 0) return super.dispatchKeyEvent(event)
+        if (event.action == KeyEvent.ACTION_DOWN) turn(if (event.isShiftPressed && event.keyCode == KeyEvent.KEYCODE_SPACE) -1 else dir)
+        return true
     }
 
     /** +1 next page, -1 previous, 0 = not a page key (the volume keys only when they turn pages in 설정). */
@@ -850,6 +853,23 @@ class PdfActivity : Activity() {
             }
         } catch (t: Throwable) {
             done(null)
+        }
+    }
+
+    // ================================================================== viewer options
+
+    /** This viewer's own options (the app settings are shared with the text reader and stay as they are). */
+    private fun viewerPrefs() = getSharedPreferences(PREFS, MODE_PRIVATE)
+
+    private fun swipeFingers(): Int = if (viewerPrefs().getInt(PREF_SWIPE_FINGERS, 1) == 2) 2 else 1
+
+    private fun chooseSwipeFingers() {
+        val options = listOf("한 손가락으로 밀기", "두 손가락으로 밀기")
+        chooser("쪽을 밀어서 넘길 때", options, swipeFingers() - 1) { which ->
+            val fingers = which + 1
+            viewerPrefs().edit().putInt(PREF_SWIPE_FINGERS, fingers).apply()
+            pageView.swipeFingers = fingers
+            if (!app.swipeToTurn) toast("설정에서 '밀어서 넘기기'가 꺼져 있습니다")
         }
     }
 
