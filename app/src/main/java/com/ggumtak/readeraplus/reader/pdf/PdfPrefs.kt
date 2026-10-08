@@ -104,6 +104,25 @@ internal class PdfPrefs(private val p: SharedPreferences) {
         get() = PenPresets.decodeColors(p.getString("recentColors", null))
         set(v) = p.edit().putString("recentColors", PenPresets.encodeColors(v)).apply()
 
+    /** Tool bar docked under the top bar (else floating over the page). */
+    var toolbarDocked: Boolean
+        get() = p.getBoolean("toolbarDocked", true)
+        set(v) = p.edit().putBoolean("toolbarDocked", v).apply()
+
+    /** Tool bar folded to its mode button. */
+    var toolbarFolded: Boolean
+        get() = p.getBoolean("toolbarFolded", false)
+        set(v) = p.edit().putBoolean("toolbarFolded", v).apply()
+
+    /** Floating tool bar position, 0..1 of the free room across and down. */
+    var toolbarX: Float
+        get() = p.getFloat("toolbarX", 0.5f).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.5f
+        set(v) = p.edit().putFloat("toolbarX", v).apply()
+
+    var toolbarY: Float
+        get() = p.getFloat("toolbarY", 0f).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
+        set(v) = p.edit().putFloat("toolbarY", v).apply()
+
     companion object {
         const val TONE_NORMAL = 0
         const val TONE_DARK = 1

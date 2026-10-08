@@ -269,6 +269,9 @@ class PdfActivity : Activity() {
         root.addView(message, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
         chrome = PdfChrome(this, root, chromeListener)
+        prefs.let { chrome.setLayout(it.toolbarDocked, it.toolbarFolded, it.toolbarX, it.toolbarY) }
+        loadPresets()
+        refreshTools()
         side = PdfSidePanel(this, root)
         // A search only the panel shows stops with it: the render thread is free for the pages again.
         side.onHidden = { searchRun++ }
@@ -318,6 +321,17 @@ class PdfActivity : Activity() {
         override fun onTool(mode: Int) = chooseTool(mode)
         override fun onUndo() = undoInk()
         override fun onBadge() = showPages(PdfSidePanel.TAB_PAGES)
+        override fun onToolbarLayout(docked: Boolean, folded: Boolean, x: Float, y: Float) = toolbarLaidOut(docked, folded, x, y)
+    }
+
+    /** The tool bar docked / folded / moved (from the bar or the settings): kept, and the page re-fitted if needed. */
+    private fun toolbarLaidOut(docked: Boolean, folded: Boolean, x: Float, y: Float) {
+        val p = prefs
+        p.toolbarDocked = docked
+        p.toolbarFolded = folded
+        p.toolbarX = x
+        p.toolbarY = y
+        placePage()
     }
 
     private fun showMessage(text: CharSequence?) {
@@ -660,7 +674,10 @@ class PdfActivity : Activity() {
         override fun onPageTap(x: Float) = pageTap(x)
         override fun onPageSettled(image: PdfPageView.PageImage) = pageSettled(image)
         override fun onViewportChanged() = viewportChanged()
-        override fun onInkChanged(page: Int) = scheduleNotesSave()
+        override fun onInkChanged(page: Int) {
+            Log.i(TAG, "ink changed on page $page")
+            scheduleNotesSave()
+        }
         override fun onLasso(page: Int, poly: FloatArray) = runLasso(page, poly)
     }
 
@@ -835,6 +852,15 @@ class PdfActivity : Activity() {
             p.pageBadge = it
             updateBadge()
         })
+        body.addView(PdfSheet.section(ctx, "도구 막대"))
+        body.addView(PdfSheet.choiceRow(ctx, "위치", listOf("위에 붙이기", "떠 있게"), if (chrome.docked) 0 else 1) {
+            chrome.setLayout(it == 0, chrome.folded, p.toolbarX, p.toolbarY)
+            toolbarLaidOut(chrome.docked, chrome.folded, p.toolbarX, p.toolbarY)
+        })
+        body.addView(PdfSheet.switchRow(ctx, "도구 막대 접기", "펜 모드 버튼만 남깁니다. 버튼을 끌어 옮길 수 있습니다", chrome.folded) {
+            chrome.setLayout(chrome.docked, it, p.toolbarX, p.toolbarY)
+            toolbarLaidOut(chrome.docked, chrome.folded, p.toolbarX, p.toolbarY)
+        })
         body.addView(PdfSheet.section(ctx, "제스처"))
         body.addView(PdfSheet.choiceRow(ctx, "밀어서 넘기기", listOf("한 손가락", "두 손가락"), p.swipeFingers - 1) {
             p.swipeFingers = it + 1
@@ -898,12 +924,13 @@ class PdfActivity : Activity() {
     private fun stopAnnotating() {
         annotating = false
         pageView.mode = PdfPageView.MODE_NONE
-        if (::chrome.isInitialized) chrome.setReading()
+        if (::chrome.isInitialized) refreshTools()
         flushNotes()
     }
 
     private fun refreshTools() {
-        if (annotating) chrome.setWriting(presets, selected, pageView.mode) else chrome.setReading()
+        Log.i(TAG, "tools: annotating=$annotating mode=${pageView.mode} preset=$selected")
+        chrome.setTools(presets, selected, pageView.mode, annotating)
     }
 
     /** A preset tapped in the tool bar: chosen, or (tapped again) its thickness / colour sheet. */
@@ -912,8 +939,11 @@ class PdfActivity : Activity() {
             editPreset(i)
             return
         }
+        if (notes == null) return
         selected = i
         prefs.selectedPreset = i
+        // A pen tapped while reading turns pen mode on with it.
+        annotating = true
         applyPreset()
         refreshTools()
     }

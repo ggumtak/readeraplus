@@ -261,4 +261,20 @@ class PdfMathTest {
         assertEquals(PdfMath.MAX_ANIM_MS, PdfMath.animMs(5000f, 1000f))
         assertEquals(80L, PdfMath.animMs(100f, 0f))
     }
+
+    // slot / fractionOf (floating tool bar)
+    @Test fun slotClampsAndHandlesNoRoom() {
+        assertEquals(50f, PdfMath.slot(0.5f, 100), eps)
+        assertEquals(0f, PdfMath.slot(-1f, 100), eps)
+        assertEquals(100f, PdfMath.slot(3f, 100), eps)
+        assertEquals(0f, PdfMath.slot(0.7f, 0), eps)
+        assertEquals(0f, PdfMath.slot(0.7f, -20), eps)
+    }
+
+    @Test fun fractionOfReversesSlot() {
+        assertEquals(0.25f, PdfMath.fractionOf(PdfMath.slot(0.25f, 400), 400), eps)
+        assertEquals(1f, PdfMath.fractionOf(900f, 400), eps)
+        assertEquals(0f, PdfMath.fractionOf(-5f, 400), eps)
+        assertEquals(0.5f, PdfMath.fractionOf(10f, 0), eps)
+    }
 }

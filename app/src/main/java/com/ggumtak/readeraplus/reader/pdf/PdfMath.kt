@@ -177,4 +177,10 @@ internal object PdfMath {
         if (count <= 0) return "0 / 0"
         return "${clampPage(page, count) + 1} / $count"
     }
+
+    /** Position in [room] free pixels for a [fraction] (0..1, clamped) of it: a floating bar's offset. */
+    fun slot(fraction: Float, room: Int): Float = if (room <= 0) 0f else fraction.coerceIn(0f, 1f) * room
+
+    /** The fraction of [room] that offset [pos] stands at ([slot] reversed); the middle with no room. */
+    fun fractionOf(pos: Float, room: Int): Float = if (room <= 0) 0.5f else (pos / room).coerceIn(0f, 1f)
 }

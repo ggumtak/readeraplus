@@ -47,7 +47,7 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
         pathEffect = DashPathEffect(floatArrayOf(3f * d, 2.5f * d), 0f)
     }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 9f * d
+        textSize = 8.5f * d
         textAlign = Paint.Align.CENTER
     }
     private val path = Path()
@@ -65,8 +65,8 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val w = (if (kind == PEN || kind == HIGHLIGHTER) 40f else 44f) * d
-        setMeasuredDimension(w.toInt(), (48f * d).toInt())
+        val w = (if (kind == PEN || kind == HIGHLIGHTER) 32f else 38f) * d
+        setMeasuredDimension(w.toInt(), (PdfChrome.TOOLBAR_DP * d).toInt())
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -86,9 +86,9 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
         val cx = w / 2f
         val lift = if (chosen) 0f else 6f * d
         val top = -2f * d + lift
-        val bodyW = 12f * d
-        val bodyBottom = top + 18f * d
-        val tipBottom = bodyBottom + 13f * d
+        val bodyW = 10f * d
+        val bodyBottom = top + 14f * d
+        val tipBottom = bodyBottom + 11f * d
         body.color = if (chosen) 0xFFF2F2F2.toInt() else 0xFFBDBDBD.toInt()
         rect.set(cx - bodyW / 2f, top, cx + bodyW / 2f, bodyBottom)
         canvas.drawRect(rect, body)
@@ -101,7 +101,7 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
         body.color = 0xFFE0E0E0.toInt()
         canvas.drawPath(path, body)
         path.rewind()
-        val pointTop = bodyBottom + 8f * d
+        val pointTop = bodyBottom + 7f * d
         val halfAt = bodyW / 2f * (tipBottom - pointTop) / (tipBottom - bodyBottom)
         path.moveTo(cx - halfAt, pointTop)
         path.lineTo(cx + halfAt, pointTop)
@@ -123,24 +123,24 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
         val cx = w / 2f
         val lift = if (chosen) 0f else 6f * d
         val top = -2f * d + lift
-        val bodyW = 16f * d
-        val bodyBottom = top + 20f * d
+        val bodyW = 14f * d
+        val bodyBottom = top + 15f * d
         body.color = if (chosen) 0xFFF2F2F2.toInt() else 0xFFBDBDBD.toInt()
         rect.set(cx - bodyW / 2f, top, cx + bodyW / 2f, bodyBottom)
         canvas.drawRect(rect, body)
         path.rewind()
         path.moveTo(cx - bodyW / 2f, bodyBottom)
         path.lineTo(cx + bodyW / 2f, bodyBottom)
-        path.lineTo(cx + bodyW / 4f, bodyBottom + 8f * d)
-        path.lineTo(cx - bodyW / 4f, bodyBottom + 8f * d)
+        path.lineTo(cx + bodyW / 4f, bodyBottom + 7f * d)
+        path.lineTo(cx - bodyW / 4f, bodyBottom + 7f * d)
         path.close()
         body.color = 0xFFE0E0E0.toInt()
         canvas.drawPath(path, body)
         path.rewind()
-        path.moveTo(cx - bodyW / 4f, bodyBottom + 8f * d)
-        path.lineTo(cx + bodyW / 4f, bodyBottom + 8f * d)
-        path.lineTo(cx + bodyW / 4f, bodyBottom + 11f * d)
-        path.lineTo(cx - bodyW / 4f, bodyBottom + 15f * d)
+        path.moveTo(cx - bodyW / 4f, bodyBottom + 7f * d)
+        path.lineTo(cx + bodyW / 4f, bodyBottom + 7f * d)
+        path.lineTo(cx + bodyW / 4f, bodyBottom + 10f * d)
+        path.lineTo(cx - bodyW / 4f, bodyBottom + 13f * d)
         path.close()
         body.color = tipColor
         canvas.drawPath(path, body)
@@ -154,25 +154,27 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
     private fun drawEraser(canvas: Canvas, w: Float, h: Float, fg: Int) {
         canvas.save()
         canvas.rotate(-40f, w / 2f, h / 2f)
-        rect.set(w / 2f - 7f * d, h / 2f - 11f * d, w / 2f + 7f * d, h / 2f + 11f * d)
+        rect.set(w / 2f - 6f * d, h / 2f - 9f * d, w / 2f + 6f * d, h / 2f + 9f * d)
         line.color = fg
         canvas.drawRoundRect(rect, 3f * d, 3f * d, line)
         body.color = fg
-        rect.set(w / 2f - 7f * d, h / 2f + 2f * d, w / 2f + 7f * d, h / 2f + 11f * d)
+        rect.set(w / 2f - 6f * d, h / 2f + 2f * d, w / 2f + 6f * d, h / 2f + 9f * d)
         canvas.drawRoundRect(rect, 3f * d, 3f * d, body)
         canvas.restore()
     }
 
-    /** A dashed loop with a short tail: the selection lasso. */
+    /** A dashed loop with a rope down to a knot: the selection lasso. */
     private fun drawLasso(canvas: Canvas, w: Float, h: Float, fg: Int) {
         dashed.color = fg
-        rect.set(w / 2f - 12f * d, h / 2f - 9f * d, w / 2f + 12f * d, h / 2f + 5f * d)
+        rect.set(w / 2f - 11f * d, h / 2f - 10f * d, w / 2f + 11f * d, h / 2f + 3f * d)
         canvas.drawOval(rect, dashed)
         line.color = fg
         path.rewind()
-        path.moveTo(w / 2f - 6f * d, h / 2f + 4f * d)
-        path.quadTo(w / 2f - 9f * d, h / 2f + 10f * d, w / 2f - 3f * d, h / 2f + 12f * d)
+        path.moveTo(w / 2f - 5f * d, h / 2f + 2f * d)
+        path.cubicTo(w / 2f - 1f * d, h / 2f + 6f * d, w / 2f - 8f * d, h / 2f + 8f * d, w / 2f - 4f * d, h / 2f + 11f * d)
         canvas.drawPath(path, line)
+        body.color = fg
+        canvas.drawCircle(w / 2f - 4f * d, h / 2f + 11f * d, 2f * d, body)
     }
 
     companion object {

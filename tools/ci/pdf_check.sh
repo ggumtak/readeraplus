@@ -35,6 +35,30 @@ tap_label "어둡게"; shot 03b_dark 1; crashes tone
 tap_label "기본"; crashes tone_back
 tap_label "닫기"; sleep 1
 
+descs() { dump; log "ui: $(grep -o 'content-desc="[^"]*"' /tmp/ui.xml | sed 's/content-desc=//' | grep -v '""' | tr '\n' ' ')"; }
+inklog() { log "app log: $(adb logcat -d -s PdfActivity:I | grep -E 'tools:|ink changed' | tail -4 | tr '\n' '|')"; }
+loop() { # a closed loop around the middle of the page (a lasso)
+  adb shell input motionevent DOWN $((CX - 150)) $((CY - 80))
+  for xy in "$CX $((CY - 120))" "$((CX + 150)) $((CY - 80))" "$((CX + 170)) $CY" "$((CX + 150)) $((CY + 80))" "$CX $((CY + 120))" "$((CX - 150)) $((CY + 80))" "$((CX - 170)) $CY" "$((CX - 150)) $((CY - 85))"; do
+    adb shell input motionevent MOVE $xy; done
+  adb shell input motionevent UP $((CX - 150)) $((CY - 85)); }
+
+log "tools straight from reading (highlighter, lasso)"
+descs
+tap_label "형광펜"; adb shell input swipe $((CX - 120)) $CY $((CX + 120)) $CY 400; shot 04a_hl_read 1; inklog; crashes hl_read
+tap_label "필기 끝내기"; sleep 1; inklog
+tap_label "선택"; loop; shot 04b_lasso 2; inklog; crashes lasso
+adb shell input keyevent KEYCODE_BACK; sleep 1; tap_label "필기 끝내기"; sleep 1
+
+log "tool bar layout (fold, float, drag, dock)"
+tap_label "도구 접기"; shot 04c_folded 1; descs; crashes fold
+tap_label "도구 펼치기"; sleep 1; crashes unfold
+tap_label "띄우기"; shot 04d_floating 1; crashes float
+dump; xy=$(python3 tools/ci/find_node.py /tmp/ui.xml "필기" exact 0)
+if [ -n "$xy" ]; then adb shell input swipe $xy $CX $((H * 2 / 3)) 700; log "dragged from $xy"; fi
+shot 04e_dragged 1; descs; crashes drag
+tap_label "위에 붙이기"; shot 04f_docked 1; crashes dock
+
 log "pen tools"
 tap_label "필기"; shot 04_tools 2; crashes tools
 tap_label "펜" 1; shot 05_pen2 2; crashes pen_select
