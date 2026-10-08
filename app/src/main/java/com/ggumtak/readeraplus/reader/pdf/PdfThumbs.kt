@@ -273,7 +273,7 @@ internal class PdfThumbs(
         if (bmp != null) {
             cache.put(page, bmp)
             if (h.page == page) h.image.setImageBitmap(bmp)
-        } else if (req.skipped && h.page == page) {
+        } else if (req.skipped && h.page == page && bound.containsKey(page)) {
             // The cell scrolled away and came back before this skipped request was reported: ask again.
             request(h, page)
         }

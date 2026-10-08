@@ -420,4 +420,32 @@ class PdfInkTest {
         )
         assertArrayEquals(floatArrayOf(0f, 0f, 0f, 0f), InkMath.bounds(FloatArray(0), 0), 0f)
     }
+
+    @Test
+    fun groupedChangesUndoAsOneStep() {
+        val n = PdfNotes()
+        val keep = InkStroke(InkTool.PEN, 0, 1f, floatArrayOf(0f, 0f, 10f, 0f))
+        n.add(0, keep)
+        n.add(0, InkStroke(InkTool.PEN, 0, 1f, floatArrayOf(0f, 50f, 10f, 50f)))
+        n.add(0, InkStroke(InkTool.PEN, 0, 1f, floatArrayOf(0f, 100f, 10f, 100f)))
+        // An eraser drag: two erases in one group.
+        n.beginGroup()
+        assertTrue(n.eraseAt(0, 5f, 50f, 2f))
+        assertTrue(n.eraseAt(0, 5f, 100f, 2f))
+        n.endGroup()
+        assertEquals(1, n.strokes(0).size)
+        assertEquals(0, n.undo())
+        assertEquals(3, n.strokes(0).size)
+        // A highlight over two lines: two adds in one group.
+        n.beginGroup()
+        n.add(1, InkStroke(InkTool.HIGHLIGHTER, 0, 10f, floatArrayOf(0f, 0f, 100f, 0f)))
+        n.add(1, InkStroke(InkTool.HIGHLIGHTER, 0, 10f, floatArrayOf(0f, 20f, 100f, 20f)))
+        n.endGroup()
+        assertEquals(1, n.undo())
+        assertTrue(n.strokes(1).isEmpty())
+        // Ungrouped steps still undo one at a time.
+        assertEquals(0, n.undo())
+        assertEquals(2, n.strokes(0).size)
+        assertTrue(n.strokes(0)[0] === keep)
+    }
 }

@@ -160,6 +160,8 @@ internal class PdfPageView(context: Context) : View(context) {
     private var inkGesture = MODE_NONE
     /** The last touch drew (its taps are not page taps). */
     private var inkTouched = false
+    /** The touch drawing now started with a stylus: other contacts (a resting palm) are ignored until it ends. */
+    private var inkStylus = false
     private var inkPage = -1
     private var inkPts = FloatArray(512)
     private var inkCount = 0
@@ -783,7 +785,11 @@ internal class PdfPageView(context: Context) : View(context) {
                 animateZoom(PdfMath.MIN_ZOOM, d.focusX - paddingLeft, d.focusY - paddingTop)
             }
         }
-    }).apply { isQuickScaleEnabled = false }
+    }).apply {
+        isQuickScaleEnabled = false
+        // A stylus with its button held draws a loop; it never zooms.
+        isStylusScaleEnabled = false
+    }
 
     private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent): Boolean = true
@@ -815,6 +821,7 @@ internal class PdfPageView(context: Context) : View(context) {
         }
 
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
+            if (inkTouched) return false
             if (scaleDetector.isInProgress || zoomAnim != null || inkGesture != MODE_NONE) return false
             // A two-finger swipe goes on with the finger left on the glass.
             if (dragging) {
@@ -840,6 +847,8 @@ internal class PdfPageView(context: Context) : View(context) {
         }
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+            // The end of a stroke or loop is not a fling of the page.
+            if (inkTouched) return false
             if (dragging && abs(vx) >= MIN_FLING_DP_PER_S * resources.displayMetrics.density) {
                 flingDir = if (vx < 0) 1 else -1
                 return true
@@ -884,6 +893,8 @@ internal class PdfPageView(context: Context) : View(context) {
                 inkCount = 0
                 inkErased = false
                 livePath.rewind()
+                // One eraser drag is one undo step.
+                if (inkGesture == MODE_ERASER) notes?.beginGroup()
                 addInkPoint(e.x, e.y, first = true)
             }
             MotionEvent.ACTION_MOVE -> {
@@ -924,6 +935,7 @@ internal class PdfPageView(context: Context) : View(context) {
         inkGesture = MODE_NONE
         val p = inkPage
         if (p != page || p < 0) {
+            if (tool == MODE_ERASER) notes?.endGroup()
             livePath.rewind()
             invalidate()
             return
@@ -940,9 +952,12 @@ internal class PdfPageView(context: Context) : View(context) {
                 }
                 livePath.rewind()
             }
-            MODE_ERASER -> if (inkErased) {
-                inkPaths.clear()
-                host?.onInkChanged(p)
+            MODE_ERASER -> {
+                notes?.endGroup()
+                if (inkErased) {
+                    inkPaths.clear()
+                    host?.onInkChanged(p)
+                }
             }
             MODE_LASSO -> {
                 val poly = inkPts.copyOf(inkCount * 2)
@@ -962,9 +977,12 @@ internal class PdfPageView(context: Context) : View(context) {
     /** Drops the stroke or loop being drawn (erasing done so far stays). */
     private fun cancelInk() {
         if (inkGesture == MODE_NONE) return
-        if (inkGesture == MODE_ERASER && inkErased) {
-            inkPaths.clear()
-            host?.onInkChanged(inkPage)
+        if (inkGesture == MODE_ERASER) {
+            notes?.endGroup()
+            if (inkErased) {
+                inkPaths.clear()
+                host?.onInkChanged(inkPage)
+            }
         }
         inkGesture = MODE_NONE
         inkCount = 0
@@ -998,6 +1016,18 @@ internal class PdfPageView(context: Context) : View(context) {
             if (slideAnim != null && inkToolFor(event) != MODE_NONE) slideAnim?.end()
             inkGesture = inkToolFor(event)
             inkTouched = inkGesture != MODE_NONE
+            val type = event.getToolType(0)
+            inkStylus = inkTouched && (type == MotionEvent.TOOL_TYPE_STYLUS || type == MotionEvent.TOOL_TYPE_ERASER)
+        }
+        if (inkStylus) {
+            // Palm rejection: only the pen (pointer 0) counts; a palm or finger never zooms, pans or cancels.
+            when (event.actionMasked) {
+                MotionEvent.ACTION_POINTER_DOWN -> {}
+                MotionEvent.ACTION_POINTER_UP -> if (event.actionIndex == 0 && inkGesture != MODE_NONE) finishInk()
+                else -> if (inkGesture != MODE_NONE) handleInk(event)
+            }
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) inkStylus = false
+            return true
         }
         if (inkGesture != MODE_NONE) {
             if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {

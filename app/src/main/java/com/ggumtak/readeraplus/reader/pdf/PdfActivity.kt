@@ -60,6 +60,7 @@ import com.ggumtak.readeraplus.ui.kit.toolbar
 import com.ggumtak.readeraplus.ui.kit.vertical
 import java.io.File
 import java.time.ZoneId
+import java.util.concurrent.Callable
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
@@ -102,6 +103,11 @@ class PdfActivity : Activity() {
             "이 폰에서는 PDF 글자를 읽을 수 없습니다.\n(Android 15 이상, 또는 Google Play 시스템 업데이트가 필요합니다)"
         private val PEN_COLORS = intArrayOf(0xFF000000.toInt(), 0xFFD32F2F.toInt(), 0xFF1565C0.toInt())
         private val HIGHLIGHT_COLORS = intArrayOf(0xFFFFF176.toInt(), 0xFFA5D6A7.toInt(), 0xFFF8BBD0.toInt())
+
+        /** Every notes file read and write, in order, across viewer instances (one closing while another opens). */
+        private val notesIo: ExecutorService = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "pdf-notes").apply { isDaemon = true }
+        }
 
         /** Opens library book [bookId] (a PDF) in the viewer. */
         fun open(context: Context, bookId: Long) {
@@ -396,7 +402,9 @@ class PdfActivity : Activity() {
                 pages = p
                 val count = p.pageCount
                 val text = p.canReadText
-                val loaded = PdfNotesStore.load(notesDir(), b.id)
+                // Through the notes thread: a save still pending from an earlier viewer is on disk before this read.
+                val dir = notesDir()
+                val loaded = notesIo.submit(Callable { PdfNotesStore.load(dir, b.id) }).get()
                 handler.post {
                     if (gen != generation || isDestroyed) return@post
                     onOpened(b, count, loaded, text)
@@ -780,7 +788,7 @@ class PdfActivity : Activity() {
         handler.postDelayed(notesSaveRunnable, NOTES_SAVE_DELAY_MS)
     }
 
-    /** Writes changed notes on the render thread (in order with every other save of this viewer). */
+    /** Writes changed notes on the process-wide notes thread, in order with every load and save. */
     private fun flushNotes() {
         handler.removeCallbacks(notesSaveRunnable)
         val n = notes ?: return
@@ -790,7 +798,7 @@ class PdfActivity : Activity() {
         n.dirty = false
         val dir = notesDir()
         try {
-            worker.execute { if (!PdfNotesStore.save(dir, id, json)) Log.w(TAG, "notes save failed") }
+            notesIo.execute { if (!PdfNotesStore.save(dir, id, json)) Log.w(TAG, "notes save failed") }
         } catch (t: Throwable) {
             Log.w(TAG, "notes save not queued", t)
         }
@@ -1076,11 +1084,13 @@ class PdfActivity : Activity() {
     /** Highlighter strokes over the selected text's rectangles (one stroke per rectangle). */
     private fun highlight(page: Int, rects: List<RectF>) {
         val n = notes ?: return
+        n.beginGroup()
         for (r in rects) {
             if (r.width() <= 0f || r.height() <= 0f) continue
             val cy = (r.top + r.bottom) / 2f
             n.add(page, InkStroke(InkTool.HIGHLIGHTER, pageView.highlighterColor, r.height(), floatArrayOf(r.left, cy, r.right, cy)))
         }
+        n.endGroup()
         pageView.inkChanged()
         scheduleNotesSave()
     }
@@ -1117,7 +1127,12 @@ class PdfActivity : Activity() {
             if (p != null) {
                 for (i in 0 until total) {
                     if (searchRun != run) break
-                    val found = p.search(i, query)
+                    val found = try {
+                        p.search(i, query)
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "search failed on page $i", t)
+                        break
+                    }
                     if (found.isNotEmpty()) hits += SearchHit(i, found.flatten())
                     done = i + 1
                     if (done % 10 == 0) {
@@ -1128,7 +1143,7 @@ class PdfActivity : Activity() {
             }
             val finished = done == total
             handler.post {
-                progress.dismiss()
+                if (!isDestroyed) runCatching { progress.dismiss() }
                 if (gen != generation || isDestroyed || searchRun != run || !finished) return@post
                 searchQuery = query
                 searchHits = hits

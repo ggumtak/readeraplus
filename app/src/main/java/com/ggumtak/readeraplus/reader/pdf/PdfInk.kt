@@ -31,6 +31,9 @@ internal class PdfNotes {
     private val byPage = HashMap<Int, ArrayList<InkStroke>>()
     private val marks = TreeSet<Int>()
     private val history = ArrayList<Step>()
+    /** Steps recorded while a group is open share its id and undo together (0 = no group). */
+    private var group = 0
+    private var groupSeq = 0
 
     /** One undo step: either an added stroke ([added]) or a set of erased strokes with their old list positions. */
     private class Step(
@@ -38,7 +41,18 @@ internal class PdfNotes {
         val added: InkStroke?,
         val removedAt: IntArray?,
         val removed: Array<InkStroke>?,
+        val group: Int = 0,
     )
+
+    /** Starts one undo step made of several changes (an eraser drag, a highlight over many lines). */
+    fun beginGroup() {
+        group = ++groupSeq
+    }
+
+    /** Ends the group started by [beginGroup]. */
+    fun endGroup() {
+        group = 0
+    }
 
     /** No strokes and no bookmarks. */
     val isEmpty: Boolean get() = byPage.isEmpty() && marks.isEmpty()
@@ -105,7 +119,7 @@ internal class PdfNotes {
     }
 
     private fun push(step: Step) {
-        history.add(step)
+        history.add(if (group != 0) Step(step.page, step.added, step.removedAt, step.removed, group) else step)
         if (history.size > MAX_HISTORY) history.removeAt(0)
     }
 
@@ -118,7 +132,19 @@ internal class PdfNotes {
      */
     fun undo(): Int {
         if (history.isEmpty()) return -1
-        val step = history.removeAt(history.size - 1)
+        val last = history.removeAt(history.size - 1)
+        undoStep(last)
+        // The rest of its group, newest first.
+        if (last.group != 0) {
+            while (history.isNotEmpty() && history[history.size - 1].group == last.group) {
+                undoStep(history.removeAt(history.size - 1))
+            }
+        }
+        dirty = true
+        return last.page
+    }
+
+    private fun undoStep(step: Step) {
         val added = step.added
         if (added != null) {
             val list = byPage[step.page]
@@ -139,8 +165,6 @@ internal class PdfNotes {
             val list = byPage.getOrPut(step.page) { ArrayList() }
             for (k in back.indices) list.add(minOf(at[k], list.size), back[k])
         }
-        dirty = true
-        return step.page
     }
 
     /** Whether [page] is bookmarked. */

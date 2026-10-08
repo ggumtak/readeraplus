@@ -98,10 +98,13 @@ class PdfPages private constructor(private val fd: ParcelFileDescriptor, private
         }
     }
 
+    /** A text call that fails (incl. a missing method of an older PDF module) answers null; out of memory still throws. */
     private inline fun <T> safely(block: () -> T): T? = try {
         block()
-    } catch (e: Exception) {
-        Log.w(TAG, "text call failed", e)
+    } catch (oom: OutOfMemoryError) {
+        throw oom
+    } catch (t: Throwable) {
+        Log.w(TAG, "text call failed", t)
         null
     }
 
@@ -231,7 +234,19 @@ class PdfPages private constructor(private val fd: ParcelFileDescriptor, private
                 throw DocumentException("파일을 읽을 수 없습니다.\n${file.path}", e)
             }
             val backend: Backend = try {
-                if (withText && hasPreV()) openPreV(fd) else Platform(PdfRenderer(fd))
+                if (withText && hasPreV()) {
+                    // A broken PDF system module must not cost the page view: fall back to the plain renderer.
+                    try {
+                        openPreV(fd)
+                    } catch (e: SecurityException) {
+                        throw e
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "PdfRendererPreV failed, plain renderer instead", t)
+                        Platform(PdfRenderer(fd))
+                    }
+                } else {
+                    Platform(PdfRenderer(fd))
+                }
             } catch (e: SecurityException) {
                 fd.close()
                 throw DocumentException("암호가 걸린 PDF는 열 수 없습니다.", e)
