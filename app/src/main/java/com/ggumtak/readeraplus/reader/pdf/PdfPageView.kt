@@ -124,7 +124,7 @@ internal class PdfPageView(context: Context) : View(context) {
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
     private val pagePaint = Paint().apply { color = Ink.WHITE }
     private val edgePaint = Paint().apply {
-        color = Ink.LINE_LIGHT
+        color = 0xFF3A3A3A.toInt()
         style = Paint.Style.STROKE
         strokeWidth = 1f
     }
@@ -534,8 +534,8 @@ internal class PdfPageView(context: Context) : View(context) {
         /** Cached stroke paths kept across page turns before the cache is dropped. */
         private const val MAX_CACHED_PATHS = 400
 
-        /** Around the page: light grey, so the page's white edge shows. */
-        private const val BACKGROUND = 0xFFE6E6E6.toInt()
+        /** Around the page: near black, like Flexcil (the page stands out; nothing to read there). */
+        private const val BACKGROUND = 0xFF141414.toInt()
 
         /** Slowest fling (dp per second) that turns the page. */
         private const val MIN_FLING_DP_PER_S = 400f

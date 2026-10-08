@@ -422,7 +422,10 @@ private fun matchSystemBars(dialog: Window, owner: Window) {
     dialog.navigationBarColor = owner.navigationBarColor
     val ownerDecor = owner.peekDecorView() ?: return
     if (Build.VERSION.SDK_INT >= 30) {
-        val c = dialog.insetsController ?: return // pending controller before attach; replayed on show()
+        // Before show() the dialog has no decor yet, and PhoneWindow.getInsetsController() then throws (Android 14)
+        // instead of returning null: the call after show() applies the bars.
+        if (dialog.peekDecorView() == null) return
+        val c = dialog.insetsController ?: return
         val oc = owner.insetsController
         if (oc != null) {
             val mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS

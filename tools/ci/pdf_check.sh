@@ -29,28 +29,34 @@ log "open"
 adb shell am start -W -a android.intent.action.VIEW -t application/pdf -d file:///sdcard/Download/test.pdf -n $PKG/.reader.pdf.PdfActivity
 shot 01_open 5; crashes open
 
-log "gear"
-adb shell input tap $CX $CY; sleep 1; shot 02_chrome 1
+log "gear (settings sheet)"
 tap_label "PDF 설정"; shot 03_settings 2; crashes gear
-adb shell input keyevent KEYCODE_BACK; sleep 1
+tap_label "어둡게"; shot 03b_dark 1; crashes tone
+tap_label "기본"; crashes tone_back
+tap_label "닫기"; sleep 1
 
 log "pen tools"
-adb shell input tap $CX $CY; sleep 1
 tap_label "필기"; shot 04_tools 2; crashes tools
 tap_label "펜" 1; shot 05_pen2 2; crashes pen_select
 tap_label "펜" 1; shot 06_pen_panel 2; crashes pen_panel
-adb shell input keyevent KEYCODE_BACK; sleep 1
-adb shell input swipe $((CX - 200)) $((CY - 100)) $((CX + 200)) $((CY + 50)) 400; shot 07_stroke 1; crashes stroke
+tap_label "닫기"; sleep 1
+adb shell input swipe $((CX - 100)) $((CY - 60)) $((CX + 100)) $((CY + 40)) 400; shot 07_stroke 1; crashes stroke
 tap_label "형광펜"; shot 08_hl 1; crashes hl_select
 tap_label "형광펜"; shot 09_hl_panel 2; crashes hl_panel
-adb shell input keyevent KEYCODE_BACK; sleep 1
-tap_label "지우개"; adb shell input swipe $((CX - 200)) $((CY - 100)) $((CX + 200)) $((CY + 50)) 400; crashes eraser
-tap_label "완료"; shot 10_done 1; crashes done
+tap_label "닫기"; sleep 1
+tap_label "지우개"; adb shell input swipe $((CX - 100)) $((CY - 60)) $((CX + 100)) $((CY + 40)) 400; crashes eraser
+tap_label "되돌리기"; crashes undo
+tap_label "필기 끝내기"; shot 10_done 1; crashes done
 
-log "search / thumbs"
-adb shell input tap $CX $CY; sleep 1; tap_label "쪽 목록"; shot 11_thumbs 3; crashes thumbs
+log "side panels"
+tap_label "페이지 탐색"; shot 11_pages 3; crashes pages
 adb shell input keyevent KEYCODE_BACK; sleep 1
-adb shell input keyevent KEYCODE_DPAD_RIGHT; sleep 1; adb shell input keyevent KEYCODE_DPAD_LEFT; shot 12_keys 1; crashes keys
+tap_label "찾기"; sleep 1; adb shell input text lighthouse; adb shell input keyevent KEYCODE_ENTER; shot 12_search 4; crashes search
+adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE_BACK; sleep 1
+tap_label "책갈피"; crashes bookmark
+adb shell input keyevent KEYCODE_DPAD_RIGHT; sleep 1; adb shell input keyevent KEYCODE_DPAD_LEFT; shot 13_keys 1; crashes keys
+adb shell input tap $CX $CY; sleep 1; shot 14_fullscreen 1; crashes fullscreen
+adb shell input tap $CX $CY; sleep 1; crashes bars_back
 
 echo "::group::logcat (app, warnings and errors)"
 adb logcat -d '*:W' | grep -iE "readeraplus|AndroidRuntime|FATAL|Pdf" | tail -200
