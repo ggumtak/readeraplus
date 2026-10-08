@@ -931,6 +931,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         reloadAnnotations()
         // A12-1: cache files the open computed but left for later (the EPUB section plan).
         ReaderIo.launch { Documents.writeDeferredCaches() }
+        // The vendor e-ink probe (reflection, a system service) runs here on IO, not inside the first refresh on the
+        // main thread; it is cached for the process.
+        ReaderIo.launch { Eink.hasXrzRefresh() }
         loadSpeed()
         if (session?.settings?.shows(com.ggumtak.readeraplus.settings.StatusItem.EPISODE) == true) scheduleEpisodes()
     }

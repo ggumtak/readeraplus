@@ -14,9 +14,16 @@ internal object InkTool {
 /**
  * One finished stroke on a page, in PDF page points (1/72 in, origin top-left of the page).
  * [points] = x0, y0, x1, y1, … (at least one point = 2 floats). Immutable (never mutate the array after construction).
- * [color] is an ARGB int; [width] the stroke width in page points.
+ * [color] is an ARGB int; [width] the stroke width in page points (the full width, for a pressure stroke).
+ * [pressures]: one steadied pen pressure (0..1) per point, or null for a constant-width stroke.
  */
-internal class InkStroke(val tool: Int, val color: Int, val width: Float, val points: FloatArray) {
+internal class InkStroke(
+    val tool: Int,
+    val color: Int,
+    val width: Float,
+    val points: FloatArray,
+    val pressures: FloatArray? = null,
+) {
     val pointCount: Int get() = points.size / 2
 }
 
@@ -123,6 +130,29 @@ internal class PdfNotes {
         if (history.size > MAX_HISTORY) history.removeAt(0)
     }
 
+    /** Removes every stroke of [page] as one undo step; false when it had none. */
+    fun clearPage(page: Int): Boolean {
+        val list = byPage[page] ?: return false
+        if (list.isEmpty()) return false
+        val removed = list.toTypedArray()
+        val at = IntArray(removed.size) { it }
+        byPage.remove(page)
+        push(Step(page, null, at, removed))
+        dirty = true
+        return true
+    }
+
+    /** Removes every stroke of every page (bookmarks stay) and the undo history; returns how many were removed. */
+    fun clearAllInk(): Int {
+        var n = 0
+        for (list in byPage.values) n += list.size
+        if (n == 0) return 0
+        byPage.clear()
+        history.clear()
+        dirty = true
+        return n
+    }
+
     /** True when [undo] has something to revert. */
     val canUndo: Boolean get() = history.isNotEmpty()
 
@@ -216,7 +246,17 @@ internal class PdfNotes {
                     if (i > 0) sb.append(',')
                     appendFloat(sb, s.points[i])
                 }
-                sb.append("]}")
+                sb.append(']')
+                val q = s.pressures
+                if (q != null) {
+                    sb.append(",\"q\":[")
+                    for (i in q.indices) {
+                        if (i > 0) sb.append(',')
+                        appendFloat(sb, q[i])
+                    }
+                    sb.append(']')
+                }
+                sb.append('}')
             }
             sb.append(']')
         }
@@ -307,7 +347,23 @@ internal class PdfNotes {
                 if (v.isNaN() || v.isInfinite()) return null
                 pts[i] = v
             }
-            return InkStroke(tool, c.toLong().toInt(), width, pts)
+            // Pressures are optional (older files, finger strokes); a wrong count drops them, not the stroke.
+            val qa: JSONArray? = o.optJSONArray("q")
+            var q: FloatArray? = null
+            if (qa != null && qa.length() == len / 2) {
+                val arr = FloatArray(qa.length())
+                var ok = true
+                for (i in arr.indices) {
+                    val v = (qa.opt(i) as? Number)?.toFloat()
+                    if (v == null || v.isNaN() || v.isInfinite()) {
+                        ok = false
+                        break
+                    }
+                    arr[i] = v.coerceIn(0f, 1f)
+                }
+                if (ok) q = arr
+            }
+            return InkStroke(tool, c.toLong().toInt(), width, pts, q)
         }
     }
 }

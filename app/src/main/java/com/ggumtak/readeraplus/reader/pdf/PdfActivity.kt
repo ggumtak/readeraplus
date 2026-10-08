@@ -47,6 +47,10 @@ import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.InkNumPad
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
+import com.ggumtak.readeraplus.ui.kit.confirm
+import com.ggumtak.readeraplus.ui.kit.row
+import com.ggumtak.readeraplus.ui.kit.sectionHeader
+import com.ggumtak.readeraplus.ui.kit.switchRow
 import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.ToolbarAction
@@ -96,13 +100,10 @@ class PdfActivity : Activity() {
         private const val NOTES_SAVE_DELAY_MS = 1000L
         private const val NOTES_DIR = "pdf_notes"
         private const val PREFS = "pdf_viewer"
-        private const val PREF_SWIPE_FINGERS = "swipeFingers"
         /** Longest selected text shown as the action dialog's title. */
         private const val SELECTION_TITLE_CHARS = 200
         private const val NO_TEXT_API =
             "이 폰에서는 PDF 글자를 읽을 수 없습니다.\n(Android 15 이상, 또는 Google Play 시스템 업데이트가 필요합니다)"
-        private val PEN_COLORS = intArrayOf(0xFF000000.toInt(), 0xFFD32F2F.toInt(), 0xFF1565C0.toInt())
-        private val HIGHLIGHT_COLORS = intArrayOf(0xFFFFF176.toInt(), 0xFFA5D6A7.toInt(), 0xFFF8BBD0.toInt())
 
         /** Every notes file read and write, in order, across viewer instances (one closing while another opens). */
         private val notesIo: ExecutorService = Executors.newSingleThreadExecutor { r ->
@@ -227,7 +228,7 @@ class PdfActivity : Activity() {
         if (requestedOrientation != a.orientationLock) requestedOrientation = a.orientationLock
         keeper.enabled = a.keepScreenOn
         pageView.swipeEnabled = a.swipeToTurn
-        pageView.swipeFingers = swipeFingers()
+        applyViewerPrefs()
         tracker.resume(SystemClock.elapsedRealtime(), dayClock.day(System.currentTimeMillis()))
     }
 
@@ -294,7 +295,7 @@ class PdfActivity : Activity() {
                 ToolbarAction(R.drawable.ic_bookmark, "책갈피") { toggleBookmark() },
                 ToolbarAction(R.drawable.ic_grid_view, "쪽 목록") { showThumbs() },
                 ToolbarAction(R.drawable.ic_edit, "필기") { startAnnotating() },
-                ToolbarAction(R.drawable.ic_swipe, "밀어 넘기기") { chooseSwipeFingers() },
+                ToolbarAction(R.drawable.ic_settings, "PDF 설정") { showSettings() },
             ),
         ).apply {
             isClickable = true
@@ -339,6 +340,10 @@ class PdfActivity : Activity() {
             }, lp())
         }
         root.addView(bottomBar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        badge = buildBadge()
+        root.addView(badge, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply {
+            setMargins(0, 0, dp(12), dp(12))
+        })
         annotBar = buildAnnotationBar()
         root.addView(annotBar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
 
@@ -348,6 +353,10 @@ class PdfActivity : Activity() {
             topBar.setPadding(i[0], i[1], i[2], 0)
             bottomBar.setPadding(i[0], 0, i[2], i[3])
             annotBar.setPadding(i[0], 0, i[2], i[3])
+            (badge.layoutParams as? FrameLayout.LayoutParams)?.let {
+                it.setMargins(0, 0, dp(12) + i[2], dp(12) + i[3])
+                badge.layoutParams = it
+            }
             // Padding changes the page area without a layout-bounds change: re-fit like a resize.
             handler.post { onAreaChanged() }
             insets
@@ -365,6 +374,7 @@ class PdfActivity : Activity() {
         topBar.visibility = if (show) View.VISIBLE else View.GONE
         bottomBar.visibility = if (show) View.VISIBLE else View.GONE
         if (show) updateChrome()
+        updateBadge()
     }
 
     private fun updateChrome() {
@@ -480,6 +490,7 @@ class PdfActivity : Activity() {
         wantedPage = target
         showFromEnd = fromEnd
         if (chromeShown) updateChrome()
+        updateBadge()
         val cached = cache[target]
         if (cached != null && fits(cached)) {
             display(cached, fromEnd)
@@ -864,31 +875,107 @@ class PdfActivity : Activity() {
         }
     }
 
-    // ================================================================== viewer options
+    // ================================================================== PDF settings (⚙ in the top bar)
 
-    /** This viewer's own options (the app settings are shared with the text reader and stay as they are). */
-    private fun viewerPrefs() = getSharedPreferences(PREFS, MODE_PRIVATE)
+    private val prefs by lazy { PdfPrefs(getSharedPreferences(PREFS, MODE_PRIVATE)) }
+    private var presets: MutableList<PenPreset> = ArrayList()
+    private var selected = 0
+    private lateinit var badge: TextView
 
-    private fun swipeFingers(): Int = if (viewerPrefs().getInt(PREF_SWIPE_FINGERS, 1) == 2) 2 else 1
-
-    private fun chooseSwipeFingers() {
-        val options = listOf("한 손가락으로 밀기", "두 손가락으로 밀기")
-        chooser("쪽을 밀어서 넘길 때", options, swipeFingers() - 1) { which ->
-            val fingers = which + 1
-            viewerPrefs().edit().putInt(PREF_SWIPE_FINGERS, fingers).apply()
-            pageView.swipeFingers = fingers
-            if (!app.swipeToTurn) toast("설정에서 '밀어서 넘기기'가 꺼져 있습니다")
-        }
+    /** Applies the viewer settings to the page view (start, and after each change). */
+    private fun applyViewerPrefs() {
+        val p = prefs
+        pageView.swipeFingers = p.swipeFingers
+        pageView.tone = p.pageTone
+        pageView.fingerDraws = p.fingerDraws
+        updateBadge()
     }
 
-    // ================================================================== annotating (pen, highlighter, eraser, 선택)
+    private fun showSettings() {
+        val p = prefs
+        val body = vertical { setPadding(0, 0, 0, dp(8)) }
+        val tones = listOf("기본", "어둡게", "세피아")
+        val fingers = listOf("한 손가락으로 밀기", "두 손가락으로 밀기")
+        body.addView(sectionHeader("보기"))
+        body.addView(row("문서 색상", tones[p.pageTone]) { v ->
+            chooser("문서 색상", tones, p.pageTone) { which ->
+                p.pageTone = which
+                pageView.tone = which
+                (v.findViewWithTag<TextView>("summary"))?.text = tones[which]
+            }
+        })
+        body.addView(switchRow("쪽 번호 표시", "오른쪽 아래에 지금 쪽 / 전체 쪽을 보여 줍니다", p.pageBadge) {
+            p.pageBadge = it
+            updateBadge()
+        })
+        body.addView(sectionHeader("넘기기 · 제스처"))
+        body.addView(row("밀어서 넘기기", fingers[p.swipeFingers - 1]) { v ->
+            chooser("쪽을 밀어서 넘길 때", fingers, p.swipeFingers - 1) { which ->
+                p.swipeFingers = which + 1
+                pageView.swipeFingers = which + 1
+                (v.findViewWithTag<TextView>("summary"))?.text = fingers[which]
+                if (!app.swipeToTurn) toast("앱 설정에서 '밀어서 넘기기'가 꺼져 있습니다")
+            }
+        })
+        body.addView(switchRow("손가락으로 필기", "끄면 펜(스타일러스)으로만 쓰고, 손가락으로는 넘기고 움직입니다", p.fingerDraws) {
+            p.fingerDraws = it
+            pageView.fingerDraws = it
+        })
+        body.addView(sectionHeader("펜"))
+        body.addView(switchRow("펜 입력 감도 사용", "스타일러스를 누르는 힘에 따라 펜 굵기가 변합니다", p.pressure) {
+            p.pressure = it
+            applyPreset()
+        })
+        body.addView(sectionHeader("필기"))
+        body.addView(row("이 쪽 필기 지우기", "되돌리기로 되살릴 수 있습니다") {
+            val n = notes
+            if (n != null && current >= 0 && n.clearPage(current)) {
+                pageView.inkChanged()
+                scheduleNotesSave()
+                toast("이 쪽 필기를 지웠습니다")
+            } else {
+                toast("이 쪽에는 필기가 없습니다")
+            }
+        })
+        body.addView(row("모든 필기 지우기", "이 책의 모든 쪽 (책갈피는 남습니다)") {
+            confirm("모든 필기 지우기", "이 책의 필기를 모두 지울까요? 되돌릴 수 없습니다.", "지우기") {
+                val n = notes ?: return@confirm
+                val removed = n.clearAllInk()
+                pageView.inkChanged()
+                scheduleNotesSave()
+                toast(if (removed > 0) "필기 ${removed}개를 지웠습니다" else "지울 필기가 없습니다")
+            }
+        })
+        val scroll = android.widget.ScrollView(this).apply { addView(body) }
+        alert().setTitle("PDF 보기 설정").setView(scroll).setPositiveButton("닫기", null).showNoAnim()
+    }
+
+    /** The page badge ("5 / 120", bottom right) when on. */
+    private fun updateBadge() {
+        if (!::badge.isInitialized) return
+        val annotating = ::annotBar.isInitialized && annotBar.visibility == View.VISIBLE
+        val show = prefs.pageBadge && pageCount > 0 && current >= 0 && !chromeShown && !annotating
+        badge.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) badge.text = "${current + 1} / $pageCount"
+    }
+
+    private fun buildBadge(): TextView = label("", 13f, color = Ink.WHITE).apply {
+        setPadding(dp(10), dp(4), dp(10), dp(4))
+        background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(6).toFloat()
+            setColor(0x99000000.toInt())
+        }
+        visibility = View.GONE
+    }
+
+    // ================================================================== annotating (pens, eraser, 선택)
 
     private fun buildAnnotationBar(): View {
         toolRow = horizontal { gravity = Gravity.CENTER_VERTICAL }
         colorRow = horizontal { gravity = Gravity.CENTER_VERTICAL }
         val row = horizontal {
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(56)
+            minimumHeight = dp(60)
             setPadding(dp(4), 0, dp(4), 0)
             addView(toolRow)
             addView(colorRow)
@@ -906,45 +993,126 @@ class PdfActivity : Activity() {
         }
     }
 
-    /** Shows the tools (pen first): one finger draws, two fingers move and zoom the page. */
+    /** Shows the tools (the last pen first): one finger (or the pen) draws, two fingers move and zoom the page. */
     private fun startAnnotating() {
         if (notes == null) return
         showChrome(false)
-        if (pageView.mode == PdfPageView.MODE_NONE) pageView.mode = PdfPageView.MODE_PEN
+        loadPresets()
+        if (pageView.mode == PdfPageView.MODE_NONE) applyPreset()
         annotBar.visibility = View.VISIBLE
         refreshAnnotationBar()
+        updateBadge()
     }
 
     private fun stopAnnotating() {
         pageView.mode = PdfPageView.MODE_NONE
         if (::annotBar.isInitialized) annotBar.visibility = View.GONE
+        updateBadge()
         flushNotes()
+    }
+
+    private fun loadPresets() {
+        if (presets.isNotEmpty()) return
+        presets = prefs.presets.toMutableList()
+        selected = prefs.selectedPreset.coerceIn(0, presets.size - 1)
+    }
+
+    /** Makes preset [selected] the active tool of the page view. */
+    private fun applyPreset() {
+        loadPresets()
+        val pr = presets[selected]
+        if (pr.tool == InkTool.HIGHLIGHTER) {
+            pageView.highlighterColor = pr.color
+            pageView.highlighterWidth = pr.width
+            pageView.mode = PdfPageView.MODE_HIGHLIGHTER
+        } else {
+            pageView.penColor = pr.color
+            pageView.penWidth = pr.width
+            pageView.penPressure = pr.pressure && prefs.pressure
+            pageView.mode = PdfPageView.MODE_PEN
+        }
     }
 
     private fun refreshAnnotationBar() {
         toolRow.removeAllViews()
+        colorRow.removeAllViews()
+        val drawing = pageView.mode == PdfPageView.MODE_PEN || pageView.mode == PdfPageView.MODE_HIGHLIGHTER
+        presets.forEachIndexed { i, pr ->
+            toolRow.addView(presetButton(pr, drawing && i == selected) {
+                if (drawing && i == selected) {
+                    editPreset(i)
+                } else {
+                    selected = i
+                    prefs.selectedPreset = i
+                    applyPreset()
+                    refreshAnnotationBar()
+                }
+            })
+        }
         fun tool(text: String, mode: Int) = toolRow.addView(chip(text, pageView.mode == mode) {
             pageView.mode = mode
             refreshAnnotationBar()
         })
-        tool("펜", PdfPageView.MODE_PEN)
-        tool("형광펜", PdfPageView.MODE_HIGHLIGHTER)
         tool("지우개", PdfPageView.MODE_ERASER)
         tool("선택", PdfPageView.MODE_LASSO)
         toolRow.addView(chip("되돌리기", false) { undoInk() })
         toolRow.addView(chip("◀", false) { turn(-1) })
         toolRow.addView(chip("▶", false) { turn(1) })
         toolRow.addView(chip("완료", false) { stopAnnotating() })
-        colorRow.removeAllViews()
-        val (colors, chosen) = when (pageView.mode) {
-            PdfPageView.MODE_PEN -> PEN_COLORS to pageView.penColor
-            PdfPageView.MODE_HIGHLIGHTER -> HIGHLIGHT_COLORS to pageView.highlighterColor
-            else -> return
+    }
+
+    /** A preset in the tool bar: its colour as a dot sized by its width, the width under it; ringed when chosen. */
+    private fun presetButton(pr: PenPreset, on: Boolean, onClick: () -> Unit): View {
+        val box = vertical {
+            gravity = Gravity.CENTER
+            minimumWidth = dp(48)
+            setPadding(dp(4), dp(2), dp(4), dp(2))
+            contentDescription = if (pr.tool == InkTool.HIGHLIGHTER) "형광펜" else "펜"
+            setOnClickListener { onClick() }
+            setOnLongClickListener {
+                onClick()
+                true
+            }
         }
-        for (c in colors) colorRow.addView(swatch(c, c == chosen) {
-            if (pageView.mode == PdfPageView.MODE_PEN) pageView.penColor = c else pageView.highlighterColor = c
-            refreshAnnotationBar()
-        })
+        val dotDp = if (pr.tool == InkTool.HIGHLIGHTER) 26 else (14 + pr.width * 2.5f).toInt().coerceIn(14, 30)
+        val dot = View(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = if (pr.tool == InkTool.HIGHLIGHTER) android.graphics.drawable.GradientDrawable.RECTANGLE
+                else android.graphics.drawable.GradientDrawable.OVAL
+                cornerRadius = dp(4).toFloat()
+                setColor(pr.color)
+                setStroke(dp(if (on) 3 else 1), if (on) Ink.BLACK else Ink.LINE_LIGHT)
+            }
+        }
+        box.addView(dot, android.widget.LinearLayout.LayoutParams(dp(dotDp), dp(if (pr.tool == InkTool.HIGHLIGHTER) 14 else dotDp)))
+        box.addView(label(PenColors.formatWidth(pr.width), 11f, bold = on, color = if (on) Ink.BLACK else Ink.GRAY))
+        return box
+    }
+
+    /** Thickness, colour and pressure of preset [i] (the chosen tool tapped again). */
+    private fun editPreset(i: Int) {
+        val pr = presets[i]
+        val hl = pr.tool == InkTool.HIGHLIGHTER
+        PenPanel(
+            activity = this,
+            title = if (hl) "형광펜" else "펜",
+            highlighter = hl,
+            color = pr.color,
+            width = pr.width,
+            minWidth = if (hl) PenPresets.HIGHLIGHTER_MIN else PenPresets.PEN_MIN,
+            maxWidth = if (hl) PenPresets.HIGHLIGHTER_MAX else PenPresets.PEN_MAX,
+            pxPerPoint = pageView.pxPerPoint,
+            pressure = if (hl) null else pr.pressure,
+            recent = prefs.recentColors,
+            onChange = { color, width, pressure ->
+                val changedColor = color != presets[i].color
+                presets[i] = presets[i].with(color = color, width = PenPresets.clampWidth(pr.tool, width), pressure = pressure)
+                prefs.presets = presets
+                if (changedColor) prefs.recentColors = PenPresets.pushRecent(prefs.recentColors, color)
+                if (i == selected) applyPreset()
+                refreshAnnotationBar()
+            },
+        ).show()
     }
 
     /** A text button of the tool bar; [on] = the chosen tool (inverted). */
@@ -962,18 +1130,6 @@ class PdfActivity : Activity() {
         layoutParams = android.widget.LinearLayout.LayoutParams(
             android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, dp(40),
         ).apply { setMargins(dp(3), 0, dp(3), 0) }
-        setOnClickListener { onClick() }
-    }
-
-    /** A colour choice: a filled circle, ringed when chosen. */
-    private fun swatch(color: Int, on: Boolean, onClick: () -> Unit): View = View(this).apply {
-        background = android.graphics.drawable.GradientDrawable().apply {
-            shape = android.graphics.drawable.GradientDrawable.OVAL
-            setColor(color)
-            setStroke(dp(if (on) 3 else 1), if (on) Ink.BLACK else Ink.LINE_LIGHT)
-        }
-        contentDescription = "색"
-        layoutParams = android.widget.LinearLayout.LayoutParams(dp(30), dp(30)).apply { setMargins(dp(6), 0, dp(6), 0) }
         setOnClickListener { onClick() }
     }
 

@@ -59,13 +59,20 @@ internal class TxtBook(
     override fun loadSection(index: Int): SectionContent {
         if (index < 0 || index >= this.index.size) return SectionContent.EMPTY
         synchronized(cache) { cache[index]?.let { return it } }
-        val start = this.index.byteStart[index]
-        val end = this.index.byteEnd[index]
-        val bytes = readRange(start, end)
-        val content = TxtParser.loadSection(bytes, bytes.size, this.index, index, decoder, options, rules)
-        synchronized(cache) { cache[index] = content }
-        return content
+        // One decode per section: a second thread asking for the same section (prefetch and page counting) waits
+        // for the first instead of decoding it again. Different sections still load in parallel (striped locks).
+        synchronized(sectionLocks[index and (SECTION_LOCKS - 1)]) {
+            synchronized(cache) { cache[index]?.let { return it } }
+            val start = this.index.byteStart[index]
+            val end = this.index.byteEnd[index]
+            val bytes = readRange(start, end)
+            val content = TxtParser.loadSection(bytes, bytes.size, this.index, index, decoder, options, rules)
+            synchronized(cache) { cache[index] = content }
+            return content
+        }
     }
+
+    private val sectionLocks = Array(SECTION_LOCKS) { Any() }
 
     private fun readRange(start: Int, end: Int): ByteArray {
         synchronized(fileLock) {
@@ -118,5 +125,7 @@ internal class TxtBook(
 
     companion object {
         const val CACHE_SIZE = 4
+        /** Striped section locks (a power of two). */
+        private const val SECTION_LOCKS = 8
     }
 }

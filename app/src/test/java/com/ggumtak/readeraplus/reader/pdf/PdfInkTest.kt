@@ -448,4 +448,41 @@ class PdfInkTest {
         assertEquals(2, n.strokes(0).size)
         assertTrue(n.strokes(0)[0] === keep)
     }
+
+    @Test
+    fun pressuresRoundTripAndAreOptional() {
+        val n = PdfNotes()
+        n.add(2, InkStroke(InkTool.PEN, 0xFF000000.toInt(), 2f, floatArrayOf(0f, 0f, 5f, 5f), floatArrayOf(0.25f, 0.875f)))
+        n.add(2, InkStroke(InkTool.PEN, 0xFF000000.toInt(), 2f, floatArrayOf(1f, 1f)))
+        val back = PdfNotes.fromJson(n.toJson())
+        val list = back.strokes(2)
+        assertEquals(2, list.size)
+        assertArrayEquals(floatArrayOf(0.25f, 0.88f), list[0].pressures!!, 1e-4f)
+        assertEquals(null, list[1].pressures)
+        // A pressure list of the wrong length is dropped, the stroke kept.
+        val odd = PdfNotes.fromJson("{\"v\":1,\"pages\":{\"0\":[{\"t\":0,\"c\":0,\"w\":1,\"p\":[0,0,1,1],\"q\":[0.5]}]}}")
+        assertEquals(1, odd.strokes(0).size)
+        assertEquals(null, odd.strokes(0)[0].pressures)
+    }
+
+    @Test
+    fun clearPageUndoesAndClearAllKeepsBookmarks() {
+        val n = PdfNotes()
+        val a = InkStroke(InkTool.PEN, 0, 1f, floatArrayOf(0f, 0f))
+        val b = InkStroke(InkTool.PEN, 0, 1f, floatArrayOf(5f, 5f))
+        n.add(3, a)
+        n.add(3, b)
+        n.add(4, InkStroke(InkTool.PEN, 0, 1f, floatArrayOf(1f, 1f)))
+        n.toggleBookmark(4)
+        assertTrue(n.clearPage(3))
+        assertTrue(n.strokes(3).isEmpty())
+        assertFalse(n.clearPage(3))
+        assertEquals(3, n.undo())
+        assertTrue(n.strokes(3)[0] === a && n.strokes(3)[1] === b)
+        assertEquals(3, n.clearAllInk())
+        assertTrue(n.pagesWithInk().isEmpty())
+        assertFalse(n.canUndo)
+        assertTrue(n.isBookmarked(4))
+        assertEquals(0, n.clearAllInk())
+    }
 }

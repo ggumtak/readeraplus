@@ -7,6 +7,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
@@ -14,6 +15,7 @@ import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
+import android.os.Build
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -147,6 +149,86 @@ internal class PdfPageView(context: Context) : View(context) {
     var penColor = 0xFF000000.toInt()
     /** Opaque: highlights multiply onto the page, so the text under them stays black. */
     var highlighterColor = 0xFFFFF176.toInt()
+    /** Full widths of the tools, in page points (they zoom with the page). */
+    var penWidth = 1.4f
+    var highlighterWidth = 11f
+    /** The pen follows stylus pressure (a finger always draws at full width). */
+    var penPressure = true
+    /** With a tool on, a finger draws too; false: only a stylus draws, fingers move, zoom and turn pages. */
+    var fingerDraws = true
+
+    /** Page colour: [PdfPrefs.TONE_NORMAL], dark (inverted) or sepia; the ink keeps its own colours. */
+    var tone = PdfPrefs.TONE_NORMAL
+        set(v) {
+            if (field == v) return
+            field = v
+            val filter = when (v) {
+                PdfPrefs.TONE_DARK -> ColorMatrixColorFilter(
+                    floatArrayOf(-1f, 0f, 0f, 0f, 255f, 0f, -1f, 0f, 0f, 255f, 0f, 0f, -1f, 0f, 255f, 0f, 0f, 0f, 1f, 0f),
+                )
+                PdfPrefs.TONE_SEPIA -> ColorMatrixColorFilter(
+                    floatArrayOf(0.95f, 0f, 0f, 0f, 12f, 0f, 0.88f, 0f, 0f, 6f, 0f, 0f, 0.72f, 0f, 0f, 0f, 0f, 0f, 1f, 0f),
+                )
+                else -> null
+            }
+            bitmapPaint.colorFilter = filter
+            pagePaint.colorFilter = filter
+            plainPaint.colorFilter = filter
+            // A dark page would swallow a multiplied highlight: highlights are laid over it, half transparent.
+            val dark = v == PdfPrefs.TONE_DARK
+            highlightPaint.xfermode = if (dark) null else PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
+            layerMultiply.xfermode = if (dark) null else PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
+            layerMultiply.alpha = if (dark) 0x80 else 0xFF
+            highlightAlpha = if (dark) 0x80 else 0xFF
+            invalidate()
+        }
+    private var highlightAlpha = 0xFF
+    /** Bitmaps drawn 1:1 (fitted page, detail): no filtering, only the page colour filter. */
+    private val plainPaint = Paint()
+
+    /** Whether a finger touch with a tool on draws (else it navigates). */
+    private val fingerTools: Boolean get() = mode != MODE_NONE && fingerDraws
+
+    /** Steadied pressure per point of the stroke being drawn (when [inkPressure]). */
+    private var inkQ = FloatArray(256)
+    private var inkPressure = false
+    private var lastQ = Float.NaN
+    /**
+     * The stroke being drawn, rasterized segment by segment into a view-sized layer as the points arrive: each frame
+     * then costs one bitmap draw however long the stroke gets (a growing Path would be redrawn whole every frame).
+     */
+    private var liveBitmap: Bitmap? = null
+    private var liveCanvas: Canvas? = null
+    private var liveOn = false
+    private val liveSeg = Path()
+    private var lastVx = 0f
+    private var lastVy = 0f
+    private var midVx = 0f
+    private var midVy = 0f
+    private var lastHalf = 0f
+    private var midHalf = 0f
+    private val liveStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val liveFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val layerPaint = Paint()
+    private val layerMultiply = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY) }
+    /** Points the platform predicts the pen will reach next (view px), drawn ahead of the real line (Android 14+). */
+    /** The MotionPredictor (Android 14+), false when the device has none, null until the first stroke. */
+    internal var predictorSlot: Any? = null
+    private val predicted = FloatArray(MAX_PREDICTED * 2)
+    private var predictedCount = 0
+    private val predictPath = Path()
+    private var eraserX = Float.NaN
+    private var eraserY = Float.NaN
+    private val eraserPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = 0xFF757575.toInt()
+        strokeWidth = context.dp(1).toFloat()
+    }
+    private val inkFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
     /** The page on screen is bookmarked: a ribbon at its top-right corner. */
     var bookmarked = false
@@ -186,7 +268,7 @@ internal class PdfPageView(context: Context) : View(context) {
     }
     private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.BUTT
+        strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
         // Multiply: the text under a highlight stays black.
         xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
@@ -233,6 +315,8 @@ internal class PdfPageView(context: Context) : View(context) {
     var onDetailDropped: ((Bitmap) -> Unit)? = null
 
     val zoomed: Boolean get() = zoom > 1.001f
+    /** Screen pixels per page point at the current zoom (tool previews at true size). */
+    val pxPerPoint: Float get() = scale.takeIf { it > 0f } ?: 1f
     private val areaW: Int get() = (width - paddingLeft - paddingRight).coerceAtLeast(0)
     private val areaH: Int get() = (height - paddingTop - paddingBottom).coerceAtLeast(0)
     private val scale: Float get() = PdfMath.fitScale(pageW, pageH, areaW, areaH) * zoom
@@ -278,6 +362,8 @@ internal class PdfPageView(context: Context) : View(context) {
     fun clear() {
         stopMotion()
         cancelInk()
+        liveBitmap = null
+        liveCanvas = null
         clearLasso()
         inkPaths.clear()
         selPage = -1
@@ -426,10 +512,11 @@ internal class PdfPageView(context: Context) : View(context) {
         /** How far two fingers must spread or close (zoom ratio) before the touch counts as a pinch. */
         private const val PINCH_DECIDE = 0.12f
 
-        /** Pen and highlighter widths in page points (they zoom with the page). */
-        private const val PEN_WIDTH_PT = 1.4f
-        private const val HIGHLIGHT_WIDTH_PT = 11f
         private const val ERASER_RADIUS_DP = 10
+        /** Length of one filled step of a live pressure line (px). */
+        private const val LIVE_STEP_PX = 2f
+        /** Predicted points drawn ahead of the pen at most. */
+        const val MAX_PREDICTED = 8
         /** Cached stroke paths kept across page turns before the cache is dropped. */
         private const val MAX_CACHED_PATHS = 400
 
@@ -521,19 +608,32 @@ internal class PdfPageView(context: Context) : View(context) {
         drawInk(canvas, page, ox, oy, s)
         if (findPage == page) drawMarks(canvas, findRects, findPaint, ox, oy, s)
         if (selPage == page) drawMarks(canvas, selRects, selectionPaint, ox, oy, s)
-        if (inkGesture == MODE_PEN || inkGesture == MODE_HIGHLIGHTER) {
-            canvas.save()
-            canvas.translate(ox, oy)
-            canvas.scale(s, s)
-            canvas.drawPath(livePath, strokePaint(inkGesture, if (inkGesture == MODE_PEN) penColor else highlighterColor, widthOf(inkGesture)))
-            canvas.restore()
+        val live = liveBitmap
+        if (liveOn && live != null) {
+            // The highlighter layer is drawn opaque and multiplied onto the page as a whole (no darker overlaps).
+            canvas.drawBitmap(live, 0f, 0f, if (inkGesture == MODE_HIGHLIGHTER) layerMultiply else layerPaint)
+            if (predictedCount > 0) drawPrediction(canvas)
         } else if (inkGesture == MODE_LASSO || lassoShown) {
             toView.setScale(s, s)
             toView.postTranslate(ox, oy)
             livePath.transform(toView, viewPath)
             canvas.drawPath(viewPath, lassoPaint)
         }
+        if (inkGesture == MODE_ERASER && !eraserX.isNaN()) {
+            canvas.drawCircle(eraserX, eraserY, context.dp(ERASER_RADIUS_DP).toFloat(), eraserPaint)
+        }
         if (bookmarked) drawRibbon(canvas, ox + pageW * s, oy)
+    }
+
+    /** The predicted tail: a plain line from the last real point, at the last width, never stored. */
+    private fun drawPrediction(canvas: Canvas) {
+        predictPath.rewind()
+        predictPath.moveTo(lastVx, lastVy)
+        for (i in 0 until predictedCount) predictPath.lineTo(predicted[i * 2], predicted[i * 2 + 1])
+        liveStroke.color = if (inkGesture == MODE_PEN) penColor else highlighterColor
+        liveStroke.strokeWidth = maxOf(1f, lastHalf * 2f)
+        canvas.drawPath(predictPath, if (inkGesture == MODE_HIGHLIGHTER) liveStroke.also { it.alpha = 0x80 } else liveStroke)
+        liveStroke.alpha = 0xFF
     }
 
     private fun drawPage(canvas: Canvas, b: Bitmap) {
@@ -544,7 +644,7 @@ internal class PdfPageView(context: Context) : View(context) {
             val t = (paddingTop + (areaH - b.height) / 2).toFloat()
             dst.set(l, t, l + b.width, t + b.height)
             canvas.drawRect(dst, pagePaint)
-            canvas.drawBitmap(b, l, t, null)
+            canvas.drawBitmap(b, l, t, plainPaint)
         } else {
             val l = paddingLeft + offX
             val t = paddingTop + offY
@@ -552,7 +652,7 @@ internal class PdfPageView(context: Context) : View(context) {
             canvas.drawRect(dst, pagePaint)
             val d = detail
             if (d != null && slide == 0f) {
-                canvas.drawBitmap(d, paddingLeft.toFloat(), paddingTop.toFloat(), null)
+                canvas.drawBitmap(d, paddingLeft.toFloat(), paddingTop.toFloat(), plainPaint)
             } else {
                 canvas.drawBitmap(b, null, dst, bitmapPaint)
             }
@@ -581,9 +681,19 @@ internal class PdfPageView(context: Context) : View(context) {
         canvas.save()
         canvas.translate(ox, oy)
         canvas.scale(s, s)
-        for (st in list) {
-            val path = inkPaths.getOrPut(st) { pathOf(st) }
-            canvas.drawPath(path, strokePaint(st.tool, st.color, st.width))
+        // Highlights under the pen lines: a highlight never tints the ink drawn over it.
+        for (pass in 0..1) {
+            for (i in list.indices) {
+                val st = list[i]
+                if ((st.tool == InkTool.HIGHLIGHTER) != (pass == 0)) continue
+                val path = inkPaths.getOrPut(st) { pathOf(st) }
+                if (st.pressures != null) {
+                    inkFillPaint.color = st.color
+                    canvas.drawPath(path, inkFillPaint)
+                } else {
+                    canvas.drawPath(path, strokePaint(st.tool, st.color, st.width))
+                }
+            }
         }
         canvas.restore()
     }
@@ -591,6 +701,7 @@ internal class PdfPageView(context: Context) : View(context) {
     private fun strokePaint(tool: Int, color: Int, width: Float): Paint {
         val p = if (tool == InkTool.HIGHLIGHTER) highlightPaint else inkPaint
         p.color = color
+        if (tool == InkTool.HIGHLIGHTER) p.alpha = highlightAlpha
         p.strokeWidth = width
         return p
     }
@@ -669,7 +780,7 @@ internal class PdfPageView(context: Context) : View(context) {
     /** Whether a two-finger touch starting now may be a page swipe (else it is a pinch at once). */
     private fun twoFingerSwipe(): Boolean =
         swipeEnabled && !zoomed && areaW > 0 && page >= 0 && !dragging && slide == 0f &&
-            (swipeFingers == 2 || mode != MODE_NONE)
+            (swipeFingers == 2 || fingerTools)
 
     // ------------------------------------------------------------------------------------------- zoom
 
@@ -797,19 +908,19 @@ internal class PdfPageView(context: Context) : View(context) {
         // Side taps turn pages at once (no wait for a possible double tap); only the middle, where a double tap
         // zooms, waits to know which it is.
         override fun onSingleTapUp(e: MotionEvent): Boolean {
-            if (mode != MODE_NONE || inkTouched) return true
+            if (fingerTools || inkTouched) return true
             if (PdfMath.tapZone(e.x, width) != 0) host?.onPageTap(e.x)
             return true
         }
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            if (mode != MODE_NONE || inkTouched) return true
+            if (fingerTools || inkTouched) return true
             if (PdfMath.tapZone(e.x, width) == 0) host?.onPageTap(e.x)
             return true
         }
 
         override fun onDoubleTap(e: MotionEvent): Boolean {
-            if (mode != MODE_NONE || inkTouched) return true
+            if (fingerTools || inkTouched) return true
             if (PdfMath.tapZone(e.x, width) != 0) {
                 // Quick taps on a side are two page turns.
                 host?.onPageTap(e.x)
@@ -829,14 +940,14 @@ internal class PdfPageView(context: Context) : View(context) {
                 return true
             }
             // With a tool, one finger draws: moving the page takes two.
-            if (mode != MODE_NONE && e2.pointerCount < 2) return false
+            if (fingerTools && e2.pointerCount < 2) return false
             if (zoomed) {
                 offX -= dx
                 offY -= dy
                 viewportChanged()
                 return true
             }
-            if (!swipeEnabled || areaW <= 0 || mode != MODE_NONE || swipeFingers != 1) return false
+            if (!swipeEnabled || areaW <= 0 || fingerTools || swipeFingers != 1) return false
             // Mostly horizontal: the page starts to slide.
             if (abs(dx) <= abs(dy)) return false
             dragging = true
@@ -853,7 +964,7 @@ internal class PdfPageView(context: Context) : View(context) {
                 flingDir = if (vx < 0) 1 else -1
                 return true
             }
-            if (scaleDetector.isInProgress || zoomAnim != null || inkGesture != MODE_NONE || mode != MODE_NONE) return false
+            if (scaleDetector.isInProgress || zoomAnim != null || inkGesture != MODE_NONE || fingerTools) return false
             if (zoomed) {
                 // Whole-pixel bounds just past the float edges; clampOffsets lands exactly on them.
                 val minX = floor(PdfMath.clampOffset(Float.NEGATIVE_INFINITY, pageW * scale, areaW.toFloat())).toInt()
@@ -874,10 +985,11 @@ internal class PdfPageView(context: Context) : View(context) {
     private fun inkToolFor(e: MotionEvent): Int {
         if (page < 0 || base == null || pageW <= 0) return MODE_NONE
         val type = e.getToolType(0)
+        val stylus = type == MotionEvent.TOOL_TYPE_STYLUS
         val tool = when {
             type == MotionEvent.TOOL_TYPE_ERASER -> MODE_ERASER
-            mode != MODE_NONE -> mode
-            type == MotionEvent.TOOL_TYPE_STYLUS -> MODE_LASSO
+            mode != MODE_NONE && (stylus || fingerDraws) -> mode
+            stylus -> MODE_LASSO
             else -> MODE_NONE
         }
         // Strokes need the notes loaded; the loop does not.
@@ -888,46 +1000,171 @@ internal class PdfPageView(context: Context) : View(context) {
     private fun handleInk(e: MotionEvent) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                // Every pen sample as it comes, not batched to the next frame: the line keeps up with the pen.
+                requestUnbufferedDispatch(e)
+                scroller.forceFinished(true)
+                zoomAnim?.end()
                 clearLasso()
                 inkPage = page
                 inkCount = 0
                 inkErased = false
                 livePath.rewind()
+                lastQ = Float.NaN
+                inkPressure = inkGesture == MODE_PEN && penPressure && e.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS
+                predictedCount = 0
+                if (inkGesture == MODE_PEN || inkGesture == MODE_HIGHLIGHTER) startLive()
+                if (Build.VERSION.SDK_INT >= 34) Prediction.record(this, e)
                 // One eraser drag is one undo step.
                 if (inkGesture == MODE_ERASER) notes?.beginGroup()
-                addInkPoint(e.x, e.y, first = true)
+                addInkPoint(e.x, e.y, e.pressure, first = true)
             }
             MotionEvent.ACTION_MOVE -> {
                 if (inkPage != page) return
-                for (h in 0 until e.historySize) addInkPoint(e.getHistoricalX(0, h), e.getHistoricalY(0, h), first = false)
-                addInkPoint(e.x, e.y, first = false)
+                for (h in 0 until e.historySize) {
+                    addInkPoint(e.getHistoricalX(0, h), e.getHistoricalY(0, h), e.getHistoricalPressure(0, h), first = false)
+                }
+                addInkPoint(e.x, e.y, e.pressure, first = false)
+                if (liveOn && Build.VERSION.SDK_INT >= 34) {
+                    Prediction.record(this, e)
+                    predictedCount = Prediction.predict(this, e, predicted)
+                }
             }
             MotionEvent.ACTION_UP -> finishInk()
             MotionEvent.ACTION_CANCEL -> cancelInk()
         }
     }
 
-    /** View point (x, y) of the current page, appended in page points (or erased at, for the eraser). */
-    private fun addInkPoint(x: Float, y: Float, first: Boolean) {
+    /** View point (x, y) with pen [pressure], appended in page points (or erased at, for the eraser). */
+    private fun addInkPoint(x: Float, y: Float, pressure: Float, first: Boolean) {
         val b = base ?: return
         val s = scale
         if (s <= 0f) return
         val px = (x - slide - originX(b, s)) / s
         val py = (y - originY(b, s)) / s
         if (inkGesture == MODE_ERASER) {
+            eraserX = x
+            eraserY = y
             val n = notes ?: return
-            if (n.eraseAt(page, px, py, context.dp(ERASER_RADIUS_DP) / s)) {
-                inkErased = true
-                invalidate()
-            }
+            if (n.eraseAt(page, px, py, context.dp(ERASER_RADIUS_DP) / s)) inkErased = true
+            invalidate()
             return
         }
         if (inkCount * 2 + 2 > inkPts.size) inkPts = inkPts.copyOf(inkPts.size * 2)
+        if (inkCount + 1 > inkQ.size) inkQ = inkQ.copyOf(inkQ.size * 2)
         inkPts[inkCount * 2] = px
         inkPts[inkCount * 2 + 1] = py
+        val q = if (inkPressure) InkShape.steady(lastQ, pressure) else 1f
+        lastQ = q
+        inkQ[inkCount] = q
         inkCount++
-        if (first) livePath.moveTo(px, py) else livePath.lineTo(px, py)
+        if (liveOn) {
+            val half = if (inkPressure) InkShape.widthAt(penWidth, q) * s / 2f else widthOf(inkGesture) * s / 2f
+            liveSegment(x, y, half, first)
+        } else {
+            if (first) livePath.moveTo(px, py) else livePath.lineTo(px, py)
+        }
         invalidate()
+    }
+
+    /** Clears the live layer (view-sized, kept between strokes) for a new stroke. */
+    private fun startLive() {
+        val w = width
+        val h = height
+        if (w <= 0 || h <= 0) return
+        var bmp = liveBitmap
+        if (bmp == null || bmp.width != w || bmp.height != h) {
+            bmp = try {
+                Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            } catch (oom: OutOfMemoryError) {
+                null
+            }
+            liveBitmap = bmp
+            liveCanvas = bmp?.let { Canvas(it) }
+        } else {
+            bmp.eraseColor(0)
+        }
+        liveOn = bmp != null
+        val color = if (inkGesture == MODE_PEN) penColor else highlighterColor
+        liveStroke.color = color
+        liveFill.color = color
+    }
+
+    /**
+     * Draws the stroke from the last point to view point (x, y) of half-width [half] into the live layer: a
+     * quadratic curve between the midpoints of the last segments (smooth, no corners at the samples), as a round
+     * line for constant width or as a run of filled steps for pressure.
+     */
+    private fun liveSegment(x: Float, y: Float, half: Float, first: Boolean) {
+        val c = liveCanvas ?: return
+        if (first) {
+            lastVx = x
+            lastVy = y
+            midVx = x
+            midVy = y
+            lastHalf = half
+            midHalf = half
+            if (inkPressure) c.drawCircle(x, y, half, liveFill)
+            return
+        }
+        val mx = (lastVx + x) / 2f
+        val my = (lastVy + y) / 2f
+        val mh = (lastHalf + half) / 2f
+        if (!inkPressure) {
+            liveStroke.strokeWidth = maxOf(1f, half * 2f)
+            liveSeg.rewind()
+            liveSeg.moveTo(midVx, midVy)
+            liveSeg.quadTo(lastVx, lastVy, mx, my)
+            c.drawPath(liveSeg, liveStroke)
+        } else {
+            // Walk the curve in short steps; each step is a quad between the two widths plus a round joint.
+            val len = kotlin.math.hypot(mx - midVx, my - midVy) + kotlin.math.hypot(lastVx - midVx, lastVy - midVy)
+            val steps = (len / LIVE_STEP_PX).toInt().coerceIn(1, 16)
+            var px = midVx
+            var py = midVy
+            var ph = midHalf
+            for (k in 1..steps) {
+                val t = k.toFloat() / steps
+                val u = 1f - t
+                val qx = u * u * midVx + 2f * u * t * lastVx + t * t * mx
+                val qy = u * u * midVy + 2f * u * t * lastVy + t * t * my
+                val qh = midHalf + (mh - midHalf) * t
+                liveStep(c, px, py, ph, qx, qy, qh)
+                px = qx
+                py = qy
+                ph = qh
+            }
+        }
+        lastVx = x
+        lastVy = y
+        lastHalf = half
+        midVx = mx
+        midVy = my
+        midHalf = mh
+    }
+
+    /** A filled step from (x0, y0) of half-width h0 to (x1, y1) of half-width h1, with a round end. */
+    private fun liveStep(c: Canvas, x0: Float, y0: Float, h0: Float, x1: Float, y1: Float, h1: Float) {
+        val dx = x1 - x0
+        val dy = y1 - y0
+        val len = kotlin.math.hypot(dx, dy)
+        if (len > 0.01f) {
+            val nx = -dy / len
+            val ny = dx / len
+            liveSeg.rewind()
+            liveSeg.moveTo(x0 + nx * h0, y0 + ny * h0)
+            liveSeg.lineTo(x1 + nx * h1, y1 + ny * h1)
+            liveSeg.lineTo(x1 - nx * h1, y1 - ny * h1)
+            liveSeg.lineTo(x0 - nx * h0, y0 - ny * h0)
+            liveSeg.close()
+            c.drawPath(liveSeg, liveFill)
+        }
+        c.drawCircle(x1, y1, h1, liveFill)
+    }
+
+    /** The live layer ends with its stroke (the stored stroke is drawn from the notes from now on). */
+    private fun endLive() {
+        liveOn = false
+        predictedCount = 0
     }
 
     private fun finishInk() {
@@ -944,16 +1181,18 @@ internal class PdfPageView(context: Context) : View(context) {
             MODE_PEN, MODE_HIGHLIGHTER -> {
                 val n = notes
                 if (n != null && inkCount > 0) {
-                    // Points closer than about a screen pixel add nothing.
-                    val pts = InkMath.simplify(inkPts, inkCount, 1f / scale)
+                    // Points closer than half a screen pixel add nothing.
+                    val (pts, q) = InkShape.simplify(inkPts, if (inkPressure) inkQ else null, inkCount, 0.5f / scale)
                     val color = if (tool == MODE_PEN) penColor else highlighterColor
-                    n.add(p, InkStroke(tool, color, widthOf(tool), pts))
+                    n.add(p, InkStroke(tool, color, widthOf(tool), pts, q))
                     host?.onInkChanged(p)
                 }
+                endLive()
                 livePath.rewind()
             }
             MODE_ERASER -> {
                 notes?.endGroup()
+                eraserX = Float.NaN
                 if (inkErased) {
                     inkPaths.clear()
                     host?.onInkChanged(p)
@@ -977,6 +1216,8 @@ internal class PdfPageView(context: Context) : View(context) {
     /** Drops the stroke or loop being drawn (erasing done so far stays). */
     private fun cancelInk() {
         if (inkGesture == MODE_NONE) return
+        endLive()
+        eraserX = Float.NaN
         if (inkGesture == MODE_ERASER) {
             notes?.endGroup()
             if (inkErased) {
@@ -990,22 +1231,44 @@ internal class PdfPageView(context: Context) : View(context) {
         invalidate()
     }
 
-    private fun widthOf(tool: Int): Float = if (tool == MODE_HIGHLIGHTER) HIGHLIGHT_WIDTH_PT else PEN_WIDTH_PT
+    private fun widthOf(tool: Int): Float = if (tool == MODE_HIGHLIGHTER) highlighterWidth else penWidth
 
+    /**
+     * The drawable path of a stored stroke, built once: a pressure stroke is its filled outline, others the centre
+     * line; both as quadratic curves through the midpoints of their segments (smooth, like the live line).
+     */
     private fun pathOf(st: InkStroke): Path {
+        val q = st.pressures
+        if (q != null) return smoothClosed(InkShape.outline(st.points, q, st.width))
         val path = Path()
         val pts = st.points
         path.moveTo(pts[0], pts[1])
-        if (pts.size < 4) {
+        val n = pts.size / 2
+        if (n < 2) {
             // A dot: a zero-length line drawn with round caps.
             path.lineTo(pts[0] + 0.01f, pts[1])
-        } else {
-            var i = 2
-            while (i + 1 < pts.size) {
-                path.lineTo(pts[i], pts[i + 1])
-                i += 2
-            }
+            return path
         }
+        for (i in 1 until n - 1) {
+            val mx = (pts[i * 2] + pts[i * 2 + 2]) / 2f
+            val my = (pts[i * 2 + 1] + pts[i * 2 + 3]) / 2f
+            path.quadTo(pts[i * 2], pts[i * 2 + 1], mx, my)
+        }
+        path.lineTo(pts[(n - 1) * 2], pts[(n - 1) * 2 + 1])
+        return path
+    }
+
+    /** A closed polygon (x, y pairs) as quadratic curves through its edge midpoints. */
+    private fun smoothClosed(poly: FloatArray): Path {
+        val path = Path()
+        val n = poly.size / 2
+        if (n < 3) return path
+        path.moveTo((poly[(n - 1) * 2] + poly[0]) / 2f, (poly[(n - 1) * 2 + 1] + poly[1]) / 2f)
+        for (i in 0 until n) {
+            val j = (i + 1) % n
+            path.quadTo(poly[i * 2], poly[i * 2 + 1], (poly[i * 2] + poly[j * 2]) / 2f, (poly[i * 2 + 1] + poly[j * 2 + 1]) / 2f)
+        }
+        path.close()
         return path
     }
 
@@ -1074,5 +1337,58 @@ internal class PdfPageView(context: Context) : View(context) {
             }
         }
         return true
+    }
+}
+
+/** Pen motion prediction (Android 14+), kept apart so older systems never load MotionPredictor. */
+@android.annotation.TargetApi(34)
+private object Prediction {
+    /** How far ahead the line is drawn: about one frame of a 60 Hz screen plus touch latency. */
+    private const val AHEAD_NS = 24_000_000L
+
+    fun record(view: PdfPageView, e: MotionEvent) {
+        val p = predictorOf(view, e) ?: return
+        try {
+            p.record(e)
+        } catch (_: IllegalArgumentException) {
+        }
+    }
+
+    /** Fills [out] with predicted view points (x, y pairs); returns how many. */
+    fun predict(view: PdfPageView, e: MotionEvent, out: FloatArray): Int {
+        val p = predictorOf(view, e) ?: return 0
+        val next = try {
+            p.predict(e.eventTimeNanos + AHEAD_NS)
+        } catch (_: IllegalArgumentException) {
+            null
+        } ?: return 0
+        var n = 0
+        val max = out.size / 2
+        for (h in 0 until next.historySize) {
+            if (n >= max) break
+            out[n * 2] = next.getHistoricalX(0, h)
+            out[n * 2 + 1] = next.getHistoricalY(0, h)
+            n++
+        }
+        if (n < max) {
+            out[n * 2] = next.x
+            out[n * 2 + 1] = next.y
+            n++
+        }
+        next.recycle()
+        return n
+    }
+
+    private fun predictorOf(view: PdfPageView, e: MotionEvent): android.view.MotionPredictor? {
+        val existing = view.predictorSlot as? android.view.MotionPredictor
+        if (existing != null) return existing
+        if (view.predictorSlot == false) return null
+        val p = android.view.MotionPredictor(view.context)
+        if (!p.isPredictionAvailable(e.deviceId, e.source)) {
+            view.predictorSlot = false
+            return null
+        }
+        view.predictorSlot = p
+        return p
     }
 }
