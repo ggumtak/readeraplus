@@ -218,4 +218,41 @@ class PdfMathTest {
         assertEquals(1, PdfMath.packedW(p))
         assertEquals(1, PdfMath.packedH(p))
     }
+
+    @Test
+    fun dragSlideFollowsTheFingerAndResistsAtMissingPages() {
+        assertEquals(-30f, PdfMath.dragSlide(0f, -30f, 1000f, hasPrev = true, hasNext = true), eps)
+        assertEquals(40f, PdfMath.dragSlide(10f, 30f, 1000f, hasPrev = true, hasNext = true), eps)
+        // No next page: a drag to the left moves only a part of the way.
+        assertEquals(-30f * PdfMath.EDGE_RESISTANCE, PdfMath.dragSlide(0f, -30f, 1000f, hasPrev = true, hasNext = false), eps)
+        // No previous page: the same to the right.
+        assertEquals(30f * PdfMath.EDGE_RESISTANCE, PdfMath.dragSlide(0f, 30f, 1000f, hasPrev = false, hasNext = true), eps)
+        // Clamped to one page step.
+        assertEquals(-1000f, PdfMath.dragSlide(-990f, -50f, 1000f, hasPrev = true, hasNext = true), eps)
+        assertEquals(1000f, PdfMath.dragSlide(990f, 50f, 1000f, hasPrev = true, hasNext = true), eps)
+    }
+
+    @Test
+    fun settleDirByDistanceFlingAndAvailablePages() {
+        // Short drags go back, long ones turn.
+        assertEquals(0, PdfMath.settleDir(-100f, 1000f, 0, hasPrev = true, hasNext = true))
+        assertEquals(1, PdfMath.settleDir(-250f, 1000f, 0, hasPrev = true, hasNext = true))
+        assertEquals(-1, PdfMath.settleDir(300f, 1000f, 0, hasPrev = true, hasNext = true))
+        // A fling turns even a short drag.
+        assertEquals(1, PdfMath.settleDir(-20f, 1000f, 1, hasPrev = true, hasNext = true))
+        assertEquals(-1, PdfMath.settleDir(20f, 1000f, -1, hasPrev = true, hasNext = true))
+        // Never against the drag, never to a missing page.
+        assertEquals(0, PdfMath.settleDir(20f, 1000f, 1, hasPrev = true, hasNext = true))
+        assertEquals(0, PdfMath.settleDir(-500f, 1000f, 0, hasPrev = true, hasNext = false))
+        assertEquals(0, PdfMath.settleDir(500f, 1000f, -1, hasPrev = false, hasNext = true))
+    }
+
+    @Test
+    fun animMsIsProportionalAndBounded() {
+        assertEquals(PdfMath.MAX_ANIM_MS, PdfMath.animMs(1000f, 1000f))
+        assertEquals(PdfMath.MAX_ANIM_MS / 2, PdfMath.animMs(-500f, 1000f))
+        assertEquals(80L, PdfMath.animMs(1f, 1000f))
+        assertEquals(PdfMath.MAX_ANIM_MS, PdfMath.animMs(5000f, 1000f))
+        assertEquals(80L, PdfMath.animMs(100f, 0f))
+    }
 }
