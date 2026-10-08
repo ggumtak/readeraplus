@@ -56,19 +56,17 @@ import java.time.ZoneId
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.math.abs
 
 /**
  * The PDF viewer: one fixed-layout page at a time from the platform [android.graphics.pdf.PdfRenderer], with
- * phone-style motion (pinch / animated double-tap zoom, panning with inertia, sliding page turns — see
- * [PdfPageView]; PDFs are read on phones, not on the e-ink device), tap zones, page keys, a page slider and 쪽 이동. Opens a library id or
+ * pinch / double-tap zoom, panning, tap zones, swipes, page keys, a page slider and 쪽 이동. Opens a library id or
  * an ACTION_VIEW uri (like the text reader, through [IntentFiles]); saves the page as the book's position
  * (section = page index, offset 0), its progress and reading time.
  *
  * Every [PdfPages] call runs on one render thread ([worker]); results come back through [handler] tagged with the
  * document generation, so a late result for a closed document is dropped.
  */
-class PdfActivity : Activity() {
+class PdfActivity : Activity(), PdfPageView.Host {
     companion object {
         private const val TAG = "PdfActivity"
         private const val STATE_BOOK = "pdf.book"
@@ -106,10 +104,9 @@ class PdfActivity : Activity() {
     /** Page to show once a book has opened (recreation), else the saved position. */
     private var restoredPage = -1
 
-    private class PageBitmap(index: Int, w: Int, h: Int, val areaW: Int, val areaH: Int, bitmap: Bitmap) :
-        PdfPageView.PageImage(index, w, h, bitmap)
+    private class PageBitmap(val index: Int, val w: Int, val h: Int, val areaW: Int, val areaH: Int, val bitmap: Bitmap)
 
-    private val cache = HashMap<Int, PageBitmap>(8)
+    private val cache = LinkedHashMap<Int, PageBitmap>(8, 0.75f, true)
     private val inFlight = HashSet<Int>()
     /** A detail bitmap the view no longer draws, reused by the next detail render (handed across threads). */
     private val spareDetail = AtomicReference<Bitmap?>(null)
@@ -183,7 +180,6 @@ class PdfActivity : Activity() {
         ReaderWindow.applyFullscreen(this, a.fullscreen)
         if (requestedOrientation != a.orientationLock) requestedOrientation = a.orientationLock
         keeper.enabled = a.keepScreenOn
-        pageView.swipeEnabled = a.swipeToTurn
         tracker.resume(SystemClock.elapsedRealtime(), dayClock.day(System.currentTimeMillis()))
     }
 
@@ -216,7 +212,7 @@ class PdfActivity : Activity() {
     private fun buildViews() {
         root = FrameLayout(this).apply { setBackgroundColor(Ink.WHITE) }
         pageView = PdfPageView(this).also {
-            it.host = pageHost
+            it.host = this
             it.onDetailDropped = { b -> keepSpare(b) }
         }
         root.addView(pageView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
@@ -413,8 +409,6 @@ class PdfActivity : Activity() {
     private fun turn(dir: Int) {
         if (pageCount <= 0 || current < 0) return
         keeper.poke()
-        // A slide still running lands on its page first, so this turn starts from there.
-        pageView.finishMotion()
         if (pageView.page == current && pageView.step(dir)) return
         val next = current + dir
         if (next < 0) {
@@ -425,23 +419,14 @@ class PdfActivity : Activity() {
             toast("마지막 쪽입니다")
             return
         }
-        if (pageView.page == current && pageView.animateTurn(dir)) return
         goTo(next, fromEnd = dir < 0)
     }
 
     private fun display(p: PageBitmap, fromEnd: Boolean) {
         showMessage(null)
         pageView.setPage(p.index, p.w, p.h, p.bitmap, fromEnd)
-        updateNeighbors()
         if (book != null) ResumeState.opened(book!!.id)
         scheduleDetail()
-    }
-
-    /** Hands the view the neighbours' fitted bitmaps that are ready, for its page slide. */
-    private fun updateNeighbors() {
-        val prev = cache[current - 1]?.takeIf { fits(it) }
-        val next = cache[current + 1]?.takeIf { fits(it) }
-        pageView.setNeighbors(prev, next)
     }
 
     private fun fits(p: PageBitmap): Boolean = p.areaW == areaW() && p.areaH == areaH()
@@ -483,7 +468,7 @@ class PdfActivity : Activity() {
         worker.execute {
             val p = pages
             // A queued prefetch the reader has already moved past (fast turns, a slider jump): not rendered.
-            val stale = abs(index - wantedPage) > 1
+            val stale = Math.abs(index - wantedPage) > 1
             val result = if (p == null || stale) null else try {
                 val w = p.pageWidth(index)
                 val h = p.pageHeight(index)
@@ -516,29 +501,24 @@ class PdfActivity : Activity() {
                 }
                 cache[index] = result
                 trimCache()
-                if (index == current && (show || pageView.page != current)) {
-                    display(result, showFromEnd)
-                } else if (abs(index - current) == 1) {
-                    updateNeighbors()
-                }
+                if (index == current && (show || pageView.page != current)) display(result, showFromEnd)
             }
         }
     }
 
-    /** Drops the cached pages farthest from the current one (its neighbours stay for the slide). */
     private fun trimCache() {
         while (cache.size > CACHE_PAGES) {
-            var far = -1
-            var farDist = 1
-            for (k in cache.keys) {
-                val d = abs(k - current)
-                if (d > farDist) {
-                    far = k
-                    farDist = d
+            val it = cache.entries.iterator()
+            var dropped = false
+            while (it.hasNext()) {
+                val e = it.next()
+                if (e.key != current) {
+                    it.remove()
+                    dropped = true
+                    break
                 }
             }
-            if (far < 0) return
-            cache.remove(far)
+            if (!dropped) return
         }
     }
 
@@ -618,15 +598,9 @@ class PdfActivity : Activity() {
         p.renderPart(v.page, b, clip, m)
     }
 
-    // ================================================================== input (the page view's host)
+    // ================================================================== input (PdfPageView.Host)
 
-    private val pageHost = object : PdfPageView.Host {
-        override fun onPageTap(x: Float) = pageTap(x)
-        override fun onPageSettled(image: PdfPageView.PageImage) = pageSettled(image)
-        override fun onViewportChanged() = viewportChanged()
-    }
-
-    private fun pageTap(x: Float) {
+    override fun onPageTap(x: Float) {
         keeper.poke()
         if (chromeShown) {
             showChrome(false)
@@ -637,13 +611,12 @@ class PdfActivity : Activity() {
         if (zone == 0) showChrome(true) else turn(zone)
     }
 
-    private fun pageSettled(image: PdfPageView.PageImage) {
-        // The slid-in page: back in the cache if it was trimmed meanwhile, so it shows at once.
-        if (image is PageBitmap && fits(image)) cache[image.index] = image
-        goTo(image.index, fromEnd = image.index < current)
+    override fun onPageSwipe(dir: Int) {
+        if (!app.swipeToTurn) return
+        turn(dir)
     }
 
-    private fun viewportChanged() {
+    override fun onViewportChanged() {
         keeper.poke()
         scheduleDetail()
     }
