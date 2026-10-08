@@ -1036,6 +1036,7 @@ class PdfActivity : Activity() {
 
     /** The text inside a loop drawn on [page] ([poly] in page points), found on the render thread. */
     private fun runLasso(page: Int, poly: FloatArray) {
+        Log.d(TAG, "lasso on page $page, ${poly.size / 2} points, text api $canReadText")
         if (!canReadText) {
             pageView.clearLasso()
             toast(NO_TEXT_API)
@@ -1101,6 +1102,7 @@ class PdfActivity : Activity() {
 
     private fun showSelection(page: Int, found: PdfText?) {
         pageView.clearLasso()
+        Log.d(TAG, "lasso text: ${found?.text?.length ?: -1} chars")
         if (found == null || found.text.isBlank()) {
             toast("고른 곳에서 글자를 찾지 못했습니다 (스캔한 PDF에는 글자 정보가 없습니다)")
             return

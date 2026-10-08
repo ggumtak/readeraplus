@@ -36,7 +36,7 @@ tap_label "기본"; crashes tone_back
 tap_label "닫기"; sleep 1
 
 descs() { dump; log "ui: $(grep -o 'content-desc="[^"]*"' /tmp/ui.xml | sed 's/content-desc=//' | grep -v '""' | tr '\n' ' ')"; }
-inklog() { log "app log: $(adb logcat -d -s PdfActivity:D | grep -E 'tools:|ink changed' | tail -4 | tr '\n' '|')"; }
+inklog() { log "app log: $(adb logcat -d -s PdfActivity:D | grep -E 'tools:|ink changed|lasso' | tail -4 | tr '\n' '|')"; }
 loop() { # a closed loop around the middle of the page (a lasso)
   adb shell input motionevent DOWN $((CX - 150)) $((CY - 80))
   for xy in "$CX $((CY - 120))" "$((CX + 150)) $((CY - 80))" "$((CX + 170)) $CY" "$((CX + 150)) $((CY + 80))" "$CX $((CY + 120))" "$((CX - 150)) $((CY + 80))" "$((CX - 170)) $CY" "$((CX - 150)) $((CY - 85))"; do
@@ -77,7 +77,9 @@ tap_label "페이지 탐색"; shot 11_pages 3; crashes pages
 adb shell input keyevent KEYCODE_BACK; sleep 1
 tap_label "찾기"; sleep 2; adb shell input text lighthouse; adb shell input keyevent KEYCODE_ENTER; shot 12_search 4; crashes search
 adb shell input keyevent KEYCODE_ENTER; sleep 1; crashes enter_again
-adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE_BACK; sleep 1
+adb shell input keyevent KEYCODE_BACK; sleep 1; descs; crashes back1
+# A second back only while the search panel is still open (it would close the viewer otherwise).
+if grep -q '검색' /tmp/ui.xml; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi; crashes back2
 tap_label "책갈피"; crashes bookmark
 adb shell input keyevent KEYCODE_DPAD_RIGHT; sleep 1; adb shell input keyevent KEYCODE_DPAD_LEFT; shot 13_keys 1; crashes keys
 adb shell input tap $CX $CY; sleep 1; shot 14_fullscreen 1; crashes fullscreen
