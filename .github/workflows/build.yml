@@ -3,6 +3,11 @@ name: Build APK
 on:
   push:
   workflow_dispatch:
+    inputs:
+      screens:
+        description: "Also run the emulator screenshots (about 50 minutes of Actions time)"
+        type: boolean
+        default: false
   # Keeps the cached signing key alive: GitHub evicts cache entries not used for 7 days, and a new key would
   # make the next APK refuse to install over the old one (settings lost on reinstall).
   schedule:
@@ -168,11 +173,12 @@ jobs:
           key: readeraplus-signing-v2
       - run: ls -la ~/.readeraplus-signing 2>/dev/null | sed -n '1,3p' || echo "no cached signing key"
 
-  # On-demand emulator run (workflow_dispatch, or a commit message containing "[screens]"): drives the app with
-  # adb and publishes screenshots + logs to the "ci-screens" prerelease for review.
+  # On-demand emulator run (a manual run with "screens" ticked, or a commit message containing "[screens]"): drives
+  # the app with adb and publishes screenshots + logs to the "ci-screens" prerelease for review. Off by default: one
+  # run costs about 50 minutes of the account's Actions time, a build about 8.
   screenshots:
     needs: build
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[screens]')
+    if: (github.event_name == 'workflow_dispatch' && inputs.screens) || contains(github.event.head_commit.message, '[screens]')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
