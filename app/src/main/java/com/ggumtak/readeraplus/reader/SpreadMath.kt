@@ -4,9 +4,9 @@ package com.ggumtak.readeraplus.reader
  * Pure page math of the landscape spread (two pages side by side, [PageGeometry.columns] 2; unit-tested). A spread is
  * named by its LEFT page, which is the reader's current page: spreads start at even page indices of a section (0, 2,
  * 4 …), so the page a jump names (k) is shown as the spread that starts at k − (k % 2). The right page is the next one
- * of the same section, the first page of the next section when the left page is a section's last and that section is
- * laid out already, else blank (a turn never waits for it). Turns move by whole spreads; a section's last spread turns
- * to the next section's page 0 on the left.
+ * of the same section, else blank: a chapter (section) ends on its own spread and the next one starts on the left of
+ * the next spread, as in a printed book; no page is ever shown twice and nothing depends on what is laid out yet.
+ * Turns move by whole spreads; a section's last spread turns to the next section's page 0 on the left.
  */
 object SpreadMath {
     /** What the right side of a spread shows. */
@@ -24,8 +24,7 @@ object SpreadMath {
      */
     fun right(left: Int, pageCount: Int, hasNext: Boolean, nextLoaded: Boolean): Right = when {
         left + 1 < pageCount -> Right.SAME_SECTION
-        hasNext && nextLoaded -> Right.NEXT_SECTION
-        else -> Right.BLANK
+        else -> Right.BLANK // the next section starts the next spread (never its page 0 here, then again on the left)
     }
 
     /**

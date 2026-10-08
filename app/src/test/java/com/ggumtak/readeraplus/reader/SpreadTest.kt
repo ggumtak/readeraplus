@@ -48,7 +48,7 @@ class SpreadTest {
         assertEquals(SpreadMath.Right.SAME_SECTION, SpreadMath.right(0, 3, hasNext = true, nextLoaded = false))
         assertEquals(SpreadMath.Right.SAME_SECTION, SpreadMath.right(2, 4, hasNext = false, nextLoaded = false))
         // The left page ends the section: the next section's first page when it is laid out, else blank (never waits).
-        assertEquals(SpreadMath.Right.NEXT_SECTION, SpreadMath.right(2, 3, hasNext = true, nextLoaded = true))
+        assertEquals(SpreadMath.Right.BLANK, SpreadMath.right(2, 3, hasNext = true, nextLoaded = true))
         assertEquals(SpreadMath.Right.BLANK, SpreadMath.right(2, 3, hasNext = true, nextLoaded = false))
         // The book's last page.
         assertEquals(SpreadMath.Right.BLANK, SpreadMath.right(2, 3, hasNext = false, nextLoaded = false))
