@@ -638,7 +638,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         permPanel.addView(label("모든 파일 접근 권한이 필요합니다", 17f, bold = true), lp())
         permPanel.addView(
             label(
-                "기기에 있는 EPUB · TXT 파일을 찾아 서재에 보여 주려면 ‘모든 파일 접근’을 허용하세요. " +
+                "기기에 있는 EPUB · TXT · PDF 파일을 찾아 서재에 보여 주려면 ‘모든 파일 접근’을 허용하세요. " +
                     "허용하고 돌아오면 자동으로 스캔합니다. 설정 화면이 열리지 않으면 ‘폴더 추가’로 책 폴더를 고르세요.",
                 14f,
                 color = Ink.GRAY,
@@ -1173,7 +1173,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
-            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/epub+zip", "text/plain", "*/*"))
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/epub+zip", "text/plain", "application/pdf", "*/*"))
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
         if (!tryStartForResult(intent, REQ_OPEN_FILE)) toast("파일 선택기를 열 수 없습니다")
@@ -1217,10 +1217,10 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 updateStatus()
                 result.onSuccess { book ->
                     if (book == null) {
-                        toast("지원하지 않는 파일입니다 (EPUB · TXT만 열 수 있습니다)")
+                        toast("지원하지 않는 파일입니다 (EPUB · TXT · PDF만 열 수 있습니다)")
                     } else {
                         changed()
-                        ReaderActivity.open(this@LibraryActivity, book.id)
+                        ReaderActivity.open(this@LibraryActivity, book)
                     }
                 }.onFailure { toast(ErrorLines.line("파일을 열 수 없습니다", it)) }
             }
@@ -1279,7 +1279,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         else "이 폴더는 파일 경로로 읽을 수 없는 저장소입니다."
         confirmDialog(
             title = "폴더에서 가져오기",
-            message = "$why\n폴더 안의 EPUB · TXT 파일을 앱 저장소로 복사해서 서재에 추가할까요?",
+            message = "$why\n폴더 안의 EPUB · TXT · PDF 파일을 앱 저장소로 복사해서 서재에 추가할까요?",
             ok = "복사",
         ) { startTreeImport(uri) }
     }
@@ -1397,7 +1397,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         // Only from the foreground (a start from the background would be blocked or yank the user back).
         if (book != null && resumed) {
             try {
-                ReaderActivity.open(this, book.id)
+                ReaderActivity.open(this, book)
                 return // the draw hold stays until the library is shown (onResume → ensureUi)
             } catch (t: Throwable) {
                 // fall through: show the library
@@ -1443,7 +1443,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             toast("휴지통에 있는 책입니다. 먼저 복원하세요.")
             return
         }
-        ReaderActivity.open(this, book.id)
+        ReaderActivity.open(this, book)
     }
 
     internal fun toggleFlag(row: BookRow, flag: BookFlag) {

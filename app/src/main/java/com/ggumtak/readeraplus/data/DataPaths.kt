@@ -88,7 +88,7 @@ internal object DataPaths {
     /** Whether a found file of [format] and [size] should be added by the scanner. */
     fun acceptSize(format: BookFormat, size: Long): Boolean = when (format) {
         BookFormat.TXT -> size >= MIN_TXT_BYTES
-        BookFormat.EPUB -> size > 0
+        BookFormat.EPUB, BookFormat.PDF -> size > 0
     }
 
     /**

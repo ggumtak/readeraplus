@@ -15,6 +15,8 @@ object Documents {
         when (BookFormat.forFile(file.name)) {
             BookFormat.TXT -> TxtDocuments.open(file, options)
             BookFormat.EPUB -> EpubDocuments.open(file, options)
+            // Shown page by page by the PDF viewer; there is no reflowable text to lay out.
+            BookFormat.PDF -> throw DocumentException("PDF는 PDF 보기 화면에서 엽니다: ${file.name}")
             null -> throw DocumentException("지원하지 않는 형식: ${file.name}")
         }
 
@@ -27,11 +29,11 @@ object Documents {
         EpubPlanCache.writePending()
     }
 
-    /** Fast metadata for library scanning (EPUB: OPF only; TXT: title from file name + encoding sniff). */
+    /** Fast metadata for library scanning (EPUB: OPF only; TXT: title from file name + encoding sniff; PDF: file name). */
     fun readMeta(file: File): DocMeta =
         when (BookFormat.forFile(file.name)) {
             BookFormat.TXT -> TxtDocuments.readMeta(file)
             BookFormat.EPUB -> EpubDocuments.readMeta(file)
-            null -> DocMeta(file.nameWithoutExtension)
+            BookFormat.PDF, null -> DocMeta(file.nameWithoutExtension)
         }
 }

@@ -24,6 +24,7 @@ class BookFileProvider : ContentProvider() {
         internal const val PATH_BOOK = "book"
         internal const val MIME_EPUB = "application/epub+zip"
         internal const val MIME_TXT = "text/plain"
+        internal const val MIME_PDF = "application/pdf"
 
         fun uriFor(authorityPackage: String, bookId: Long): Uri = Uri.Builder()
             .scheme(ContentResolver.SCHEME_CONTENT)
@@ -41,6 +42,7 @@ class BookFileProvider : ContentProvider() {
         internal fun mimeOf(format: BookFormat?): String? = when (format) {
             BookFormat.EPUB -> MIME_EPUB
             BookFormat.TXT -> MIME_TXT
+            BookFormat.PDF -> MIME_PDF
             null -> null
         }
 

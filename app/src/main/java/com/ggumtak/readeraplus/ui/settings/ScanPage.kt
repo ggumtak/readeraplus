@@ -56,7 +56,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
 
         body.section("스캔")
         permRow = ctx.row("모든 파일 접근 권한", StorageAccess.summary(ctx)) { StorageAccess.request(activity) }.also(body::addView)
-        body.addView(ctx.row("지금 스캔", "EPUB · TXT(1KB 이상) 파일을 찾아 서재에 추가하고, 사라진 파일은 목록에서 뺍니다") { scanNow() })
+        body.addView(ctx.row("지금 스캔", "EPUB · TXT(1KB 이상) · PDF 파일을 찾아 서재에 추가하고, 사라진 파일은 목록에서 뺍니다") { scanNow() })
         // A scan started earlier (by another instance of this page, even in a previous activity) keeps running;
         // show its latest status and receive its updates.
         statusText = ctx.note(if (ScanState.running) ScanState.status ?: "스캔 중…" else lastScanText()).also(body::addView)

@@ -219,7 +219,7 @@ internal class StatsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
             return
         }
         reloadOnResume = true
-        ReaderActivity.open(activity, book.id)
+        ReaderActivity.open(activity, book)
     }
 
     override fun onDestroy() {

@@ -41,6 +41,7 @@ import com.ggumtak.readeraplus.engine.PageInfo
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.BookFormat
+import com.ggumtak.readeraplus.reader.pdf.PdfActivity
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.format.DocumentException
 import com.ggumtak.readeraplus.format.Documents
@@ -105,6 +106,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         private const val STATE_SECTION = "rp.section"
         private const val STATE_OFFSET = "rp.offset"
         private const val STATE_AT = "rp.at"
+
+        /** Opens [book] in the screen for its format: a PDF in [PdfActivity], EPUB / TXT here. */
+        fun open(context: Context, book: Book, jump: ReaderJump? = null) {
+            if (book.format == BookFormat.PDF) PdfActivity.open(context, book.id) else open(context, book.id, jump)
+        }
 
         fun open(context: Context, bookId: Long, jump: ReaderJump? = null) {
             context.startActivity(
@@ -795,6 +801,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             try {
                 val opened = withContext(Dispatchers.IO) {
                     val b = IntentFiles.resolveBook(this@ReaderActivity, intent)
+                    if (b.format == BookFormat.PDF) throw PdfRedirect(b)
                     val f = File(b.path)
                     if (!f.isFile) throw DocumentException("파일을 찾을 수 없습니다.\n${b.path}")
                     parsing = b
@@ -863,6 +870,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 afterOpen()
             } catch (e: CancellationException) {
                 throw e
+            } catch (r: PdfRedirect) {
+                // A PDF id reached the text reader (recents, an old intent, a new library entry): the viewer shows it.
+                PdfActivity.open(this@ReaderActivity, r.book.id)
+                finish()
             } catch (t: Throwable) {
                 Log.w(TAG, "open failed", t)
                 showError(t, parsing)
@@ -876,6 +887,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             }
         }
     }
+
+    /** Thrown by the open path's IO block for a PDF, which [PdfActivity] shows instead. */
+    private class PdfRedirect(val book: Book) : Exception()
 
     /** What the open path's IO block hands back: the book, its document and the settings it was parsed with. */
     private class Opened(

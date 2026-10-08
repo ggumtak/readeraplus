@@ -33,7 +33,7 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Library cover thumbnails: EPUB cover image or a rendered mini first page for TXT. Disk-cached as
+ * Library cover thumbnails: EPUB cover image, a rendered mini first page for TXT, the first page of a PDF. Disk-cached as
  * `cacheDir/thumbs/<bookId>/<version>@<w>x<h>.png` (see [CoverKeys]): writing or invalidating a thumbnail only
  * lists that book's own directory, however large the library.
  */
@@ -131,6 +131,26 @@ object Covers {
             bytes?.let { decodeCover(it, w, h) }
         }
         BookFormat.TXT -> txtPage(context, book, file, w, h)
+        BookFormat.PDF -> pdfPage(file, w, h)
+    }
+
+    /** The first page of a PDF, fitted on white inside w×h (never cropped: it is the page itself, not a cover). */
+    private fun pdfPage(file: File, w: Int, h: Int): Bitmap? = PdfPages.open(file).use { pdf ->
+        val pw = pdf.pageWidth(0)
+        val ph = pdf.pageHeight(0)
+        val scale = minOf(w.toFloat() / pw, h.toFloat() / ph)
+        val dw = (pw * scale).toInt().coerceIn(1, w)
+        val dh = (ph * scale).toInt().coerceIn(1, h)
+        // PdfRenderer draws into ARGB_8888 only; the cached thumbnail is RGB_565 like the others.
+        val page = Bitmap.createBitmap(dw, dh, Bitmap.Config.ARGB_8888)
+        pdf.renderWhole(0, page)
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
+        val c = Canvas(out)
+        c.drawColor(Color.WHITE)
+        c.drawBitmap(page, ((w - dw) / 2).toFloat(), ((h - dh) / 2).toFloat(), Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG))
+        page.recycle()
+        border(c, w, h, BORDER_GREY)
+        out
     }
 
     private fun decodeCached(f: File): Bitmap? {

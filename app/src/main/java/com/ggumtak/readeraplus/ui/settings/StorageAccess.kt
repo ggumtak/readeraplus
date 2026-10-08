@@ -23,7 +23,7 @@ internal object StorageAccess {
         }
 
     fun summary(context: Context): String =
-        if (granted(context)) "허용됨 — 모든 폴더의 EPUB · TXT를 찾을 수 있습니다"
+        if (granted(context)) "허용됨 — 모든 폴더의 EPUB · TXT · PDF를 찾을 수 있습니다"
         else "허용 안 됨 — 눌러서 허용하세요 (도서 스캔에 필요)"
 
     /** Opens the system permission screen (API 30+) or asks for READ_EXTERNAL_STORAGE (API 26–29). */

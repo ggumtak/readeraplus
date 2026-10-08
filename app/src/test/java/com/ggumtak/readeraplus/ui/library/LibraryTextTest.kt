@@ -107,6 +107,7 @@ class LibraryTextTest {
         assertEquals("a_b_c.txt", LibraryText.importFileName("a/b:c.txt", null))
         assertEquals("download.epub", LibraryText.importFileName("download", "application/epub+zip"))
         assertEquals("notes.txt", LibraryText.importFileName("notes", "text/plain"))
+        assertEquals("scan.pdf", LibraryText.importFileName("scan", "application/pdf"))
         assertEquals("가져온 책.txt", LibraryText.importFileName(null, "text/plain"))
         assertEquals("hidden.txt", LibraryText.importFileName(".hidden.txt", null))
         assertNull(LibraryText.importFileName("photo.jpg", "image/jpeg"))
@@ -357,10 +358,12 @@ class LibraryTextTest {
     fun bookNamesAndMime() {
         assertTrue(LibraryText.isBookName("a.TXT"))
         assertTrue(LibraryText.isBookName("b.epub"))
-        assertFalse(LibraryText.isBookName("c.pdf"))
+        assertTrue(LibraryText.isBookName("c.PDF"))
+        assertFalse(LibraryText.isBookName("d.docx"))
         assertFalse(LibraryText.isBookName("txt"))
         assertEquals("application/epub+zip", LibraryText.mimeFor("x.EPUB"))
         assertEquals("text/plain", LibraryText.mimeFor("x.txt"))
+        assertEquals("application/pdf", LibraryText.mimeFor("x.Pdf"))
         assertEquals("application/octet-stream", LibraryText.mimeFor("x.bin"))
     }
     @Test

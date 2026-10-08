@@ -60,9 +60,9 @@ internal data class MetaInfo(
         /**
          * Whether the library needs the parser's metadata for [format]. TXT has none beyond the file-name title
          * (its sniffed charset is not stored: `Book.encoding` is the user's forced encoding), so the scanner
-         * skips a 64 KB read + charset sniff per TXT file.
+         * skips a 64 KB read + charset sniff per TXT file. PDF: the file-name title (its metadata is not read).
          */
-        fun needsParser(format: BookFormat?): Boolean = format != null && format != BookFormat.TXT
+        fun needsParser(format: BookFormat?): Boolean = format == BookFormat.EPUB
 
         /** "소설 1권.txt" → "소설 1권"; names without extension stay as they are. */
         fun titleFromFileName(fileName: String): String {

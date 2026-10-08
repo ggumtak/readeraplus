@@ -6,7 +6,13 @@ import java.io.File
 
 enum class BookFormat(val label: String, val extensions: List<String>) {
     TXT("TXT", listOf("txt")),
-    EPUB("EPUB", listOf("epub"));
+    EPUB("EPUB", listOf("epub")),
+
+    /**
+     * Fixed-layout pages shown by the PDF viewer (`reader/pdf/PdfActivity`, platform PdfRenderer). Never parsed
+     * into a [BookDocument]: [Documents.open] refuses it. Its reading position is (page index, 0).
+     */
+    PDF("PDF", listOf("pdf"));
 
     companion object {
         fun forFile(name: String): BookFormat? {

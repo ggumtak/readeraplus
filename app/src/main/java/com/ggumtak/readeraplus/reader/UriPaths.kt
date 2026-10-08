@@ -66,10 +66,11 @@ object UriPaths {
             name = if (ext.length in 1..5) name.substring(0, 140) + "." + ext else name.substring(0, 150)
         }
         val ext = name.substringAfterLast('.', "").lowercase()
-        if (ext == "txt" || ext == "epub") return name
+        if (ext == "txt" || ext == "epub" || ext == "pdf") return name
         val m = mime?.lowercase() ?: ""
         return when {
             m == "application/epub+zip" || m.endsWith("epub") -> "$name.epub"
+            m == "application/pdf" -> "$name.pdf"
             m.startsWith("text/") -> "$name.txt"
             else -> name
         }

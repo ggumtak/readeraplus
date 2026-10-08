@@ -65,12 +65,15 @@ class DataPathsTest {
         assertEquals(BookFormat.TXT, DataPaths.bookFormatOf("소설.Txt"))
         assertNull(DataPaths.bookFormatOf("._소설.txt"))
         assertNull(DataPaths.bookFormatOf(".hidden.epub"))
-        assertNull(DataPaths.bookFormatOf("a.pdf"))
+        assertEquals(BookFormat.PDF, DataPaths.bookFormatOf("a.pdf"))
+        assertNull(DataPaths.bookFormatOf("a.docx"))
         assertNull(DataPaths.bookFormatOf(""))
         assertFalse(DataPaths.acceptSize(BookFormat.TXT, 1023))
         assertTrue(DataPaths.acceptSize(BookFormat.TXT, 1024))
         assertFalse(DataPaths.acceptSize(BookFormat.EPUB, 0))
         assertTrue(DataPaths.acceptSize(BookFormat.EPUB, 10))
+        assertFalse(DataPaths.acceptSize(BookFormat.PDF, 0))
+        assertTrue(DataPaths.acceptSize(BookFormat.PDF, 10))
     }
 
     @Test

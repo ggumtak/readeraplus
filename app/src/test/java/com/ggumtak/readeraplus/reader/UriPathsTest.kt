@@ -36,6 +36,8 @@ class UriPathsTest {
         assertEquals("a_b_c.epub", UriPaths.safeFileName("a:b?c.epub", null, "book"))
         assertEquals("story.epub", UriPaths.safeFileName("story", "application/epub+zip", "book"))
         assertEquals("story.txt", UriPaths.safeFileName("story", "text/plain", "book"))
+        assertEquals("scan.pdf", UriPaths.safeFileName("scan", "application/pdf", "book"))
+        assertEquals("Manual.PDF", UriPaths.safeFileName("Manual.PDF", "application/octet-stream", "book"))
         assertEquals("book.txt", UriPaths.safeFileName("", "text/plain", "book"))
         assertEquals("book", UriPaths.safeFileName(null, null, "book"))
         assertEquals("x.txt", UriPaths.safeFileName("/some/dir/x.txt", null, "book"))

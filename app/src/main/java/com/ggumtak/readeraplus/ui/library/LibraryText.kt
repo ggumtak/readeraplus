@@ -172,10 +172,10 @@ internal object LibraryText {
         return groups.filter { it.label.contains(q, ignoreCase = true) || it.key.contains(q, ignoreCase = true) }
     }
 
-    /** True for names the app can open (.epub / .txt, any case). */
+    /** True for names the app can open (.epub / .txt / .pdf, any case). */
     fun isBookName(name: String): Boolean {
         val n = name.lowercase(Locale.ROOT)
-        return n.endsWith(".epub") || n.endsWith(".txt")
+        return n.endsWith(".epub") || n.endsWith(".txt") || n.endsWith(".pdf")
     }
 
     /**
@@ -215,6 +215,7 @@ internal object LibraryText {
         val ext = when (mime?.lowercase(Locale.ROOT)) {
             "application/epub+zip" -> ".epub"
             "text/plain" -> ".txt"
+            "application/pdf" -> ".pdf"
             else -> return null
         }
         val base = clean.ifEmpty { "가져온 책" }
@@ -342,7 +343,7 @@ internal object LibraryText {
         if (inGroup) return "이 항목에 책이 없습니다."
         return when (shelf) {
             Shelf.READING_NOW -> "${Shelf.READING_NOW.label}이 없습니다.\n책을 열면 여기에 표시됩니다."
-            Shelf.ALL -> "책이 없습니다.\n‘도서 스캔’으로 기기의 EPUB · TXT 파일을 찾거나 ‘파일 열기’로 추가하세요."
+            Shelf.ALL -> "책이 없습니다.\n‘도서 스캔’으로 기기의 EPUB · TXT · PDF 파일을 찾거나 ‘파일 열기’로 추가하세요."
             Shelf.FAVORITES -> "즐겨찾기한 책이 없습니다.\n" +
                 if (flagButtons) "카드의 별 버튼으로 추가하세요." else "책 메뉴에서 ‘즐겨찾기에 추가’를 고르세요."
             Shelf.TO_READ -> "${Shelf.TO_READ.label}이 없습니다.\n" +
@@ -354,7 +355,7 @@ internal object LibraryText {
             Shelf.COLLECTIONS -> "컬렉션이 없습니다.\n오른쪽 위 + 버튼으로 새 컬렉션을 만드세요."
             Shelf.FORMATS -> "책이 없습니다."
             Shelf.FOLDERS -> "책이 있는 폴더가 없습니다."
-            Shelf.DOWNLOADS -> "다운로드 폴더에 EPUB · TXT 파일이 없습니다."
+            Shelf.DOWNLOADS -> "다운로드 폴더에 EPUB · TXT · PDF 파일이 없습니다."
             Shelf.TRASH -> "휴지통이 비어 있습니다."
         }
     }
@@ -365,6 +366,7 @@ internal object LibraryText {
         return when {
             n.endsWith(".epub") -> "application/epub+zip"
             n.endsWith(".txt") -> "text/plain"
+            n.endsWith(".pdf") -> "application/pdf"
             else -> "application/octet-stream"
         }
     }
