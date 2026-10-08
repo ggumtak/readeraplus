@@ -1,5 +1,14 @@
 # 다음 작업 인수인계 (2026-10-02)
 
+## 2026-10-08 PDF 보기
+- 사용자 결정: PDF는 리플로우 없이 **페이지 그대로 보기**(방법 A). 주로 일반 폰에서 보므로 e-ink 최적화는 하지 않는다.
+- `reader/pdf/PdfActivity`(플랫폼 `PdfRenderer`, 의존성 없음): 쪽 단위 표시, 핀치·두 번 탭 확대, 끌어 이동, 확대 영역 선명 재렌더,
+  좌/우 탭·스와이프·볼륨키·쪽 이동·슬라이더, 위치(section = 쪽 번호, offset 0)·진행률·읽은 시간 저장.
+- 계약 변경(사용자 승인): `BookFormat.PDF`, `Documents.open`은 PDF를 거부, `AndroidManifest`에 PdfActivity·PDF 열기 필터.
+- 서재: 스캔·가져오기·표지(첫 쪽)·공유 MIME에 PDF 포함. `ReaderActivity.open(Book)`이 형식별로 분기하고,
+  텍스트 리더로 들어온 PDF id는 뷰어로 넘긴다. Wi-Fi 전송은 TXT·EPUB만 그대로.
+- 텍스트 검색·선택·메모·목차는 없다(Android 14 PdfRenderer에 텍스트 API 없음).
+
 ## 2026-10-02 진행
 - 사용자 추가 지시: **페이지 넘김 애니메이션은 모든 기기·모드에서 완전히 사용하지 않는다.**
   탭·키·자동 넘김은 다음 화면으로 즉시 교체한다. 기존 scroll 명세의 180 ms step 애니메이션은 폐기한다.

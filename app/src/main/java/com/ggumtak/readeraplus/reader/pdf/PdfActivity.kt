@@ -111,6 +111,10 @@ class PdfActivity : Activity(), PdfPageView.Host {
     /** A detail bitmap the view no longer draws, reused by the next detail render (handed across threads). */
     private val spareDetail = AtomicReference<Bitmap?>(null)
     private var detailBusy = false
+    /** The viewport whose detail render just failed: not retried until zoom / pan move on. */
+    private var failedDetail: PdfPageView.Viewport? = null
+    /** The page on screen, for the render thread to skip prefetches that are no longer wanted. */
+    @Volatile private var wantedPage = -1
 
     private val tracker = ReadingTracker()
     private val dayClock = DayClock(ZoneId.systemDefault())
@@ -214,6 +218,7 @@ class PdfActivity : Activity(), PdfPageView.Host {
         root.addView(pageView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
         message = label("불러오는 중…", 16f, color = Ink.GRAY).apply {
+            setBackgroundColor(Ink.WHITE)
             gravity = Gravity.CENTER
             setPadding(dp(24), dp(24), dp(24), dp(24))
         }
@@ -358,7 +363,10 @@ class PdfActivity : Activity(), PdfPageView.Host {
         cache.clear()
         inFlight.clear()
         detailBusy = false
+        failedDetail = null
+        wantedPage = -1
         handler.removeCallbacks(detailRunnable)
+        pageView.clear()
         try {
             worker.execute {
                 try {
@@ -381,6 +389,7 @@ class PdfActivity : Activity(), PdfPageView.Host {
         val target = PdfMath.clampPage(index, pageCount)
         val changed = target != current
         current = target
+        wantedPage = target
         showFromEnd = fromEnd
         if (chromeShown) updateChrome()
         val cached = cache[target]
@@ -429,9 +438,12 @@ class PdfActivity : Activity(), PdfPageView.Host {
         pageView.refit()
         if (pageCount <= 0 || current < 0) return
         val shown = cache[current]
-        if (shown != null && fits(shown)) return
-        cache.clear()
-        goTo(current, fromEnd = false)
+        if (shown == null || !fits(shown)) {
+            cache.clear()
+            goTo(current, fromEnd = false)
+        }
+        // The view dropped its sharp zoomed bitmap with the old page area.
+        scheduleDetail()
     }
 
     private fun prefetch() {
@@ -455,7 +467,9 @@ class PdfActivity : Activity(), PdfPageView.Host {
         val gen = generation
         worker.execute {
             val p = pages
-            val result = if (p == null) null else try {
+            // A queued prefetch the reader has already moved past (fast turns, a slider jump): not rendered.
+            val stale = Math.abs(index - wantedPage) > 1
+            val result = if (p == null || stale) null else try {
                 val w = p.pageWidth(index)
                 val h = p.pageHeight(index)
                 val size = PdfMath.renderSize(w, h, PdfMath.fitScale(w, h, aw, ah), MAX_BASE_PIXELS)
@@ -472,6 +486,11 @@ class PdfActivity : Activity(), PdfPageView.Host {
             handler.post {
                 if (gen != generation || isDestroyed) return@post
                 inFlight.remove(index)
+                if (stale && index != current) return@post
+                if (stale) {
+                    requestBase(index, showFromEnd, show = true)
+                    return@post
+                }
                 if (result == null) {
                     if (index == current) showMessage("${index + 1}쪽을 그리지 못했습니다.")
                     return@post
@@ -522,6 +541,8 @@ class PdfActivity : Activity(), PdfPageView.Host {
             return
         }
         val v = pageView.detailNeeded() ?: return
+        val failed = failedDetail
+        if (failed != null && PdfPageView.sameViewport(failed, v)) return
         detailBusy = true
         val gen = generation
         worker.execute {
@@ -546,7 +567,12 @@ class PdfActivity : Activity(), PdfPageView.Host {
             handler.post {
                 if (gen != generation || isDestroyed) return@post
                 detailBusy = false
-                if (bmp != null) pageView.setDetail(v, bmp)
+                if (bmp != null) {
+                    failedDetail = null
+                    pageView.setDetail(v, bmp)
+                } else {
+                    failedDetail = v
+                }
                 // Zoom / pan moved on while rendering: one more for where it is now.
                 if (pageView.detailNeeded() != null) scheduleDetail()
             }

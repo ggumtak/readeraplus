@@ -100,6 +100,19 @@ internal class PdfPageView(context: Context) : View(context) {
         invalidate()
     }
 
+    /** Shows nothing (the document closed): drops the page, its bitmaps and the zoom. */
+    fun clear() {
+        dropDetail()
+        base = null
+        page = -1
+        pageW = 0
+        pageH = 0
+        zoom = 1f
+        offX = 0f
+        offY = 0f
+        invalidate()
+    }
+
     /** Back to the whole page (a new document, or the view's size changed). */
     fun resetZoom() {
         zoom = 1f
@@ -156,9 +169,17 @@ internal class PdfPageView(context: Context) : View(context) {
         onDetailDropped?.invoke(d)
     }
 
-    private fun same(a: Viewport, b: Viewport): Boolean =
-        a.page == b.page && a.width == b.width && a.height == b.height &&
+    private fun same(a: Viewport, b: Viewport): Boolean = sameViewport(a, b)
+
+    companion object {
+        /** Whether a detail bitmap rendered for [a] is right for [b] (sub-pixel differences ignored). */
+        fun sameViewport(a: Viewport, b: Viewport): Boolean =
+            a.page == b.page && a.width == b.width && a.height == b.height &&
             abs(a.scale - b.scale) < 1e-4f && abs(a.left - b.left) < 0.5f && abs(a.top - b.top) < 0.5f
+
+        /** Slowest horizontal fling (dp per second) that turns the page. */
+        const val MIN_FLING_PX_PER_S = 400f
+    }
 
     private fun clampOffsets() {
         if (pageW <= 0 || pageH <= 0) return
@@ -183,16 +204,25 @@ internal class PdfPageView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val b = base ?: return
         if (pageW <= 0 || pageH <= 0) return
-        val s = scale
-        val l = paddingLeft + offX
-        val t = paddingTop + offY
-        dst.set(l, t, l + pageW * s, t + pageH * s)
-        canvas.drawRect(dst, pagePaint)
         val d = detail
-        if (d != null) {
-            canvas.drawBitmap(d, paddingLeft.toFloat(), paddingTop.toFloat(), null)
+        val s = scale
+        if (!zoomed && abs(b.width - pageW * s) <= 1f && abs(b.height - pageH * s) <= 1f) {
+            // The fitted bitmap 1:1 on whole pixels, centred: no resampling blur on text.
+            val l = (paddingLeft + (areaW - b.width) / 2).toFloat()
+            val t = (paddingTop + (areaH - b.height) / 2).toFloat()
+            dst.set(l, t, l + b.width, t + b.height)
+            canvas.drawRect(dst, pagePaint)
+            canvas.drawBitmap(b, l, t, null)
         } else {
-            canvas.drawBitmap(b, null, dst, bitmapPaint)
+            val l = paddingLeft + offX
+            val t = paddingTop + offY
+            dst.set(l, t, l + pageW * s, t + pageH * s)
+            canvas.drawRect(dst, pagePaint)
+            if (d != null) {
+                canvas.drawBitmap(d, paddingLeft.toFloat(), paddingTop.toFloat(), null)
+            } else {
+                canvas.drawBitmap(b, null, dst, bitmapPaint)
+            }
         }
         canvas.drawRect(dst, edgePaint)
     }
@@ -262,10 +292,5 @@ internal class PdfPageView(context: Context) : View(context) {
         scaleDetector.onTouchEvent(event)
         gestures.onTouchEvent(event)
         return true
-    }
-
-    private companion object {
-        /** Slowest horizontal fling (dp per second) that turns the page. */
-        const val MIN_FLING_PX_PER_S = 400f
     }
 }
