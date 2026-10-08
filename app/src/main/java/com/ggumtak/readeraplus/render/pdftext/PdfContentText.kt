@@ -38,6 +38,8 @@ internal class PdfContentText(
     private val fallback: PdfFont,
     private val sink: PageTextBuilder,
 ) {
+    /** Advances like a simple font, maps nothing. */
+    private val mute: PdfFont = SimpleFont(FloatArray(256) { 0.5f }, arrayOfNulls(256))
     private var cA = 1.0
     private var cB = 0.0
     private var cC = 0.0
@@ -207,7 +209,8 @@ internal class PdfContentText(
 
     private fun lookupFont(res: PdfDict?, name: String): PdfFont {
         val d = res?.dict("Font")?.get(name) as? PdfDict ?: return fallback
-        return fontFor(d) ?: fallback
+        // A composite font that can't be read gives no text: its 2-byte codes read as Latin-1 would be garbage.
+        return fontFor(d) ?: if (d.name("Subtype") == "Type0") mute else fallback
     }
 
     private fun showArray(a: PdfArray) {

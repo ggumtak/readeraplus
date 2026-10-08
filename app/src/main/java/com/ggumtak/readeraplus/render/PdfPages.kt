@@ -41,11 +41,43 @@ class PdfText(val text: String, val rects: List<RectF>)
 class PdfPages private constructor(
     private val fd: ParcelFileDescriptor,
     private val backend: Backend,
-    private val own: PdfTextReader?,
+    private val file: File,
+    withText: Boolean,
 ) : Closeable {
     val pageCount: Int = backend.pageCount
-    /** Text layers can be read (selection, search). A scanned PDF still has no text. */
-    val canReadText: Boolean get() = backend.hasText || own != null
+    /** The app's text reader, opened on the first text call (a broken file's recovery scan never delays page one). */
+    private var ownState = if (withText && !backend.hasText) OWN_UNOPENED else OWN_NONE
+    private var ownReader: PdfTextReader? = null
+    /**
+     * Text layers can be read (selection, search). A scanned PDF still has no text; with the app's own reader this
+     * is a promise until the first text call, after which a file it can't read turns it false.
+     */
+    val canReadText: Boolean get() = backend.hasText || ownState != OWN_NONE
+
+    private val own: PdfTextReader?
+        get() {
+            if (ownState == OWN_UNOPENED) {
+                ownState = OWN_NONE
+                ownReader = openOwn()
+                if (ownReader != null) ownState = OWN_OPEN
+            }
+            return ownReader
+        }
+
+    private fun openOwn(): PdfTextReader? = try {
+        val r = PdfTextReader.open(file)
+        if (r.pageCount == backend.pageCount) r else {
+            // Another page tree than the renderer's: its text would land on the wrong pages.
+            Log.w(TAG, "own text reader: ${r.pageCount} pages, renderer ${backend.pageCount}; no text")
+            r.close()
+            null
+        }
+    } catch (oom: OutOfMemoryError) {
+        null
+    } catch (t: Throwable) {
+        Log.w(TAG, "own text reader failed: ${t.message}")
+        null
+    }
     /** The last pages read by [own] (a lasso reads the lines, then selects on the same page). */
     private var ownPage = -1
     private var ownGlyphs: PageGlyphs = PageGlyphs.EMPTY
@@ -93,6 +125,7 @@ class PdfPages private constructor(
         backend.hasText -> safely { backend.allText(index) }
         own != null -> safely {
             val g = ownText(index)
+            if (g.text.isEmpty()) return@safely emptyList()
             val sx = ownScaleX(index)
             val sy = ownScaleY(index)
             PageGlyphsOps.lineBoxes(g).map { PdfText(g.text.substring(it.start, it.end), listOf(rect(it.box, sx, sy))) }
@@ -104,9 +137,11 @@ class PdfPages private constructor(
     fun selectBetween(index: Int, x0: Float, y0: Float, x1: Float, y1: Float): PdfText? = when {
         backend.hasText -> safely { backend.select(index, x0, y0, x1, y1) }
         own != null -> safely {
+            val g = ownText(index)
+            if (g.text.isEmpty()) return@safely null
             val sx = ownScaleX(index)
             val sy = ownScaleY(index)
-            PageGlyphsOps.select(ownText(index), x0 / sx, y0 / sy, x1 / sx, y1 / sy)
+            PageGlyphsOps.select(g, x0 / sx, y0 / sy, x1 / sx, y1 / sy)
                 ?.let { sel -> PdfText(sel.text, sel.boxes.map { rect(it, sx, sy) }) }
         }
         else -> null
@@ -117,15 +152,18 @@ class PdfPages private constructor(
         query.isBlank() -> emptyList()
         backend.hasText -> safely { backend.search(index, query) } ?: emptyList()
         own != null -> safely {
+            // Most pages have no match: the renderer's page (for the scale) is opened only for those that do.
+            val found = PageGlyphsOps.search(ownText(index), query)
+            if (found.isEmpty()) return@safely emptyList()
             val sx = ownScaleX(index)
             val sy = ownScaleY(index)
-            PageGlyphsOps.search(ownText(index), query).map { m -> m.map { rect(it, sx, sy) } }
+            found.map { m -> m.map { rect(it, sx, sy) } }
         } ?: emptyList()
         else -> emptyList()
     }
 
     private fun ownText(index: Int): PageGlyphs {
-        val r = own ?: return PageGlyphs.EMPTY
+        val r = ownReader ?: return PageGlyphs.EMPTY
         if (index != ownPage) {
             ownGlyphs = PageGlyphs.EMPTY
             ownPage = -1
@@ -137,12 +175,12 @@ class PdfPages private constructor(
 
     // The app's reader measures the page itself; its points are scaled onto the renderer's should the two differ.
     private fun ownScaleX(index: Int): Float {
-        val w = own?.pageSize(index)?.get(0) ?: return 1f
+        val w = ownReader?.pageSize(index)?.get(0) ?: return 1f
         return if (w > 0f) pageWidth(index) / w else 1f
     }
 
     private fun ownScaleY(index: Int): Float {
-        val h = own?.pageSize(index)?.get(1) ?: return 1f
+        val h = ownReader?.pageSize(index)?.get(1) ?: return 1f
         return if (h > 0f) pageHeight(index) / h else 1f
     }
 
@@ -153,7 +191,7 @@ class PdfPages private constructor(
             backend.close()
         } finally {
             try {
-                own?.close()
+                ownReader?.close()
             } finally {
                 fd.close()
             }
@@ -264,6 +302,9 @@ class PdfPages private constructor(
 
     companion object {
         private const val TAG = "PdfPages"
+        private const val OWN_NONE = 0
+        private const val OWN_UNOPENED = 1
+        private const val OWN_OPEN = 2
 
         private fun pack(w: Int, h: Int): Long = (w.toLong() shl 32) or (h.toLong() and 0xFFFFFFFFL)
 
@@ -318,22 +359,7 @@ class PdfPages private constructor(
                 fd.close()
                 throw DocumentException("PDF 파일을 열 수 없습니다 (손상되었거나 지원하지 않는 형식).", t)
             }
-            // Without the platform's text API, the app's own text reader; a file it can't read just has no text.
-            val own = if (!withText || backend.hasText) null else try {
-                val r = PdfTextReader.open(file)
-                if (r.pageCount == backend.pageCount) r else {
-                    // Another page tree than the renderer's: its text would land on the wrong pages.
-                    Log.w(TAG, "own text reader: ${r.pageCount} pages, renderer ${backend.pageCount}; no text")
-                    r.close()
-                    null
-                }
-            } catch (oom: OutOfMemoryError) {
-                null
-            } catch (t: Throwable) {
-                Log.w(TAG, "own text reader failed: ${t.message}")
-                null
-            }
-            val pages = PdfPages(fd, backend, own)
+            val pages = PdfPages(fd, backend, file, withText)
             if (pages.pageCount <= 0) {
                 pages.close()
                 throw DocumentException("쪽이 없는 PDF입니다.")

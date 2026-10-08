@@ -27,7 +27,9 @@ class PageGlyphs(val text: String, val boxes: FloatArray, val lineStarts: IntArr
 /**
  * Pure-JVM PDF text extractor, the fallback for devices whose platform PDF API has no text layer. It reads the
  * text of each page and per-character boxes without rendering. Not thread-safe: one thread uses an instance.
- * The file is memory-mapped (read-only) rather than read into the heap.
+ * The file is memory-mapped (read-only) rather than read into the heap; a file cut short while it is open faults
+ * the process (SIGBUS), as with any mapping. Limits: no decryption; text set vertically or turned within the page
+ * comes out one character per line; hyphenated line ends are kept.
  */
 class PdfTextReader private constructor(
     private val raf: RandomAccessFile,
@@ -102,6 +104,9 @@ class PdfTextReader private constructor(
     private fun fontFor(d: PdfDict): PdfFont? {
         fonts[d]?.let { return it }
         if (badFonts.containsKey(d)) return null
+        // Bounded: a PDF with its own font objects on every page searched end to end would keep them all.
+        if (fonts.size >= MAX_FONTS) fonts.clear()
+        if (badFonts.size >= MAX_FONTS) badFonts.clear()
         return try {
             PdfFontLoader.load(d).also { fonts[d] = it }
         } catch (_: Exception) {
@@ -188,6 +193,7 @@ class PdfTextReader private constructor(
 
     companion object {
         private const val MAX_PAGES = 500_000
+        private const val MAX_FONTS = 64
         private const val MAX_TREE_DEPTH = 64
 
         /** Opens and parses the xref/trailer/page tree. Throws [PdfTextException] (encrypted -> message "encrypted"). */

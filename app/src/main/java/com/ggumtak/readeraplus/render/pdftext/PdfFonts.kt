@@ -631,7 +631,7 @@ internal object PdfFontLoader {
                     val c2 = numOf(nx)?.toInt() ?: break
                     val wd = w.num(i + 2) ?: break
                     val v = (wd / 1000.0).toFloat()
-                    if (c2 >= c && c2 - c <= 64) {
+                    if (c2 >= c && c2.toLong() - c <= 64) {
                         for (k in c..c2) single[k] = v
                     } else if (c2 >= c) {
                         rLo.add(c)

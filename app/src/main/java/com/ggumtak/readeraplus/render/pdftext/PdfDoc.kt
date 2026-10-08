@@ -246,7 +246,8 @@ internal class PdfDoc(@JvmField val src: ByteSrc) {
         } catch (_: PdfFormatException) {
             return null
         }
-        if (n < 0 || n > data.size || first < 0) return null
+        // Each header entry takes at least 4 bytes ("n o "): a bigger /N is corrupt, not an allocation to make.
+        if (n < 0 || n > data.size / 4 || first < 0) return null
         val lx = PdfLexer(ArraySrc(data), 0, minOf(first, data.size), null)
         val nums = IntArray(n)
         val offs = IntArray(n)

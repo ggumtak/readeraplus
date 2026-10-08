@@ -91,6 +91,22 @@ class PdfTextReaderTest {
     }
 
     @Test
+    fun hugeWidthRangeDoesNotLoopOrAllocate() {
+        // c2 - c overflows Int: must not be taken for a short range of single widths.
+        val pdf = koreanDoc("BT /F1 20 Tf 50 700 Td <0001 0002> Tj ET")
+        pdf.put(6, "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Test /DW 1000 /W [-2147483648 2147483647 500] >>")
+        assertEquals("\uC548\uB155", TestPdf.open(pdf.classic()).page(0).text)
+    }
+
+    @Test
+    fun unreadableType0FontGivesNoGarbage() {
+        // Descendant missing: the font can't load; its 2-byte codes must not come out as Latin-1 pairs.
+        val pdf = koreanDoc("BT /F1 20 Tf 50 700 Td <4142 4344> Tj ET")
+        pdf.put(5, "<< /Type /Font /Subtype /Type0 /BaseFont /Test /Encoding /Identity-H >>")
+        assertEquals("", TestPdf.open(pdf.classic()).page(0).text)
+    }
+
+    @Test
     fun type0UnmappedCodeAdvancesAndGapBecomesSpace() {
         // code 9 has no Unicode: no char, but the pen moves 20 pt, which is a gap of 4 em-quarters -> one space
         val g = TestPdf.open(koreanDoc("BT /F1 20 Tf 50 700 Td <0001 0002 0009 0003> Tj ET").classic()).page(0)
