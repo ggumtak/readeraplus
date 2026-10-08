@@ -85,7 +85,8 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
         top = ctx.horizontal {
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(BAR)
-            minimumHeight = ctx.dp(TOP_DP)
+            // A tap between the buttons stays on the bar: never a page turn or the bars hidden underneath.
+            isClickable = true
         }
         top.addView(icon(R.drawable.ic_arrow_back, "닫기") { listener.onBack() })
         top.addView(icon(R.drawable.ic_grid_view, "페이지 탐색") { listener.onPages(PdfSidePanel.TAB_PAGES) })
@@ -131,6 +132,7 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
             addView(pin)
             addView(fold)
             setPadding(0, 0, ctx.dp(4), 0)
+            isClickable = true
         }
         root.addView(toolbar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, ctx.dp(TOOLBAR_DP), Gravity.TOP or Gravity.START))
         dragHandle()
@@ -179,6 +181,8 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
         top.visibility = v
         toolbar.visibility = v
         if (!show) badge.visibility = View.GONE
+        // A turn while hidden left the old size: placed again once laid out.
+        else toolbar.post { position() }
     }
 
     val isShown: Boolean get() = shown
@@ -225,6 +229,11 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
 
     private fun place() {
         top.setPadding(insetLeft + activity.dp(2), insetTop, insetRight + activity.dp(2), 0)
+        // Exactly what [topSpace] and the tool bar's margin count on, whatever the inset.
+        (top.layoutParams as FrameLayout.LayoutParams).let {
+            it.height = insetTop + activity.dp(TOP_DP)
+            top.layoutParams = it
+        }
         val strip = docked && !folded
         (toolbar.layoutParams as FrameLayout.LayoutParams).let {
             it.topMargin = insetTop + activity.dp(TOP_DP) + if (strip) 0 else activity.dp(FLOAT_GAP_DP)
@@ -286,29 +295,31 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
                         v.isPressed = true
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        if (docked && !folded) return true
                         val dx = e.rawX - downX
                         val dy = e.rawY - downY
                         if (!moving && dx * dx + dy * dy > slop * slop) {
                             moving = true
                             v.isPressed = false
                         }
-                        if (moving) {
+                        // The docked strip stays put; a drag on it is still no tap.
+                        if (moving && !(docked && !folded)) {
                             toolbar.translationX = (startX + dx).coerceIn(0f, roomX().toFloat())
                             toolbar.translationY = (startY + dy).coerceIn(0f, roomY().toFloat())
                         }
                     }
-                    MotionEvent.ACTION_UP -> {
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         v.isPressed = false
                         if (moving) {
-                            posX = PdfMath.fractionOf(toolbar.translationX, roomX())
-                            posY = PdfMath.fractionOf(toolbar.translationY, roomY())
-                            report()
-                        } else {
+                            if (!(docked && !folded)) {
+                                posX = PdfMath.fractionOf(toolbar.translationX, roomX())
+                                posY = PdfMath.fractionOf(toolbar.translationY, roomY())
+                                report()
+                            }
+                        } else if (e.actionMasked == MotionEvent.ACTION_UP) {
                             v.performClick()
                         }
+                        moving = false
                     }
-                    MotionEvent.ACTION_CANCEL -> v.isPressed = false
                 }
                 return true
             }

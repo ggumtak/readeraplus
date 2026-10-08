@@ -675,7 +675,7 @@ class PdfActivity : Activity() {
         override fun onPageSettled(image: PdfPageView.PageImage) = pageSettled(image)
         override fun onViewportChanged() = viewportChanged()
         override fun onInkChanged(page: Int) {
-            Log.i(TAG, "ink changed on page $page")
+            Log.d(TAG, "ink changed on page $page")
             scheduleNotesSave()
         }
         override fun onLasso(page: Int, poly: FloatArray) = runLasso(page, poly)
@@ -929,7 +929,7 @@ class PdfActivity : Activity() {
     }
 
     private fun refreshTools() {
-        Log.i(TAG, "tools: annotating=$annotating mode=${pageView.mode} preset=$selected")
+        Log.d(TAG, "tools: annotating=$annotating mode=${pageView.mode} preset=$selected")
         chrome.setTools(presets, selected, pageView.mode, annotating)
     }
 

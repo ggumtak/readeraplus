@@ -36,7 +36,7 @@ tap_label "기본"; crashes tone_back
 tap_label "닫기"; sleep 1
 
 descs() { dump; log "ui: $(grep -o 'content-desc="[^"]*"' /tmp/ui.xml | sed 's/content-desc=//' | grep -v '""' | tr '\n' ' ')"; }
-inklog() { log "app log: $(adb logcat -d -s PdfActivity:I | grep -E 'tools:|ink changed' | tail -4 | tr '\n' '|')"; }
+inklog() { log "app log: $(adb logcat -d -s PdfActivity:D | grep -E 'tools:|ink changed' | tail -4 | tr '\n' '|')"; }
 loop() { # a closed loop around the middle of the page (a lasso)
   adb shell input motionevent DOWN $((CX - 150)) $((CY - 80))
   for xy in "$CX $((CY - 120))" "$((CX + 150)) $((CY - 80))" "$((CX + 170)) $CY" "$((CX + 150)) $((CY + 80))" "$CX $((CY + 120))" "$((CX - 150)) $((CY + 80))" "$((CX - 170)) $CY" "$((CX - 150)) $((CY - 85))"; do
