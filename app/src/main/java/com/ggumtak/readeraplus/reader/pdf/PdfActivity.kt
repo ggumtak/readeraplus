@@ -454,6 +454,9 @@ class PdfActivity : Activity() {
         searchRun++
         searchHits = emptyList()
         searchQuery = ""
+        pageCount = 0
+        current = -1
+        updateBadge()
         generation++
         book = null
         pageCount = 0
@@ -924,7 +927,10 @@ class PdfActivity : Activity() {
         body.addView(sectionHeader("펜"))
         body.addView(switchRow("펜 입력 감도 사용", "스타일러스를 누르는 힘에 따라 펜 굵기가 변합니다", p.pressure) {
             p.pressure = it
-            applyPreset()
+            // Only the pressure of the pen in use changes; the tool (or reading) stays as it is.
+            loadPresets()
+            val pr = presets[selected]
+            pageView.penPressure = pr.tool == InkTool.PEN && pr.pressure && it
         })
         body.addView(sectionHeader("필기"))
         body.addView(row("이 쪽 필기 지우기", "되돌리기로 되살릴 수 있습니다") {
@@ -1105,12 +1111,15 @@ class PdfActivity : Activity() {
             pressure = if (hl) null else pr.pressure,
             recent = prefs.recentColors,
             onChange = { color, width, pressure ->
-                val changedColor = color != presets[i].color
                 presets[i] = presets[i].with(color = color, width = PenPresets.clampWidth(pr.tool, width), pressure = pressure)
                 prefs.presets = presets
-                if (changedColor) prefs.recentColors = PenPresets.pushRecent(prefs.recentColors, color)
                 if (i == selected) applyPreset()
                 refreshAnnotationBar()
+            },
+            // The colour chosen in the end joins the recent ones (not every step of a slider drag).
+            onClose = {
+                val c = presets[i].color
+                if (c != pr.color) prefs.recentColors = PenPresets.pushRecent(prefs.recentColors, c)
             },
         ).show()
     }

@@ -45,6 +45,8 @@ internal class PenPanel(
     pressure: Boolean?,
     private val recent: IntArray,
     private val onChange: (color: Int, width: Float, pressure: Boolean) -> Unit,
+    /** Called once when the panel closes. */
+    private val onClose: (() -> Unit)? = null,
 ) {
     private var color: Int = color or (0xFF shl 24)
     private var width: Float = width.coerceIn(minOf(minWidth, maxWidth), maxOf(minWidth, maxWidth))
@@ -67,6 +69,7 @@ internal class PenPanel(
             .setTitle(title)
             .setView(buildContent())
             .setPositiveButton("닫기", null)
+            .setOnDismissListener { onClose?.invoke() }
             .showNoAnim()
     }
 

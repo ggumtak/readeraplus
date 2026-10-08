@@ -145,6 +145,8 @@ internal class PdfPageView(context: Context) : View(context) {
             if (field == v) return
             cancelInk()
             field = v
+            // The live tiles are for drawing tools only (a stylus loop while reading draws a path).
+            if (v == MODE_NONE || v == MODE_ERASER || v == MODE_LASSO) tiles.release()
         }
     var penColor = 0xFF000000.toInt()
     /** Opaque: highlights multiply onto the page, so the text under them stays black. */
@@ -174,6 +176,12 @@ internal class PdfPageView(context: Context) : View(context) {
             bitmapPaint.colorFilter = filter
             pagePaint.colorFilter = filter
             plainPaint.colorFilter = filter
+            // On the dark page the ink turns light too, keeping its hue (black → white, red → light red).
+            val inkFilter = if (v == PdfPrefs.TONE_DARK) ColorMatrixColorFilter(INK_LIGHTNESS_INVERT) else null
+            inkPaint.colorFilter = inkFilter
+            inkFillPaint.colorFilter = inkFilter
+            layerPaint.colorFilter = inkFilter
+            liveStroke.colorFilter = inkFilter
             // A dark page would swallow a multiplied highlight: highlights are laid over it, half transparent.
             val dark = v == PdfPrefs.TONE_DARK
             highlightPaint.xfermode = if (dark) null else PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
@@ -197,8 +205,7 @@ internal class PdfPageView(context: Context) : View(context) {
      * The stroke being drawn, rasterized segment by segment into a view-sized layer as the points arrive: each frame
      * then costs one bitmap draw however long the stroke gets (a growing Path would be redrawn whole every frame).
      */
-    private var liveBitmap: Bitmap? = null
-    private var liveCanvas: Canvas? = null
+    private val tiles = LiveTiles()
     private var liveOn = false
     private val liveSeg = Path()
     private var lastVx = 0f
@@ -362,8 +369,7 @@ internal class PdfPageView(context: Context) : View(context) {
     fun clear() {
         stopMotion()
         cancelInk()
-        liveBitmap = null
-        liveCanvas = null
+        tiles.release()
         clearLasso()
         inkPaths.clear()
         selPage = -1
@@ -506,6 +512,14 @@ internal class PdfPageView(context: Context) : View(context) {
         const val MODE_ERASER = 2
         const val MODE_LASSO = 3
 
+        /** c' = c + 255 − 2·luma(c): inverts lightness, keeps hue (black ↔ white, red → pink). */
+        private val INK_LIGHTNESS_INVERT = floatArrayOf(
+            1f - 2f * 0.299f, -2f * 0.587f, -2f * 0.114f, 0f, 255f,
+            -2f * 0.299f, 1f - 2f * 0.587f, -2f * 0.114f, 0f, 255f,
+            -2f * 0.299f, -2f * 0.587f, 1f - 2f * 0.114f, 0f, 255f,
+            0f, 0f, 0f, 1f, 0f,
+        )
+
         private const val TWO_UNDECIDED = 0
         private const val TWO_PINCH = 1
         private const val TWO_SWIPE = 2
@@ -608,11 +622,10 @@ internal class PdfPageView(context: Context) : View(context) {
         drawInk(canvas, page, ox, oy, s)
         if (findPage == page) drawMarks(canvas, findRects, findPaint, ox, oy, s)
         if (selPage == page) drawMarks(canvas, selRects, selectionPaint, ox, oy, s)
-        val live = liveBitmap
-        if (liveOn && live != null) {
+        if (liveOn) {
             // The highlighter layer is drawn opaque and multiplied onto the page as a whole (no darker overlaps).
-            canvas.drawBitmap(live, 0f, 0f, if (inkGesture == MODE_HIGHLIGHTER) layerMultiply else layerPaint)
-            if (predictedCount > 0) drawPrediction(canvas)
+            tiles.drawTo(canvas, if (inkGesture == MODE_HIGHLIGHTER) layerMultiply else layerPaint)
+            if (inkGesture == MODE_PEN) drawTail(canvas)
         } else if (inkGesture == MODE_LASSO || lassoShown) {
             toView.setScale(s, s)
             toView.postTranslate(ox, oy)
@@ -625,15 +638,18 @@ internal class PdfPageView(context: Context) : View(context) {
         if (bookmarked) drawRibbon(canvas, ox + pageW * s, oy)
     }
 
-    /** The predicted tail: a plain line from the last real point, at the last width, never stored. */
-    private fun drawPrediction(canvas: Canvas) {
+    /**
+     * The pen line's tail, redrawn each frame and never stored: from the last drawn midpoint to the last real point
+     * (the layer stops half a segment short), then on through the predicted points (Android 14+).
+     */
+    private fun drawTail(canvas: Canvas) {
         predictPath.rewind()
-        predictPath.moveTo(lastVx, lastVy)
+        predictPath.moveTo(midVx, midVy)
+        predictPath.lineTo(lastVx, lastVy)
         for (i in 0 until predictedCount) predictPath.lineTo(predicted[i * 2], predicted[i * 2 + 1])
-        liveStroke.color = if (inkGesture == MODE_PEN) penColor else highlighterColor
+        liveStroke.color = penColor
         liveStroke.strokeWidth = maxOf(1f, lastHalf * 2f)
-        canvas.drawPath(predictPath, if (inkGesture == MODE_HIGHLIGHTER) liveStroke.also { it.alpha = 0x80 } else liveStroke)
-        liveStroke.alpha = 0xFF
+        canvas.drawPath(predictPath, liveStroke)
     }
 
     private fun drawPage(canvas: Canvas, b: Bitmap) {
@@ -1066,24 +1082,13 @@ internal class PdfPageView(context: Context) : View(context) {
         invalidate()
     }
 
-    /** Clears the live layer (view-sized, kept between strokes) for a new stroke. */
+    /** Clears the live tiles (kept between strokes) for a new stroke. */
     private fun startLive() {
         val w = width
         val h = height
         if (w <= 0 || h <= 0) return
-        var bmp = liveBitmap
-        if (bmp == null || bmp.width != w || bmp.height != h) {
-            bmp = try {
-                Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            } catch (oom: OutOfMemoryError) {
-                null
-            }
-            liveBitmap = bmp
-            liveCanvas = bmp?.let { Canvas(it) }
-        } else {
-            bmp.eraseColor(0)
-        }
-        liveOn = bmp != null
+        tiles.reset(w, h)
+        liveOn = true
         val color = if (inkGesture == MODE_PEN) penColor else highlighterColor
         liveStroke.color = color
         liveFill.color = color
@@ -1095,7 +1100,6 @@ internal class PdfPageView(context: Context) : View(context) {
      * line for constant width or as a run of filled steps for pressure.
      */
     private fun liveSegment(x: Float, y: Float, half: Float, first: Boolean) {
-        val c = liveCanvas ?: return
         if (first) {
             lastVx = x
             lastVy = y
@@ -1103,7 +1107,7 @@ internal class PdfPageView(context: Context) : View(context) {
             midVy = y
             lastHalf = half
             midHalf = half
-            if (inkPressure) c.drawCircle(x, y, half, liveFill)
+            tiles.drawCircle(x, y, maxOf(half, 0.5f), liveFill)
             return
         }
         val mx = (lastVx + x) / 2f
@@ -1114,7 +1118,12 @@ internal class PdfPageView(context: Context) : View(context) {
             liveSeg.rewind()
             liveSeg.moveTo(midVx, midVy)
             liveSeg.quadTo(lastVx, lastVy, mx, my)
-            c.drawPath(liveSeg, liveStroke)
+            val pad = half + 2f
+            tiles.drawPath(
+                liveSeg, liveStroke,
+                minOf(midVx, lastVx, mx) - pad, minOf(midVy, lastVy, my) - pad,
+                maxOf(midVx, lastVx, mx) + pad, maxOf(midVy, lastVy, my) + pad,
+            )
         } else {
             // Walk the curve in short steps; each step is a quad between the two widths plus a round joint.
             val len = kotlin.math.hypot(mx - midVx, my - midVy) + kotlin.math.hypot(lastVx - midVx, lastVy - midVy)
@@ -1128,7 +1137,7 @@ internal class PdfPageView(context: Context) : View(context) {
                 val qx = u * u * midVx + 2f * u * t * lastVx + t * t * mx
                 val qy = u * u * midVy + 2f * u * t * lastVy + t * t * my
                 val qh = midHalf + (mh - midHalf) * t
-                liveStep(c, px, py, ph, qx, qy, qh)
+                liveStep(px, py, ph, qx, qy, qh)
                 px = qx
                 py = qy
                 ph = qh
@@ -1143,7 +1152,7 @@ internal class PdfPageView(context: Context) : View(context) {
     }
 
     /** A filled step from (x0, y0) of half-width h0 to (x1, y1) of half-width h1, with a round end. */
-    private fun liveStep(c: Canvas, x0: Float, y0: Float, h0: Float, x1: Float, y1: Float, h1: Float) {
+    private fun liveStep(x0: Float, y0: Float, h0: Float, x1: Float, y1: Float, h1: Float) {
         val dx = x1 - x0
         val dy = y1 - y0
         val len = kotlin.math.hypot(dx, dy)
@@ -1156,9 +1165,10 @@ internal class PdfPageView(context: Context) : View(context) {
             liveSeg.lineTo(x1 - nx * h1, y1 - ny * h1)
             liveSeg.lineTo(x0 - nx * h0, y0 - ny * h0)
             liveSeg.close()
-            c.drawPath(liveSeg, liveFill)
+            val pad = maxOf(h0, h1) + 2f
+            tiles.drawPath(liveSeg, liveFill, minOf(x0, x1) - pad, minOf(y0, y1) - pad, maxOf(x0, x1) + pad, maxOf(y0, y1) + pad)
         }
-        c.drawCircle(x1, y1, h1, liveFill)
+        tiles.drawCircle(x1, y1, h1, liveFill)
     }
 
     /** The live layer ends with its stroke (the stored stroke is drawn from the notes from now on). */
@@ -1172,6 +1182,7 @@ internal class PdfPageView(context: Context) : View(context) {
         inkGesture = MODE_NONE
         val p = inkPage
         if (p != page || p < 0) {
+            endLive()
             if (tool == MODE_ERASER) notes?.endGroup()
             livePath.rewind()
             invalidate()
