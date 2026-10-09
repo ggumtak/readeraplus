@@ -23,7 +23,7 @@ class MarginShiftTest {
     private val pitch = LayoutKeys.linePitch(s, em)
 
     /** Lines of 10 chars, one pitch apart; pages of [perPage] lines from [first] on, the lines before it on one page. */
-    private fun layout(lines: Int, first: Int, perPage: Int, odd: Set<Int> = emptySet()): SectionLayout {
+    private fun layout(lines: Int, first: Int, perPage: Int, odd: Set<Int> = emptySet(), blank: Set<Int> = emptySet()): SectionLayout {
         val text = "가".repeat(lines * 10)
         val content = SectionContent(text, listOf(ParagraphBlock(0, text.length)))
         fun line(i: Int, row: Int): LineInfo {
@@ -32,7 +32,7 @@ class MarginShiftTest {
                 LineInfo(i * 10, i * 10 + 10, 0f, y, y + 30f, y + pitch, 0f, LineInfo.EXPAND_NONE,
                     imageBlock = ImageBlock(i * 10, "a.png"), imageWidth = 10f, imageHeight = 10f)
             } else {
-                LineInfo(i * 10, i * 10 + 10, 0f, y, y + 30f, y + pitch, 0f, LineInfo.EXPAND_NONE)
+                LineInfo(i * 10, if (i in blank) i * 10 else i * 10 + 10, 0f, y, y + 30f, y + pitch, 0f, LineInfo.EXPAND_NONE)
             }
         }
         val pages = ArrayList<PageInfo>()
@@ -74,6 +74,22 @@ class MarginShiftTest {
         val short = layout(32, 30, 16)
         assertEquals(-1, MarginShift.start(short, 1, 300, 2))
         assertEquals(31 * 10, MarginShift.start(short, 1, 300, 1))
+    }
+
+    @Test
+    fun aBlankLineIsNeverTheNewTop() {
+        // Line 29 (before the page) and line 31 (on it) are blank paragraphs: a page drops a blank line on its top.
+        val l = layout(100, 30, 16, blank = setOf(29, 31))
+        // raising: past the blank line to the next with text
+        assertEquals(32 * 10, MarginShift.start(l, 1, 300, 1))
+        // lowering: back past the blank line too
+        assertEquals(28 * 10, MarginShift.start(l, 1, 300, -1))
+        // lowering then raising lands where it started
+        val lowered = layout(100, 28, 16, blank = setOf(29, 31))
+        assertEquals(30 * 10, MarginShift.start(lowered, 1, 280, 1))
+        // only the line just before the page is blank
+        val gap = layout(100, 30, 16, blank = setOf(29))
+        assertEquals(28 * 10, MarginShift.start(gap, 1, 300, -1))
     }
 
     @Test

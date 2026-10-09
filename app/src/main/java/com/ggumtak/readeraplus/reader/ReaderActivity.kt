@@ -1625,6 +1625,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         curSection = 0
         curPageIdx = 0
         anchor = DocPosition.START
+        marginBase = -1
         anchorHeld = false
         rebindDue = false
         displayedGenId = -1
@@ -3658,8 +3659,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         scroll?.stopMotion()
         // 위·아래 여백 alone: the lines of the page on screen stay where they are (MarginShift), counted from its anchor —
         // also while the relayout of the step before is still on its way (the device takes a moment per step).
+        // Not in a landscape spread (the anchor's page may be the right one) nor around a switch to scrolling.
         val base = when {
-            scroll != null || !LayoutKeys.verticalMarginsOnly(before, eff) -> -1
+            scroll != null || scrollWanted || curSpread || !LayoutKeys.verticalMarginsOnly(before, eff) -> -1
             marginBase >= 0 -> marginBase
             !layoutStale() && navJob?.isActive != true && curSection == anchor.section -> anchor.offset
             else -> -1
@@ -3686,6 +3688,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun keepLinesInPlace(s: BookSession, shown: SectionLayout, base: Int) {
         val g = s.generation ?: return
         val pitch = s.linePitch()
+        // The box on screen was cut by this pitch too (not when the font's own height became known in between).
+        if (LayoutKeys.linesBox(shown.config.height, pitch) != shown.config.height) return
         val delta = LayoutKeys.linesIn(shown.config.height, pitch) - LayoutKeys.linesIn(g.geometry.contentHeight, pitch)
         // No whole line gained or lost (or none can cross the top): the page starts where the one on screen does.
         val off = MarginShift.start(shown, curPageIdx, base, delta).let { if (it < 0) base else it }

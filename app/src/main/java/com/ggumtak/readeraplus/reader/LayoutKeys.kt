@@ -185,8 +185,11 @@ object LayoutKeys {
         (a.marginTopDp != b.marginTopDp || a.marginBottomDp != b.marginBottomDp) &&
             a.copy(marginTopDp = b.marginTopDp, marginBottomDp = b.marginBottomDp) == b
 
-    /** Whole lines of [pitch] px in a box [h] px tall ([linesBox] keeps exactly these); 0 when [pitch] is unknown. */
-    fun linesIn(h: Int, pitch: Float): Int = if (pitch >= 1f && h > 0) (h / pitch + 1e-3f).toInt() else 0
+    /**
+     * Whole lines of [pitch] px in a box [h] px tall ([linesBox] keeps exactly these), at least the one the engine always
+     * places; 0 when [pitch] is unknown.
+     */
+    fun linesIn(h: Int, pitch: Float): Int = if (pitch >= 1f && h > 0) (h / pitch + 1e-3f).toInt().coerceAtLeast(1) else 0
 
     /**
      * [h] cut to the height of the most whole lines of [pitch] px it holds (rounded up to a pixel, so they still fit),
