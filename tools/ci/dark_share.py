@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prints the share of near-black pixels in a band of a screenshot (no dependencies: a minimal PNG reader).
 Usage: dark_share.py shot.png y0 y1 [light] — rows y0..y1 (exclusive), all columns. Near-black: r, g, b all < 40;
-with "light", the share of near-white pixels (all > 200) instead.
+with "light", the share of light pixels (all > 90: a thin anti-aliased line counts) instead.
 Used by pdf_check.sh to catch a live highlighter that blacks out its tiles (a white page has almost none)."""
 import struct, sys, zlib
 
@@ -46,6 +46,6 @@ for y in range(y0, y1):
     for x in range(w):
         o = x * bpp
         total += 1
-        if (r[o] > 200 and r[o + 1] > 200 and r[o + 2] > 200) if light else (r[o] < 40 and r[o + 1] < 40 and r[o + 2] < 40):
+        if (r[o] > 90 and r[o + 1] > 90 and r[o + 2] > 90) if light else (r[o] < 40 and r[o + 1] < 40 and r[o + 2] < 40):
             dark += 1
 print("%.3f" % (dark / total if total else 0))
