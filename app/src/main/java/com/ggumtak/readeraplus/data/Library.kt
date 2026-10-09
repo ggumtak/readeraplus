@@ -428,7 +428,10 @@ object Library {
         }
     }
 
-    /** Removes the entry (and its bookmarks/quotes/caches); deletes the file too when [deleteFile]. */
+    /**
+     * Removes the entry (and its bookmarks/quotes/caches and a PDF's ink notes); deletes the file too when
+     * [deleteFile].
+     */
     fun remove(bookId: Long, deleteFile: Boolean) {
         val db = db()
         val path = db.queryFirst(LibrarySql.SELECT_PATH_BY_ID, args(bookId)) { it.getString(0) } ?: return
@@ -441,6 +444,7 @@ object Library {
         }
         notesChanged()
         invalidateCover(bookId)
+        deletePdfNotes(bookId)
     }
 
     /**
@@ -475,7 +479,10 @@ object Library {
             }
         }
         if (removed.isNotEmpty()) notesChanged()
-        for ((id, _) in removed) invalidateCover(id)
+        for ((id, _) in removed) {
+            invalidateCover(id)
+            deletePdfNotes(id)
+        }
         if (failed > 0) throw IOException("파일 ${failed}개가 지워지지 않습니다")
     }
 
@@ -500,6 +507,16 @@ object Library {
         if (path.isEmpty()) return
         val f = File(path)
         if (f.exists() && !f.delete() && f.exists()) throw IOException("파일이 지워지지 않습니다")
+    }
+
+    /**
+     * Deletes the PDF viewer's ink / bookmarks file of a book removed for good ([PdfNoteFiles]; best effort, a book
+     * without one costs a stat). Call after the commit that deleted the rows, on the IO thread: never for a
+     * trashed book, whose notes stay until the trash is emptied.
+     */
+    internal fun deletePdfNotes(bookId: Long) {
+        val ctx = appContext ?: return
+        PdfNoteFiles.delete(ctx, bookId)
     }
 
     internal fun invalidateCover(bookId: Long) {

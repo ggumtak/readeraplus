@@ -88,6 +88,11 @@ class PdfActivity : Activity() {
         private const val PREFS = "pdf_viewer"
         /** Longest selected text shown as the action dialog's title. */
         private const val SELECTION_TITLE_CHARS = 200
+        /** Search results reach the panel at least this often: every so many pages scanned … */
+        private const val SEARCH_PUSH_PAGES = 10
+        /** … or so many milliseconds, whichever comes first. */
+        private const val SEARCH_PUSH_MS = 300L
+        private const val NOTES_SAVE_FAILED = "필기를 저장하지 못했습니다. 저장 공간을 확인하세요"
         private const val NO_TEXT_API =
             "이 PDF에서는 글자를 읽을 수 없습니다.\n(암호가 걸렸거나 손상된 파일)"
 
@@ -116,6 +121,8 @@ class PdfActivity : Activity() {
     private var generation = 0
 
     private var book: Book? = null
+    /** The library id being opened (set from the intent until the book is open or the open failed), else -1. */
+    private var openingId = -1L
     private var pageCount = 0
     private var current = -1
     /** Page to show once a book has opened (recreation), else the saved position. */
@@ -152,8 +159,12 @@ class PdfActivity : Activity() {
 
     private val app: AppSettings get() = Settings.app
 
-    /** The open book's annotations (main thread); saved on [worker] in order. */
+    /** The open book's annotations (main thread); saved on [notesIo] in order. */
     private var notes: PdfNotes? = null
+    /** Counts the saves handed to [notesIo]: a failed one matters only while no newer save has been queued. */
+    private var notesSaveSeq = 0
+    /** The "could not save" message is shown once per viewer. */
+    private var notesFailShown = false
     private var canReadText = false
 
     /** Last search: its query and the pages with matches (rectangles in page points). */
@@ -196,6 +207,8 @@ class PdfActivity : Activity() {
         val id = intent.getLongExtra(ReaderActivity.EXTRA_BOOK_ID, -1L)
         if (id <= 0 && intent.data == null) return
         if (id > 0 && id == book?.id) return
+        // The same book still opening: let that open finish rather than close and start it again.
+        if (id > 0 && book == null && id == openingId) return
         setIntent(intent)
         closeDocument()
         startOpen(intent)
@@ -221,6 +234,7 @@ class PdfActivity : Activity() {
         tracker.pause(SystemClock.elapsedRealtime())?.let { writeReading(it) }
         flushPosition()
         flushNotes()
+        flushPresets()
         if (book != null && current >= 0) ResumeState.paused()
     }
 
@@ -321,6 +335,7 @@ class PdfActivity : Activity() {
         override fun onPreset(index: Int, again: Boolean) = choosePreset(index, again)
         override fun onTool(mode: Int) = chooseTool(mode)
         override fun onUndo() = undoInk()
+        override fun onRedo() = redoInk()
         override fun onBadge() = showPages(PdfSidePanel.TAB_PAGES)
         override fun onToolbarLayout(docked: Boolean, folded: Boolean, x: Float, y: Float) = toolbarLaidOut(docked, folded, x, y)
     }
@@ -338,14 +353,21 @@ class PdfActivity : Activity() {
     private fun showMessage(text: CharSequence?) {
         message.text = text ?: ""
         message.visibility = if (text == null) View.GONE else View.VISIBLE
+        if (text == null) clearMessageTap()
+    }
+
+    /** The message is plain text again: it no longer takes taps (the page below gets them). */
+    private fun clearMessageTap() {
+        message.setOnClickListener(null)
+        message.isClickable = false
     }
 
     // ================================================================== opening / closing
 
     private fun startOpen(intent: Intent) {
-        message.setOnClickListener(null)
-        message.isClickable = false
+        openingId = intent.getLongExtra(ReaderActivity.EXTRA_BOOK_ID, -1L)
         showMessage("불러오는 중…")
+        clearMessageTap()
         val gen = generation
         worker.execute {
             try {
@@ -376,6 +398,7 @@ class PdfActivity : Activity() {
                 val text = (t as? DocumentException)?.message ?: "PDF 파일을 열 수 없습니다."
                 handler.post {
                     if (gen != generation || isDestroyed) return@post
+                    openingId = -1L
                     showMessage("$text\n\n(눌러서 닫기)")
                     message.setOnClickListener { finish() }
                 }
@@ -384,6 +407,7 @@ class PdfActivity : Activity() {
     }
 
     private fun onOpened(b: Book, count: Int, loaded: PdfNotes, text: Boolean) {
+        openingId = -1L
         book = b
         pageCount = count
         notes = loaded
@@ -404,6 +428,7 @@ class PdfActivity : Activity() {
         stopAnnotating()
         if (::side.isInitialized) side.hide()
         notes = null
+        refreshRedo()
         searchRun++
         searchHits = emptyList()
         searchQuery = ""
@@ -412,6 +437,7 @@ class PdfActivity : Activity() {
         updateBadge()
         generation++
         book = null
+        openingId = -1L
         pageCount = 0
         current = -1
         cache.clear()
@@ -568,7 +594,10 @@ class PdfActivity : Activity() {
                     return@post
                 }
                 if (result == null) {
-                    if (index == current) showMessage("${index + 1}쪽을 그리지 못했습니다.")
+                    if (index == current) {
+                        showMessage("${index + 1}쪽을 그리지 못했습니다.\n\n(눌러서 다시 시도)")
+                        message.setOnClickListener { retryPage(index) }
+                    }
                     return@post
                 }
                 if (!fits(result)) {
@@ -584,6 +613,16 @@ class PdfActivity : Activity() {
                 }
             }
         }
+    }
+
+    /** A tap on the "could not draw" message: forgets the failed render and asks for the page again. */
+    private fun retryPage(index: Int) {
+        if (pageCount <= 0 || index != current) return
+        clearMessageTap()
+        showMessage("불러오는 중…")
+        cache.remove(index)
+        failedDetail = null
+        goTo(index, showFromEnd)
     }
 
     /** Drops the cached pages farthest from the current one (its neighbours stay for the slide). */
@@ -688,6 +727,8 @@ class PdfActivity : Activity() {
         override fun onInkChanged(page: Int) {
             Log.d(TAG, "ink changed on page $page")
             scheduleNotesSave()
+            // A new stroke or erase ends the redo.
+            refreshRedo()
         }
         override fun onLasso(page: Int, poly: FloatArray) = runLasso(page, poly)
     }
@@ -751,20 +792,47 @@ class PdfActivity : Activity() {
         handler.postDelayed(notesSaveRunnable, NOTES_SAVE_DELAY_MS)
     }
 
-    /** Writes changed notes on the process-wide notes thread, in order with every load and save. */
+    /**
+     * Saves changed notes. The main thread only copies the notes (a shallow snapshot); the JSON is built and written on
+     * the process-wide notes thread, in order with every load and save. `dirty` is cleared at once and set again if the
+     * write fails (see [notesSaveFailed]).
+     */
     private fun flushNotes() {
         handler.removeCallbacks(notesSaveRunnable)
         val n = notes ?: return
         val id = book?.id ?: return
         if (!n.dirty) return
-        val json = if (n.isEmpty) null else n.toJson()
+        val snapshot = n.snapshot()
         n.dirty = false
+        val seq = ++notesSaveSeq
         val dir = notesDir()
         try {
-            notesIo.execute { if (!PdfNotesStore.save(dir, id, json)) Log.w(TAG, "notes save failed") }
+            notesIo.execute {
+                val ok = try {
+                    PdfNotesStore.save(dir, id, if (snapshot.isEmpty) null else snapshot.toJson())
+                } catch (t: Throwable) {
+                    Log.w(TAG, "notes save threw", t)
+                    false
+                }
+                if (!ok) handler.post { notesSaveFailed(n, seq) }
+            }
         } catch (t: Throwable) {
             Log.w(TAG, "notes save not queued", t)
+            notesSaveFailed(n, seq)
         }
+    }
+
+    /**
+     * A notes write failed: the notes are changed-and-unsaved again, so the next debounce or [onPause] tries once
+     * more (a newer save already queued carries these changes; notes of a closed document are gone). The reader is
+     * told once.
+     */
+    private fun notesSaveFailed(n: PdfNotes, seq: Int) {
+        Log.w(TAG, "notes save failed")
+        if (notes === n && seq == notesSaveSeq) n.dirty = true
+        if (notesFailShown) return
+        notesFailShown = true
+        (if (isDestroyed) applicationContext else this).toast(NOTES_SAVE_FAILED)
     }
 
     /** The page's bookmark ribbon (on the page and in the top bar) and search matches. */
@@ -805,6 +873,7 @@ class PdfActivity : Activity() {
                     val removed = n.clearAllInk()
                     pageView.inkChanged()
                     scheduleNotesSave()
+                    refreshRedo()
                     side.refresh()
                     toast(if (removed > 0) "필기 ${removed}개를 지웠습니다" else "지울 필기가 없습니다")
                 }
@@ -839,6 +908,8 @@ class PdfActivity : Activity() {
     private val prefs by lazy { PdfPrefs(getSharedPreferences(PREFS, MODE_PRIVATE)) }
     private var presets: MutableList<PenPreset> = ArrayList()
     private var selected = 0
+    /** A preset was edited in the open pen sheet and is not stored yet (stored when the sheet closes or on pause). */
+    private var presetsDirty = false
 
     /** Applies the viewer settings to the page view (start, and after each change). */
     private fun applyViewerPrefs() {
@@ -901,6 +972,7 @@ class PdfActivity : Activity() {
             if (n != null && current >= 0 && n.clearPage(current)) {
                 pageView.inkChanged()
                 scheduleNotesSave()
+                refreshRedo()
                 toast("이 페이지 필기를 지웠습니다")
             } else {
                 toast("이 페이지에는 필기가 없습니다")
@@ -912,6 +984,7 @@ class PdfActivity : Activity() {
                 val removed = n.clearAllInk()
                 pageView.inkChanged()
                 scheduleNotesSave()
+                refreshRedo()
                 toast(if (removed > 0) "필기 ${removed}개를 지웠습니다" else "지울 필기가 없습니다")
             }
         })
@@ -947,6 +1020,7 @@ class PdfActivity : Activity() {
     private fun refreshTools() {
         Log.d(TAG, "tools: annotating=$annotating mode=${pageView.mode} preset=$selected")
         chrome.setTools(presets, selected, pageView.mode, annotating)
+        refreshRedo()
     }
 
     /** A preset tapped in the tool bar: chosen, or (tapped again) its thickness / colour sheet. */
@@ -964,10 +1038,15 @@ class PdfActivity : Activity() {
         refreshTools()
     }
 
-    /** 지우개 / 선택 from the tool bar, or 형광펜 from the reading tool bar (the pen tools come out). */
+    /**
+     * 지우개 / 선택 from the tool bar, or 형광펜 from the reading tool bar (the pen tools come out). The eraser and
+     * 선택 are toggles: tapped while in use, they hand back to the chosen pen or highlighter (the stylus's eraser end
+     * stays a temporary eraser, see [PdfPageView]).
+     */
     private fun chooseTool(mode: Int) {
         if (notes == null) return
         loadPresets()
+        val wasAnnotating = annotating
         if (!annotating) {
             annotating = true
             if (!chrome.isShown) toggleBars()
@@ -978,6 +1057,9 @@ class PdfActivity : Activity() {
                 selected = hl
                 prefs.selectedPreset = hl
             }
+            applyPreset()
+        } else if (wasAnnotating && pageView.mode == mode) {
+            // The eraser (or the selection loop) tapped again: back to the pen or highlighter used before it.
             applyPreset()
         } else {
             pageView.mode = mode
@@ -1025,15 +1107,23 @@ class PdfActivity : Activity() {
             // Applied to the pen at once; stored and shown in the tool bar when the sheet closes (slider drags stay smooth).
             onChange = { color, width, pressure ->
                 presets[i] = presets[i].with(color = color, width = PenPresets.clampWidth(pr.tool, width), pressure = pressure)
+                presetsDirty = true
                 if (i == selected) applyPreset()
             },
             onClose = {
-                prefs.presets = presets
+                flushPresets()
                 refreshTools()
                 val c = presets[i].color
                 if (c != pr.color) prefs.recentColors = PenPresets.pushRecent(prefs.recentColors, c)
             },
         ).show()
+    }
+
+    /** Stores edited pen presets (the sheet closing, or the app leaving the screen with the sheet open). */
+    private fun flushPresets() {
+        if (!presetsDirty) return
+        presetsDirty = false
+        prefs.presets = presets
     }
 
     private fun undoInk() {
@@ -1046,6 +1136,26 @@ class PdfActivity : Activity() {
         pageView.inkChanged()
         if (page != current) goTo(page, fromEnd = false)
         scheduleNotesSave()
+        refreshRedo()
+    }
+
+    /** 다시 실행: puts back what 되돌리기 reverted last. */
+    private fun redoInk() {
+        val n = notes ?: return
+        val page = n.redo()
+        if (page < 0) {
+            refreshRedo()
+            return
+        }
+        pageView.inkChanged()
+        if (page != current) goTo(page, fromEnd = false)
+        scheduleNotesSave()
+        refreshRedo()
+    }
+
+    /** The 다시 실행 button shows only while there is something to redo. */
+    private fun refreshRedo() {
+        if (::chrome.isInitialized) chrome.setCanRedo(notes?.canRedo == true)
     }
 
     // ================================================================== selection loop → 사전 · 검색
@@ -1154,6 +1264,7 @@ class PdfActivity : Activity() {
         n.endGroup()
         pageView.inkChanged()
         scheduleNotesSave()
+        refreshRedo()
     }
 
     // ================================================================== search (right side panel)
@@ -1171,7 +1282,10 @@ class PdfActivity : Activity() {
         if (searchHits.isNotEmpty()) side.setSearchResults(searchQuery, searchHits.map { it.page to it.rects.size })
     }
 
-    /** Searches every page on the render thread, progress and results in the side panel. */
+    /**
+     * Searches every page on the render thread. The panel shows the matches found so far every [SEARCH_PUSH_PAGES]
+     * pages or [SEARCH_PUSH_MS] (whichever comes first), then the final list.
+     */
     private fun runSearch(query: String) {
         val run = ++searchRun
         val gen = generation
@@ -1181,6 +1295,8 @@ class PdfActivity : Activity() {
             val hits = ArrayList<SearchHit>()
             val p = pages
             var done = 0
+            var pushedAt = SystemClock.uptimeMillis()
+            var pushedDone = 0
             if (p != null) {
                 for (i in 0 until total) {
                     if (searchRun != run) break
@@ -1193,19 +1309,27 @@ class PdfActivity : Activity() {
                     }
                     if (found.isNotEmpty()) hits += SearchHit(i, found.flatten())
                     done = i + 1
-                    if (done % 10 == 0) {
+                    val now = SystemClock.uptimeMillis()
+                    if (done < total && (done - pushedDone >= SEARCH_PUSH_PAGES || now - pushedAt >= SEARCH_PUSH_MS)) {
+                        pushedDone = done
+                        pushedAt = now
+                        // Built here, off the main thread: the panel gets a list nobody changes any more.
+                        val partial = hits.map { it.page to it.rects.size }
                         val d = done
-                        handler.post { if (searchRun == run && side.isShown) side.setSearchProgress(d, total) }
+                        handler.post {
+                            if (gen == generation && searchRun == run && side.isShown) side.setSearchPartial(partial, d, total)
+                        }
                     }
                 }
             }
-            val finished = done == total
+            // Only a search that read every page is a result; one stopped half way is dropped.
+            val result = if (done == total) hits.map { it.page to it.rects.size } else null
             handler.post {
-                if (gen != generation || isDestroyed || searchRun != run || !finished) return@post
+                if (gen != generation || isDestroyed || searchRun != run || result == null) return@post
                 searchQuery = query
                 searchHits = hits
                 showPageMarks()
-                side.setSearchResults(query, hits.map { it.page to it.rects.size })
+                side.setSearchResults(query, result)
             }
         }
     }

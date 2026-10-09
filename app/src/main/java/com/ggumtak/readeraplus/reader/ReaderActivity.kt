@@ -154,6 +154,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         private const val COUNT_DELAY_MS = 800L
         /** At most this long the first page of an open or relayout waits for cached page counts (usually ≈ 10–50 ms). */
         private const val CACHE_WAIT_MS = 150L
+        /** Books whose missing EPUB items were already reported in this process. */
+        private val missingNoticeShown = HashSet<Long>()
+
+        /** A re-parse lays its page out again at most this often for pages turned while it did (then by ratio). */
+        private const val REOPEN_RETARGETS = 3
         private const val OWNER_QUOTES = "quotes"
         private const val OWNER_SEARCH = "search"
         /** N §6.1: the note an open / a new intent jumped to, marked until the first manual turn. */
@@ -1316,7 +1321,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 // N §6.1: six getExtra calls, no I/O (a restored reader's by-id intent has none). A place kept from
                 // another book (its open failed) never suppresses this book's jump.
                 val jump = if (place == null || place.bookId != b.id) ReaderJump.from(intent) else null
-                val sigText = LayoutKeys.textSignature(eff, d.format, b.encoding)
+                val sigText = LayoutKeys.textSignature(eff, d.format, b.encoding, b.sizeBytes)
                 val noteSig = NoteSig.of(sigText, b.sizeBytes)
                 // A TXT position saved under other parse options (chapter detection, replace rules, encoding, ...)
                 // is found again by its char fraction instead of reading stale (section, offset) coordinates.
@@ -1499,6 +1504,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         // main thread; it is cached for the process.
         ReaderIo.launch { Eink.hasXrzRefresh() }
         loadSpeed()
+        // A broken EPUB opens with what it holds; say once per book (per process) that some of it is missing.
+        val missing = (s.document as? EpubBook)?.missingSpineItems ?: 0
+        if (missing > 0 && missingNoticeShown.add(id)) toast("이 책은 본문 파일 ${missing}개가 빠져 있어 그 부분을 건너뜁니다")
         if (ReaderPerf.turns) Log.d(ReaderPerf.TAG, "afterOpen ${SystemClock.uptimeMillis() - t0} ms")
     }
 
@@ -1783,7 +1791,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun noteSig(s: BookSession): String {
         if (sigSession !== s) {
             val b = bookRef
-            sigPlain = if (b == null) null else LayoutKeys.textSignature(s.settings, s.document.format, b.encoding)
+            sigPlain = if (b == null) null else LayoutKeys.textSignature(s.settings, s.document.format, b.encoding, b.sizeBytes)
             sigNote = NoteSig.of(sigPlain, b?.sizeBytes ?: 0L)
             sigSession = s
         }
@@ -3670,11 +3678,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val b = bookRef ?: return
         // Settles a running drag first, so the anchor is the line on top now.
         scroll?.stopMotion()
-        val pos = anchor
+        var pos = anchor
         // A §5.5: the visible text at the anchor, found again near it in the new parse.
-        val needle = old.peek(pos.section)?.let { TextRefind.snippet(it.content.text, pos.offset) }
+        var needle = old.peek(pos.section)?.let { TextRefind.snippet(it.content.text, pos.offset) }
         val oldCount = old.sectionCount
-        val ratio = old.counts.charProgress(pos.section, pos.offset)
+        var ratio = old.counts.charProgress(pos.section, pos.offset)
         if (onApplied != null) reopenDone += onApplied
         reopening = true
         navJob?.cancel()
@@ -3702,15 +3710,30 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 val s = BookSession(this@ReaderActivity, b, d, use) { !scrollMode }
                 fresh = s
                 s.listener = sessionListener
-                val target = if (s.sectionCount == oldCount) pos else s.counts.locateFraction(ratio)
-                val sec = target.section.coerceIn(0, s.sectionCount - 1)
-                val (vw, vh) = pageTargetSize()
-                // The needle is text of the old anchor's section: searched only where that section still is.
-                s.setViewport(vw, vh, pageCutoutTop, AnchorSpec(sec, target.offset, if (target === pos && sec == pos.section) needle else null))
-                val l = s.layout(sec)
-                if (l != null) {
-                    val at = if (l.anchorBreak >= 0) l.anchorBreak else target.offset.coerceIn(0, l.content.length)
-                    preloadImages(s, l, AnchorMath.pageFor(l, at))
+                // The old parse stays readable while this one is made (seconds for a big TXT): pages turned meanwhile
+                // count, so the new parse opens where the reader is now, not where the re-open started. A turn during
+                // the layout below lays out again (a few times at most; then the latest place wins by ratio).
+                var target: DocPosition
+                var sec: Int
+                var l: SectionLayout?
+                var tries = 0
+                while (true) {
+                    if (session === old && anchor != pos) {
+                        pos = anchor
+                        needle = old.peek(pos.section)?.let { TextRefind.snippet(it.content.text, pos.offset) }
+                        ratio = old.counts.charProgress(pos.section, pos.offset)
+                    }
+                    target = if (s.sectionCount == oldCount) pos else s.counts.locateFraction(ratio)
+                    sec = target.section.coerceIn(0, s.sectionCount - 1)
+                    val (vw, vh) = pageTargetSize()
+                    // The needle is text of the old anchor's section: searched only where that section still is.
+                    s.setViewport(vw, vh, pageCutoutTop, AnchorSpec(sec, target.offset, if (target === pos && sec == pos.section) needle else null))
+                    l = s.layout(sec)
+                    if (l != null) {
+                        val at = if (l.anchorBreak >= 0) l.anchorBreak else target.offset.coerceIn(0, l.content.length)
+                        preloadImages(s, l, AnchorMath.pageFor(l, at))
+                    }
+                    if (session !== old || anchor == pos || ++tries >= REOPEN_RETARGETS) break
                 }
                 if (session !== old) return@launch
                 if (l == null) {
@@ -3726,6 +3749,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 thumbs?.close(); thumbs = null
                 thumbDecorVersions = IntArray(0)
                 session = s
+                // The old session's generation ids restart in this one: nothing shown counts as current until its
+                // first page (a tap meanwhile would turn the old layout on the new renderer).
+                displayedGenId = -1
                 adopted = true
                 // The open's afterOpen has not run yet (this re-parse cancelled the open, or replaced its session
                 // before the first good draw): it goes with this session's first page.
@@ -4534,7 +4560,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         override fun textSignature(): String? {
             val s = session ?: return null
             val b = bookRef ?: return null
-            return LayoutKeys.textSignature(s.settings, s.document.format, b.encoding)
+            return LayoutKeys.textSignature(s.settings, s.document.format, b.encoding, b.sizeBytes)
         }
 
         override fun saveReturnMark(text: String?) {
@@ -5143,7 +5169,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         if (!peek.savesPosition) return
         try {
-            val sig = LayoutKeys.textSignature(s.settings, s.document.format, b.encoding)
+            val sig = LayoutKeys.textSignature(s.settings, s.document.format, b.encoding, b.sizeBytes)
             val stored = TextPositions.decode(readTextPosition(b.id))
             if (sig != null && stored != null && stored.first != sig) {
                 val prog = progressAt(s, pos)
@@ -5173,7 +5199,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun writeTextPosition(b: Book, s: BookSession, pos: DocPosition) {
         if (!peek.savesPosition) return
         try {
-            val sig = LayoutKeys.textSignature(s.settings, s.document.format, b.encoding) ?: return
+            val sig = LayoutKeys.textSignature(s.settings, s.document.format, b.encoding, b.sizeBytes) ?: return
             val key = "b${b.id}"
             val value = TextPositions.encode(sig, s.counts.charProgress(pos.section, pos.offset))
             if (lastTextPos == key to value) return

@@ -315,7 +315,9 @@ internal object TxtParser {
      *   when >= 60% of text lines are 90–105% of L without terminal punctuation (or >= 35% and almost no line
      *   is longer than 1.1 L), L >= 20. Lines >= 80% of L are then joined (>= 70% when paragraph ends are
      *   explicit: blank lines after short lines, or indents). "Always" joins lines >= 75% of L.
-     * - indent signal: 5–60% of non-blank lines indented -> an indented line starts a new paragraph.
+     * - indent signal: 5–60% of non-blank lines indented -> an indented line starts a new paragraph. A one-space
+     *   "indent" is not one when at least 75% of the one-space lines follow a full line (>= 80% of L): there the space
+     *   is what a word wrap left at the start of the continuation line (a 40-column file wrapped at spaces).
      * - AUTO blank lines: blank runs are 60–140% of the (joined) paragraphs -> blank lines are separators and are
      *   removed; a run longer than the usual separator run is a scene break. Otherwise blank runs are kept
      *   (collapsed to one empty paragraph each).
@@ -338,12 +340,9 @@ internal object TxtParser {
                 hist[minOf(t.width[i], 4096)]++
             }
         }
-        val stopIndent = nonBlank > 0 && indented * 20 >= nonBlank && indented * 10 <= nonBlank * 6
-
-        // ---- hard-wrap joining
-        var joinMin = 0
+        // L: the 90th percentile of text line widths (the wrap width of a hard-wrapped file).
         var l = 0
-        if (o.txtJoinWrappedLines != 0 && textLines > 0) {
+        if (textLines > 0) {
             val target = (textLines * 9L + 9) / 10
             var acc = 0L
             while (l < 4096) {
@@ -351,6 +350,19 @@ internal object TxtParser {
                 if (acc >= target) break
                 l++
             }
+        }
+        val wrapSpaces = wrapSpaces(t, l)
+        if (wrapSpaces) {
+            for (i in 0 until count) {
+                val f = flags[i]
+                if (f and (LineFlags.DELETED or LineFlags.BLANK) == 0 && f and LineFlags.INDENT1 != 0) indented--
+            }
+        }
+        val stopIndent = nonBlank > 0 && indented * 20 >= nonBlank && indented * 10 <= nonBlank * 6
+
+        // ---- hard-wrap joining
+        var joinMin = 0
+        if (o.txtJoinWrappedLines != 0 && textLines > 0) {
             if (o.txtJoinWrappedLines == 2) {
                 joinMin = maxOf(1, (l * 3 + 3) / 4)
             } else if (textLines >= 8 && l >= 20) {
@@ -420,7 +432,8 @@ internal object TxtParser {
                         continue
                     }
                     if (run > 0) { runHist[minOf(run, 8)]++; runs++; run = 0 }
-                    val joined = prevJoinable && f and noJoinNext == 0 && !(stopIndent && f and LineFlags.INDENT != 0)
+                    val indentStop = stopIndent && f and LineFlags.INDENT != 0 && !(wrapSpaces && f and LineFlags.INDENT1 != 0)
+                    val joined = prevJoinable && f and noJoinNext == 0 && !indentStop
                     if (!joined) paragraphs++
                     prevJoinable = joinMin > 0 && f and (LineFlags.HEADING or LineFlags.SCENE or stopFlags) == 0 &&
                         t.width[i] >= joinMin
@@ -435,7 +448,32 @@ internal object TxtParser {
                 }
             }
         }
-        return TxtDecisions(blankMode, sceneRun, joinMin, stopIndent, ignoreTerminal)
+        return TxtDecisions(blankMode, sceneRun, joinMin, stopIndent, ignoreTerminal, wrapSpaces)
+    }
+
+    /**
+     * Whether the one-space indents of this file ([LineFlags.INDENT1]) are wrap leftovers: at least 3 of them and at
+     * least 75% right after a full text line (>= 80% of the wrap width [l] as joining counts it, l >= 20). A file that indents paragraphs
+     * by one space has them after paragraph ends, which are rarely full.
+     */
+    internal fun wrapSpaces(t: LineTable, l: Int): Boolean {
+        if (l < 20) return false
+        val full = (l * 4 + 4) / 5
+        val flags = t.flags
+        val skip = LineFlags.DELETED or LineFlags.BLANK or LineFlags.HEADING or LineFlags.SCENE or LineFlags.SEG
+        var single = 0
+        var afterFull = 0
+        var prev = -1
+        for (i in 0 until t.count) {
+            val f = flags[i]
+            if (f and LineFlags.DELETED != 0) continue
+            if (f and LineFlags.INDENT1 != 0 && f and skip == 0) {
+                single++
+                if (prev >= 0 && flags[prev] and skip == 0 && t.width[prev] >= full) afterFull++
+            }
+            prev = i
+        }
+        return single >= 3 && afterFull * 4 >= single * 3
     }
 
     // ---------------------------------------------------------------- per-section pass

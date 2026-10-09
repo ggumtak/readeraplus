@@ -22,6 +22,7 @@ import com.ggumtak.readeraplus.data.BookFileProvider
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.LibraryQuery
 import com.ggumtak.readeraplus.data.Notes
+import com.ggumtak.readeraplus.data.PdfNoteFiles
 import com.ggumtak.readeraplus.data.NotesTab
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
@@ -242,20 +243,32 @@ private fun LibraryActivity.notesCountThen(count: () -> Int, then: (Int) -> Unit
     }
 }
 
+/** Appended to a delete question when [books] PDFs with ink / bookmarks of their own are among the books deleted. */
+private fun pdfNotesWarning(books: Int): String = when {
+    books <= 0 -> ""
+    books == 1 -> "\n\n이 PDF의 필기·책갈피도 함께 지워집니다."
+    else -> "\n\nPDF ${books}권의 필기·책갈피도 함께 지워집니다."
+}
+
 /**
  * "영구 삭제" of one book. The book's notes are counted first (IO): when it has some, the question says so and offers
- * [독서 노트] (the hub filtered to this book) to export them first (NOTES_SPEC §10.1).
+ * [독서 노트] (the hub filtered to this book) to export them first (NOTES_SPEC §10.1). A PDF with a notes file of its
+ * own (ink, bookmarks) says so too; the file is looked up in the same IO step.
  */
 private fun LibraryActivity.confirmDelete(b: Book) {
-    notesCountThen({ Notes.countForBooks(listOf(b.id)) }) { notes ->
+    val app = applicationContext
+    var pdfNotes = false
+    notesCountThen({
+        pdfNotes = b.format == BookFormat.PDF && PdfNoteFiles.exists(app, b.id)
+        Notes.countForBooks(listOf(b.id))
+    }) { notes ->
         val cb = deleteFileCheckBox()
         val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
         val d = alert().setTitle("영구 삭제")
-            .setMessage(LibraryText.deleteMessage(b.title, notes))
+            .setMessage(LibraryText.deleteMessage(b.title, notes) + pdfNotesWarning(if (pdfNotes) 1 else 0))
             .setView(box)
             .setPositiveButton("삭제") { _, _ ->
                 val deleteFile = cb.isChecked
-                val app = applicationContext
                 io("삭제하지 못했습니다", {
                     Library.remove(b.id, deleteFile)
                     Covers.invalidate(app, b.id)
@@ -275,17 +288,21 @@ private fun LibraryActivity.confirmDelete(b: Book) {
  * counted here are deleted: one trashed while the question is open keeps its notes ([Library.emptyTrash]).
  */
 internal fun LibraryActivity.confirmEmptyTrash() {
+    val app = applicationContext
     var counted: List<Long>? = null
+    var pdfNotes = 0
     notesCountThen({
-        val ids = Library.books(LibraryQuery(Shelf.TRASH, null, ""), LibrarySort.RECENT).map { it.id }
+        val books = Library.books(LibraryQuery(Shelf.TRASH, null, ""), LibrarySort.RECENT)
+        val ids = books.map { it.id }
         counted = ids
+        pdfNotes = books.count { it.format == BookFormat.PDF && PdfNoteFiles.exists(app, it.id) }
         if (ids.isEmpty()) 0 else Notes.countForBooks(ids)
     }) { notes ->
         val ids = counted
         val cb = deleteFileCheckBox()
         val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
         val d = alert().setTitle("휴지통 비우기")
-            .setMessage(LibraryText.emptyTrashMessage(notes, ids?.size ?: 0))
+            .setMessage(LibraryText.emptyTrashMessage(notes, ids?.size ?: 0) + pdfNotesWarning(pdfNotes))
             .setView(box)
             .setPositiveButton("비우기") { _, _ ->
                 val deleteFiles = cb.isChecked

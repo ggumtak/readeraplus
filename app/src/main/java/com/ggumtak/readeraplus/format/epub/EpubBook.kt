@@ -42,6 +42,12 @@ internal class EpubBook private constructor(
         if (it.isEmpty()) throw DocumentException("내용이 없는 책입니다")
     }
 
+    /**
+     * Spine entries the book lists but doesn't hold (no manifest item, or no file in the zip): they are skipped, and the
+     * reader says so once (a partly copied or broken EPUB used to open silently with chapters missing).
+     */
+    val missingSpineItems: Int = missingSpine(zip, pkg)
+
     /** Canonical zip path → first spine index. */
     private val spineIndex = HashMap<String, Int>(spine.size * 2).also { m ->
         for ((i, it) in spine.withIndex()) m.putIfAbsent(it.path, i)
@@ -685,6 +691,11 @@ internal class EpubBook private constructor(
         private const val DETECT_SMALL_BUDGET = 8L * 1024 * 1024
         private const val TITLE_PEEK_BYTES = 8 * 1024
         private const val TITLE_SCAN_BYTES = 24 * 1024
+
+        /** See [missingSpineItems]. */
+        internal fun missingSpine(zip: EpubZip, pkg: EpubPackage): Int =
+            (pkg.spineRefCount - pkg.spine.size).coerceAtLeast(0) +
+                pkg.spine.count { (it.isHtml || it.isImage) && zip.find(it.path) == null }
 
         /** Displayable spine items (XHTML or image) in reading order, with canonical zip paths; may be empty. */
         internal fun selectSpine(zip: EpubZip, pkg: EpubPackage): List<ManifestItem> {

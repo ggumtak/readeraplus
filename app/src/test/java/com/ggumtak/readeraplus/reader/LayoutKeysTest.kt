@@ -35,6 +35,62 @@ class LayoutKeysTest {
         assertEquals(1384, g.contentTop + g.contentHeight)
     }
 
+    @Test
+    fun textBoxIsWholeLinesCentredBetweenTheMargins() {
+        // Comet, default settings: box rows 80..1384 (1304 px). 1 em = 40 px; the line pitch is lineHeight × em.
+        val em = 40f
+        val pitch = s.lineHeightPct / 100f * em
+        val g = LayoutKeys.geometry(s, 720, 1440, density, emPx = em)
+        val lines = (1304 / pitch).toInt()
+        assertEquals(Math.ceil((lines * pitch).toDouble()).toInt(), g.contentHeight)
+        // the rest of a line is split: as much above as below (to a pixel)
+        val above = g.contentTop - 80
+        val below = 1384 - (g.contentTop + g.contentHeight)
+        assertTrue("above $above, below $below", above >= 0 && below >= 0 && Math.abs(above - below) <= 1)
+        assertTrue("less than a line left over", above + below < pitch)
+        // the side geometry is untouched
+        val plain = LayoutKeys.geometry(s, 720, 1440, density)
+        assertEquals(plain.contentLeft, g.contentLeft)
+        assertEquals(plain.contentWidth, g.contentWidth)
+    }
+
+    @Test
+    fun raisingBothVerticalMarginsMovesBothTextEdgesInward() {
+        // The user's complaint: raising 위·아래 여백 only seemed to grow the top. Across a sweep of the stepper the text's
+        // top only goes down and its bottom only goes up, and every dropped line takes from both ends.
+        val em = 40f
+        var prevTop = -1
+        var prevBottom = Int.MAX_VALUE
+        var drops = 0
+        var prevH = -1
+        // From -10 both margins move (below it the bottom one is already 0 and only the top grows).
+        for (ui in -10..40 step 2) {
+            val t = s.copy(marginTopDp = VerticalMargin.topDp(ui), marginBottomDp = VerticalMargin.bottomDp(ui))
+            val g = LayoutKeys.geometry(t, 720, 1440, density, emPx = em)
+            val top = g.contentTop
+            val bottom = g.contentTop + g.contentHeight
+            assertTrue("top never moves up ($ui)", top >= prevTop)
+            assertTrue("bottom never moves down ($ui)", bottom <= prevBottom)
+            if (prevH >= 0 && g.contentHeight < prevH) {
+                drops++
+                assertTrue("a dropped line moves the bottom up too ($ui)", bottom < prevBottom)
+            }
+            prevTop = top
+            prevBottom = bottom
+            prevH = g.contentHeight
+        }
+        assertTrue("the sweep drops lines", drops >= 2)
+    }
+
+    @Test
+    fun linesBoxKeepsTinyOrUnknownBoxes() {
+        assertEquals(500, LayoutKeys.linesBox(500, 0f))
+        assertEquals(500, LayoutKeys.linesBox(500, Float.NaN))
+        assertEquals(100, LayoutKeys.linesBox(100, 60f))
+        assertEquals(120, LayoutKeys.linesBox(130, 60f))
+        assertEquals(121, LayoutKeys.linesBox(130, 60.4f))
+    }
+
     /** The geometry before the bands (4efdf0b): margins from the screen's edges (below a cutout band), no status term. */
     private fun edgeGeometry(t: ReaderSettings, viewW: Int, viewH: Int, d: Float, extraTop: Int = 0): IntArray {
         fun px(dp: Int): Int = Math.round((if (t.pageMargins) dp else LayoutKeys.TINY_MARGIN_DP) * d)

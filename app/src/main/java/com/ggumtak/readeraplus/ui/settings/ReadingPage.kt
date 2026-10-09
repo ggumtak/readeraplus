@@ -12,6 +12,7 @@ import com.ggumtak.readeraplus.reader.extras.StatusUi
 import com.ggumtak.readeraplus.reader.extras.StyleChoice
 import com.ggumtak.readeraplus.reader.extras.TxtEdits
 import com.ggumtak.readeraplus.render.FontManager
+import com.ggumtak.readeraplus.render.FontMath
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.SideMargin
@@ -27,6 +28,7 @@ import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.stepperRow
 import com.ggumtak.readeraplus.ui.kit.toast
+import com.ggumtak.readeraplus.ui.kit.vertical
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,6 +53,10 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     private var marginViews: Array<View> = emptyArray()
     private var widowRow: View? = null
     private var bookTxtRow: View? = null
+    /** Holds the 굵기 stepper: swapped when the font's own weight is known ([showWeight]). */
+    private var weightHolder: LinearLayout? = null
+    private var weightNatural = DEFAULT_NATURAL_WEIGHT
+    private var weightMin = DEFAULT_MIN_WEIGHT
 
     override fun build(): View {
         val r = Settings.reader
@@ -70,22 +76,20 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         body.addView(ctx.toggleRow("흑백 반전", "검은 바탕에 흰 글자 · 화면 색보다 우선", r.invert) { v -> edit { it.copy(invert = v) } })
 
         body.section("글자")
-        // The font's name is read off the main thread (a user font is a file read in a cold process).
+        // The font's name and weights are read off the main thread (a user font is a file read in a cold process; the
+        // weights scan /sdcard/Fonts and parse a font file). 굵기 shows "기본" for a regular font until they arrive.
         val fontRow = ctx.valueRow("글꼴", "…") { v -> chooseFont(v) }.also(body::addView)
-        val fontId = r.fontId
-        activity.scope.launch {
-            val name = withContext(Dispatchers.IO) { fontName(fontId) }
-            fontRow.setSummary(name)
-        }
+        weightNatural = DEFAULT_NATURAL_WEIGHT
+        weightMin = DEFAULT_MIN_WEIGHT
         body.addView(stepper("글자 크기", r.fontSizeSp, ReaderSettings.MIN_FONT_SP, ReaderSettings.MAX_FONT_SP, 0.5f, Fmt::number) { v ->
             edit { it.copy(fontSizeSp = v) }
         })
         // 굵기 counts steps from the font's own weight ("기본"); a static file can't get thinner than it is.
-        val natural = FontManager.naturalWeight(r.fontId)
-        val minWeight = runCatching { FontManager.minWeight(r.fontId) }.getOrDefault(100).coerceAtMost(natural).toFloat()
-        body.addView(stepper("굵기", r.fontWeight.toFloat(), minWeight, 900f, 50f, { Fmt.weight(it.toInt(), natural) }) { v ->
-            edit { it.copy(fontWeight = v.toInt()) }
-        })
+        val holder = ctx.vertical()
+        weightHolder = holder
+        holder.addView(weightStepper(weightNatural, weightMin))
+        body.addView(holder)
+        loadFont(r.fontId, fontRow)
         body.addView(stepper("글자 간격", r.letterSpacingPm.toFloat(), -100f, 200f, 10f, { Fmt.letterSpacing(it.toInt()) }) { v ->
             edit { it.copy(letterSpacingPm = v.toInt()) }
         })
@@ -347,11 +351,47 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         FontChooser.show(activity, Settings.reader.fontId) { id ->
             if (activity.isFinishing) return@show
             edit { it.copy(fontId = id) }
-            row.setSummary(fontName(id))
+            loadFont(id, row)
         }
     }
 
     private fun fontName(id: String): String = runCatching { FontManager.font(id)?.name }.getOrNull() ?: id
+
+    /** What the 글꼴 and 굵기 rows show for one font. */
+    private class FontFacts(val name: String, val natural: Int, val min: Int)
+
+    /**
+     * Reads the name and the weights of font [fontId] off the main thread (a user font is a file read, the weights may
+     * scan /sdcard/Fonts and parse a font file), then updates [nameRow] and the 굵기 stepper together. Skipped when
+     * the page is gone or another font was chosen meanwhile (that choice loads its own).
+     */
+    private fun loadFont(fontId: String, nameRow: View) {
+        activity.scope.launch {
+            val facts = withContext(Dispatchers.IO) {
+                val natural = FontManager.naturalWeight(fontId)
+                val min = runCatching { FontManager.minWeight(fontId) }.getOrDefault(DEFAULT_MIN_WEIGHT).coerceAtMost(natural)
+                FontFacts(fontName(fontId), natural, min)
+            }
+            if (activity.isFinishing || Settings.reader.fontId != fontId) return@launch
+            nameRow.setSummary(facts.name)
+            showWeight(facts.natural, facts.min)
+        }
+    }
+
+    private fun weightStepper(natural: Int, min: Int): LinearLayout =
+        stepper("굵기", Settings.reader.fontWeight.toFloat(), min.toFloat(), 900f, 50f, { Fmt.weight(it.toInt(), natural) }) { v ->
+            edit { it.copy(fontWeight = v.toInt()) }
+        }
+
+    /** Replaces the 굵기 stepper when the font's weights differ from what it was built with (else no redraw). */
+    private fun showWeight(natural: Int, min: Int) {
+        val holder = weightHolder ?: return
+        if (natural == weightNatural && min == weightMin) return
+        weightNatural = natural
+        weightMin = min
+        holder.removeAllViews()
+        holder.addView(weightStepper(natural, min))
+    }
 
     private fun reset() {
         ctx.confirm(RESET_TITLE, RESET_MESSAGE, "되돌리기") { applyStyle { ReadingDefaults.reset(it) } }
@@ -378,6 +418,9 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         const val CUSTOM_STYLE = "직접 설정"
         /** The 추천 스타일 row for the defaults' own look, which no preset matches since 웹소설 became the 마루뷰어 page. */
         const val DEFAULT_STYLE = "기본"
+        /** 굵기 until the font's weights are read: a regular font that can also go lighter (the default font's). */
+        private const val DEFAULT_NATURAL_WEIGHT = FontMath.REGULAR
+        private const val DEFAULT_MIN_WEIGHT = 100
         const val RESET_TITLE = "기본값으로 되돌리기"
         const val RESET_SUMMARY = "흑백 반전 · TXT 정리는 그대로"
         const val RESET_MESSAGE = "글꼴 · 글자 크기 · 간격 · 여백 · 가로 화면 · 화면 색을 기본값으로 되돌릴까요?\n흑백 반전과 TXT 정리는 그대로 둡니다."

@@ -39,6 +39,7 @@ import com.ggumtak.readeraplus.reader.LayoutKeys
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.reader.ReaderIo
 import com.ggumtak.readeraplus.reader.ShownPage
+import com.ggumtak.readeraplus.render.AndroidTextMeasurer
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
 import com.ggumtak.readeraplus.render.PagePalette
@@ -403,7 +404,8 @@ class SelectionController(private val host: ReaderHost) {
         if (!onCurrentSection()) return Zone.NONE
         val len = sectionText?.length ?: return Zone.NONE
         val v = host.pageView
-        val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density, host.pageCutoutTop)
+        val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density, host.pageCutoutTop,
+            emPx = AndroidTextMeasurer.emPxFor(ctx, Settings.reader.fontSizeSp))
         val h = dragHandle
         val allowNext = (h == null || !h.start) && SelectionSpan.canTurn(true, page.start, page.end, len)
         val allowPrev = (h == null || h.start) && SelectionSpan.canTurn(false, page.start, page.end, len)
@@ -531,7 +533,8 @@ class SelectionController(private val host: ReaderHost) {
             }
         }
         // Fallback: the reader's own content box (the status bands and the margins from the settings, A §2.5).
-        val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density, host.pageCutoutTop)
+        val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density, host.pageCutoutTop,
+            emPx = AndroidTextMeasurer.emPxFor(ctx, Settings.reader.fontSizeSp))
         originX = if (!dx.isNaN()) dx else SelectionOrigin.fallbackX(g, v.paddingLeft)
         originY = if (!dy.isNaN()) dy else SelectionOrigin.fallbackY(g, v.paddingTop)
         originKey = if (!dx.isNaN() && !dy.isNaN()) key else null

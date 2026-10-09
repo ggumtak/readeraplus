@@ -26,7 +26,8 @@ import com.ggumtak.readeraplus.ui.kit.label
  * taps do. Main thread.
  *
  * The tool bar keeps one shape: the mode button at its left end (pen mode / reading; dragged, it moves a floating
- * tool bar), the pen presets, eraser, lasso, undo, then 위에 붙이기 (pin) and 접기. It is either docked (a flat strip
+ * tool bar), the pen presets, eraser, lasso, undo and (only while there is something to redo) redo, then 위에
+ * 붙이기 (pin) and 접기. It is either docked (a flat strip
  * under the top bar, the page below it) or floating (a rounded bar over the page, wherever it was dragged); folded,
  * only the mode button and 펼치기 stay, floating.
  */
@@ -46,6 +47,8 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
         /** Eraser or lasso ([PdfPageView.MODE_ERASER] / [PdfPageView.MODE_LASSO]). */
         fun onTool(mode: Int)
         fun onUndo()
+        /** 다시 실행: puts back what 되돌리기 reverted (the button shows only while [setCanRedo] is true). */
+        fun onRedo()
         fun onBadge()
         /** The tool bar docked / folded / dragged by the user (to keep for next time). */
         fun onToolbarLayout(docked: Boolean, folded: Boolean, x: Float, y: Float)
@@ -76,6 +79,8 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
     private var presetKey: String? = null
     private var eraserIcon: PdfToolIcon? = null
     private var lassoIcon: PdfToolIcon? = null
+    private var redoButton: ImageButton? = null
+    private var canRedoNow = false
     private var annotatingNow = false
     /** The floating bar is being dragged by its grip: layout passes leave its position alone. */
     private var dragging = false
@@ -386,6 +391,15 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
         lassoIcon?.chosen = annotating && mode == PdfPageView.MODE_LASSO
     }
 
+    /**
+     * Shows the 다시 실행 button right after 되돌리기 while there is something to redo. Gone otherwise (not just
+     * hidden), so the bar keeps its width on a narrow phone.
+     */
+    fun setCanRedo(can: Boolean) {
+        canRedoNow = can
+        redoButton?.visibility = if (can) View.VISIBLE else View.GONE
+    }
+
     /** The row's views for [presets] (made again only when a preset's tool, colour or width changes). */
     private fun buildRow(presets: List<PenPreset>, key: String) {
         presetKey = key
@@ -410,6 +424,11 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
             setOnClickListener { listener.onTool(PdfPageView.MODE_LASSO) }
         }.also { toolRow.addView(it) }
         toolRow.addView(icon(R.drawable.ic_undo, "되돌리기", size = TOOL_ICON_DP) { listener.onUndo() })
+        // The undo arrow mirrored.
+        redoButton = icon(R.drawable.ic_undo, "다시 실행", size = TOOL_ICON_DP) { listener.onRedo() }.apply {
+            scaleX = -1f
+            visibility = if (canRedoNow) View.VISIBLE else View.GONE
+        }.also { toolRow.addView(it) }
         toolRow.addView(divider())
     }
 

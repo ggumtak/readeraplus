@@ -117,7 +117,9 @@ class PageImagesTest {
             }
         }
         repeat(3) { loop() }
-        assertEquals(0L, AllocCounter.measure(loop))
+        // The least of three runs (as StatusModelTest): a JIT recompile or deopt landing inside one run is not the code
+        // allocating (seen once here with other test runs on the machine).
+        assertEquals(0L, (1..3).minOf { AllocCounter.measure(loop)!! })
         assertEquals(0, hits)
     }
 

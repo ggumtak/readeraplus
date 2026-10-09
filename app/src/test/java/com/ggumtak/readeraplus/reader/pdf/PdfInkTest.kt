@@ -2,6 +2,7 @@ package com.ggumtak.readeraplus.reader.pdf
 
 import java.io.File
 import java.nio.file.Files
+import java.util.Random
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -142,7 +143,7 @@ class PdfInkTest {
     }
 
     @Test
-    fun historyCappedAt100() {
+    fun historyCappedAt100Units() {
         val n = PdfNotes()
         for (i in 0 until 105) n.add(0, stroke(i.toFloat(), 0f))
         var undone = 0
@@ -484,5 +485,479 @@ class PdfInkTest {
         assertFalse(n.canUndo)
         assertTrue(n.isBookmarked(4))
         assertEquals(0, n.clearAllInk())
+    }
+
+    // ---- eraser: bounding box ----
+
+    /** The eraser as it was before the bounding box: every segment of every stroke. */
+    private fun bruteHit(s: InkStroke, x: Float, y: Float, radius: Float): Boolean {
+        val p = s.points
+        val reach = radius + s.width * 0.5f
+        val n = p.size / 2
+        if (n == 0) return false
+        if (n == 1) return InkMath.distToSegment(x, y, p[0], p[1], p[0], p[1]) <= reach
+        for (i in 0 until n - 1) {
+            val o = i * 2
+            if (InkMath.distToSegment(x, y, p[o], p[o + 1], p[o + 2], p[o + 3]) <= reach) return true
+        }
+        return false
+    }
+
+    @Test
+    fun boxSkipsFarStrokesAndKeepsNearOnes() {
+        // The box of these points is x 10..50, y 10..60; mayReach takes the full reach (radius + half the width).
+        val s = stroke(10f, 10f, 50f, 30f, 20f, 60f, width = 4f)
+        assertTrue(s.mayReach(30f, 30f, 3f))
+        assertTrue(s.mayReach(8f, 10f, 2f)) // 2 left of the box, exactly the reach
+        assertTrue(s.mayReach(52f, 62f, 2f))
+        assertFalse(s.mayReach(7f, 10f, 2f))
+        assertFalse(s.mayReach(200f, 30f, 7f))
+        assertFalse(s.mayReach(30f, -100f, 7f))
+        assertFalse(s.mayReach(30f, 70f, 7f)) // 10 below the box
+        assertTrue(s.mayReach(30f, 70f, 10f))
+        assertFalse(stroke().mayReach(0f, 0f, 100f)) // no points: nothing to reach
+    }
+
+    @Test
+    fun farStrokeIsNotHitAndNearOneIs() {
+        val n = PdfNotes()
+        val near = stroke(0f, 0f, 100f, 0f, width = 2f)
+        val far = stroke(0f, 500f, 100f, 500f, width = 2f)
+        n.add(0, near)
+        n.add(0, far)
+        assertFalse(n.eraseAt(0, 50f, 300f, 10f))
+        assertEquals(2, n.strokes(0).size)
+        assertTrue(n.eraseAt(0, 50f, 6f, 5f))
+        assertEquals(listOf(far), n.strokes(0))
+        assertEquals(0, n.undo())
+        assertEquals(listOf(near, far), n.strokes(0))
+    }
+
+    @Test
+    fun eraseAtTheEdgeOfReachStillHits() {
+        val n = PdfNotes()
+        n.add(0, stroke(0f, 0f, 100f, 0f, width = 0f))
+        assertTrue(n.eraseAt(0, 50f, 5f, 5f)) // distance 5 <= reach 5, right on the box edge
+    }
+
+    @Test
+    fun strokeWithNanPointIsStillJudgedByTheExactTest() {
+        val n = PdfNotes()
+        n.add(0, stroke(0f, 0f, 10f, 0f, Float.NaN, Float.NaN, width = 0f))
+        assertFalse(n.eraseAt(0, 50f, 50f, 2f))
+        assertTrue(n.eraseAt(0, 5f, 1f, 2f))
+    }
+
+    @Test
+    fun boxedEraserEqualsBruteForceOnRandomStrokes() {
+        val rnd = Random(20260412L)
+        var hitQueries = 0
+        for (round in 0 until 30) {
+            val n = PdfNotes()
+            for (k in 0 until 60) {
+                val pts = FloatArray((1 + rnd.nextInt(8)) * 2) { rnd.nextFloat() * 400f }
+                n.add(round % 3, InkStroke(InkTool.PEN, 0, rnd.nextFloat() * 12f, pts))
+            }
+            val page = round % 3
+            for (q in 0 until 120) {
+                val x = rnd.nextFloat() * 440f - 20f
+                val y = rnd.nextFloat() * 440f - 20f
+                val r = rnd.nextFloat() * 25f
+                val before = ArrayList(n.strokes(page))
+                val expectedGone = before.filter { bruteHit(it, x, y, r) }
+                val expectedKept = before.filterNot { bruteHit(it, x, y, r) }
+                val removed = n.eraseAt(page, x, y, r)
+                assertEquals(expectedGone.isNotEmpty(), removed)
+                val after = n.strokes(page)
+                assertEquals(expectedKept.size, after.size)
+                for (i in expectedKept.indices) assertSame(expectedKept[i], after[i])
+                if (removed) hitQueries++
+            }
+        }
+        // Sanity: the random set really exercised both outcomes.
+        assertTrue(hitQueries > 50)
+    }
+
+    @Test
+    fun eraseMissLeavesHistoryAndListAlone() {
+        val n = PdfNotes()
+        n.add(0, stroke(0f, 0f, 10f, 10f))
+        val list = n.strokes(0)
+        assertFalse(n.eraseAt(0, 300f, 300f, 4f))
+        assertSame(list, n.strokes(0))
+        assertEquals(0, n.undo()) // only the add is in the history
+        assertFalse(n.canUndo)
+    }
+
+    // ---- redo ----
+
+    @Test
+    fun redoPutsBackWhatUndoRevertedInOrder() {
+        val n = PdfNotes()
+        assertFalse(n.canRedo)
+        assertEquals(-1, n.redo())
+        val a = stroke(0f, 0f)
+        val b = stroke(1f, 1f)
+        val c = stroke(2f, 2f)
+        n.add(5, a)
+        n.add(5, b)
+        n.add(6, c)
+        assertFalse(n.canRedo)
+        assertEquals(6, n.undo())
+        assertEquals(5, n.undo())
+        assertTrue(n.canRedo)
+        assertEquals(listOf(a), n.strokes(5))
+        n.dirty = false
+        assertEquals(5, n.redo()) // b
+        assertTrue(n.dirty)
+        assertEquals(listOf(a, b), n.strokes(5))
+        assertTrue(n.canRedo)
+        assertEquals(6, n.redo()) // c
+        assertSame(c, n.strokes(6)[0])
+        assertFalse(n.canRedo)
+        assertEquals(-1, n.redo())
+        // Redone steps are undoable again.
+        assertEquals(6, n.undo())
+        assertTrue(n.strokes(6).isEmpty())
+        assertEquals(6, n.redo())
+        assertSame(c, n.strokes(6)[0])
+    }
+
+    @Test
+    fun redoOfAnEraseRemovesTheSameStrokesAgain() {
+        val n = PdfNotes()
+        val s0 = stroke(0f, 0f, 10f, 0f)
+        val s1 = stroke(0f, 100f, 10f, 100f)
+        val s2 = stroke(0f, 1f, 10f, 1f)
+        val s3 = stroke(0f, 200f, 10f, 200f)
+        for (s in listOf(s0, s1, s2, s3)) n.add(4, s)
+        assertTrue(n.eraseAt(4, 5f, 0f, 3f))
+        assertEquals(listOf(s1, s3), n.strokes(4))
+        assertEquals(4, n.undo())
+        assertEquals(listOf(s0, s1, s2, s3), n.strokes(4))
+        assertEquals(4, n.redo())
+        assertEquals(listOf(s1, s3), n.strokes(4))
+        // And back once more: the original order is restored again.
+        assertEquals(4, n.undo())
+        assertEquals(listOf(s0, s1, s2, s3), n.strokes(4))
+    }
+
+    @Test
+    fun redoOfClearPageAndEraseEverything() {
+        val n = PdfNotes()
+        val a = stroke(0f, 0f)
+        val b = stroke(5f, 5f)
+        n.add(3, a)
+        n.add(3, b)
+        assertTrue(n.clearPage(3))
+        assertEquals(3, n.undo())
+        assertEquals(listOf(a, b), n.strokes(3))
+        assertEquals(3, n.redo())
+        assertTrue(n.strokes(3).isEmpty())
+        assertEquals(0, n.pagesWithInk().size)
+        assertEquals(3, n.undo())
+        assertEquals(listOf(a, b), n.strokes(3))
+    }
+
+    @Test
+    fun redoRestoresAWholeGroupAtOnce() {
+        val n = PdfNotes()
+        n.add(0, InkStroke(InkTool.PEN, 0, 1f, floatArrayOf(0f, 0f, 10f, 0f)))
+        n.add(0, InkStroke(InkTool.PEN, 0, 1f, floatArrayOf(0f, 50f, 10f, 50f)))
+        n.add(0, InkStroke(InkTool.PEN, 0, 1f, floatArrayOf(0f, 100f, 10f, 100f)))
+        n.beginGroup()
+        assertTrue(n.eraseAt(0, 5f, 50f, 2f))
+        assertTrue(n.eraseAt(0, 5f, 100f, 2f))
+        n.endGroup()
+        assertEquals(1, n.strokes(0).size)
+        assertEquals(0, n.undo())
+        assertEquals(3, n.strokes(0).size)
+        assertEquals(0, n.redo())
+        assertEquals(1, n.strokes(0).size)
+        assertFalse(n.canRedo)
+        // The group is one undo step again.
+        assertEquals(0, n.undo())
+        assertEquals(3, n.strokes(0).size)
+
+        // A group of adds comes back in its original order.
+        val h1 = InkStroke(InkTool.HIGHLIGHTER, 0, 10f, floatArrayOf(0f, 0f, 100f, 0f))
+        val h2 = InkStroke(InkTool.HIGHLIGHTER, 0, 10f, floatArrayOf(0f, 20f, 100f, 20f))
+        n.beginGroup()
+        n.add(1, h1)
+        n.add(1, h2)
+        n.endGroup()
+        assertEquals(1, n.undo())
+        assertTrue(n.strokes(1).isEmpty())
+        assertEquals(1, n.redo())
+        assertEquals(listOf(h1, h2), n.strokes(1))
+    }
+
+    @Test
+    fun anyNewEditEndsTheRedo() {
+        fun undone(): PdfNotes {
+            val n = PdfNotes()
+            n.add(0, stroke(0f, 0f, 10f, 0f))
+            n.add(0, stroke(0f, 50f, 10f, 50f))
+            n.undo()
+            assertTrue(n.canRedo)
+            return n
+        }
+        val add = undone()
+        add.add(0, stroke(1f, 1f))
+        assertFalse(add.canRedo)
+        assertEquals(-1, add.redo())
+
+        val erase = undone()
+        assertTrue(erase.eraseAt(0, 5f, 0f, 2f))
+        assertFalse(erase.canRedo)
+        assertEquals(-1, erase.redo())
+
+        val clearPage = undone()
+        assertTrue(clearPage.clearPage(0))
+        assertFalse(clearPage.canRedo)
+
+        val clearAll = undone()
+        assertEquals(1, clearAll.clearAllInk())
+        assertFalse(clearAll.canRedo)
+        assertFalse(clearAll.canUndo)
+        assertEquals(-1, clearAll.redo())
+    }
+
+    @Test
+    fun editsThatChangeNothingKeepTheRedo() {
+        val n = PdfNotes()
+        n.add(0, stroke(0f, 0f, 10f, 0f))
+        n.add(0, stroke(0f, 50f, 10f, 50f))
+        n.undo()
+        assertFalse(n.eraseAt(0, 500f, 500f, 2f)) // a miss
+        assertFalse(n.clearPage(9)) // an empty page
+        n.toggleBookmark(2) // not an undo step
+        assertTrue(n.canRedo)
+        assertEquals(0, n.redo())
+        assertEquals(2, n.strokes(0).size)
+        // Nothing to undo / redo on an empty history leaves things alone.
+        val e = PdfNotes()
+        assertEquals(-1, e.undo())
+        assertEquals(-1, e.redo())
+        assertFalse(e.dirty)
+    }
+
+    @Test
+    fun undoThenRedoIsByteIdenticalOnDisk() {
+        val n = PdfNotes()
+        n.add(1, InkStroke(InkTool.PEN, 0xFF000000.toInt(), 2f, floatArrayOf(1f, 2f, 3f, 4f), floatArrayOf(0.5f, 0.75f)))
+        n.add(1, InkStroke(InkTool.HIGHLIGHTER, 0x80FFEB3B.toInt(), 9f, floatArrayOf(0f, 0f, 50f, 0f)))
+        n.add(2, InkStroke(InkTool.PEN, 0xFF112233.toInt(), 1f, floatArrayOf(7f, 7f)))
+        n.eraseAt(1, 25f, 0f, 2f)
+        val before = n.toJson()
+        while (n.canUndo) n.undo()
+        assertTrue(n.isEmpty)
+        while (n.canRedo) n.redo()
+        assertEquals(before, n.toJson())
+    }
+
+    // ---- history cap: 100 undo units, a group counts once ----
+
+    /** How many undo() calls it takes to empty the history (one per unit). */
+    private fun undoCalls(n: PdfNotes): Int {
+        var calls = 0
+        while (n.canUndo) {
+            n.undo()
+            calls++
+        }
+        return calls
+    }
+
+    @Test
+    fun capDropsTheOldestWholeGroupNeverHalfOfOne() {
+        val n = PdfNotes()
+        // An old eraser-drag-like group of 30 steps (adds here) = 1 unit, then 100 single steps: 101 units.
+        n.beginGroup()
+        for (i in 0 until 30) n.add(0, stroke(i.toFloat(), 0f))
+        n.endGroup()
+        for (i in 0 until 100) n.add(1, stroke(i.toFloat(), 1f))
+        // The whole group left the history (not 1 of its 30 steps): 100 singles undo, its 30 strokes stay.
+        assertEquals(100, undoCalls(n))
+        assertEquals(30, n.strokes(0).size)
+        assertTrue(n.strokes(1).isEmpty())
+    }
+
+    @Test
+    fun aGroupCountsAsOneUnitNotAsItsSteps() {
+        val n = PdfNotes()
+        // 100 groups of 3 steps = 300 steps but 100 units: nothing is dropped.
+        for (g in 0 until 100) {
+            n.beginGroup()
+            for (i in 0 until 3) n.add(g, stroke(i.toFloat(), 0f))
+            n.endGroup()
+        }
+        assertEquals(100, undoCalls(n))
+        for (g in 0 until 100) assertTrue(n.strokes(g).isEmpty())
+    }
+
+    @Test
+    fun capTrimsSeveralOldGroupsUntilItFits() {
+        val n = PdfNotes()
+        // 60 groups of 2 steps (60 units), then 60 single steps: 120 units, the 20 oldest groups go.
+        for (g in 0 until 60) {
+            n.beginGroup()
+            for (i in 0 until 2) n.add(g, stroke(i.toFloat(), 0f))
+            n.endGroup()
+        }
+        for (i in 0 until 60) n.add(100, stroke(i.toFloat(), 0f))
+        assertEquals(100, undoCalls(n))
+        for (g in 0 until 20) assertEquals(2, n.strokes(g).size) // out of the history, never half undone
+        for (g in 20 until 60) assertTrue(n.strokes(g).isEmpty())
+        assertTrue(n.strokes(100).isEmpty())
+    }
+
+    @Test
+    fun aLongEraserDragSurvivesTheNextEdit() {
+        val n = PdfNotes()
+        for (i in 0 until 130) n.add(0, stroke(i.toFloat() * 10f, 0f, i.toFloat() * 10f + 5f, 0f, width = 1f))
+        n.beginGroup()
+        for (i in 0 until 130) assertTrue(n.eraseAt(0, i.toFloat() * 10f + 2f, 0f, 1f)) // 130 erase steps, 1 unit
+        n.endGroup()
+        assertTrue(n.strokes(0).isEmpty())
+        // Further edits do not push the drag out of the history.
+        n.add(1, stroke(0f, 0f))
+        n.add(1, stroke(1f, 1f))
+        assertEquals(1, n.undo())
+        assertEquals(1, n.undo())
+        assertEquals(0, n.undo()) // the whole drag at once
+        assertEquals(130, n.strokes(0).size)
+    }
+
+    @Test
+    fun theGroupBeingBuiltIsNeverCut() {
+        val n = PdfNotes()
+        n.beginGroup()
+        for (i in 0 until 130) n.add(0, stroke(i.toFloat(), 0f))
+        n.endGroup()
+        assertEquals(130, n.strokes(0).size)
+        // One undo takes the whole over-long group back, nothing half.
+        assertEquals(0, n.undo())
+        assertTrue(n.strokes(0).isEmpty())
+        assertFalse(n.canUndo)
+        assertTrue(n.canRedo)
+        assertEquals(0, n.redo())
+        assertEquals(130, n.strokes(0).size)
+    }
+
+    @Test
+    fun theOpenGroupStaysWhileOlderUnitsAreDropped() {
+        val n = PdfNotes()
+        for (i in 0 until 100) n.add(0, stroke(i.toFloat(), 0f))
+        n.beginGroup()
+        for (i in 0 until 5) n.add(1, stroke(i.toFloat(), 1f)) // 101st unit: the oldest single goes
+        n.endGroup()
+        assertEquals(100, undoCalls(n)) // 99 singles + the whole group
+        assertTrue(n.strokes(1).isEmpty())
+        assertEquals(1, n.strokes(0).size)
+    }
+
+    @Test
+    fun ungroupedCapStillExactlyOneHundred() {
+        val n = PdfNotes()
+        for (i in 0 until 250) n.add(0, stroke(i.toFloat(), 0f))
+        assertEquals(100, undoCalls(n))
+        assertEquals(150, n.strokes(0).size)
+    }
+
+    @Test
+    fun twoGroupsInARowAreTwoUnits() {
+        val n = PdfNotes()
+        for (g in 0 until 2) {
+            n.beginGroup()
+            n.add(g, stroke(0f, 0f))
+            n.add(g, stroke(1f, 1f))
+            n.endGroup()
+        }
+        assertEquals(1, n.undo()) // only the second group
+        assertTrue(n.strokes(1).isEmpty())
+        assertEquals(2, n.strokes(0).size)
+        assertEquals(0, n.undo())
+        assertTrue(n.strokes(0).isEmpty())
+        assertFalse(n.canUndo)
+    }
+
+    @Test
+    fun redoneStepsReturnToTheCappedHistory() {
+        val n = PdfNotes()
+        for (i in 0 until 100) n.add(0, stroke(i.toFloat(), 0f))
+        for (i in 0 until 40) n.undo()
+        for (i in 0 until 40) assertEquals(0, n.redo())
+        assertFalse(n.canRedo)
+        // Back to 100 units: one more edit still trims exactly one.
+        n.add(0, stroke(500f, 0f))
+        assertEquals(100, undoCalls(n))
+    }
+
+    // ---- snapshot (saved off the main thread) ----
+
+    @Test
+    fun snapshotJsonIsTheNotesJsonByteForByte() {
+        val n = PdfNotes()
+        n.toggleBookmark(3)
+        n.toggleBookmark(1)
+        n.add(2, InkStroke(InkTool.PEN, 0xFF000000.toInt(), 1.5f, floatArrayOf(1f, 2f, 3.25f, 4.5f), floatArrayOf(0.25f, 0.5f)))
+        n.add(0, InkStroke(InkTool.HIGHLIGHTER, 0x80FFEB3B.toInt(), 11f, floatArrayOf(0.004f, 10f, -5.678f, 10f)))
+        val expected = "{\"v\":1,\"bookmarks\":[1,3],\"pages\":{" +
+            "\"0\":[{\"t\":1,\"c\":-2130711749,\"w\":11,\"p\":[0,10,-5.68,10]}]," +
+            "\"2\":[{\"t\":0,\"c\":-16777216,\"w\":1.5,\"p\":[1,2,3.25,4.5],\"q\":[0.25,0.5]}]}}"
+        assertEquals(expected, n.toJson())
+        assertEquals(expected, n.snapshot().toJson())
+        assertEquals("{\"v\":1,\"bookmarks\":[],\"pages\":{}}", PdfNotes().snapshot().toJson())
+    }
+
+    @Test
+    fun snapshotIsUnaffectedByLaterEdits() {
+        val n = PdfNotes()
+        n.add(0, stroke(0f, 0f, 10f, 0f))
+        n.add(0, stroke(0f, 50f, 10f, 50f))
+        n.toggleBookmark(4)
+        val snap = n.snapshot()
+        val json = snap.toJson()
+        // Everything the main thread can do next, while the snapshot is being written elsewhere.
+        n.add(0, stroke(1f, 1f))
+        n.add(7, stroke(2f, 2f))
+        n.eraseAt(0, 5f, 0f, 2f)
+        n.undo()
+        n.undo()
+        n.clearAllInk()
+        n.toggleBookmark(4)
+        n.toggleBookmark(9)
+        assertEquals(json, snap.toJson())
+        assertFalse(snap.isEmpty)
+    }
+
+    @Test
+    fun snapshotEmptinessMatchesTheNotes() {
+        val n = PdfNotes()
+        assertTrue(n.snapshot().isEmpty)
+        n.toggleBookmark(1)
+        assertFalse(n.snapshot().isEmpty) // a bookmark alone is kept on disk
+        n.toggleBookmark(1)
+        assertTrue(n.snapshot().isEmpty)
+        n.add(0, stroke(0f, 0f))
+        assertFalse(n.snapshot().isEmpty)
+        n.undo()
+        assertTrue(n.snapshot().isEmpty)
+        assertEquals(n.isEmpty, n.snapshot().isEmpty)
+    }
+
+    @Test
+    fun snapshotWrittenAndLoadedBackRoundTrips() {
+        val dir = tempDir()
+        try {
+            val n = PdfNotes()
+            n.add(1, stroke(1f, 2f, 3f, 4f))
+            n.toggleBookmark(6)
+            val snap = n.snapshot()
+            assertTrue(PdfNotesStore.save(dir, 5L, snap.toJson()))
+            assertEquals(n.toJson(), PdfNotesStore.load(dir, 5L).toJson())
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 }

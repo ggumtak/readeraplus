@@ -9,6 +9,8 @@ package com.ggumtak.readeraplus.data
  *   TXT options store the same quote at other offsets); bookmarks on `section,offset`; a match only fills what the
  *   device lacks (style onto 0, place onto `frac < 0`, note onto empty);
  * - lookups are deduplicated on (word key, section, start, createdAt);
+ * - a PDF's ink and bookmarks (`pdfNotes`, one file per book) are written only where the device has none of its own
+ *   ([PdfNoteFiles.shouldRestore]): the device's file stays, whoever read the book later;
  * - a backup book with notes whose file is not here becomes a placeholder (trashed, missing) holding them.
  */
 internal object BackupMerge {
@@ -92,9 +94,10 @@ internal object BackupMerge {
         )
     }
 
-    /** A backup book holding at least one note (quote, bookmark, review or lookup). */
+    /** A backup book holding at least one note (quote, bookmark, review, lookup or PDF ink / bookmarks). */
     fun hasNotes(b: BackupBook): Boolean =
-        b.quotes.isNotEmpty() || b.bookmarks.isNotEmpty() || b.review.isNotBlank() || b.lookups.isNotEmpty()
+        b.quotes.isNotEmpty() || b.bookmarks.isNotEmpty() || b.review.isNotBlank() || b.lookups.isNotEmpty() ||
+            PdfNoteFiles.hasContent(b.pdfNotes)
 
     /** An unresolved backup book becomes a placeholder only when it carries notes (and a path to find it by). */
     fun needsPlaceholder(b: BackupBook): Boolean = b.path.isNotEmpty() && hasNotes(b)

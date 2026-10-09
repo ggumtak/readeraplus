@@ -19,7 +19,7 @@ import java.io.OutputStreamWriter
 
 /**
  * JSON export/import of library state (flags, positions, bookmarks, quotes, collections, reviews, reading log,
- * per-book prefs, lookups) + settings. File format: see [BackupJson] / [SettingsJson]; restore rules: [BackupMerge].
+ * per-book prefs, lookups, PDF notes) + settings. File format: see [BackupJson] / [SettingsJson]; restore rules: [BackupMerge].
  * The auto backup ([AutoBackup]) writes the same file from [snapshot].
  */
 object Backup {
@@ -51,7 +51,9 @@ object Backup {
      * query with [busy] checked after each (books, bookmarks, quotes, memberships, collections, reading log, book
      * prefs, lookups, settings); null when it turned true. Raw prefs go in sorted key order, so an unchanged state
      * always serialises — and hashes — the same. Blocking (IO thread). This is S §3.2's `snapshotJson`, kept as
-     * models: the 10–20 MB JSON tree is never built; [BackupJson.write] streams it (K11).
+     * models: the 10–20 MB JSON tree is never built; [BackupJson.write] streams it (K11). A PDF book that has a
+     * notes file ([PdfNoteFiles]) is only marked ([BackupBook.sourceId]); the write reads the file when it reaches
+     * the book.
      */
     internal fun snapshot(context: Context, busy: () -> Boolean): Snapshot? {
         Library.init(context)
@@ -100,9 +102,10 @@ object Backup {
         }
         val settingsAreDefault = reader == ReaderSettings() && app == AppSettings() && styles.isEmpty()
         if (busy()) return null
+        val appContext = context.applicationContext ?: context
         val backupBooks = books.map { r ->
             val b = r.book
-            BackupJson.fromBook(
+            val entry = BackupJson.fromBook(
                 b, r.metaLocked,
                 memberships[b.id].orEmpty(),
                 bookmarks[b.id].orEmpty(),
@@ -112,6 +115,7 @@ object Backup {
                 r.reviewAt,
                 lookups[b.id].orEmpty(),
             )
+            if (b.format == BookFormat.PDF && PdfNoteFiles.exists(appContext, b.id)) entry.copy(sourceId = b.id) else entry
         }
         val data = BackupData(
             version = BackupJson.VERSION,
@@ -121,6 +125,7 @@ object Backup {
             settings = settings,
             txtParseVersion = TxtDocuments.PARSE_VERSION,
             summary = BackupJson.summaryOf(backupBooks),
+            pdfNotes = { entry -> PdfNoteFiles.readText(appContext, entry.sourceId, PdfNoteFiles.MAX_BACKUP_BOOK_CHARS) },
         )
         return Snapshot(data, settingsAreDefault)
     }
@@ -128,7 +133,7 @@ object Backup {
     /** [d] with its header set: [createdAt] and [origin] (the summary counted when missing). */
     internal fun headed(d: BackupData, createdAt: Long, origin: BackupOrigin?): BackupData =
         BackupData(d.version, createdAt, d.books, d.collections, d.settings, d.txtParseVersion, origin,
-            d.summary ?: BackupJson.summaryOf(d.books))
+            d.summary ?: BackupJson.summaryOf(d.books), d.pdfNotes)
 
     /** The `origin` header of a file this install writes (one PackageManager call; IO thread). */
     internal fun origin(context: Context, auto: Boolean): BackupOrigin {
@@ -173,8 +178,10 @@ object Backup {
         val bytes = readLimited(input)
         val data = BackupJson.parse(String(bytes, Charsets.UTF_8))
         val matches = resolveBooks(data.books)
-        val remap = applyLibrary(data, matches)
+        val pdfNotes = ArrayList<Pair<Long, String>>()
+        val remap = applyLibrary(data, matches, pdfNotes)
         Library.notesChanged() // after applyLibrary's commit (N §5.1 / §5.6)
+        restorePdfNotes(context, pdfNotes)
         markTextPositions(context, remap)
         data.settings?.let { applySettings(it) }
         InstallState.settleOffer(context)
@@ -295,8 +302,16 @@ object Backup {
         return id.takeIf { it > 0 }
     }
 
-    /** Restores [matches]; returns (book id, progress) of the restored positions to find again by fraction. */
-    private fun applyLibrary(data: BackupData, matches: List<Match>): List<Pair<Long, Float>> {
+    /**
+     * Restores [matches]; returns (book id, progress) of the restored positions to find again by fraction. The PDF
+     * notes of the entries are added to [pdfNotes] as (book id, notes text): files are written after the commit
+     * ([restorePdfNotes]), never inside the transaction.
+     */
+    private fun applyLibrary(
+        data: BackupData,
+        matches: List<Match>,
+        pdfNotes: MutableList<Pair<Long, String>>,
+    ): List<Pair<Long, Float>> {
         val db = Library.db()
         val now = System.currentTimeMillis()
         val remap = ArrayList<Pair<Long, Float>>()
@@ -376,6 +391,7 @@ object Backup {
                     }
                 }
                 restorePrefs(this, id, b, r)
+                b.pdfNotes?.let { pdfNotes += id to it }
                 if (b.quotes.isNotEmpty()) {
                     val existing = queryList(BackupSql.SELECT_QUOTES_OF_BOOK, args(id), ::quote)
                     val plan = BackupMerge.quotes(existing, b.quotes)
@@ -408,6 +424,21 @@ object Backup {
             }
         }
         return remap
+    }
+
+    /**
+     * Writes the PDF notes of restored books to the files the PDF viewer reads, under the book's id on this device
+     * (a new one for an added file or a placeholder). The device's own notes stay ([PdfNoteFiles.shouldRestore]);
+     * one failing book never stops the rest.
+     */
+    private fun restorePdfNotes(context: Context, notes: List<Pair<Long, String>>) {
+        for ((id, text) in notes) {
+            try {
+                PdfNoteFiles.restore(context, id, text)
+            } catch (t: Throwable) {
+                Log.w(TAG, "pdf notes restore failed for book $id", t)
+            }
+        }
     }
 
     /**

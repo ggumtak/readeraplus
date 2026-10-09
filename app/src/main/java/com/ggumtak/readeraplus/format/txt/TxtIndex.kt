@@ -53,9 +53,10 @@ internal object TxtIndexStore {
     /**
      * Bump whenever parsing output could change for the same input. At most once per release (every large TXT then
      * parses in full once): 4 = release 2, author-note pruning (A5); 5 = the user heading rule adds to the built-in
-     * rules, easy patterns (HeadingRule), numbered headings ending with '.'.
+     * rules, easy patterns (HeadingRule), numbered headings ending with '.'; 6 = one-space wrap leftovers don't start
+     * paragraphs (`TxtDecisions.wrapSpaces`).
      */
-    const val VERSION = 5
+    const val VERSION = 6
     private const val MAGIC = 0x52505458 // "RPTX"
     /** Fixed bytes per section record: byteStart, byteEnd, flags, chars, headLine, headChar, title marker. */
     private const val SECTION_BYTES = 6 * 4 + 1
@@ -131,7 +132,7 @@ internal object TxtIndexStore {
     }
 
     internal fun encode(x: TxtIndex): ByteArray {
-        var size = 4 * 4 + 8 + x.key.length * 2 + 4 + x.encoding.length * 2 + 4 * 6
+        var size = 4 * 4 + 8 + x.key.length * 2 + 4 + x.encoding.length * 2 + 4 * 6 + 1
         for (i in 0 until x.size) size += SECTION_BYTES + (x.titles[i]?.let { 4 + it.length * 2 } ?: 0)
         val out = ByteBuffer.allocate(size)
         out.putInt(MAGIC)
@@ -144,6 +145,7 @@ internal object TxtIndexStore {
         out.putInt(x.decisions.joinMinWidth)
         out.put(if (x.decisions.joinStopAtIndent) 1 else 0)
         out.put(if (x.decisions.joinIgnoreTerminal) 1 else 0)
+        out.put(if (x.decisions.wrapSpaces) 1 else 0)
         out.putInt(x.size)
         for (i in 0 until x.size) {
             out.putInt(x.byteStart[i])
@@ -181,6 +183,7 @@ internal object TxtIndexStore {
         if (joinMin < 0) return null
         val stopIndent = inp.get().toInt() != 0
         val ignoreTerminal = inp.get().toInt() != 0
+        val wrapSpaces = inp.get().toInt() != 0
         val n = inp.getInt()
         if (n < 1 || n > inp.remaining() / SECTION_BYTES) return null
         val bs = IntArray(n)
@@ -205,7 +208,7 @@ internal object TxtIndexStore {
         }
         if (inp.getInt() != MAGIC) return null
         return TxtIndex(
-            key, encoding, newline, TxtDecisions(blankMode, sceneRun, joinMin, stopIndent, ignoreTerminal),
+            key, encoding, newline, TxtDecisions(blankMode, sceneRun, joinMin, stopIndent, ignoreTerminal, wrapSpaces),
             bs, be, fl, ch, ti, hl, hc,
         )
     }

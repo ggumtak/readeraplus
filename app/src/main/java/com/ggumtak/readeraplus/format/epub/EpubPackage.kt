@@ -40,6 +40,8 @@ internal class EpubPackage(
     val coverMeta: String?,
     /** Guide reference of type "cover" (resolved path without fragment). */
     val guideCover: String?,
+    /** `<itemref>`s in the spine, including those naming no manifest item (dropped from [spine]). */
+    val spineRefCount: Int = spine.size,
 ) {
     val byId: Map<String, ManifestItem> = HashMap<String, ManifestItem>().also { m ->
         for (it in manifest) m.putIfAbsent(it.id, it)
@@ -263,6 +265,7 @@ internal object OpfParser {
             spineTocId = spineToc,
             coverMeta = coverMeta,
             guideCover = guideCover,
+            spineRefCount = spineRefs.size,
         )
     }
 

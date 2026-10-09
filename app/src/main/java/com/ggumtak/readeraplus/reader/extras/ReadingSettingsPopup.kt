@@ -153,10 +153,11 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         })
         // 굵기 counts steps from the font's own weight ("기본"); a static file can't get thinner than it is. Read per
         // label, so a font picked here relabels the next step.
-        val minWeight = runCatching { FontManager.minWeight(cur.fontId) }.getOrDefault(100)
-            .coerceAtMost(FontManager.naturalWeight(cur.fontId)).toFloat()
+        val minWeight = minWeightOf(cur.fontId)
+        // The floor follows the font picked in this popup too: a "−" below a static font's weight changed only the
+        // number before (the page drew the same).
         root.addView(stepperRow("굵기", cur.fontWeight.toFloat().coerceAtLeast(minWeight), minWeight, 900f, 50f,
-            { Fmt.weight(it.toInt(), FontManager.naturalWeight(cur.fontId)) }) {
+            { Fmt.weight(it.toInt(), FontManager.naturalWeight(cur.fontId)) }, floor = { minWeightOf(cur.fontId) }) {
             update(cur.copy(fontWeight = it.toInt()), debounce = true)
         })
         root.addView(stepperRow("줄 간격", cur.lineHeightPct.toFloat(), 100f, 300f, 5f, { Fmt.pct(it.toInt()) }) {
@@ -306,7 +307,14 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
     // ------------------------------------------------------------------ rows
 
-    /** Label left, "−  value  +" right (48 dp buttons, "<title> 줄이기" / "<title> 늘리기") on the same row. */
+    /** The lightest weight [fontId] draws differently (a static file can't get thinner than it is). */
+    private fun minWeightOf(fontId: String): Float = runCatching { FontManager.minWeight(fontId) }.getOrDefault(100)
+        .coerceAtMost(FontManager.naturalWeight(fontId)).toFloat()
+
+    /**
+     * Label left, "−  value  +" right (48 dp buttons, "<title> 줄이기" / "<title> 늘리기") on the same row. [floor], when
+     * given, is read at each tap instead of [min] (it can move while the popup is open).
+     */
     private fun stepperRow(
         title: String,
         value: Float,
@@ -314,6 +322,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         max: Float,
         step: Float,
         format: (Float) -> String,
+        floor: (() -> Float)? = null,
         onChange: (Float) -> Unit,
     ): LinearLayout {
         var v = value
@@ -324,7 +333,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         // while tapping repeatedly, and line up with the other rows' buttons.
         valueView.lockWidthForValues(min, max, step, format, minPx = ctx.dp(Compact.STEP_VALUE_DP))
         fun set(nv: Float) {
-            val s = Fmt.stepFloat(nv, step, min, max)
+            val s = Fmt.stepFloat(nv, step, floor?.invoke() ?: min, max)
             if (s == v) return
             v = s
             valueView.text = format(v)

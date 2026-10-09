@@ -263,7 +263,7 @@ class BookSession(
     private fun geometryNow(): PageGeometry {
         val dm = context.resources.displayMetrics
         val cols = LayoutKeys.columnsFor(settings.landscapePages, viewW, viewH, paged())
-        return LayoutKeys.geometry(settings, viewW, viewH, dm.density, viewCutoutTop, cols)
+        return LayoutKeys.geometry(settings, viewW, viewH, dm.density, viewCutoutTop, cols, AndroidTextMeasurer.emPxFor(context, settings.fontSizeSp))
     }
 
     /** True when the current generation's page columns are not the ones the view and settings make now. */

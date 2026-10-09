@@ -190,6 +190,56 @@ class TxtFormatTest {
         assertEquals(origA, paras(indented, o))
     }
 
+    /**
+     * Cuts [text] every [chars] characters regardless of words (old fixed-width TXT): a cut right before a space leaves
+     * that space at the start of the next line.
+     */
+    private fun cutEvery(text: String, chars: Int): List<String> = text.chunked(chars).map { it.trimEnd() }
+
+    @Test
+    fun oneSpaceLeftByAFixedWidthCutIsNoParagraphStart() {
+        // 40-char cuts: about a fifth of the lines start with the space the cut fell before; those must not split
+        // paragraphs (they did when 5-60% of the lines were "indented"). Paragraphs are separated by blank lines.
+        val r = Random(21)
+        val originals = List(30) { TxtTestUtil.paragraph(r, 200 + r.nextInt(300)) }
+        val text = originals.joinToString("\n\n") { cutEvery(it, 40).joinToString("\n") }
+        val lines = text.split('\n')
+        val oneSpace = lines.count { it.startsWith(" ") && !it.startsWith("  ") }
+        val nonBlank = lines.count { it.isNotBlank() }
+        assertTrue("fixture has 5-60% one-space lines: $oneSpace / $nonBlank", oneSpace * 20 >= nonBlank && oneSpace * 10 <= nonBlank * 6)
+        val out = paras(text, ParseOptions(txtDetectChapters = false, txtJoinWrappedLines = 1))
+        assertEquals("one paragraph per source paragraph", originals.size, out.size)
+        // Same words in the same order (a cut inside a word is joined with a space, as before this fix).
+        for (k in originals.indices) {
+            assertEquals(originals[k].replace(" ", ""), out[k].replace(" ", ""))
+        }
+    }
+
+    @Test
+    fun oneSpaceIndentStillStartsParagraphs() {
+        // A word-wrapped file that marks paragraph starts with a one-space indent (paragraph ends are rarely full):
+        // the indent keeps splitting paragraphs.
+        val r = Random(22)
+        val originals = List(30) { TxtTestUtil.paragraph(r, 150 + r.nextInt(250)) }
+        val text = originals.joinToString("\n") { p -> wrap(p, 60).mapIndexed { k, l -> if (k == 0) " $l" else l }.joinToString("\n") }
+        assertEquals(originals, paras(text, ParseOptions(txtDetectChapters = false, txtJoinWrappedLines = 1)))
+    }
+
+    @Test
+    fun wrapSpacesNeedsMostOneSpaceLinesAfterFullLines() {
+        fun table(text: String): LineTable = LineTable.build(text.toCharArray(), text.length, '\n', LineConfig(true, null, true), null)
+        // three one-space lines, each after a full 40-column line: wrap leftovers
+        val full = "가".repeat(20)
+        val wrapped = listOf(full, " 나다", full, " 라마", full, " 바사", "짧다").joinToString("\n")
+        assertTrue(TxtParser.wrapSpaces(table(wrapped), 40))
+        // the same lines after short lines: indents
+        val indented = listOf("짧다.", " 나다", "짧다.", " 라마", "짧다.", " 바사").joinToString("\n")
+        assertFalse(TxtParser.wrapSpaces(table(indented), 40))
+        // two spaces or a full-width space are never INDENT1
+        val two = listOf(full, "  나다", full, "\u3000라마", full, "  바사").joinToString("\n")
+        assertFalse(TxtParser.wrapSpaces(table(two), 40))
+    }
+
     @Test
     fun doubleSpacedFileUsesLongerRunsForSceneBreaks() {
         val r = Random(16)

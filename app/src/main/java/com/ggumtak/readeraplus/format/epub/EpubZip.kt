@@ -139,6 +139,9 @@ internal class EpubZip private constructor(
         fun open(file: File): EpubZip {
             val z = try {
                 openZip(file)
+            } catch (e: ZipException) {
+                // Not a zip after all (a cut-off download, a renamed file): a broken book, not an unreadable file.
+                throw DocumentException("EPUB 파일이 손상되었습니다", e)
             } catch (e: IOException) {
                 throw DocumentException("파일을 읽지 못했습니다", e)
             } catch (e: SecurityException) {

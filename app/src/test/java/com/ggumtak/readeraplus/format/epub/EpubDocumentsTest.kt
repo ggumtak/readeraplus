@@ -98,6 +98,34 @@ class EpubDocumentsTest {
     }
 
     @Test
+    fun missingSpineItemsAreCounted() {
+        // epub2(): the spine names "missing", which the manifest lacks; every other item is there.
+        EpubDocuments.open(epub2(), ParseOptions()).use { doc ->
+            assertEquals(1, (doc as EpubBook).missingSpineItems)
+        }
+        // a manifest item whose file is not in the zip counts too
+        val opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>t</dc:title></metadata>
+<manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml"/><item id="b" href="b.xhtml" media-type="application/xhtml+xml"/></manifest>
+<spine><itemref idref="a"/><itemref idref="b"/></spine></package>"""
+        val f = writeEpub(listOf(container(), text("OEBPS/content.opf", opf), text("OEBPS/a.xhtml", xhtml("A", "<p>${EpubTestUtil.SENTENCES[0]}</p>"))))
+        EpubDocuments.open(f, ParseOptions()).use { doc ->
+            assertEquals(1, (doc as EpubBook).missingSpineItems)
+        }
+    }
+
+    @Test
+    fun aFileThatIsNoZipIsADamagedEpub() {
+        val f = File.createTempFile("cut", ".epub").apply { deleteOnExit(); writeBytes(ByteArray(300) { (it * 7).toByte() }) }
+        try {
+            EpubDocuments.open(f, ParseOptions()).close()
+            fail("opened")
+        } catch (e: DocumentException) {
+            assertEquals("EPUB 파일이 손상되었습니다", e.message)
+        }
+    }
+
+    @Test
     fun epub2WithNcx() {
         val f = epub2()
         EpubDocuments.open(f, ParseOptions()).use { doc ->

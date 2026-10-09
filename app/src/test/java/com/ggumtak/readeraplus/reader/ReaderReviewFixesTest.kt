@@ -53,7 +53,7 @@ class ReaderReviewFixesTest {
         fun key(x: ReaderSettings, f: BookFormat) = LayoutKeys.keyFor(x, f, "", g, density, font, 1)
         assertNotEquals(key(s, BookFormat.EPUB), key(t, BookFormat.EPUB))
         assertEquals(key(s, BookFormat.TXT), key(t, BookFormat.TXT))
-        assertEquals(LayoutKeys.textSignature(s, BookFormat.TXT, ""), LayoutKeys.textSignature(t, BookFormat.TXT, ""))
+        assertEquals(LayoutKeys.textSignature(s, BookFormat.TXT, "", 1000L), LayoutKeys.textSignature(t, BookFormat.TXT, "", 1000L))
     }
 
     @Test
@@ -130,17 +130,19 @@ class ReaderReviewFixesTest {
 
     @Test
     fun textSignatureTracksOptionsThatMoveText() {
-        val base = LayoutKeys.textSignature(s, BookFormat.TXT, "")
+        val base = LayoutKeys.textSignature(s, BookFormat.TXT, "", 1000L)
         assertNotNull(base)
-        assertNull(LayoutKeys.textSignature(s, BookFormat.EPUB, ""))
-        assertEquals(base, LayoutKeys.textSignature(s, BookFormat.TXT, ""))
+        assertNull(LayoutKeys.textSignature(s, BookFormat.EPUB, "", 1000L))
+        assertEquals(base, LayoutKeys.textSignature(s, BookFormat.TXT, "", 1000L))
         // Styling only: never remaps a position.
-        assertEquals(base, LayoutKeys.textSignature(s.copy(txtEmphasizeHeadings = false, fontSizeSp = 30f, epubPublisherStyles = false), BookFormat.TXT, ""))
+        assertEquals(base, LayoutKeys.textSignature(s.copy(txtEmphasizeHeadings = false, fontSizeSp = 30f, epubPublisherStyles = false), BookFormat.TXT, "", 1000L))
         for (t in listOf(
             s.copy(txtDetectChapters = false), s.copy(txtChapterRegex = "^제\\d+화"), s.copy(txtBlankLines = 3),
             s.copy(txtStripIndent = false), s.copy(txtJoinWrappedLines = 0), s.copy(txtReplaceRules = "a => b"),
-        )) assertNotEquals(t.toString(), base, LayoutKeys.textSignature(t, BookFormat.TXT, ""))
-        assertNotEquals(base, LayoutKeys.textSignature(s, BookFormat.TXT, "MS949"))
+        )) assertNotEquals(t.toString(), base, LayoutKeys.textSignature(t, BookFormat.TXT, "", 1000L))
+        assertNotEquals(base, LayoutKeys.textSignature(s, BookFormat.TXT, "MS949", 1000L))
+        // the same path holding another file (another size): its saved coordinates are found again by fraction
+        assertNotEquals(base, LayoutKeys.textSignature(s, BookFormat.TXT, "", 1001L))
     }
 
     @Test

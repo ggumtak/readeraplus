@@ -31,6 +31,11 @@ internal object LineFlags {
     const val OV = 256
     const val CJK_FIRST = 512
     const val CJK_LAST = 1024
+    /**
+     * With [INDENT]: the indentation is exactly one plain space (U+0020). In a hard-wrapped file that space is often
+     * what the wrap left at the start of a continuation line, not an indent (see `TxtParser.decide`).
+     */
+    const val INDENT1 = 2048
 }
 
 /** Char classification helpers (no allocation, hot loops). */
@@ -478,6 +483,8 @@ private class LineProcessor(private val t: LineTable, private val cfg: LineConfi
         }
         // Normalise in place: tabs/newlines -> space, drop other controls, BOM, object replacement char;
         // track the trailing-trim point, the first non-space and the column width in the same loop.
+        // The source's first char, read before the loop below rewrites the line in place.
+        val first0 = if (s < e) arr[s] else '\u0000'
         var w = s
         var wid = 0
         var lastEnd = s
@@ -519,7 +526,10 @@ private class LineProcessor(private val t: LineTable, private val cfg: LineConfi
         }
         e = lastEnd
         var width = widAtLast
-        if (lead > s) f = f or LineFlags.INDENT
+        if (lead > s) {
+            f = f or LineFlags.INDENT
+            if (lead == s + 1 && widBeforeLead == 1 && first0 == ' ') f = f or LineFlags.INDENT1
+        }
         if (cfg.stripIndent) {
             s = lead
             width -= widBeforeLead

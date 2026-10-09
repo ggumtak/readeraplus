@@ -40,6 +40,11 @@ internal class TxtDecisions(
     val joinStopAtIndent: Boolean,
     /** Paragraph ends are marked explicitly (blank lines / indents): join full lines even after punctuation. */
     val joinIgnoreTerminal: Boolean,
+    /**
+     * A one-space indent ([LineFlags.INDENT1]) is what the hard wrap left at the start of continuation lines (most
+     * such lines follow a full line): it neither marks a paragraph start nor stops joining.
+     */
+    val wrapSpaces: Boolean = false,
 ) {
     companion object {
         const val REMOVE_SINGLES = 1
@@ -152,7 +157,7 @@ internal object TxtParagraphs {
                     if (k >= to) break
                     val fk = flags[k]
                     if (fk and noJoinNext != 0) break
-                    if (d.joinStopAtIndent && fk and LineFlags.INDENT != 0) break
+                    if (d.joinStopAtIndent && fk and LineFlags.INDENT != 0 && !(d.wrapSpaces && fk and LineFlags.INDENT1 != 0)) break
                     trimLeading(t, k)
                     length += joinSep(t, j, k) + t.length(k)
                     j = k

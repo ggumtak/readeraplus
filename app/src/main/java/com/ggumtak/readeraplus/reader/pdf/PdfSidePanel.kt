@@ -140,6 +140,23 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
     fun setSearchResults(query: String, results: List<Pair<Int, Int>>) {
         val ui = search ?: return
         val n = results.size
+        val total = showResults(ui, results)
+        ui.setStatus(if (n == 0) "‘$query’ 찾지 못했습니다" else "‘$query’ 총 ${total}곳 · ${n}쪽")
+    }
+
+    /**
+     * The matches found so far while the search is still running ([done] of [total] pages scanned): the list grows
+     * where it stands (its scroll position is kept) and the status keeps the progress text.
+     */
+    fun setSearchPartial(results: List<Pair<Int, Int>>, done: Int, total: Int) {
+        val ui = search ?: return
+        val found = showResults(ui, results)
+        ui.setStatus(if (results.isEmpty()) "찾는 중… $done / ${total}쪽" else "찾는 중… $done / ${total}쪽 · ${found}곳")
+    }
+
+    /** Puts [results] in the list; returns the number of matches in them. */
+    private fun showResults(ui: SearchUi, results: List<Pair<Int, Int>>): Int {
+        val n = results.size
         val p = IntArray(n)
         val c = IntArray(n)
         var total = 0
@@ -149,7 +166,7 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
             total += c[i]
         }
         ui.adapter.set(p, c)
-        ui.setStatus(if (n == 0) "‘$query’ 찾지 못했습니다" else "‘$query’ 총 ${total}곳 · ${n}쪽")
+        return total
     }
 
     // ------------------------------------------------------------------------------------------ pages
@@ -433,6 +450,8 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
         private var counts = IntArray(0)
 
         fun set(p: IntArray, c: IntArray) {
+            // Progress updates mostly repeat the list: no redraw, the list stays as it is.
+            if (p.contentEquals(pages) && c.contentEquals(counts)) return
             pages = p
             counts = c
             notifyDataSetChanged()

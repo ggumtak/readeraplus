@@ -116,6 +116,14 @@ internal data class BackupBook(
     val missingAt: Long = 0,
     /** v3: the book's dictionary lookups (단어장). */
     val lookups: List<BackupLookup> = emptyList(),
+    /**
+     * v4: a PDF book's ink and bookmarks, the text of its `pdf_notes/<id>.json` ([PdfNoteFiles]), as one string.
+     * Null when the book has none or the backup predates it. A snapshot leaves it null and names the book in
+     * [sourceId] instead: [BackupData.pdfNotes] loads the text while [BackupJson.write] streams the book.
+     */
+    val pdfNotes: String? = null,
+    /** The library id of the row a snapshot was read from, > 0 only for a PDF book that has a notes file; never written. */
+    val sourceId: Long = 0L,
 )
 
 internal class BackupData(
@@ -134,6 +142,12 @@ internal class BackupData(
     val origin: BackupOrigin? = null,
     /** S §3.6: the counts of [books] as written; null in older backups (then [BackupJson.summaryOf] counts them). */
     val summary: AutoBackup.Summary? = null,
+    /**
+     * Loads the PDF notes text of a book with [BackupBook.sourceId] > 0 when [BackupJson.write] reaches it, so the
+     * notes of every PDF are never in memory together; null = none. A [BackupBook.pdfNotes] already set wins.
+     * [BackupJson.toJson] (a tree) does not call it.
+     */
+    val pdfNotes: ((BackupBook) -> String?)? = null,
 )
 
 /** The fields a header read returns (S §3.4) without building the books. */
@@ -156,6 +170,10 @@ internal class BackupHeader(
  * `summary`, written right after `createdAt` so [readHeader] stops before `settings` and `books` (S §3.6, C10); per
  * quote `style` (≠ 0) and the place `chapter, frac, sig` (when `frac ≥ 0`), per bookmark the place; per book
  * `reviewAt`, `missingAt`, `lookups`, and `prefs.returnMark` (N §5.6, U §3.3).
+ *
+ * R4 (still version 1, still optional both ways): per PDF book `pdfNotes`, the text of the viewer's notes file
+ * (`{"v":1,"bookmarks":[…],"pages":{…}}`) as ONE string value, written only for a book that has such a file. Older
+ * builds ignore the key; an older backup restores without it.
  */
 internal object BackupJson {
     const val FORMAT = "readeraplus-backup"
@@ -263,8 +281,15 @@ internal object BackupJson {
      * order (format, version, createdAt, origin, summary, …, books last) that [readHeader] relies on, whatever key order
      * the org.json build keeps; without ever holding the whole tree or the whole text (K11: a 1,000-book snapshot is a
      * 10–20 MB tree). [checkpoint] runs after the header and after every book; it may throw to abort (the busy check).
+     * The PDF notes [BackupData.pdfNotes] loads add up to at most [pdfNotesBudget] chars; a book that would pass it
+     * goes without (its notes stay on the device) so the file stays restorable under [Backup.MAX_BYTES].
      */
-    fun write(data: BackupData, out: java.io.Writer, checkpoint: () -> Unit = {}) {
+    fun write(
+        data: BackupData,
+        out: java.io.Writer,
+        pdfNotesBudget: Int = PdfNoteFiles.MAX_BACKUP_TOTAL_CHARS,
+        checkpoint: () -> Unit = {},
+    ) {
         var first = true
         fun field(name: String, value: Any) {
             val one = JSONObject().put(name, value).toString() // {"name":value}: a single key, so its form is fixed
@@ -282,13 +307,35 @@ internal object BackupJson {
         field("collections", JSONArray().also { a -> data.collections.forEach { a.put(it) } })
         out.write(",\"books\":[")
         checkpoint()
+        var pdfBudget = pdfNotesBudget
         for ((i, b) in data.books.withIndex()) {
             if (i > 0) out.write(",")
-            out.write(bookToJson(b).toString())
+            var notes: String? = null
+            if (b.pdfNotes == null && b.sourceId > 0) {
+                notes = data.pdfNotes?.invoke(b)?.takeIf { it.isNotEmpty() && it.length <= pdfBudget }
+                if (notes != null) pdfBudget -= notes.length
+            }
+            writeBook(out, b, notes)
             checkpoint()
         }
         out.write("]}")
         out.flush()
+    }
+
+    /**
+     * One book as `bookToJson(b)` plus [pdfNotes] as its last key: spliced onto the text, so a large notes string is
+     * quoted straight into [out] and never put into a JSONObject (a second and third copy of it).
+     */
+    private fun writeBook(out: java.io.Writer, b: BackupBook, pdfNotes: String?) {
+        val s = bookToJson(b).toString()
+        if (pdfNotes == null) {
+            out.write(s)
+            return
+        }
+        out.write(s, 0, s.length - 1) // without the closing brace
+        out.write(",\"pdfNotes\":")
+        out.write(JSONObject.quote(pdfNotes))
+        out.write("}")
     }
 
     fun originToJson(o: BackupOrigin): JSONObject = JSONObject()
@@ -423,6 +470,7 @@ internal object BackupJson {
             p.returnMark?.let { po.put("returnMark", it) }
             o.put("prefs", po)
         }
+        b.pdfNotes?.takeIf { it.isNotEmpty() }?.let { o.put("pdfNotes", it) }
         return o
     }
 
@@ -525,7 +573,23 @@ internal object BackupJson {
             reviewAt = long(o, "reviewAt", 0L).coerceAtLeast(0L),
             missingAt = long(o, "missingAt", 0L).coerceAtLeast(0L),
             lookups = lookupsFromJson(o.optJSONArray("lookups")),
+            pdfNotes = pdfNotesFromJson(o),
         )
+    }
+
+    /**
+     * A backup entry's PDF notes text: the string value of `pdfNotes` (a nested object is taken as its text), null
+     * when absent, blank, not text or longer than a book's cap ([PdfNoteFiles.MAX_BACKUP_BOOK_CHARS]). Not checked
+     * here for being notes: [PdfNoteFiles.shouldRestore] does that for the books actually restored.
+     */
+    fun pdfNotesFromJson(o: JSONObject, maxChars: Int = PdfNoteFiles.MAX_BACKUP_BOOK_CHARS): String? {
+        if (!o.has("pdfNotes") || o.isNull("pdfNotes")) return null
+        val text = when (val v = o.opt("pdfNotes")) {
+            is String -> v
+            is JSONObject -> v.toString()
+            else -> null
+        } ?: return null
+        return text.takeIf { it.isNotBlank() && it.length <= maxChars }
     }
 
     /** A note's place: (chapter, frac, sig) when `frac` is a fraction 0..1, else [NotePlace.UNKNOWN]. */

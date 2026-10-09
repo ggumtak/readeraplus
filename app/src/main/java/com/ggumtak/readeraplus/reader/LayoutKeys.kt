@@ -56,8 +56,9 @@ object LayoutKeys {
      * 3: [ALGO_VERSION] replaces the app's version code, and [keyFor] adds the format's parse version (A2).
      * The parse version ([parseVersionOf]) covers the TXT parse and the EPUB section split only: a change to what the
      * EPUB content parser makes of an item's XHTML (text, block styles) has no version of its own, so bump this then.
+     * 4: the text box is a whole number of body lines tall, the rest split above and below it ([geometry] with emPx).
      */
-    const val VERSION = 3
+    const val VERSION = 4
 
     /**
      * Version of the line-breaking output: bump exactly when `TypesetPass` (or the measurer) can produce different
@@ -103,8 +104,22 @@ object LayoutKeys {
      * 계산해야지"); band + margin is rounded once, so without a cutout the default box is where 40 dp from the top put it
      * (Comet row 80); under the S25's 87 px band it starts one 15 dp margin below it (row 129). Only settings decide the
      * bands: nothing shown or hidden on the page moves the box.
+     *
+     * With [emPx] (1 em of the body text in px) the box is then cut to a whole number of body lines (lineHeight × em),
+     * the part of a line left over split half above, half below. Without it the lines fill the box from its top and that
+     * part piled up at the bottom: raising 위·아래 여백 together moved the text down at once while its bottom stayed put
+     * until a whole line dropped (user, 2026-10-09: "위에만 여백이 늘어나서 아래로 내려오는 느낌"). Now a dropped line
+     * takes half a line from each side. Every caller that maps touches to the page must pass the same [emPx].
      */
-    fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, extraTop: Int = 0, columns: Int = 1): PageGeometry {
+    fun geometry(
+        s: ReaderSettings,
+        viewW: Int,
+        viewH: Int,
+        density: Float,
+        extraTop: Int = 0,
+        columns: Int = 1,
+        emPx: Float = 0f,
+    ): PageGeometry {
         fun px(dp: Int): Int = Math.round(dp * density)
         fun margin(dp: Int): Int = if (s.pageMargins) dp.coerceAtLeast(0) else TINY_MARGIN_DP
         val ml = px(margin(s.marginLeftDp))
@@ -144,8 +159,22 @@ object LayoutKeys {
         if (h < minBox) {
             h = minOf(minBox, below).coerceAtLeast(1)
             top = band + ((below - h) / 2).coerceAtLeast(0)
+        } else {
+            val snapped = linesBox(h, s.lineHeightPct / 100f * emPx)
+            top += (h - snapped) / 2
+            h = snapped
         }
         return PageGeometry(viewW, viewH, left, top, w, h, band, cols, gutter, pageW)
+    }
+
+    /**
+     * [h] cut to the height of the most whole lines of [pitch] px it holds (rounded up to a pixel, so they still fit),
+     * at least two lines; [h] itself when [pitch] is unknown or a line doesn't fit twice.
+     */
+    internal fun linesBox(h: Int, pitch: Float): Int {
+        if (!(pitch >= 1f) || h < 2 * pitch) return h
+        val lines = (h / pitch).toInt()
+        return Math.ceil((lines * pitch).toDouble()).toInt().coerceIn(1, h)
     }
 
     /** [txt]: TXT books always honour their parser's block hints (centred scene breaks, headings). */
@@ -258,11 +287,13 @@ object LayoutKeys {
      * each position once, by fraction), every option that can move text between sections or shift offsets, plus the
      * encoding; heading emphasis only styles text and is left out so toggling it never remaps a position.
      */
-    fun textSignature(s: ReaderSettings, format: BookFormat, encoding: String): String? {
+    fun textSignature(s: ReaderSettings, format: BookFormat, encoding: String, sizeBytes: Long): String? {
         if (format == BookFormat.EPUB) return null
         val p = s.parseOptions(encoding)
         val sb = StringBuilder(128)
-        sb.append("t1|v").append(TxtDocuments.PARSE_VERSION)
+        // The file's size: a book replaced at the same path (a corrected copy over Wi-Fi, a re-import) has other
+        // sections, so its saved (section, offset) is found again by fraction instead of opening somewhere else.
+        sb.append("t1|v").append(TxtDocuments.PARSE_VERSION).append("|s").append(sizeBytes)
             .append('|').append(p.txtBlankLines).append(',').append(p.txtStripIndent)
             .append(',').append(p.txtJoinWrappedLines).append(',').append(p.txtDetectChapters)
             .append(",enc=").append(p.txtEncoding)
