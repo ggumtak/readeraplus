@@ -25,7 +25,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
     override fun build(): View {
         val body = ctx.pageBody()
         body.section("백업", first = true)
-        body.addView(ctx.row("백업 파일 만들기", "읽던 위치 · 즐겨찾기 등 표시 · 북마크 · 인용문 · 리뷰 · 컬렉션 · 설정을 JSON 파일 하나로 저장") {
+        body.addView(ctx.row("백업 파일 만들기", "읽던 위치 · 즐겨찾기 등 표시 · 북마크 · 형광펜 · 리뷰 · 컬렉션 · 설정을 JSON 파일 하나로 저장") {
             createBackup()
         })
         body.section("복원")
@@ -103,7 +103,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
     private fun confirmRestore(uri: Uri) {
         ctx.confirm(
             "백업에서 복원",
-            "현재 서재의 읽기 기록 · 북마크 · 인용문과 설정을 백업 파일의 내용으로 덮어씁니다. 계속할까요?",
+            "현재 서재의 읽기 기록 · 북마크 · 형광펜과 설정을 백업 파일의 내용으로 덮어씁니다. 계속할까요?",
             ok = "복원",
         ) { restore(uri) }
     }

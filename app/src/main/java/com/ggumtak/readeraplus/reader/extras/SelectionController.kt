@@ -357,7 +357,7 @@ class SelectionController(private val host: ReaderHost) {
         list += Action("복사", R.drawable.ic_content_copy) { copy() }
         val q = editingQuote
         if (q == null) {
-            list += Action("인용", R.drawable.ic_format_quote) {
+            list += Action("형광펜", R.drawable.ic_ink_highlighter) {
                 val snap = snapshot()
                 clear()
                 if (snap != null) saveQuote(snap, "")
@@ -365,7 +365,7 @@ class SelectionController(private val host: ReaderHost) {
             list += Action("메모", R.drawable.ic_sticky_note_2) { noteThenQuote() }
         } else {
             list += Action("메모", R.drawable.ic_sticky_note_2) { editQuoteNote(q) }
-            list += Action("인용 삭제", R.drawable.ic_delete) { deleteQuote(q) }
+            list += Action("형광펜 삭제", R.drawable.ic_delete) { deleteQuote(q) }
         }
         list += Action("공유", R.drawable.ic_share) { share() }
         list += Action("문단", R.drawable.ic_select_all) { selectParagraph() }
@@ -609,7 +609,7 @@ class SelectionController(private val host: ReaderHost) {
             } else {
                 QuoteCache.put(q.bookId, all)
             }
-            ctx.toast("인용문에 저장했습니다")
+            ctx.toast("형광펜으로 저장했습니다")
         }
     }
 
@@ -629,7 +629,7 @@ class SelectionController(private val host: ReaderHost) {
 
     private fun editQuoteNote(q: Quote) {
         clear()
-        ctx.multilinePrompt("인용문 메모", q.note, "메모", minLines = 3) { note ->
+        ctx.multilinePrompt("형광펜 메모", q.note, "메모", minLines = 3) { note ->
             scope.launch {
                 val all = withContext(Dispatchers.IO) {
                     runCatching { Library.updateQuoteNote(q.id, note.trim()) }
@@ -642,7 +642,7 @@ class SelectionController(private val host: ReaderHost) {
 
     private fun deleteQuote(q: Quote) {
         clear()
-        ctx.confirm("인용문 삭제", "이 인용문을 삭제할까요?", "삭제") {
+        ctx.confirm("형광펜 삭제", "이 형광펜을 삭제할까요?", "삭제") {
             scope.launch {
                 val all = withContext(Dispatchers.IO) {
                     runCatching { Library.deleteQuote(q.id) }

@@ -120,7 +120,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         body.section("스와이프 · 길게 누르기")
         body.addView(ctx.toggleRow("스와이프로 넘김", "좌우로 밀어서 페이지 넘김 (오른쪽→왼쪽 = 다음)", app.swipeToTurn) { v -> editApp { it.copy(swipeToTurn = v) } })
         body.addView(ctx.toggleRow("세로 스와이프", "위로 밀면 다음 페이지, 아래로 밀면 이전 페이지", app.verticalSwipe) { v -> editApp { it.copy(verticalSwipe = v) } })
-        body.addView(ctx.toggleRow("길게 눌러 텍스트 선택", "단어를 길게 누르면 선택 → 복사 · 인용 · 사전 · 검색", app.longPressSelect) { v -> editApp { it.copy(longPressSelect = v) } })
+        body.addView(ctx.toggleRow("길게 눌러 텍스트 선택", "단어를 길게 누르면 선택 → 복사 · 형광펜 · 사전 · 검색", app.longPressSelect) { v -> editApp { it.copy(longPressSelect = v) } })
         var pressRow: View? = null
         pressRow = ctx.valueRow("길게 누르기 시간", SettingsFormat.longPress(app.longPressMs)) {
             val opts = SettingsFormat.LONG_PRESS_OPTIONS

@@ -230,7 +230,7 @@ private fun LibraryActivity.confirmDelete(b: Book) {
     val cb = deleteFileCheckBox()
     val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
     alert().setTitle("영구 삭제")
-        .setMessage("‘${b.title}’을(를) 서재에서 삭제합니다. 북마크와 인용문도 함께 지워집니다.")
+        .setMessage("‘${b.title}’을(를) 서재에서 삭제합니다. 북마크와 형광펜도 함께 지워집니다.")
         .setView(box)
         .setPositiveButton("삭제") { _, _ ->
             val deleteFile = cb.isChecked

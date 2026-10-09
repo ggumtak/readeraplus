@@ -14,7 +14,7 @@ import kotlinx.coroutines.Job
 import java.lang.ref.WeakReference
 
 /**
- * Reader panels (ReadEra-like): reading settings popup, contents (목차 · 북마크 · 인용문), in-book search,
+ * Reader panels (ReadEra-like): reading settings popup, contents (목차 · 북마크 · 형광펜), in-book search,
  * review, document properties and go-to-page. Wired by ReaderActivity. All calls on the main thread.
  *
  * Lifecycle: every window a panel opens (full-screen dialogs, the settings popup and its menus, info and prompt
@@ -27,7 +27,7 @@ object ReaderPanels {
         ReadingSettingsPopup(host, anchor).show()
     }
 
-    /** Full-screen TOC / bookmarks / quotes (tabs 목차 · 북마크 · 인용문). */
+    /** Full-screen TOC / bookmarks / quotes (tabs 목차 · 북마크 · 형광펜). */
     fun showContents(host: ReaderHost, initialTab: Int = 0) {
         ContentsDialog(host, initialTab).show()
     }

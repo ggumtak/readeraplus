@@ -41,7 +41,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
 
         body.section("일반", first = true)
         scanRow = ctx.navRow("파일 스캔", scanSummary(app)) { activity.push(SettingsActivity.PAGE_SCAN) }.also(body::addView)
-        body.addView(ctx.navRow("백업 및 복원", "서재 기록 · 북마크 · 인용문 · 설정을 파일로 저장하고 되살립니다") {
+        body.addView(ctx.navRow("백업 및 복원", "서재 기록 · 북마크 · 형광펜 · 설정을 파일로 저장하고 되살립니다") {
             activity.push(SettingsActivity.PAGE_BACKUP)
         })
         body.addView(ctx.navRow("Wi-Fi로 책 받기", "같은 Wi-Fi의 PC · 휴대폰 브라우저에서 TXT · EPUB 파일을 보냅니다") {

@@ -72,7 +72,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Full-screen 목차 · 북마크 · 인용문 dialog. Every list is paged a screen at a time ([InkPager]: pager bar, page keys,
+ * Full-screen 목차 · 북마크 · 형광펜 dialog. Every list is paged a screen at a time ([InkPager]: pager bar, page keys,
  * a drag is one page jump). The TOC tab (T1-1) has a header — "540화 · 지금 123화" with [지금] [화 번호] [검색], the
  * time left (T1-7) and, for a confidently numbered TOC, "빠진 화 3개 · 중복 1개 ›" — and marks the entries before the
  * current one in gray.
@@ -123,12 +123,12 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         val bar = ctx.horizontal { minimumHeight = ctx.dp(56); setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
         bar.addView(ctx.flatIcon(R.drawable.ic_arrow_back, "뒤로") { dialog.dismiss() })
         bar.addView(ctx.label(book.title, 19f, bold = true, maxLines = 1).apply { setPadding(ctx.dp(12), 0, ctx.dp(8), 0) }, lp(0, WRAP_CONTENT, 1f))
-        shareAll = ctx.flatIcon(R.drawable.ic_share, "인용문 모두 공유") { shareAllQuotes() }.apply { visibility = View.GONE }
+        shareAll = ctx.flatIcon(R.drawable.ic_share, "형광펜 모두 공유") { shareAllQuotes() }.apply { visibility = View.GONE }
         bar.addView(shareAll)
         root.addView(bar, lp())
         // tabs
         val tabs = ctx.horizontal()
-        listOf("목차", "북마크", "인용문").forEachIndexed { i, name ->
+        listOf("목차", "북마크", "형광펜").forEachIndexed { i, name ->
             val cell = ctx.vertical {
                 gravity = Gravity.CENTER_HORIZONTAL
                 background = pressableBackground()
@@ -653,7 +653,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         ))
     }
 
-    // ------------------------------------------------------------------ 인용문
+    // ------------------------------------------------------------------ 형광펜
 
     private fun loadQuotes(container: FrameLayout) {
         val keep = pagers[2]?.list?.firstVisiblePosition ?: 0
@@ -666,11 +666,11 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             if (loaded != null) QuoteCache.put(bookId, loaded)
             val list = loaded.orEmpty().sortedWith(compareBy({ it.section }, { it.start }))
             quotes = list
-            tabLabels[2]?.text = if (list.isEmpty()) "인용문" else "인용문 ${list.size}"
+            tabLabels[2]?.text = if (list.isEmpty()) "형광펜" else "형광펜 ${list.size}"
             if (tab == 2) shareAll.visibility = if (list.isNotEmpty()) View.VISIBLE else View.GONE
             container.removeAllViews()
             if (list.isEmpty()) {
-                container.addView(ctx.emptyMessage("인용문이 없습니다\n\n본문을 길게 눌러 문장을 선택한 뒤\n'인용'을 누르세요"))
+                container.addView(ctx.emptyMessage("형광펜이 없습니다\n\n본문을 길게 눌러 문장을 선택한 뒤\n'형광펜'을 누르세요"))
                 return@launch
             }
             val lv = ctx.einkListView()
@@ -705,7 +705,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             MenuItem("복사", R.drawable.ic_content_copy) { TextActions.copy(ctx, q.text) },
             MenuItem("공유", R.drawable.ic_share) { TextActions.share(ctx, quoteShareText(q), book.title) },
             MenuItem("메모", R.drawable.ic_edit) {
-                ctx.multilinePrompt("인용문 메모", q.note, "메모", minLines = 3) { text ->
+                ctx.multilinePrompt("형광펜 메모", q.note, "메모", minLines = 3) { text ->
                     scope.launch {
                         withContext(Dispatchers.IO) { runCatching { Library.updateQuoteNote(q.id, text.trim()) } }
                         loadQuotes(container)
@@ -713,7 +713,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 }
             },
             MenuItem("삭제", R.drawable.ic_delete) {
-                ctx.confirm("인용문 삭제", "이 인용문을 삭제할까요?", "삭제") {
+                ctx.confirm("형광펜 삭제", "이 형광펜을 삭제할까요?", "삭제") {
                     scope.launch {
                         val remaining = withContext(Dispatchers.IO) {
                             runCatching { Library.deleteQuote(q.id) }
@@ -738,13 +738,13 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
 
     private fun shareAllQuotes() {
         if (quotes.isEmpty()) {
-            ctx.toast("인용문이 없습니다")
+            ctx.toast("형광펜이 없습니다")
             return
         }
         val sb = StringBuilder()
         sb.append("《").append(book.title).append("》")
         if (book.author.isNotBlank()) sb.append(" — ").append(book.author)
-        sb.append("\n인용문 ").append(quotes.size).append("개\n")
+        sb.append("\n형광펜 ").append(quotes.size).append("개\n")
         for (q in quotes) {
             sb.append("\n“").append(q.text.trim()).append("”\n")
             sb.append("  (").append(pageOf(q.section, q.start)).append("쪽)\n")
@@ -879,7 +879,7 @@ internal object EpisodeWait {
     }
 }
 
-/** Hardware page keys of the paged lists (TOC, 북마크, 인용문, search results). Pure; unit-tested. */
+/** Hardware page keys of the paged lists (TOC, 북마크, 형광펜, search results). Pure; unit-tested. */
 internal object ListKeys {
     /**
      * +1 next page, -1 previous, 0 not a page key. A key bound to 다음 / 이전 페이지 (or 화) pages; a key bound to

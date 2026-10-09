@@ -51,7 +51,7 @@ data class Bookmark(
     val chapter: String = "", val frac: Float = -1f, val sig: String = "",
 )
 
-/** A saved quote / highlight ("인용문"). */
+/** A saved quote / highlight ("형광펜"). */
 data class Quote(
     val id: Long,
     val bookId: Long,
@@ -104,8 +104,8 @@ data class NotePlace(val chapter: String, val frac: Float, val sig: String) {
     companion object { val UNKNOWN = NotePlace("", -1f, "") }
 }
 
-enum class NoteKind(val code: Int, val label: String) { QUOTE(1, "인용문"), BOOKMARK(2, "북마크"), REVIEW(3, "리뷰"), LOOKUP(4, "단어") }
-enum class NotesTab(val label: String) { ALL("전체"), QUOTES("인용문"), MEMOS("메모"), BOOKMARKS("북마크"), REVIEWS("리뷰"), WORDS("단어") }
+enum class NoteKind(val code: Int, val label: String) { QUOTE(1, "형광펜"), BOOKMARK(2, "북마크"), REVIEW(3, "리뷰"), LOOKUP(4, "단어") }
+enum class NotesTab(val label: String) { ALL("전체"), QUOTES("형광펜"), MEMOS("메모"), BOOKMARKS("북마크"), REVIEWS("리뷰"), WORDS("단어") }
 enum class NotesOrder(val label: String) {
     NEWEST("최신순"), OLDEST("오래된 순"), BOOK_RECENT("책별 · 최근 읽은 책 먼저"), BOOK_TITLE("책별 · 제목순");
     val byBook: Boolean get() = this == BOOK_RECENT || this == BOOK_TITLE
