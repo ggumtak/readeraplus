@@ -242,7 +242,8 @@ class BookSession(
 
     /**
      * A new generation at the same view and settings, laid out around [anchor]: a session not shown yet whose target
-     * moved while it was being laid out ([setViewport] keeps the generation when the size is the same).
+     * moved while it was being laid out ([setViewport] keeps the generation when the size is the same), or a page whose
+     * first line moved with 위·아래 여백 ([MarginShift]) after [updateSettings] made the generation.
      */
     fun reanchor(anchor: AnchorSpec) {
         if (generation != null) rebuild(anchor)
@@ -266,6 +267,10 @@ class BookSession(
         rebuild(anchor)
         return Change.RELAYOUT
     }
+
+    /** The body line pitch the text box is cut by ([LayoutKeys.linePitch]) for the settings now. */
+    fun linePitch(): Float = LayoutKeys.linePitch(settings, AndroidTextMeasurer.emPxFor(context, settings.fontSizeSp),
+        AndroidTextMeasurer.naturalLinePxFor(context, settings))
 
     /** The geometry the settings, the view and the read mode make now. */
     private fun geometryNow(): PageGeometry {

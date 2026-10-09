@@ -163,13 +163,30 @@ object LayoutKeys {
             h = minOf(minBox, below).coerceAtLeast(1)
             top = band + ((below - h) / 2).coerceAtLeast(0)
         } else {
-            val pitch = if (emPx > 0f) maxOf(s.lineHeightPct / 100f * emPx, naturalLinePx) else 0f
-            val snapped = linesBox(h, pitch)
+            val snapped = linesBox(h, linePitch(s, emPx, naturalLinePx))
             top += (h - snapped) / 2
             h = snapped
         }
         return PageGeometry(viewW, viewH, left, top, w, h, band, cols, gutter, pageW)
     }
+
+    /**
+     * The body line pitch [geometry] cuts the box by: lineHeight × [emPx] or, when larger, [naturalLinePx] (the engine's
+     * line); 0 when [emPx] is unknown.
+     */
+    fun linePitch(s: ReaderSettings, emPx: Float, naturalLinePx: Float = 0f): Float =
+        if (emPx > 0f) maxOf(s.lineHeightPct / 100f * emPx, naturalLinePx) else 0f
+
+    /**
+     * Only 위·아래 여백 differ between [a] and [b] (and they do): the lines break the same, only the box's height and
+     * place change ([MarginShift]).
+     */
+    fun verticalMarginsOnly(a: ReaderSettings, b: ReaderSettings): Boolean =
+        (a.marginTopDp != b.marginTopDp || a.marginBottomDp != b.marginBottomDp) &&
+            a.copy(marginTopDp = b.marginTopDp, marginBottomDp = b.marginBottomDp) == b
+
+    /** Whole lines of [pitch] px in a box [h] px tall ([linesBox] keeps exactly these); 0 when [pitch] is unknown. */
+    fun linesIn(h: Int, pitch: Float): Int = if (pitch >= 1f && h > 0) (h / pitch + 1e-3f).toInt() else 0
 
     /**
      * [h] cut to the height of the most whole lines of [pitch] px it holds (rounded up to a pixel, so they still fit),

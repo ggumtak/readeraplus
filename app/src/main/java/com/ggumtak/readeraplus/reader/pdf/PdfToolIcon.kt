@@ -73,7 +73,15 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
-        val fg = if (chosen) ACCENT else ICON
+        var fg = if (chosen) ACCENT else ICON
+        // The eraser and the lasso have no pen to raise: the chosen one sits on a light tile, drawn dark (plain to
+        // see in grey too, where the accent colour alone was not).
+        if (chosen && (kind == ERASER || kind == LASSO)) {
+            body.color = CHIP
+            rect.set(3f * d, 4f * d, w - 3f * d, h - 4f * d)
+            canvas.drawRoundRect(rect, 6f * d, 6f * d, body)
+            fg = CHIP_ICON
+        }
         when (kind) {
             PEN -> drawPen(canvas, w, h, fg)
             HIGHLIGHTER -> drawMarker(canvas, w, h, fg)
@@ -202,5 +210,8 @@ internal class PdfToolIcon(context: Context, val kind: Int) : View(context) {
         /** Icon colour on the dark tool bar, and the chosen tool's accent. */
         const val ICON = 0xFFE0E0E0.toInt()
         const val ACCENT = 0xFFF5B82E.toInt()
+        /** The chosen eraser's / lasso's tile and the icon on it. */
+        const val CHIP = 0xFFF2F2F2.toInt()
+        const val CHIP_ICON = 0xFF202020.toInt()
     }
 }

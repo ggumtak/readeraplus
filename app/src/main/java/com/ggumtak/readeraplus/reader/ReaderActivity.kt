@@ -293,6 +293,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private val a11yShown = A11yShown()
     /** Where the reader is (survives relayouts without drifting): a page start or an exact jump target. */
     private var anchor = DocPosition.START
+    /**
+     * While a relayout for 위·아래 여백 alone is on its way: the anchor of the page still on screen, which the next such
+     * change counts its lines from too ([MarginShift]); -1 otherwise.
+     */
+    private var marginBase = -1
     /** A jump whose layout is still pending; a relayout meanwhile must go there, not back to [anchor]. */
     private var pendingJump: PendingNav? = null
     /** S §1.10: the scroll viewport while [AppSettings.readMode] is SCROLL and a page is shown; null in paged mode. */
@@ -2085,6 +2090,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /** The session made a new generation: the scroll viewport keeps drawing its frozen frame until the next show. */
     private fun onNewGeneration() {
+        marginBase = -1
         val sc = scroll ?: return
         sc.onGenerationChanged()
         scrollFrozen = true
@@ -2134,6 +2140,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         s.touch(section, rs)
         val p = layout.pages.getOrNull(idx)
         anchor = DocPosition(section, if (anchorOffset >= 0) anchorOffset else p?.start ?: 0)
+        marginBase = -1
         anchorLanded()
         cancelLoadingText()
         errorPanel.visibility = View.GONE
@@ -3649,15 +3656,42 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         // Settles a running drag first, so the rebuild keeps the line on top now (A §5.5).
         scroll?.stopMotion()
+        // 위·아래 여백 alone: the lines of the page on screen stay where they are (MarginShift), counted from its anchor —
+        // also while the relayout of the step before is still on its way (the device takes a moment per step).
+        val base = when {
+            scroll != null || !LayoutKeys.verticalMarginsOnly(before, eff) -> -1
+            marginBase >= 0 -> marginBase
+            !layoutStale() && navJob?.isActive != true && curSection == anchor.section -> anchor.offset
+            else -> -1
+        }
+        val shown = if (base >= 0) curLayout else null
         when (s.updateSettings(eff, keepHere())) {
             BookSession.Change.NONE -> {}
             BookSession.Change.REPAINT -> { thumbPaintVersion++; repaint() }
             BookSession.Change.RELAYOUT -> {
+                if (shown != null) keepLinesInPlace(s, shown, base)
                 onNewGeneration()
+                if (shown != null) marginBase = base
                 relayout()
             }
         }
         onApplied?.invoke()
+    }
+
+    /**
+     * 위·아래 여백 changed the box of [shown] (the page on screen) by whole lines: the page gives its top lines to the page
+     * before, or takes them back, instead of sliding half a line the wrong way ([MarginShift]); the new generation is
+     * anchored at its new first line.
+     */
+    private fun keepLinesInPlace(s: BookSession, shown: SectionLayout, base: Int) {
+        val g = s.generation ?: return
+        val pitch = s.linePitch()
+        val delta = LayoutKeys.linesIn(shown.config.height, pitch) - LayoutKeys.linesIn(g.geometry.contentHeight, pitch)
+        // No whole line gained or lost (or none can cross the top): the page starts where the one on screen does.
+        val off = MarginShift.start(shown, curPageIdx, base, delta).let { if (it < 0) base else it }
+        if (off == anchor.offset) return
+        anchor = DocPosition(anchor.section, off)
+        s.reanchor(AnchorSpec(anchor.section, off))
     }
 
     /** Same layout, new colours/footer items: redraw with a renderer for the new settings. */
