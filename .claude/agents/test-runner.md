@@ -2,7 +2,7 @@
 name: test-runner
 description: Runs ReaderaPlus checks (typecheck, JVM unit tests, CI status) and returns a short, factual summary of failures with file:line locations. Use after a change or to triage a failing build. Never modifies source code.
 tools: Read, Grep, Glob, Bash
-model: haiku
+model: sonnet
 maxTurns: 20
 color: yellow
 ---

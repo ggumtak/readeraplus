@@ -19,9 +19,9 @@ Innospace One Comet(e-ink, Android 14)용 개인 전자책 리더. EPUB + TXT, K
 
 | 에이전트 | 모델 | 역할 | 권한 |
 |---|---|---|---|
-| `Explore` | haiku | 파일·심볼·호출부 탐색, 기존 구현·의존성 조사 (내장 Explore 대체) | 읽기 전용 |
+| `Explore` | sonnet | 파일·심볼·호출부 탐색, 기존 구현·의존성 조사 (내장 Explore 대체) | 읽기 전용 |
 | `implementer` | sonnet | 메인이 설계한 범위가 명확한 구현·버그 수정 + 단위 테스트 | 지정 파일만 수정 |
-| `test-runner` | haiku | typecheck/unittest/CI 결과 실행·요약 | 소스 수정 금지 |
+| `test-runner` | sonnet | typecheck/unittest/CI 결과 실행·요약 | 소스 수정 금지 |
 | `code-reviewer` | sonnet | 변경분의 버그·회귀·성능·안정성 리뷰 | 읽기 전용 |
 
 ### 위임 기준
