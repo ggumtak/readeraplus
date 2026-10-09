@@ -64,8 +64,11 @@ class LanUpload(private val context: Context, private val destDir: File, private
         /** [file] was received and stored; [book] is its library entry, or null when adding it failed. */
         fun onReceived(file: File, book: Book?)
 
-        /** An upload was refused or failed; [message] is user text ("200MB보다 큰 파일은 받을 수 없습니다", …). */
-        fun onError(message: String)
+        /**
+         * An upload was refused or failed; [message] is user text ("200MB보다 큰 파일은 받을 수 없습니다", …), [file] the
+         * refused file's name when one file was refused (null when the request as a whole failed).
+         */
+        fun onError(message: String, file: String?)
     }
 
     /** A running server: [url] for the browser, e.g. "http://192.168.0.23:8080/k7m3"; [code] is its path part. */
@@ -146,7 +149,7 @@ class LanUpload(private val context: Context, private val destDir: File, private
             },
             events = object : LanExchange.Events {
                 override fun received(file: File, book: Book?) = post { listener.onReceived(file, book) }
-                override fun error(message: String) = post { listener.onError(message) }
+                override fun error(message: String, file: String?) = post { listener.onError(message, file) }
             },
         )
 
@@ -253,7 +256,7 @@ class LanUpload(private val context: Context, private val destDir: File, private
         private const val BUFFER = 64 * 1024
 
         internal const val NO_WIFI = "Wi-Fi에 연결되어 있지 않습니다"
-        internal const val NO_PORT = "전송에 쓸 포트를 열지 못했습니다 (8080–8089 모두 사용 중)"
+        internal val NO_PORT = "책 받기를 시작하지 못했습니다 (포트 ${PORTS.first}–${PORTS.last} 사용 중)"
 
         private val random by lazy { SecureRandom() }
 
@@ -302,10 +305,13 @@ internal class LanExchange(
     private val events: Events,
     private val guard: LanGuard = LanGuard(),
 ) {
-    /** What the page learns (called on the handler thread; the server posts them to the main thread). */
+    /**
+     * What the page learns (called on the handler thread; the server posts them to the main thread). [error]'s [file]
+     * names a refused file; null when the request failed as a whole.
+     */
     interface Events {
         fun received(file: File, book: Book?)
-        fun error(message: String)
+        fun error(message: String, file: String? = null)
     }
 
     /** Thrown by [MultipartReader.copyBody] beyond its limit. */
@@ -398,7 +404,8 @@ internal class LanExchange(
         val parts = MultipartReader(body, boundary)
         /** (sanitised name asked for, name stored). */
         val saved = ArrayList<Pair<String, String>>(1)
-        val problems = ArrayList<String>(1)
+        /** (file name as shown, reason) of each refused file. */
+        val problems = ArrayList<Pair<String, String>>(1)
         try {
             if (!parts.start()) {
                 respond(out, 400, TEXT, BAD_REQUEST)
@@ -417,7 +424,7 @@ internal class LanExchange(
                 val name = LanNames.sanitize(raw)
                 if (name == null) {
                     parts.copyBody(null, LanUpload.MAX_FILE_BYTES)
-                    problems += "$WRONG_TYPE: ${LanNames.display(raw)}"
+                    problems += LanNames.display(raw) to WRONG_TYPE
                     continue
                 }
                 val file = receive(parts, name, problems) ?: continue
@@ -433,25 +440,29 @@ internal class LanExchange(
             if (stopped()) return
             val (status, message) = when {
                 isNoSpace(e) -> 507 to NO_SPACE
-                e is DiskError -> 500 to "$FAILED (저장하지 못했습니다)"
-                else -> 400 to "$FAILED (연결이 끊겼습니다)"
+                e is DiskError -> 500 to DISK_FAILED
+                else -> 400 to CUT_OFF
             }
             events.error(message)
             // The browser may still read this if only the rest of its body was lost.
             respond(out, status, TEXT, message)
             return
         }
-        for (p in problems) events.error(p)
+        for ((name, reason) in problems) events.error(reason, name)
+        // A refused file is "a.txt · 빈 파일은 받을 수 없습니다"; the page's own one-file requests get the reason only
+        // (it shows the name before the answer already).
+        val lines = problems.joinToString("\n") { (name, reason) -> "$name · $reason" }
         when {
             problems.isEmpty() && saved.size == 1 -> respond(out, 200, TEXT, LanPage.received(saved[0].first, saved[0].second))
             problems.isEmpty() -> respond(out, 200, TEXT, "받았습니다 (${saved.size}개)")
-            saved.isEmpty() -> respond(out, 415, TEXT, problems.joinToString("\n"))
-            else -> respond(out, 200, TEXT, "받았습니다 (${saved.size}개)\n" + problems.joinToString("\n"))
+            saved.isEmpty() && problems.size == 1 -> respond(out, 415, TEXT, problems[0].second)
+            saved.isEmpty() -> respond(out, 415, TEXT, lines)
+            else -> respond(out, 200, TEXT, "받았습니다 (${saved.size}개)\n$lines")
         }
     }
 
     /** Streams the current part to [name] in [destDir] (temp file, then renamed); null (and a problem) on refusal. */
-    private fun receive(parts: MultipartReader, name: String, problems: MutableList<String>): File? {
+    private fun receive(parts: MultipartReader, name: String, problems: MutableList<Pair<String, String>>): File? {
         val temp = File(destDir, "$TEMP_PREFIX${System.nanoTime()}$TEMP_SUFFIX")
         var done = false
         try {
@@ -462,11 +473,14 @@ internal class LanExchange(
             }
             val size = DiskOutput(fo).use { parts.copyBody(it, LanUpload.MAX_FILE_BYTES) }
             if (size == 0L) {
-                problems += "$EMPTY: ${LanNames.display(name)}"
+                problems += LanNames.display(name) to EMPTY
                 return null
             }
-            val target = File(destDir, LanNames.unique(name) { File(destDir, it).exists() })
-            if (!temp.renameTo(target)) throw DiskError(IOException("rename failed"))
+            val target = try {
+                BookCopies.settle(temp, destDir, name)
+            } catch (e: IOException) {
+                throw DiskError(e)
+            }
             done = true
             return target
         } finally {
@@ -474,16 +488,8 @@ internal class LanExchange(
         }
     }
 
-    /** Temp files an earlier run left behind (process killed mid-upload): only one server writes here at a time. */
-    fun removeStaleTemps() {
-        try {
-            destDir.list()?.forEach { n ->
-                if (n.startsWith(TEMP_PREFIX) && n.endsWith(TEMP_SUFFIX)) File(destDir, n).delete()
-            }
-        } catch (t: Throwable) {
-            // Best effort: a leftover hidden temp file costs only its space.
-        }
-    }
+    /** Temp files an earlier run left behind (process killed mid-upload); a recent one may still be written. */
+    fun removeStaleTemps() = BookCopies.sweepTemps(destDir)
 
     companion object {
         /**
@@ -508,7 +514,9 @@ internal class LanExchange(
         internal const val WRONG_TYPE = "TXT·EPUB 파일만 받을 수 있습니다"
         internal const val NO_SPACE = "저장 공간이 부족합니다"
         internal const val EMPTY = "빈 파일은 받을 수 없습니다"
-        internal const val FAILED = "파일을 받지 못했습니다"
+        /** The file could not be written here (the folder, not the connection). */
+        internal const val DISK_FAILED = "기기에 저장하지 못했습니다"
+        internal const val CUT_OFF = "연결이 끊겨 받지 못했습니다"
         private const val BAD_REQUEST = "잘못된 요청입니다"
         private const val NOT_FOUND = "찾을 수 없습니다"
 
@@ -1139,10 +1147,10 @@ li{margin:6px 0;word-break:break-all}
 small{color:#555}
 </style></head><body>
 <h1>리더플러스로 책 보내기</h1>
-<p>TXT·EPUB 파일을 고르거나 아래 상자에 끌어다 놓으세요.</p>
-<div id="drop">여기에 파일을 끌어다 놓기<br><br><input type="file" id="f" multiple accept=".txt,.epub"></div>
+<p>다 받을 때까지 기기에서 ‘Wi-Fi로 책 받기’ 화면을 열어 두세요.</p>
+<div id="drop">TXT·EPUB 파일을 여기에 끌어다 놓거나 고르세요<br><br><input type="file" id="f" multiple accept=".txt,.epub"></div>
 <ul id="list"></ul>
-<p><small>파일 하나에 200MB까지 보낼 수 있습니다. 다 받을 때까지 기기에서 ‘Wi-Fi로 책 받기’ 화면을 열어 두세요.</small></p>
+<p><small>파일 하나에 200MB까지</small></p>
 <script>
 var q=[],busy=0,L=document.getElementById('list'),M=${LanUpload.MAX_FILE_BYTES},
 U=location.pathname.replace(/\/+${'$'}/,'')+'/upload';
@@ -1154,8 +1162,8 @@ if(!/\.(txt|epub)${'$'}/i.test(f.name)){show(li,f,'TXT·EPUB 파일만 보낼 �
 if(f.size>M){show(li,f,'200MB보다 큰 파일은 보낼 수 없습니다',1);return next();}
 busy=1;var x=new XMLHttpRequest(),d=new FormData();d.append('file',f,f.name);x.open('POST',U);
 x.upload.onprogress=function(e){if(e.lengthComputable)show(li,f,Math.floor(e.loaded*100/e.total)+'%');};
-x.onload=function(){show(li,f,x.responseText||('오류 '+x.status),x.status!=200);busy=0;next();};
-x.onerror=function(){show(li,f,'보내지 못했습니다 (연결이 끊겼습니다)',1);busy=0;next();};
+x.onload=function(){show(li,f,x.responseText||('보내지 못했습니다 (오류 '+x.status+')'),x.status!=200);busy=0;next();};
+x.onerror=function(){show(li,f,'연결이 끊겨 보내지 못했습니다',1);busy=0;next();};
 x.send(d);}
 var I=document.getElementById('f');I.onchange=function(){add(I.files);I.value='';};
 var D=document.getElementById('drop');

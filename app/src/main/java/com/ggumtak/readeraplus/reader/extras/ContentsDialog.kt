@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextPaint
@@ -16,6 +17,7 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -23,19 +25,27 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.BaseAdapter
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.HorizontalScrollView
+import com.ggumtak.readeraplus.ui.kit.PageTarget
+import com.ggumtak.readeraplus.reader.ReaderJump
 import android.widget.ListView
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Bookmark
 import com.ggumtak.readeraplus.data.Library
+import com.ggumtak.readeraplus.data.NotesTab
 import com.ggumtak.readeraplus.data.Quote
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderFormat
+import com.ggumtak.readeraplus.reader.JumpAnchor
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
+import com.ggumtak.readeraplus.render.QuoteLook
+import com.ggumtak.readeraplus.render.QuoteStyles
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.TapAction
@@ -44,6 +54,7 @@ import com.ggumtak.readeraplus.ui.kit.InkNumPad
 import com.ggumtak.readeraplus.ui.kit.InkPager
 import com.ggumtak.readeraplus.ui.kit.InkPagerBar
 import com.ggumtak.readeraplus.ui.kit.MenuItem
+import com.ggumtak.readeraplus.ui.kit.ToolbarAction
 import com.ggumtak.readeraplus.ui.kit.NumPadState
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.borderBox
@@ -61,8 +72,11 @@ import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
+import com.ggumtak.readeraplus.ui.kit.toolbar
 import com.ggumtak.readeraplus.ui.kit.vertical
 import com.ggumtak.readeraplus.ui.library.LibraryText
+import com.ggumtak.readeraplus.ui.notes.NotesActivity
+import com.ggumtak.readeraplus.ui.settings.SettingsActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
@@ -72,10 +86,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Full-screen 목차 · 북마크 · 형광펜 dialog. Every list is paged a screen at a time ([InkPager]: pager bar, page keys,
- * a drag is one page jump). The TOC tab (T1-1) has a header — "540화 · 지금 123화" with [지금] [화 번호] [검색], the
- * time left (T1-7) and, for a confidently numbered TOC, "빠진 화 3개 · 중복 1개 ›" — and marks the entries before the
- * current one in gray.
+ * Full-screen 목차 · 북마크 · 인용문 dialog. Every list scrolls and flings like any list ([SCROLLS]) under its pager
+ * bar ([InkPager]: "3 / 27", ◀ / ▶ and the page keys jump a page). The TOC tab (T1-1) has a header — "123/540화" with
+ * [현재 위치] [화 번호] [검색], the time left (T1-7) and, for a confidently numbered TOC, "빠진 화 3개 · 중복 1개 ›" — and
+ * marks the entries before the current one in gray.
  */
 internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private val ctx = host.activity
@@ -88,18 +102,44 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private val scope = MainScope()
     private lateinit var dialog: Dialog
     private val body = FrameLayout(ctx)
-    private val tabLabels = arrayOfNulls<TextView>(3)
-    private val tabBars = arrayOfNulls<View>(3)
-    private val tabViews = arrayOfNulls<View>(3)
+    private val tabLabels = arrayOfNulls<TextView>(4)
+    private val tabBars = arrayOfNulls<View>(4)
+    private val tabViews = arrayOfNulls<View>(4)
     /** The tabs' list pagers (null while a tab loads or is empty): the page keys move the selected one. */
-    private val pagers = arrayOfNulls<InkPager>(3)
-    private var tab = initialTab.coerceIn(0, 2)
+    private val pagers = arrayOfNulls<PageTarget>(4)
+    private var tab = initialTab.coerceIn(0, 3).let { if (it == 3 && !thumbsShown()) 0 else it }
+    private var thumbsTab: ThumbsTab? = null
+    private var onFirstShown: (() -> Unit)? = null
+    private fun thumbsShown(): Boolean = (host as? PageThumbsHost)?.thumbnailsShown == true
     private lateinit var shareAll: View
+    /** "독서 노트 (모든 책)" (북마크 and 인용문 tabs): the notes hub. */
+    private lateinit var hubLink: View
+    /** The book's quotes in reading order, as last loaded. */
+    private var allQuotes: List<Quote> = emptyList()
+    /** The quotes listed: [allQuotes] through the chip filter ([quoteFilter]); 모두 공유 shares these. */
     private var quotes: List<Quote> = emptyList()
+    /** The selected chip's style, [QuoteRows.ALL] for 전체 (in memory only, never persisted). */
+    private var quoteFilter = QuoteRows.ALL
+    /** The open session's NoteSig ([NotePlaceHost]), null without one: decides "· 위치 바뀜". */
+    private var sessionSig: String? = null
+    /** Where the last touch went down on a quote row (row coordinates): a click there opens the palette. */
+    private var quoteDownRow: View? = null
+    private var quoteDownX = -1f
+    /** Uptime of that DOWN: only a click right after it (a tap) uses it, not a later key or accessibility click. */
+    private var quoteDownAt = 0L
     /** Episode numbers of the book's TOC (BookInsightsHost), null while unknown or without a TOC. */
     private var episodes: Episodes? = null
     /** The TOC tab once built (its header is filled in when the episodes arrive late). */
     private var tocTab: TocTab? = null
+    /** The 북마크 / 인용문 lists once built: their rows' page numbers refresh when the pages are counted. */
+    private var bookmarkList: ListView? = null
+    private var quoteList: ListView? = null
+    /** The pages are counted (or counting failed): the page numbers shown while 쪽수 계산 중 are read again. */
+    private val countsListener: () -> Unit = {
+        tocTab?.countsChanged()
+        (bookmarkList?.adapter as? BaseAdapter)?.notifyDataSetChanged()
+        (quoteList?.adapter as? BaseAdapter)?.notifyDataSetChanged()
+    }
 
     fun show() {
         val insights = host as? BookInsightsHost
@@ -119,22 +159,24 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
 
     private fun open() {
         val root = ctx.vertical { setBackgroundColor(Ink.WHITE) }
-        // toolbar
-        val bar = ctx.horizontal { minimumHeight = ctx.dp(56); setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
-        bar.addView(ctx.flatIcon(R.drawable.ic_arrow_back, "뒤로") { dialog.dismiss() })
-        bar.addView(ctx.label(book.title, 19f, bold = true, maxLines = 1).apply { setPadding(ctx.dp(12), 0, ctx.dp(8), 0) }, lp(0, WRAP_CONTENT, 1f))
-        shareAll = ctx.flatIcon(R.drawable.ic_share, "형광펜 모두 공유") { shareAllQuotes() }.apply { visibility = View.GONE }
-        bar.addView(shareAll)
+        // toolbar: the kit's (title 20 sp bold, U polish 10)
+        val bar = ctx.toolbar(book.title, R.drawable.ic_arrow_back, onNav = { dialog.dismiss() }, actions = listOf(
+            ToolbarAction(R.drawable.ic_open_in_new, "독서 노트 (모든 책)") { openHub() },
+            ToolbarAction(R.drawable.ic_share, "형광펜 모두 공유") { shareAllQuotes() },
+        ))
+        val actions = bar.getChildAt(0) as ViewGroup
+        hubLink = actions.getChildAt(actions.childCount - 2).apply { visibility = View.GONE }
+        shareAll = actions.getChildAt(actions.childCount - 1).apply { visibility = View.GONE }
         root.addView(bar, lp())
         // tabs
         val tabs = ctx.horizontal()
-        listOf("목차", "북마크", "형광펜").forEachIndexed { i, name ->
+        listOf("목차", "북마크", "형광펜", "미리보기").forEachIndexed { i, name ->
             val cell = ctx.vertical {
                 gravity = Gravity.CENTER_HORIZONTAL
                 background = pressableBackground()
                 setOnClickListener { select(i) }
             }
-            val t = ctx.label(name, 16f).apply {
+            val t = ctx.label(name, 16f, maxLines = 1).apply {
                 gravity = Gravity.CENTER
                 setPadding(0, ctx.dp(12), 0, ctx.dp(10))
             }
@@ -143,13 +185,19 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             cell.addView(underline, LinearLayout.LayoutParams(ctx.dp(64), ctx.dp(3)))
             tabLabels[i] = t
             tabBars[i] = underline
-            tabs.addView(cell, lp(0, WRAP_CONTENT, 1f))
+            if (i == 3 && !thumbsShown()) cell.visibility = View.GONE
+            tabs.addView(cell, lp(ctx.dp(90), WRAP_CONTENT))
         }
-        root.addView(tabs, lp())
+        root.addView(HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled = false; isFillViewport = true; addView(tabs) }, lp())
         root.addView(ctx.hairline())
         root.addView(body, lp(MATCH_PARENT, 0, 1f))
         dialog = ctx.fullScreenDialog(root)
-        dialog.setOnDismissListener { scope.cancel() }
+        dialog.setOnDismissListener {
+            host.removeCountsListener(countsListener)
+            thumbsTab?.stop()
+            onFirstShown = null
+            scope.cancel()
+        }
         dialog.setOnKeyListener { _, code, event ->
             if (code == KeyEvent.KEYCODE_BACK && tab == 0 && tocTab?.isFiltering == true) {
                 if (event.action == KeyEvent.ACTION_UP) tocTab?.clearFilterIfAny()
@@ -162,9 +210,21 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 }
             }
         }
-        select(tab)
-        dialog.show()
-        PanelRegistry.dialog(ctx, dialog)
+        if (tab == 3 && ThumbsTab.available(host)) {
+            onFirstShown = {
+                if (!stale() && !ctx.isFinishing && !ctx.isDestroyed) {
+                    dialog.show(); PanelRegistry.dialog(ctx, dialog); host.addCountsListener(countsListener)
+                } else {
+                    thumbsTab?.stop() // never shown: no dismiss will stop the tab's own counts listener
+                }
+            }
+            select(tab)
+        } else {
+            select(tab)
+            dialog.show()
+            PanelRegistry.dialog(ctx, dialog)
+            host.addCountsListener(countsListener)
+        }
     }
 
     /**
@@ -182,21 +242,48 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             dialog.dismiss()
             return
         }
+        if (tab == 3 && i != 3) thumbsTab?.stop()
         tab = i
-        for (k in 0..2) {
+        if (i == 3 && ThumbsTab.available(host)) {
+            val t = thumbsTab ?: ThumbsTab(host) { dialog.dismiss() }.also { thumbsTab = it; tabViews[3] = it.view; pagers[3] = it }
+            t.prepare(body.width, body.height) {
+                if (tab == 3 && !stale()) {
+                    showTabBody(3, t.view)
+                    val ready = onFirstShown; onFirstShown = null; ready?.invoke()
+                } else if (onFirstShown != null) {
+                    onFirstShown = null // the dialog was never shown (no dismiss will come): stop the tab here
+                    t.stop()
+                }
+            }
+            return
+        }
+        val v = tabViews[i] ?: when (i) {
+            0 -> buildToc()
+            1 -> FrameLayout(ctx).also { loadBookmarks(it) }
+            2 -> FrameLayout(ctx).also { loadQuotes(it) }
+            else -> ctx.label("책을 여는 중입니다…", 16f).apply { gravity = Gravity.CENTER }
+        }.also { tabViews[i] = it }
+        showTabBody(i, v)
+    }
+
+    private fun showTabBody(i: Int, v: View) {
+        for (k in 0..3) {
             val sel = k == i
             tabLabels[k]?.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             tabLabels[k]?.setTextColor(if (sel) Ink.BLACK else Ink.GRAY)
             tabBars[k]?.setBackgroundColor(if (sel) Ink.BLACK else Color.TRANSPARENT)
         }
-        val v = tabViews[i] ?: when (i) {
-            0 -> buildToc()
-            1 -> FrameLayout(ctx).also { loadBookmarks(it) }
-            else -> FrameLayout(ctx).also { loadQuotes(it) }
-        }.also { tabViews[i] = it }
         body.removeAllViews()
         body.addView(v, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         shareAll.visibility = if (i == 2 && quotes.isNotEmpty()) View.VISIBLE else View.GONE
+        hubLink.visibility = if (i == 1 || i == 2) View.VISIBLE else View.GONE
+    }
+
+    /** "독서 노트 (모든 책)": the hub on the matching tab; the dialog goes (the reader reloads its notes on return). */
+    private fun openHub() {
+        val notesTab = if (tab == 1) NotesTab.BOOKMARKS else NotesTab.QUOTES
+        dialog.dismiss()
+        runCatching { NotesActivity.open(ctx, notesTab) }
     }
 
     private fun goAndClose(pos: DocPosition) {
@@ -204,13 +291,16 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         if (!stale()) host.goTo(pos, remember = true)
     }
 
-    /** A list with its pager bar below it (the bar is the list's page indicator and ◀ / ▶ buttons). */
+    /**
+     * A list with its pager bar below it (the bar is the list's page indicator and ◀ / ▶ buttons). The list scrolls
+     * and flings like any list on every device (2026-10-04, [SCROLLS]); the bar and the page keys jump a page.
+     */
     private fun pagedList(tabIndex: Int, list: ListView): LinearLayout {
         val col = ctx.vertical()
         col.addView(list, lp(MATCH_PARENT, 0, 1f))
         val bar = InkPagerBar(ctx)
         col.addView(bar)
-        pagers[tabIndex] = list.inkPaging(bar)
+        pagers[tabIndex] = list.inkPaging(bar, scrolls = SCROLLS)
         return col
     }
 
@@ -219,8 +309,18 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     private fun buildToc(): View {
         val doc = host.document ?: return ctx.emptyMessage("책을 여는 중입니다…")
         if (doc.toc.isEmpty()) {
-            val hint = if (doc.format == BookFormat.TXT) "\n\n읽기 설정에서 '챕터 자동 인식'을 켜거나\n챕터 규칙(정규식)을 추가해 보세요" else ""
-            return ctx.emptyMessage("이 책에는 목차가 없습니다$hint")
+            val empty = ctx.emptyMessage("이 책에는 목차가 없습니다")
+            // A TXT book finds its chapters with the book's own TXT options: one tap there (from the reader only).
+            val reader = ctx as? ReaderActivity
+            if (doc.format != BookFormat.TXT || reader == null) return empty
+            return ctx.vertical {
+                gravity = Gravity.CENTER
+                addView(empty, lp())
+                addView(ctx.outlineButton("이 책의 TXT 정리 ›") {
+                    dialog.dismiss()
+                    reader.openAppSettings(SettingsActivity.PAGE_BOOK_TXT)
+                }, lp(WRAP_CONTENT, WRAP_CONTENT))
+            }
         }
         return TocTab(doc).also { tocTab = it }.view
     }
@@ -249,7 +349,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
 
         private val list = ctx.einkListView()
         private val summary = ctx.label("", 15f, maxLines = 1)
-        private val nowBtn = headerButton("지금") { pager.showRow(current.coerceAtLeast(0), CURRENT_ROW) }
+        private val nowBtn = headerButton("현재 위치") { pager.showRow(current.coerceAtLeast(0), CURRENT_ROW) }
         private val numBtn = headerButton("화 번호") { askEpisode() }
         private val searchBtn = headerButton("검색") { askFilter() }
         private val allBtn = headerButton("전체 보기") { clearFilter() }
@@ -278,7 +378,8 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                 // Read episodes (before the current one) in gray.
                 title.setTextColor(if (current >= 0 && i < current) Ink.GRAY else Ink.BLACK)
                 val lbl = labels[i] ?: tocPageLabel(secs[i], offs[i].coerceAtLeast(0))
-                    .also { if (offs[i] >= 0) labels[i] = it }
+                    // A "" given while the pages are counted is not kept: it would stay blank after the count.
+                    .also { if (offs[i] >= 0 && runCatching { host.pagesPending() }.getOrNull() == null) labels[i] = it }
                 page.text = lbl
                 return row
             }
@@ -307,7 +408,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             list.setOnItemClickListener { _, _, position, _ -> openEntry(indexAt(position)) }
             val bar = InkPagerBar(ctx)
             col.addView(bar)
-            pager = list.inkPaging(bar)
+            pager = list.inkPaging(bar, scrolls = SCROLLS)
             pagers[0] = pager
             view = col
 
@@ -345,6 +446,12 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
 
         fun episodesChanged() {
             renderHeader()
+        }
+
+        /** The pages are counted: the labels cached before (none while pending) are read again, visible rows included. */
+        fun countsChanged() {
+            labels.fill(null)
+            adapter.notifyDataSetChanged()
         }
 
         private fun openEntry(i: Int, then: (() -> Unit)? = null) {
@@ -563,7 +670,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         }
     }
 
-    private fun headerButton(text: String, onClick: () -> Unit): TextView = ctx.label(text, 14f).apply {
+    private fun headerButton(text: String, onClick: () -> Unit): TextView = ctx.label(text, 15f, maxLines = 1).apply {
         gravity = Gravity.CENTER
         setPadding(ctx.dp(10), 0, ctx.dp(10), 0)
         // No pressed state: what the button does is the feedback (one e-ink update).
@@ -576,8 +683,10 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         setPadding(ctx.dp(16), 0, ctx.dp(16), 0)
     }
 
+    /** A TOC row's page: empty while the pages are counted (no estimate shown as a page number). */
     private fun tocPageLabel(section: Int, offset: Int): String =
-        PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull())
+        if (runCatching { host.pagesPending() }.getOrNull() != null) ""
+        else PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull())
 
     private fun tocRow(): LinearLayout = ctx.horizontal {
         minimumHeight = ctx.dp(52)
@@ -590,21 +699,27 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     // ------------------------------------------------------------------ 북마크
 
     private fun loadBookmarks(container: FrameLayout) {
-        val keep = pagers[1]?.list?.firstVisiblePosition ?: 0
+        val keep = (pagers[1] as? InkPager)?.list?.firstVisiblePosition ?: 0
         pagers[1] = null
         container.removeAllViews()
         container.addView(ctx.emptyMessage("불러오는 중…"))
         val bookId = book.id
         scope.launch {
-            val list = withContext(Dispatchers.IO) { runCatching { Library.bookmarks(bookId) }.getOrDefault(emptyList()) }
-                .sortedWith(compareBy({ it.section }, { it.offset }))
-            tabLabels[1]?.text = if (list.isEmpty()) "북마크" else "북마크 ${list.size}"
+            val loaded = withContext(Dispatchers.IO) { runCatching { Library.bookmarks(bookId) }.getOrNull() }
             container.removeAllViews()
+            if (loaded == null) {
+                // Not "none": the user's bookmarks are still there. The tab label stays as it was.
+                container.addView(retryMessage("북마크를 불러오지 못했습니다\n\n눌러서 다시 시도") { loadBookmarks(container) })
+                return@launch
+            }
+            val list = loaded.sortedWith(compareBy({ it.section }, { it.offset }))
+            tabLabels[1]?.text = if (list.isEmpty()) "북마크" else "북마크 ${list.size}"
             if (list.isEmpty()) {
                 container.addView(ctx.emptyMessage(TocText.noBookmarks(Settings.app.bookmarkByTouch)))
                 return@launch
             }
             val lv = ctx.einkListView()
+            bookmarkList = lv
             lv.adapter = object : BaseAdapter() {
                 override fun getCount() = list.size
                 override fun getItem(position: Int) = list[position]
@@ -617,7 +732,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
                     note.visibility = if (b.note.isBlank()) View.GONE else View.VISIBLE
                     note.text = "메모: ${b.note}"
                     row.findViewWithTag<TextView>("meta").text =
-                        "${pageOf(b.section, b.offset)}쪽  ·  ${Fmt.dateTime(b.createdAt)}"
+                        PageLabel.metaLine(pageOf(b.section, b.offset), Fmt.date(b.createdAt))
                     return row
                 }
             }
@@ -628,7 +743,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             }
             container.addView(pagedList(1, lv), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
             // Reloaded after an edit: stay where the user was.
-            if (keep > 0) pagers[1]?.showRow(keep)
+            if (keep > 0) (pagers[1] as? InkPager)?.showRow(keep)
         }
     }
 
@@ -636,66 +751,203 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         if (stale()) return
         trackedMenu(anchor, listOf(
             MenuItem("이동", R.drawable.ic_bookmark) { goAndClose(DocPosition(b.section, b.offset)) },
-            MenuItem("메모 편집", R.drawable.ic_edit) {
-                ctx.multilinePrompt("북마크 메모", b.note, "메모", minLines = 3) { text ->
-                    scope.launch {
-                        withContext(Dispatchers.IO) { runCatching { Library.updateBookmarkNote(b.id, text.trim()) } }
-                        loadBookmarks(container)
-                    }
-                }
-            },
+            MenuItem("메모 편집", R.drawable.ic_edit) { editBookmarkNote(b, b.note, container) },
             MenuItem("삭제", R.drawable.ic_delete) {
                 scope.launch {
-                    withContext(Dispatchers.IO) { runCatching { Library.deleteBookmark(b.id) } }
+                    val ok = withContext(Dispatchers.IO) { runCatching { Library.deleteBookmark(b.id) }.isSuccess }
+                    if (!ok) failed("삭제하지 못했습니다")
                     loadBookmarks(container)
                 }
             },
         ))
     }
 
-    // ------------------------------------------------------------------ 형광펜
+    /** The bookmark's memo editor; a failed save says so and opens again with the typed text (never lost). */
+    private fun editBookmarkNote(b: Bookmark, initial: String, container: FrameLayout) {
+        ctx.multilinePrompt("북마크 메모", initial, "메모", minLines = 3) { text ->
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) { runCatching { Library.updateBookmarkNote(b.id, text.trim()) }.isSuccess }
+                loadBookmarks(container)
+                if (!ok && failed("저장하지 못했습니다")) editBookmarkNote(b, text, container)
+            }
+        }
+    }
+
+    /** A failed write's toast while the reader is alive (true then). */
+    private fun failed(text: String): Boolean {
+        if (ctx.isFinishing || ctx.isDestroyed) return false
+        ctx.toast(text)
+        return true
+    }
+
+    // ------------------------------------------------------------------ 인용문
 
     private fun loadQuotes(container: FrameLayout) {
-        val keep = pagers[2]?.list?.firstVisiblePosition ?: 0
+        val keep = (pagers[2] as? InkPager)?.list?.firstVisiblePosition ?: 0
         pagers[2] = null
         container.removeAllViews()
         container.addView(ctx.emptyMessage("불러오는 중…"))
         val bookId = book.id
         scope.launch {
             val loaded = withContext(Dispatchers.IO) { runCatching { Library.quotes(bookId) }.getOrNull() }
-            if (loaded != null) QuoteCache.put(bookId, loaded)
-            val list = loaded.orEmpty().sortedWith(compareBy({ it.section }, { it.start }))
-            quotes = list
-            tabLabels[2]?.text = if (list.isEmpty()) "형광펜" else "형광펜 ${list.size}"
-            if (tab == 2) shareAll.visibility = if (list.isNotEmpty()) View.VISIBLE else View.GONE
-            container.removeAllViews()
-            if (list.isEmpty()) {
-                container.addView(ctx.emptyMessage("형광펜이 없습니다\n\n본문을 길게 눌러 문장을 선택한 뒤\n'형광펜'을 누르세요"))
+            if (loaded == null) {
+                // Not "none" (the user would think the quotes lost): the rows and the cache stay as they were; no
+                // list is shown, so there is nothing to 모두 공유.
+                quotes = emptyList()
+                if (tab == 2) shareAll.visibility = View.GONE
+                container.removeAllViews()
+                container.addView(retryMessage("형광펜을 불러오지 못했습니다\n\n눌러서 다시 시도") { loadQuotes(container) })
                 return@launch
             }
-            val lv = ctx.einkListView()
-            lv.adapter = object : BaseAdapter() {
-                override fun getCount() = list.size
-                override fun getItem(position: Int) = list[position]
-                override fun getItemId(position: Int) = list[position].id
-                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                    val row = (convertView as? LinearLayout) ?: noteRow(4)
-                    val q = list[position]
-                    row.findViewWithTag<TextView>("text").text = q.text.trim()
-                    val note = row.findViewWithTag<TextView>("note")
-                    note.visibility = if (q.note.isBlank()) View.GONE else View.VISIBLE
-                    note.text = "메모: ${q.note}"
-                    row.findViewWithTag<TextView>("meta").text = "${pageOf(q.section, q.start)}쪽  ·  ${Fmt.dateTime(q.createdAt)}"
-                    return row
+            QuoteCache.put(bookId, loaded)
+            setQuotes(loaded)
+            showQuotes(container, keep)
+        }
+    }
+
+    /** A failed load's message: a tap loads again. */
+    private fun retryMessage(text: String, retry: () -> Unit): TextView =
+        ctx.emptyMessage(text).apply { setOnClickListener { retry() } }
+
+    /** New quote rows (a load or a recolour): reading order, the session sig, the filter kept while it applies. */
+    private fun setQuotes(all: List<Quote>) {
+        allQuotes = all.sortedWith(compareBy({ it.section }, { it.start }))
+        sessionSig = sessionSig(host)
+        quoteFilter = QuoteRows.keepFilter(quoteFilter, QuoteRows.styleCounts(allQuotes))
+    }
+
+    /** Builds the tab from [allQuotes] in one pass (one e-ink update): chips, list and pager, starting at row [keep]. */
+    private fun showQuotes(container: FrameLayout, keep: Int) {
+        val all = allQuotes
+        val list = QuoteRows.filter(all, quoteFilter)
+        quotes = list
+        pagers[2] = null
+        tabLabels[2]?.text = QuoteRows.tabLabel(list.size, all.size, quoteFilter != QuoteRows.ALL)
+        if (tab == 2) shareAll.visibility = if (list.isNotEmpty()) View.VISIBLE else View.GONE
+        container.removeAllViews()
+        if (all.isEmpty()) {
+            container.addView(ctx.emptyMessage("형광펜이 없습니다\n\n본문을 길게 누른 뒤 ‘형광펜’을 누르세요"))
+            return
+        }
+        val ink = QuoteLook.ink()
+        val lv = ctx.einkListView()
+        quoteList = lv
+        lv.adapter = object : BaseAdapter() {
+            override fun getCount() = list.size
+            override fun getItem(position: Int) = list[position]
+            override fun getItemId(position: Int) = list[position].id
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val row = (convertView as? LinearLayout) ?: quoteRow(ink)
+                bindQuote(row, list[position])
+                return row
+            }
+        }
+        // The swatch column is not a clickable child (InkPager's drag must see every DOWN): the row's one click
+        // decides by where the touch went down.
+        lv.setOnItemClickListener { _, view, position, _ ->
+            val q = list.getOrNull(position) ?: return@setOnItemClickListener
+            val tap = quoteDownRow === view && SystemClock.uptimeMillis() - quoteDownAt < TAP_CLICK_MS
+            val x = if (tap) quoteDownX else -1f
+            quoteDownRow = null
+            if (QuoteRows.inSwatchColumn(x, view.width, ctx.dp(QuoteRows.SWATCH_COLUMN_DP))) recolour(swatchAnchor(view), q, container)
+            else openQuote(q)
+        }
+        lv.setOnItemLongClickListener { _, view, position, _ ->
+            quoteDownRow = null
+            list.getOrNull(position)?.let { quoteMenu(view, it, container) }
+            true
+        }
+        val col = ctx.vertical()
+        if (QuoteRows.showChips(QuoteRows.styleCounts(all))) {
+            col.addView(chipRow(all, container), lp(MATCH_PARENT, WRAP_CONTENT))
+            col.addView(ctx.hairline())
+        }
+        col.addView(pagedList(2, lv), lp(MATCH_PARENT, 0, 1f))
+        container.addView(col, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        if (keep > 0) (pagers[2] as? InkPager)?.showRow(keep)
+    }
+
+    /** `[전체 12] [● 5] [● 3] [가̲ 4]`: a tap filters in memory (no query) and rebuilds the list from the top. */
+    private fun chipRow(all: List<Quote>, container: FrameLayout): View {
+        val counts = QuoteRows.styleCounts(all)
+        val row = ctx.horizontal { setPadding(ctx.dp(12), ctx.dp(8), ctx.dp(12), ctx.dp(8)) }
+        val many = QuoteRows.chips(counts).size >= 4
+        fun add(style: Int, chip: LinearLayout) {
+            val selected = style == quoteFilter
+            chip.background = ctx.borderBox(fill = if (selected) Ink.BLACK else Ink.WHITE, radiusDp = 3f)
+            for (k in 0 until chip.childCount) (chip.getChildAt(k) as? TextView)?.setTextColor(if (selected) Ink.WHITE else Ink.BLACK)
+            chip.setOnClickListener {
+                if (quoteFilter == style || stale()) return@setOnClickListener
+                quoteFilter = style
+                showQuotes(container, 0)
+            }
+            // Up to 4 chips keep their width; more share the row (all six styles fit 360 dp without a scroll).
+            val params = if (many) lp(0, ctx.dp(CHIP_DP), 1f) else lp(WRAP_CONTENT, ctx.dp(CHIP_DP))
+            if (row.childCount > 0) params.leftMargin = ctx.dp(if (many) 4 else 6)
+            if (many) chip.setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
+            row.addView(chip, params)
+        }
+        add(QuoteRows.ALL, chip().apply { addView(ctx.label(QuoteRows.allChip(all.size), 14f, maxLines = 1)) })
+        val ink = QuoteLook.ink()
+        for ((style, n) in QuoteRows.chips(counts)) {
+            add(style, chip().apply {
+                contentDescription = "${QuoteStyles.label(style)} $n"
+                addView(QuoteSwatch(ctx, style, ROW_SWATCH_DP, ink))
+                addView(ctx.label("$n", 14f, maxLines = 1).apply { setPadding(ctx.dp(if (many) 3 else 6), 0, 0, 0) })
+            })
+        }
+        return row
+    }
+
+    private fun chip(): LinearLayout = ctx.horizontal {
+        gravity = Gravity.CENTER
+        minimumWidth = ctx.dp(44)
+        setPadding(ctx.dp(12), 0, ctx.dp(12), 0)
+    }
+
+    private fun swatchAnchor(row: View): View = row.findViewWithTag("swatchCol") ?: row
+
+    /** A quote whose place changed goes by its fraction (the offsets point at other text); others go to the offset. */
+    private fun openQuote(q: Quote) {
+        val notes = host as? NoteJumpHost
+        if (placeChanged(q) && notes != null) {
+            dialog.dismiss()
+            if (!stale()) notes.openNote(ReaderJump(q.section, q.start, q.end, q.frac, q.sig, q.text.take(ReaderJump.ANCHOR_MAX)))
+        } else goAndClose(DocPosition(q.section, q.start))
+    }
+
+    /** "· 위치 바뀜" (PLAN K2): the reader's rule, with the anchor checked when the quote's section is shown. */
+    private fun placeChanged(q: Quote): Boolean =
+        QuoteRows.placeChanged(q.sig, sessionSig, if (sessionSig != null && q.sig != sessionSig) anchorMatch(host, q) else null)
+
+    /**
+     * The palette at [anchor] (the row's swatch column) → IO `updateQuoteStyle` + reload → the page's highlights of
+     * that section (only while the book is still the open one) → the tab rebuilt in place. No confirm.
+     */
+    private fun recolour(anchor: View, q: Quote, container: FrameLayout) {
+        if (stale()) return
+        QuotePalette.show(anchor, QuoteStyles.of(q.style)) { s ->
+            if (s == q.style || stale()) return@show
+            val keep = (pagers[2] as? InkPager)?.list?.firstVisiblePosition ?: 0
+            // Not [scope]: closing the dialog mid-write must still recolour the page and the cache.
+            MainScope().launch {
+                val all = withContext(Dispatchers.IO) {
+                    runCatching {
+                        Library.updateQuoteStyle(q.id, s)
+                        Library.quotes(book.id)
+                    }.getOrNull()
                 }
+                if (all == null) {
+                    if (!ctx.isFinishing && !ctx.isDestroyed) ctx.toast("색을 바꾸지 못했습니다")
+                    return@launch
+                }
+                // The last-used style follows every palette pick, a recolour included (N §7.1.3).
+                runCatching { Settings.raw().edit().putInt(PREF_QUOTE_STYLE, s).apply() }
+                if (!stale()) refreshQuoteHighlights(host, q.section, all) else QuoteCache.put(book.id, all)
+                if (!dialog.isShowing) return@launch
+                setQuotes(all)
+                showQuotes(container, keep)
             }
-            lv.setOnItemClickListener { _, _, position, _ -> goAndClose(DocPosition(list[position].section, list[position].start)) }
-            lv.setOnItemLongClickListener { _, view, position, _ ->
-                quoteMenu(view, list[position], container)
-                true
-            }
-            container.addView(pagedList(2, lv), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-            if (keep > 0) pagers[2]?.showRow(keep)
         }
     }
 
@@ -704,27 +956,33 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         trackedMenu(anchor, listOf(
             MenuItem("복사", R.drawable.ic_content_copy) { TextActions.copy(ctx, q.text) },
             MenuItem("공유", R.drawable.ic_share) { TextActions.share(ctx, quoteShareText(q), book.title) },
-            MenuItem("메모", R.drawable.ic_edit) {
-                ctx.multilinePrompt("형광펜 메모", q.note, "메모", minLines = 3) { text ->
-                    scope.launch {
-                        withContext(Dispatchers.IO) { runCatching { Library.updateQuoteNote(q.id, text.trim()) } }
-                        loadQuotes(container)
-                    }
-                }
-            },
+            MenuItem("색 바꾸기", R.drawable.ic_ink_highlighter) { recolour(swatchAnchor(anchor), q, container) },
+            MenuItem("메모 편집", R.drawable.ic_edit) { editQuoteNote(q, q.note, container) },
             MenuItem("삭제", R.drawable.ic_delete) {
                 ctx.confirm("형광펜 삭제", "이 형광펜을 삭제할까요?", "삭제") {
                     scope.launch {
-                        val remaining = withContext(Dispatchers.IO) {
-                            runCatching { Library.deleteQuote(q.id) }
-                            runCatching { Library.quotes(book.id) }.getOrNull()
+                        val (ok, remaining) = withContext(Dispatchers.IO) {
+                            runCatching { Library.deleteQuote(q.id) }.isSuccess to
+                                runCatching { Library.quotes(book.id) }.getOrNull()
                         }
+                        if (!ok) failed("삭제하지 못했습니다")
                         if (remaining != null && !stale()) refreshQuoteHighlights(host, q.section, remaining)
                         loadQuotes(container)
                     }
                 }
             },
         ))
+    }
+
+    /** The quote's memo editor; a failed save says so and opens again with the typed text (never lost). */
+    private fun editQuoteNote(q: Quote, initial: String, container: FrameLayout) {
+        ctx.multilinePrompt("형광펜 메모", initial, "메모", minLines = 3) { text ->
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) { runCatching { Library.updateQuoteNote(q.id, text.trim()) }.isSuccess }
+                loadQuotes(container)
+                if (!ok && failed("저장하지 못했습니다")) editQuoteNote(q, text, container)
+            }
+        }
     }
 
     private fun quoteShareText(q: Quote): String {
@@ -736,22 +994,13 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         return sb.toString()
     }
 
+    /** 모두 공유 of the listed (chip-filtered) quotes, tagged "[초록]" when they use ≥ 2 styles. */
     private fun shareAllQuotes() {
         if (quotes.isEmpty()) {
             ctx.toast("형광펜이 없습니다")
             return
         }
-        val sb = StringBuilder()
-        sb.append("《").append(book.title).append("》")
-        if (book.author.isNotBlank()) sb.append(" — ").append(book.author)
-        sb.append("\n형광펜 ").append(quotes.size).append("개\n")
-        for (q in quotes) {
-            sb.append("\n“").append(q.text.trim()).append("”\n")
-            sb.append("  (").append(pageOf(q.section, q.start)).append("쪽)\n")
-            if (q.note.isNotBlank()) sb.append("  메모: ").append(q.note.trim()).append('\n')
-        }
-        // Keep well below the binder transaction limit.
-        val text = if (sb.length > 200_000) sb.substring(0, 200_000) + "\n…" else sb.toString()
+        val text = QuoteRows.shareAll(book.title, book.author, quotes, { pageOf(it.section, it.start) }, TextActions.SHARE_MAX_CHARS)
         TextActions.share(ctx, text, book.title)
     }
 
@@ -759,12 +1008,55 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
 
     private fun noteRow(textLines: Int): LinearLayout = ctx.vertical {
         background = pressableBackground()
-        val inner = ctx.vertical { setPadding(ctx.dp(16), ctx.dp(12), ctx.dp(16), ctx.dp(12)) }
+        addView(noteTexts(textLines, ctx.dp(16)), lp())
+        addView(ctx.hairline())
+    }
+
+    private fun noteTexts(textLines: Int, padRight: Int): LinearLayout {
+        val inner = ctx.vertical { setPadding(ctx.dp(16), ctx.dp(12), padRight, ctx.dp(12)) }
         inner.addView(ctx.label("", 16f, maxLines = textLines).apply { tag = "text"; setLineSpacing(0f, 1.2f) }, lp())
         inner.addView(ctx.label("", 14f, color = Ink.GRAY, maxLines = 3).apply { tag = "note"; setPadding(0, ctx.dp(6), 0, 0) }, lp())
         inner.addView(ctx.label("", 13f, color = Ink.GRAY).apply { tag = "meta"; setPadding(0, ctx.dp(6), 0, 0) }, lp())
-        addView(inner, lp())
+        return inner
+    }
+
+    /**
+     * `[text / 메모 / meta (weight 1)] [swatch column 48 dp]`: the swatch at the top, beside the first text line. The
+     * column is a plain (not clickable) view; the row's touch listener only records where the touch went down.
+     */
+    private fun quoteRow(ink: Boolean): LinearLayout = ctx.vertical {
+        background = pressableBackground()
+        val line = ctx.horizontal { gravity = Gravity.TOP }
+        line.addView(noteTexts(4, 0), lp(0, WRAP_CONTENT, 1f))
+        val column = FrameLayout(ctx).apply { tag = "swatchCol"; contentDescription = "색 바꾸기" }
+        column.addView(QuoteSwatch(ctx, QuoteStyles.YELLOW, ROW_SWATCH_DP, ink).apply { tag = "swatch" },
+            FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = ctx.dp(SWATCH_TOP_DP) })
+        line.addView(column, lp(ctx.dp(QuoteRows.SWATCH_COLUMN_DP), MATCH_PARENT))
+        addView(line, lp())
         addView(ctx.hairline())
+        setOnTouchListener { v, e ->
+            if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                quoteDownRow = v
+                quoteDownX = e.x
+                quoteDownAt = e.downTime
+            }
+            false
+        }
+    }
+
+    private fun bindQuote(row: LinearLayout, q: Quote) {
+        row.findViewWithTag<TextView>("text").text = q.text.trim()
+        val note = row.findViewWithTag<TextView>("note")
+        note.visibility = if (q.note.isBlank()) View.GONE else View.VISIBLE
+        note.text = "메모: ${q.note}"
+        val meta = PageLabel.metaLine(pageOf(q.section, q.start), Fmt.date(q.createdAt))
+        row.findViewWithTag<TextView>("meta").text = if (placeChanged(q)) meta + QuoteRows.STALE_SUFFIX else meta
+        val swatch = row.findViewWithTag<QuoteSwatch>("swatch")
+        val style = QuoteStyles.of(q.style)
+        if (swatch.style != style) {
+            swatch.style = style
+            swatch.invalidate()
+        }
     }
 
     private fun trackedMenu(anchor: View, items: List<MenuItem>) {
@@ -772,15 +1064,31 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
     }
 
     private fun pageOf(section: Int, offset: Int): String =
-        PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull()).ifEmpty { "-" }
+        if (runCatching { host.pagesPending() }.getOrNull() != null) "-"
+        else PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(section, offset)) }.getOrNull()).ifEmpty { "-" }
 
     companion object {
-        /** [지금] and a jump show the entry as the 4th row: the three above give context. */
+        /**
+         * The 목차 / 북마크 / 인용문 lists drag and fling like any list, e-ink included (the user's call, 2026-10-04:
+         * a list this short scrolls well enough there). The 썸네일 grid stays a page at a time.
+         */
+        const val SCROLLS = true
+        /** [현재 위치] and a jump show the entry as the 4th row: the three above give context. */
         const val CURRENT_ROW = 3
-        const val HEADER_DP = 40
+        const val HEADER_DP = 48
         const val INFO_DP = 26
         /** A message after a jump waits for the dialog to go (the reader's window gets the focus back). */
         const val NOTE_DELAY_MS = 300L
+        /** Filter chips are 44 dp tall (N §7.2). */
+        const val CHIP_DP = 48
+        /** A row click this soon after its DOWN came from that touch (a tap is released before the long press). */
+        const val TAP_CLICK_MS = 1_500L
+        /** The last-used quote style (N §7.1.3; the selection popup's default). */
+        const val PREF_QUOTE_STYLE = "extras.quoteStyle"
+        /** Swatches in rows and chips: a 12 dp dot (QuoteSwatch draws the ink sample at its own row size). */
+        const val ROW_SWATCH_DP = 12
+        /** The row swatch's top: level with the first 16 sp text line under the row's 12 dp padding. */
+        const val SWATCH_TOP_DP = 16
 
         /**
          * [all] is the book's complete, freshly loaded quote list: stores it in [QuoteCache] and re-sends the quote
@@ -788,8 +1096,28 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
          */
         fun refreshQuoteHighlights(host: ReaderHost, section: Int, all: List<Quote>) {
             runCatching { QuoteCache.put(host.book.id, all) }
-            val hl = all.filter { it.section == section }.map { Highlight(it.start, it.end, HighlightKind.QUOTE) }
+            // A quote whose place changed is not drawn (its offsets point at other text): the reader's rule (PLAN K2).
+            val sig = sessionSig(host)
+            val hl = QuoteHighlights.forSection(all, section, sig) { anchorMatch(host, it) }
             runCatching { host.setHighlights("quotes", section, hl) }
+        }
+
+        /** The open session's NoteSig ("" for EPUB) through [NotePlaceHost]; null when the host has no places. */
+        fun sessionSig(host: ReaderHost): String? =
+            (host as? NotePlaceHost)?.let { h -> runCatching { h.notePlace(host.currentPosition()).sig }.getOrNull() }
+
+        /**
+         * Whether [q]'s text is still at its offset (`JumpAnchor.matches`, ≤ 24 visible chars): the reader's own check
+         * on any section it has laid out ([NotePlaceHost.quoteAnchorMatch], the set the page draws), else when its
+         * section is the one laid out; null when that text is not at hand.
+         */
+        fun anchorMatch(host: ReaderHost, q: Quote): Boolean? {
+            (host as? NotePlaceHost)?.let { h -> runCatching { h.quoteAnchorMatch(q) }.getOrNull()?.let { return it } }
+            val layout = runCatching { host.currentLayout?.takeIf { host.currentPosition().section == q.section } }.getOrNull()
+                ?: return null
+            val text = layout.content.text
+            if (q.start < 0 || q.start >= text.length) return false
+            return JumpAnchor.matches(text, q.start, q.text)
         }
 
         /**
@@ -901,22 +1229,23 @@ internal object ListKeys {
 /** Texts of the TOC tab (header, filter, gaps dialog, jump notes). Pure; unit-tested. */
 internal object TocText {
     /**
-     * Header summary: "540화 · 지금 123화" when the episodes are usable ([maxNumber] ≥ 0; [currentNumber] -1 leaves out
-     * "지금"), else "목차 612개 · 지금 87번째" ([current] = TOC index, -1 before the first entry: "목차 612개").
+     * Header summary, as the status bar's 회차 reads: "123/540화" when the episodes are usable ([maxNumber] ≥ 0;
+     * [currentNumber] -1: "540화"), else "87/612" ([current] = TOC index, -1 before the first entry: "목차 612개").
      */
     fun summary(count: Int, current: Int, maxNumber: Int, currentNumber: Int): String = when {
-        maxNumber >= 0 && currentNumber >= 0 -> "${maxNumber}화 · 지금 ${currentNumber}화"
+        maxNumber >= 0 && currentNumber >= 0 -> "$currentNumber/${maxOf(maxNumber, currentNumber)}화"
         maxNumber >= 0 -> "${maxNumber}화"
-        current >= 0 -> "목차 ${count}개 · 지금 ${current + 1}번째"
+        current >= 0 -> "${current + 1}/${maxOf(count, current + 1)}"
         else -> "목차 ${count}개"
     }
 
-    /** "남은 시간  이 화 3분 · 책 7시간" (either part may be missing); null when both are unknown. */
+    /** "남은 시간 · 챕터 3분 · 책 7시간" (either part may be missing); null when both are unknown. */
     fun timeLeft(episodeMinutes: Int?, bookMinutes: Int?): String? {
-        val parts = ArrayList<String>(2)
-        if (episodeMinutes != null) parts += "이 화 ${ReaderFormat.duration(episodeMinutes)}"
+        val parts = ArrayList<String>(3)
+        parts += "남은 시간"
+        if (episodeMinutes != null) parts += "챕터 ${ReaderFormat.duration(episodeMinutes)}"
         if (bookMinutes != null) parts += "책 ${ReaderFormat.duration(bookMinutes)}"
-        return if (parts.isEmpty()) null else "남은 시간  " + parts.joinToString(" · ")
+        return if (parts.size == 1) null else parts.joinToString(" · ")
     }
 
     /** "빠진 화 3개 · 중복 1개 ›" (either part alone), or null when there is nothing to report. */
@@ -960,9 +1289,9 @@ internal object TocText {
     /** "57" or "120–125". */
     fun runLabel(r: IntRange): String = if (r.first == r.last) "${r.first}" else "${r.first}–${r.last}"
 
-    /** The go-to dialog's [화] hint: "1–540화 · 지금 123화" ([current] -1: without "지금"). */
+    /** The go-to dialog's [화] hint: "1–540화 · 현재 123화" ([current] -1: without "현재"), as [GoToText.info] says. */
     fun episodeHint(min: Int, max: Int, current: Int): String =
-        "${min.coerceAtLeast(0)}–${max}화" + if (current >= 0) " · 지금 ${current}화" else ""
+        "${min.coerceAtLeast(0)}–${max}화" + if (current >= 0) " · 현재 ${current}화" else ""
 
     /** After a jump to the next higher episode: "57화가 없어 58화로 이동했습니다". */
     fun jumped(asked: Int, found: Int): String = "${asked}화가 없어 ${found}화로 이동했습니다"
@@ -972,8 +1301,8 @@ internal object TocText {
 
     /** The bookmark tab's empty text; the corner tap is mentioned only when it is on ("북마크 모서리 터치"). */
     fun noBookmarks(byTouch: Boolean): String =
-        if (byTouch) "북마크가 없습니다\n\n화면 오른쪽 위 모서리를 누르거나\n메뉴에서 북마크를 추가하세요"
-        else "북마크가 없습니다\n\n메뉴에서 북마크를 추가하세요"
+        if (byTouch) "북마크가 없습니다\n\n오른쪽 위 모서리를 누르거나\n‘북마크 추가’를 누르세요"
+        else "북마크가 없습니다\n\n‘북마크 추가’를 누르세요"
 
     /**
      * 이 / 가 after [word]: by the final consonant of a last Hangul syllable, or of a last digit as read in Korean

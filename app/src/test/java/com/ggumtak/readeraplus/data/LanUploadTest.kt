@@ -419,6 +419,8 @@ class LanUploadTest {
         val html = LanPage.HTML
         assertTrue(html.contains("<meta charset=\"utf-8\">"))
         assertTrue(html.contains("리더플러스로 책 보내기"))
+        // The one warning first, before the drop zone.
+        assertTrue(html.indexOf("‘Wi-Fi로 책 받기’ 화면을 열어 두세요") in 0 until html.indexOf("<div id=\"drop\">"))
         assertTrue(html.contains("'/upload'"))
         assertTrue(html.contains("M=${LanUpload.MAX_FILE_BYTES}"))
         assertFalse(html.contains("http://") || html.contains("https://") || html.contains("src="))
@@ -444,8 +446,10 @@ class LanUploadTest {
             received += file
         }
 
-        override fun error(message: String) {
+        val files = ArrayList<String?>()
+        override fun error(message: String, file: String?) {
             errors += message
+            files += file
         }
     }
 
@@ -565,17 +569,24 @@ class LanUploadTest {
         val h = harness()
         val (status, body) = h.upload(listOf(file("그림.pdf", "x")))
         assertEquals(415, status)
-        assertEquals("${LanExchange.WRONG_TYPE}: 그림.pdf", body)
-        assertEquals(listOf("${LanExchange.WRONG_TYPE}: 그림.pdf"), h.events.errors)
+        // One file per request (the page): the reason only, the page shows the name before it.
+        assertEquals(LanExchange.WRONG_TYPE, body)
+        assertEquals(listOf(LanExchange.WRONG_TYPE), h.events.errors)
+        assertEquals(listOf<String?>("그림.pdf"), h.events.files)
         val (s2, b2) = h.upload(listOf(file("빈.txt", "")))
         assertEquals(415, s2)
-        assertEquals("${LanExchange.EMPTY}: 빈.txt", b2)
+        assertEquals(LanExchange.EMPTY, b2)
+        assertEquals("빈.txt", h.events.files.last())
         assertTrue(names(h.dir).isEmpty())
-        // One good file and one refused: 200 with the problem listed.
+        // One good file and one refused: 200 with the problem listed as "name · reason".
         val (s3, b3) = h.upload(listOf(file("good.txt", "ok"), file("나쁜.exe", "x")))
         assertEquals(200, s3)
-        assertEquals("받았습니다 (1개)\n${LanExchange.WRONG_TYPE}: 나쁜.exe", b3)
+        assertEquals("받았습니다 (1개)\n나쁜.exe · ${LanExchange.WRONG_TYPE}", b3)
         assertEquals(listOf("good.txt"), names(h.dir))
+        // Two refused in one request: one line each.
+        val (s4, b4) = h.upload(listOf(file("a.pdf", "x"), file("b.txt", "")))
+        assertEquals(415, s4)
+        assertEquals("a.pdf · ${LanExchange.WRONG_TYPE}\nb.txt · ${LanExchange.EMPTY}", b4)
     }
 
     @Test
@@ -592,9 +603,11 @@ class LanUploadTest {
         // The connection ends before the announced length: no file, no temp file, an error for the page.
         val (status, body) = h.upload(listOf(file("반쪽.txt", "x".repeat(5000))), cut = 3000)
         assertEquals(400, status)
-        assertEquals("${LanExchange.FAILED} (연결이 끊겼습니다)", body)
+        assertEquals(LanExchange.CUT_OFF, body)
         assertTrue(names(h.dir).isEmpty())
         assertEquals(listOf(body), h.events.errors)
+        // The request failed as a whole: no file is named.
+        assertEquals(listOf<String?>(null), h.events.files)
     }
 
     @Test
@@ -605,7 +618,7 @@ class LanUploadTest {
         val h = Harness(notADir, longArrayOf(1_000), Recorder(), ArrayList())
         val (status, body) = h.upload(listOf(file("a.txt", "hello")))
         assertEquals(500, status)
-        assertEquals("${LanExchange.FAILED} (저장하지 못했습니다)", body)
+        assertEquals(LanExchange.DISK_FAILED, body)
         assertEquals(listOf(body), h.events.errors)
         assertTrue(h.added.isEmpty())
         assertEquals(listOf("plain"), names(base.dir))
@@ -722,10 +735,14 @@ class LanUploadTest {
     @Test
     fun staleTempFilesAreRemoved() {
         val h = harness()
-        File(h.dir, "${LanExchange.TEMP_PREFIX}123${LanExchange.TEMP_SUFFIX}").writeText("x")
+        val stale = File(h.dir, "${LanExchange.TEMP_PREFIX}123${LanExchange.TEMP_SUFFIX}")
+        stale.writeText("x")
+        stale.setLastModified(System.currentTimeMillis() - 2 * 60 * 60 * 1000L)
+        // An upload still being written is left alone.
+        File(h.dir, "${LanExchange.TEMP_PREFIX}456${LanExchange.TEMP_SUFFIX}").writeText("x")
         File(h.dir, "keep.txt").writeText("x")
         File(h.dir, ".upload-note.txt").writeText("x")
         h.exchange.removeStaleTemps()
-        assertEquals(listOf(".upload-note.txt", "keep.txt"), names(h.dir))
+        assertEquals(listOf(".upload-456.part", ".upload-note.txt", "keep.txt"), names(h.dir))
     }
 }

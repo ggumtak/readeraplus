@@ -1,0 +1,47 @@
+{
+  "lane": "RU-C",
+  "files": [
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ReaderChrome.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ChromeMath.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/ReturnNav.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/StatusModel.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/AllocCounter.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/StatusTextTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/StatusModelTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/ReturnPointsTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/ReturnMarkCodecTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/ChromeMathTest.kt",
+    "docs/next/RU_C_STATUS.md",
+    "docs/next/lanes/RU-C.result.json"
+  ],
+  "summary": "Reader chrome per U §2: top bar with bookmark width guard, one-line 17sp title, brightness row with icon-swap looks, lazily built options panel (question/swipe/device/panel rows) and the verdict-NONE link; bottom bar with the return dock, fixed-width centred tnum page label (autosize 14-17sp, content description with the page) and [rotation][pin], seek row. ReturnNav: pure ReturnPoints (★1-★5 + chipVisible), ReturnMarkCodec, lazy dock strip with fit rule and lazy floating chip, PIN_FLOATS=false. StatusModel/StatusText: zero-allocation slot filling, change detection by dot px, chapterStartsHere, sample(). ChromeMath pure helpers. All setters no-ops when unchanged.",
+  "checks": "module typecheck OK; module unittest OK (47 tests); full tools/typecheck.sh OK; full tools/unittest.sh OK (1242 tests); StatusModelTest 0 bytes for 10,000 updates after warm-up; two independent reviews, all real findings fixed.",
+  "contractRequests": [
+    "ReturnHost has no section-count/length API: U §3.3 coerceIn of a restored DocPosition cannot be done in ReturnNav; host must clamp (or add a clamp hook to ReturnHost)."
+  ],
+  "rcaNotes": [
+    "buildViews: light = LightController(lightHost); returnNav = ReturnNav(this, returnHost); chrome = ReaderChrome(this, chromeActions, returnNav.dock, light); light.attach(chrome); root.addView(returnNav.chip, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.START)). Delete the chrome.setBrightnessCollapsed(...) call and PREF_BRIGHTNESS_COLLAPSED (method kept as a no-op for compatibility).",
+    "Main thread: call returnNav.bind() at the END of every showPage (after the new page/frame is installed) and at every scroll settle, in BOTH chrome states — with the chrome hidden this is what shows/updates the floating chip (onJump is called before the jump, so it cannot show the chip itself). Cheap and allocation-free when unchanged. Also call it from onCountsChanged(complete).",
+    "returnNav.onJump(currentPosition()) BEFORE jumpTo at every remembered jump (goTo remember, goToPage, goToProgress, followLink, seek release), same main-thread message as the showPage.",
+    "returnNav.onManualTurn() after the turned page is installed (paged: per manual turn; scroll: per step and per screen of drag via ScreenCounter).",
+    "chromeActions.onPinHere() = returnNav.onPinPressed().",
+    "setChromeVisible(v): chrome.setVisible(v) then (with chromeVisible already updated) if (v) returnNav.onChromeShown() else returnNav.onChromeHidden(); then updateChipPosition().",
+    "ReturnHost.onReturnChanged() = if (chromeVisible) bindChrome(); updateChipPosition(). bindChrome() adds returnNav.bind() and chrome.setPinned(returnNav.pinned, returnNav.markOnScreen()) and light.bind().",
+    "ReturnHost members currently TODO(\"owner: RC-A\") must be implemented (pin tap throws until then). globalPageOf/isOnCurrentPage/jumpToReturn must tolerate/clamp an out-of-range DocPosition (restored marks are not clamped here).",
+    "afterOpen: ReaderIo.launch { BookPrefs.returnMark(id) } -> main, guard isDestroyed/bookRef?.id/session, then returnNav.restore(text). saveReturnMark(t) = ReaderIo.launch { BookPrefs.setReturnMark(id, t) }.",
+    "reopenDocument: val f = returnNav.markFraction() before switching sessions, then returnNav.reparsed(f, exact = epub && sameSectionCount). closeCurrentBook: returnNav.reset().",
+    "updateChipPosition (chrome hidden only): bottomMargin = insets[3] + dp(PROGRESS_LANE_DP) + dp(4), above extras bars; leftMargin = insets[0] + dp(8).",
+    "ReaderMenus ⋮: when chrome.bookmarkHidden is true, add '북마크 추가'/'북마크 삭제'.",
+    "chrome.setPage(label, max, progress) with label = ReaderFormat.pageLabel(...) while visible (sets the '페이지 이동, N / M' description). setInsets is safe to call on every insets pass (re-sizes only when the row width changes).",
+    "StatusModel: buildDecor fills StatusInputs for shown items only, then status.update(settings, inputs, ProgressMath.trackPx(viewW, lane, density)) in the same main-thread step that installs the frame; PageDecor(hl, bookmarked, status.decor, status.decor.version). StatusSampleHost.statusSample(item) = status.sample(item, scratchInputs)."
+  ],
+  "deviations": [
+    "setBrightnessCollapsed kept as a no-op (still in the frozen API) instead of deleted (U §2.3).",
+    "ReturnPoints.restorePinned also remaps offer/chainOffer MARK->OTHER when a temporary mark is demoted (case missing from U §3.2; otherwise the chip would point at the pin instead of the reading place).",
+    "Restored marks are not coerceIn-clamped in ReturnNav (no section-count API); the host clamps.",
+    "restore() after reset() is ignored until the next bind()/onJump() (U §3.3 says 'until the next afterOpen', which ReturnNav cannot observe).",
+    "Row width for the width guard/label uses displayMetrics.widthPixels minus side insets instead of root.width (root.width is stale right after a rotation).",
+    "ReturnNav.bind() also refreshes the chip when the chrome is hidden (spec lists bind for the chrome-visible case only)."
+  ],
+  "complete": true
+}

@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.reader.extras
 
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.ui.settings.SettingsFormat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -9,12 +10,16 @@ class FormatTest {
 
     @Test
     fun fileSizes() {
-        assertEquals("0 B", Fmt.fileSize(0))
-        assertEquals("532 B", Fmt.fileSize(532))
-        assertEquals("1.00 KB", Fmt.fileSize(1024))
-        assertEquals("812 KB", Fmt.fileSize(812L * 1024))
-        assertEquals("15.3 MB", Fmt.fileSize((15.3 * 1024 * 1024).toLong()))
-        assertEquals("1.05 GB", Fmt.fileSize((1.05 * 1024 * 1024 * 1024).toLong()))
+        // 책 정보 says a size as the library card does (one wording in the app, 2026-10-04).
+        assertEquals("0B", Fmt.fileSize(0))
+        assertEquals("532B", Fmt.fileSize(532))
+        assertEquals("1KB", Fmt.fileSize(1024))
+        assertEquals("812KB", Fmt.fileSize(812L * 1024))
+        assertEquals("3.4MB", Fmt.fileSize((3.4 * 1024 * 1024).toLong()))
+        assertEquals("15MB", Fmt.fileSize((15.3 * 1024 * 1024).toLong()))
+        for (n in longArrayOf(0, 532, 1024, 3_565_158, 16_043_212, 1L shl 31)) {
+            assertEquals(com.ggumtak.readeraplus.ui.library.LibraryText.formatSize(n), Fmt.fileSize(n))
+        }
     }
 
     @Test
@@ -43,17 +48,28 @@ class FormatTest {
         assertEquals("20.5", Fmt.number(20.499998f))
         assertEquals("170%", Fmt.pct(170))
         assertEquals("없음", Fmt.em(0))
-        assertEquals("1em", Fmt.em(100))
-        assertEquals("1.25em", Fmt.em(125))
-        assertEquals("0.5em", Fmt.em(50))
-        assertEquals("0.05em", Fmt.em(5))
+        assertEquals("1자", Fmt.em(100))
+        assertEquals("1.25자", Fmt.em(125))
+        assertEquals("0.5자", Fmt.em(50))
+        assertEquals("0.05자", Fmt.em(5))
         assertEquals("기본", Fmt.letterSpacing(0))
         assertEquals("+2%", Fmt.letterSpacing(20))
-        assertEquals("-1%", Fmt.letterSpacing(-10))
+        assertEquals("\u22121%", Fmt.letterSpacing(-10))
         assertEquals("+1.5%", Fmt.letterSpacing(15))
-        assertEquals("400", Fmt.weight(400))
-        assertEquals("700", Fmt.weight(700))
-        assertEquals("450", Fmt.weight(450))
+        assertEquals("기본", Fmt.weight(400))
+        assertEquals("+6", Fmt.weight(700))
+        assertEquals("+1", Fmt.weight(450))
+        assertEquals("+2", Fmt.weight(500))
+        assertEquals("-1", Fmt.weight(350))
+        assertEquals("-6", Fmt.weight(100))
+        assertEquals("+10", Fmt.weight(900))
+        // relative to the font's own weight: a variable font whose default wght is 300
+        assertEquals("기본", Fmt.weight(300, 300))
+        assertEquals("+2", Fmt.weight(400, 300))
+        assertEquals("-4", Fmt.weight(100, 300))
+        assertEquals(300, com.ggumtak.readeraplus.render.FontMath.naturalWeight(true, 300f))
+        assertEquals(400, com.ggumtak.readeraplus.render.FontMath.naturalWeight(false, 300f))
+        assertEquals(400, com.ggumtak.readeraplus.render.FontMath.naturalWeight(true, 0f))
         assertEquals("1.0x", Fmt.rate(1f))
         assertEquals("1.3x", Fmt.rate(1.3f))
         assertEquals("끔", Fmt.minutes(0))
@@ -83,8 +99,8 @@ class FormatTest {
 
     @Test
     fun replaceRules() {
-        assertEquals("없음", Fmt.rulesLabel(""))
-        assertEquals("없음", Fmt.rulesLabel("# 주석만\n\n"))
+        assertEquals("없음 · 광고 문구 등 지우기", Fmt.rulesLabel(""))
+        assertEquals("없음 · 광고 문구 등 지우기", Fmt.rulesLabel("# 주석만\n\n"))
         val rules = "# 광고 줄 지우기\n^\\s*광고.*$ => \n(\\S)\\.{3} => $1…\n잘못된[ => x\n화살표 없음\n => 빈 패턴"
         // The rules the parser applies (as RuleList.enabledCount): comments, "=> 빈 패턴" and the line without an arrow
         // are not rules; the invalid regex is counted (it is reported as invalid separately).
@@ -97,7 +113,13 @@ class FormatTest {
     @Test
     fun dates() {
         assertEquals("-", Fmt.dateTime(0))
-        assertTrue(Fmt.dateTime(1_700_000_000_000L).matches(Regex("\\d{4}\\.\\d{2}\\.\\d{2} \\d{2}:\\d{2}")))
+        assertEquals("-", Fmt.date(0))
+        // The app's one wording (style guide 9): never "2026.09.30".
+        val now = System.currentTimeMillis()
+        assertEquals(SettingsFormat.dateTime(now), Fmt.dateTime(now))
+        assertEquals(SettingsFormat.date(now), Fmt.date(now))
+        assertTrue(Fmt.date(now).matches(Regex("\\d{1,2}월 \\d{1,2}일")))
+        assertTrue(Fmt.dateTime(1_700_000_000_000L).matches(Regex("2023년 11월 1[45]일 \\d{2}:\\d{2}")))
     }
 
     // ------------------------------------------------------------------ page labels
@@ -122,6 +144,25 @@ class FormatTest {
         assertEquals("12", PageLabel.pageOnly("~12 / ~3260"))
         assertEquals("12", PageLabel.pageOnly("12 / ~3260"))
         assertEquals("", PageLabel.pageOnly(null))
+    }
+
+    @Test
+    fun pageTextsLeaveOutAMissingPage() {
+        assertTrue(PageLabel.hasPage("12"))
+        assertTrue(!PageLabel.hasPage(""))
+        assertTrue(!PageLabel.hasPage("-"))
+        assertTrue(!PageLabel.hasPage(" - "))
+        assertTrue(!PageLabel.hasPage(null))
+        assertEquals("12쪽 · 2026.10.05", PageLabel.metaLine("12", "2026.10.05"))
+        assertEquals("2026.10.05", PageLabel.metaLine("-", "2026.10.05"))
+        assertEquals("2026.10.05", PageLabel.metaLine("", "2026.10.05"))
+        assertEquals("3 / 20 · 12쪽", PageLabel.withPage("3 / 20", "12"))
+        assertEquals("3 / 20+ · 12쪽", PageLabel.withPage("3 / 20+", "12"))
+        assertEquals("3 / 20", PageLabel.withPage("3 / 20", ""))
+        assertEquals("3 / 20", PageLabel.withPage("3 / 20", "-"))
+        assertEquals("  (12쪽)\n", PageLabel.shareLine("12"))
+        assertEquals("", PageLabel.shareLine("-"))
+        assertEquals("", PageLabel.shareLine(""))
     }
 
     @Test

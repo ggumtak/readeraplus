@@ -6,6 +6,7 @@ import com.ggumtak.readeraplus.engine.ParagraphBlock
 import com.ggumtak.readeraplus.engine.RuleBlock
 import com.ggumtak.readeraplus.engine.SectionContent
 import com.ggumtak.readeraplus.engine.StyleRun
+import com.ggumtak.readeraplus.format.txt.TxtChapters
 
 /**
  * Splits oversized spine items (whole-book XHTML files written by TXT→EPUB converters) into sub-sections, so
@@ -32,16 +33,116 @@ internal object EpubSplit {
     /** Maximum distance searched for a space when a cut has to go inside a paragraph. */
     private const val SPACE_SEARCH = 2000
 
-    /** Result of [scan]: approximate converted length and, per requested anchor, the text chars before it. */
-    class Scan(val chars: Int, val anchors: Map<String, Int>)
+    /**
+     * Result of [scan]: approximate converted length and, per requested anchor, the text chars before it; [lines]
+     * (when asked for) the item's blocks.
+     */
+    class Scan(val chars: Int, val anchors: Map<String, Int>, val lines: Lines? = null)
+
+    /**
+     * The blocks of one item in document order, for chapter detection ([EpubHeadings]): [pos] is the text chars
+     * before the block (the coordinate of [Scan.anchors]), [text] its whitespace-collapsed text, or null for a block
+     * longer than [TxtChapters.MAX_HEADING_CHARS] (body: only that it exists matters). Blocks without text are not
+     * lines; an image is a null line.
+     */
+    class Lines {
+        @JvmField var n = 0
+        @JvmField var pos = IntArray(256)
+        @JvmField var text = arrayOfNulls<String>(256)
+
+        fun add(at: Int, s: String?) {
+            if (n >= MAX_LINES) return
+            if (n == pos.size) {
+                pos = pos.copyOf(n * 2)
+                text = text.copyOf(n * 2)
+            }
+            pos[n] = at
+            text[n] = s
+            n++
+        }
+    }
+
+    /** Lines kept per item (a longer item is detected on its first part only). */
+    private const val MAX_LINES = 1_000_000
+
+    /**
+     * Collects the block texts of [scan]: the converter's paragraph model (a paragraph closes at every block tag, at
+     * `<br>`, `<hr>` and an image), its whitespace collapsing and the characters it drops, so the text of a line is
+     * the text of the converted block. Stops reading a block once it is longer than a heading.
+     */
+    private class LineBuilder(private val out: Lines) {
+        private val sb = StringBuilder(64)
+        private var started = false
+        private var long = false
+        private var space = false
+        private var at = 0
+
+        fun text(s: String, from: Int, end: Int, raw: Boolean, before: Int) {
+            if (long) return
+            var i = from
+            while (i < end) {
+                val c = s[i]
+                if (c == '&' && !raw) {
+                    val e = Entities.parseAt(s, i, end)
+                    if (e >= 0) {
+                        add((e ushr 32).toInt(), before)
+                        i = (e and 0xFFFFFFFFL).toInt()
+                        if (long) return
+                        continue
+                    }
+                }
+                add(c.code, before)
+                i++
+                if (long) return
+            }
+        }
+
+        private fun add(cp: Int, before: Int) {
+            when {
+                cp == 0x20 || cp == 0x09 || cp == 0x0A || cp == 0x0D || cp == 0x0C || cp == 0x2028 || cp == 0x2029 ->
+                    if (started) space = true
+                cp < 0x20 || cp in 0x7F..0x9F || cp == 0xAD || cp == 0xFEFF || cp == 0xFFFC -> {}
+                cp == 0x3000 && !started -> {}
+                else -> {
+                    if (!started) {
+                        started = true
+                        at = before
+                    }
+                    if (space) {
+                        sb.append(' ')
+                        space = false
+                    }
+                    sb.appendCodePoint(cp)
+                    if (sb.length > TxtChapters.MAX_HEADING_CHARS) long = true
+                }
+            }
+        }
+
+        /** Ends the block: a line when it had text. */
+        fun flush() {
+            if (started) out.add(at, if (long) null else sb.toString())
+            sb.setLength(0)
+            started = false
+            long = false
+            space = false
+        }
+
+        /** An image: ends the block and is a body line of its own. */
+        fun image(before: Int) {
+            flush()
+            out.add(before, null)
+        }
+    }
 
     /**
      * Estimates the converted text length of [xhtml] (whitespace runs count as one char, entities as one, head,
      * script and style content skipped) and finds where the ids in [wanted] occur (first occurrence, as the
-     * converter records them: `id` of any element, `name` of `<a>`).
+     * converter records them: `id` of any element, `name` of `<a>`). With [lines] the item's blocks are collected
+     * in the same pass over the markup (a second, short look at each text token; the char counting is unchanged).
      */
-    fun scan(xhtml: String, wanted: Set<String>): Scan {
+    fun scan(xhtml: String, wanted: Set<String>, lines: Lines? = null): Scan {
         val r = MarkupReader(xhtml)
+        val lb = if (lines != null) LineBuilder(lines) else null
         val found = HashMap<String, Int>()
         var chars = 0
         var space = true // leading whitespace never counts
@@ -62,10 +163,15 @@ internal object EpubSplit {
                         r.attr("id")?.let { if (it in wanted) found.putIfAbsent(it, chars) }
                         if (n == "a") r.attr("name")?.let { if (it in wanted) found.putIfAbsent(it, chars) }
                     }
+                    if (lb != null && !inHead) {
+                        if (n == "img" || n == "image") lb.image(chars)
+                        else if (n == "br" || n == "hr" || XhtmlConverter.isBlockTag(n)) lb.flush()
+                    }
                 }
                 MarkupReader.END -> {
                     skipRaw = false
                     if (r.name == "head") inHead = false
+                    if (lb != null && !inHead && XhtmlConverter.isBlockTag(r.name)) lb.flush()
                 }
                 MarkupReader.TEXT -> {
                     val raw = r.textRaw
@@ -78,6 +184,7 @@ internal object EpubSplit {
                     val s = r.source
                     var i = r.textStart
                     val end = r.textEnd
+                    lb?.text(s, i, end, raw, chars)
                     while (i < end) {
                         val c = s[i]
                         if (c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '\u000C') {
@@ -101,7 +208,8 @@ internal object EpubSplit {
                 }
             }
         }
-        return Scan(chars, found)
+        lb?.flush()
+        return Scan(chars, found, lines)
     }
 
     /** Number of parts for an item whose scan found [chars] text chars. */

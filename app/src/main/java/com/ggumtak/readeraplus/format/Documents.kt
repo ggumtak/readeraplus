@@ -17,7 +17,7 @@ object Documents {
             BookFormat.EPUB -> EpubDocuments.open(file, options)
             // Shown page by page by the PDF viewer; there is no reflowable text to lay out.
             BookFormat.PDF -> throw DocumentException("PDF는 PDF 보기 화면에서 엽니다: ${file.name}")
-            null -> throw DocumentException("지원하지 않는 형식: ${file.name}")
+            null -> throw DocumentException("TXT·EPUB·PDF 파일만 열 수 있습니다")
         }
 
     /**

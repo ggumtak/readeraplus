@@ -18,8 +18,19 @@ import kotlin.math.abs
 /*
  * Page-at-a-time lists for e-ink (T1-1). A fling paints every scroll frame (a smear of partial e-ink updates), so a
  * paged list never scrolls: a drag or fling becomes exactly one page jump, and the pager bar / page keys move it a
- * page at a time. Each move is one layout and one draw, the "3 / 27" indicator included.
+ * page at a time. Each move is one layout and one draw, the "3 / 27" indicator included. A scrolling pager
+ * ([inkPaging] with `scrolls`, the contents dialog's lists since 2026-10-04) lets the list drag and fling like any
+ * list; its bar and the page keys still jump a page.
  */
+
+/**
+ * Anything the page keys and ◀ ▶ move a page at a time: an [InkPager] list, the contents dialog's 썸네일 grid
+ * (`ThumbsTab`). Main thread.
+ */
+interface PageTarget {
+    /** One page towards [dir] (+1 next, -1 previous). False when already at that end (nothing changes). */
+    fun page(dir: Int): Boolean
+}
 
 /** Pure page maths of [InkPager] (unit-tested). "Rows" are adapter positions. */
 object PagerMath {
@@ -59,9 +70,10 @@ object PagerMath {
 }
 
 /**
- * The pager bar under a paged list: [◀ 이전]  "3 / 27"  [다음 ▶], 44dp tall with a 1px top line. The buttons have no
+ * The pager bar under a paged list: [◀ 이전]  "3 / 27"  [다음 ▶], 48dp tall with a 1px top line. The buttons have no
  * pressed state (the page change is the feedback: one e-ink update per page) and turn gray at the ends. Created by
- * the caller, placed below the list (it sets its own 44dp LinearLayout params) and handed to [inkPaging].
+ * the caller, placed below the list (it sets its own 48dp LinearLayout params) and handed to [inkPaging]. A page here
+ * is one screen of the list, so the buttons are "이전 화면" / "다음 화면".
  */
 class InkPagerBar(context: Context) : LinearLayout(context) {
     internal val prev: TextView = button("◀ 이전")
@@ -96,7 +108,7 @@ class InkPagerBar(context: Context) : LinearLayout(context) {
         includeFontPadding = false
         minWidth = context.dp(88)
         setPadding(context.dp(16), 0, context.dp(16), 0)
-        contentDescription = if (text.startsWith("◀")) "이전 페이지" else "다음 페이지"
+        contentDescription = if (text.startsWith("◀")) "이전 화면" else "다음 화면"
     }
 
     internal fun show(page: Int, total: Int, canPrev: Boolean, canNext: Boolean) {
@@ -113,7 +125,7 @@ class InkPagerBar(context: Context) : LinearLayout(context) {
     }
 
     companion object {
-        const val HEIGHT_DP = 44
+        const val HEIGHT_DP = 48
     }
 }
 
@@ -121,22 +133,24 @@ class InkPagerBar(context: Context) : LinearLayout(context) {
  * A list paged a screen at a time ([inkPaging]). Main thread only.
  *
  * - A page is the visible rows − 1, moved with `setSelection(first ± page)`.
- * - A vertical drag or fling beyond the touch slop is consumed: the list never scrolls, and on `ACTION_UP` it becomes
- *   exactly one page jump (finger up = next page). Taps and long presses still reach the rows. Rows must not hold
- *   clickable children (the list would then see the drag first).
+ * - Paged: a vertical drag or fling beyond the touch slop is consumed: the list never scrolls, and on `ACTION_UP` it
+ *   becomes exactly one page jump (finger up = next page). Taps and long presses still reach the rows. Rows must not
+ *   hold clickable children (the list would then see the drag first).
+ * - Scrolling (`scrolls`): the list drags and flings itself; the indicator follows every scroll frame.
  * - The indicator is updated right after each `setSelection` (which never raises `onScrollStateChanged(IDLE)`) and
  *   again when the list lays out (data changes, a caller's own `setSelection`), in the same frame.
  *
- * The pager owns the list's OnTouchListener and OnScrollListener: use [onMoved] to follow the visible rows.
+ * The pager owns the list's OnTouchListener (paged) and OnScrollListener: use [onMoved] to follow the visible rows.
  */
-class InkPager internal constructor(val list: ListView, private val bar: InkPagerBar) {
+class InkPager internal constructor(val list: ListView, private val bar: InkPagerBar, private val scrolls: Boolean = false) : PageTarget {
     /** Runs after every layout of the list (a page jump, a data change): the visible rows may be different. */
     var onMoved: (() -> Unit)? = null
 
     init {
         bar.prev.setOnClickListener { page(-1) }
         bar.next.setOnClickListener { page(1) }
-        list.setOnTouchListener(DragToPage())
+        // Scrolling: the list's own drag and fling (no touch listener); paged: a drag is one page jump.
+        if (scrolls) list.isVerticalScrollBarEnabled = true else list.setOnTouchListener(DragToPage())
         list.setOnScrollListener(object : AbsListView.OnScrollListener {
             override fun onScrollStateChanged(view: AbsListView, scrollState: Int) {}
             override fun onScroll(view: AbsListView, firstVisible: Int, visibleCount: Int, totalCount: Int) {
@@ -171,10 +185,11 @@ class InkPager internal constructor(val list: ListView, private val bar: InkPage
     }
 
     /** One page towards [dir] (+1 next, -1 previous). False when already at that end (or nothing is laid out yet). */
-    fun page(dir: Int): Boolean {
+    override fun page(dir: Int): Boolean {
         val n = count
         if (n == 0 || list.childCount == 0 || dir == 0) return false
         if (if (dir > 0) atEnd() else atStart()) return false
+        stopFling()
         val first = list.firstVisiblePosition
         val step = PagerMath.step(list.childCount)
         val target = PagerMath.target(first, dir, step, n)
@@ -190,8 +205,14 @@ class InkPager internal constructor(val list: ListView, private val bar: InkPage
     /** Shows row [index] as row [rowFromTop] (0 = top; the TOC's [지금] uses 3), e.g. after a filter or a jump. */
     fun showRow(index: Int, rowFromTop: Int = 0) {
         if (count == 0) return
+        stopFling()
         list.setSelection(PagerMath.firstFor(index.coerceIn(0, count - 1), rowFromTop))
         update()
+    }
+
+    /** A scrolling list's running fling stops first: a page jump lands where it says (setSelection keeps a fling). */
+    private fun stopFling() {
+        if (scrolls) list.smoothScrollBy(0, 0)
     }
 
     /** Re-reads the list's position into the indicator (the pager does this itself after every layout). */
@@ -255,17 +276,18 @@ class InkPager internal constructor(val list: ListView, private val bar: InkPage
 
 /**
  * Pages this list a screen at a time with [bar] (see [InkPager]). Call once, after the adapter is set; the pager takes
- * over the list's touch and scroll listeners.
+ * over the list's touch and scroll listeners. [scrolls] = true keeps the list's own drag and fling (smooth scrolling,
+ * the bar and page keys still jump a page).
  */
-fun ListView.inkPaging(bar: InkPagerBar): InkPager = InkPager(this, bar)
+fun ListView.inkPaging(bar: InkPagerBar, scrolls: Boolean = false): InkPager = InkPager(this, bar, scrolls)
 
 /**
- * Hardware page keys page [pager]'s list while this dialog has the focus (the dialog window gets the keys, not the
+ * Hardware page keys page [pager] (an [InkPager] list or any other [PageTarget]) while this dialog has the focus (the dialog window gets the keys, not the
  * activity below). [direction] maps a key code to +1 (next page), -1 or 0 (not a page key: left alone). A page key's
  * DOWN and UP are both consumed, so the system volume panel never shows; a held key pages once (fresh presses only).
  * [skip] leaves a key to the dialog (e.g. while typing in a search field).
  */
-fun Dialog.inkPagerKeys(pager: () -> InkPager?, direction: (Int) -> Int, skip: (KeyEvent) -> Boolean = { false }) {
+fun Dialog.inkPagerKeys(pager: () -> PageTarget?, direction: (Int) -> Int, skip: (KeyEvent) -> Boolean = { false }) {
     setOnKeyListener { _, keyCode, ev ->
         val dir = direction(keyCode)
         if (dir == 0 || skip(ev)) return@setOnKeyListener false

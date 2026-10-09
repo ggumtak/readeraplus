@@ -8,6 +8,7 @@ import com.ggumtak.readeraplus.format.epub.EpubPlanCache
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.render.FontMath
 import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.StatusBands
 import java.security.MessageDigest
 
 /** Placement of the page content box inside the page view (px). */
@@ -18,7 +19,33 @@ data class PageGeometry(
     val contentTop: Int,
     val contentWidth: Int,
     val contentHeight: Int,
-)
+    /**
+     * Px at the view's top that a display cutout covers ([LayoutKeys.geometry]'s extraTop; the S25's camera band in
+     * fullscreen), 0 without one. The header's band is reserved below it (only paper is drawn there), the header itself
+     * is drawn inside it at the very top as MaruViewer draws it (`StatusFit.headerBaseline`), the bookmark ribbon hangs
+     * from the view's top over it (`RibbonMath`), and a thumbnail leaves it out.
+     */
+    val cutoutTop: Int = 0,
+    /**
+     * Pages across the view: 1, or 2 for a landscape spread ([LayoutKeys.columnsFor]). Then [contentWidth] is ONE page's
+     * column (the width the sections are typeset at), [contentLeft] the left column's x, and the right column starts a
+     * [gutter] after the left one ([columnLeft]); the status bands, the progress line and the header still span the view.
+     */
+    val columns: Int = 1,
+    /** Px between two columns (0 with one). */
+    val gutter: Int = 0,
+    /**
+     * Width of the view a single page would have with these margins ([viewWidth] with one column; a spread's left
+     * margin, one column and the right margin): what a thumbnail of one page shows ([PageThumbs]).
+     */
+    val pageWidth: Int = viewWidth,
+) {
+    /** Left edge (px) of column [i] (0 = left page). */
+    fun columnLeft(i: Int): Int = contentLeft + i * (contentWidth + gutter)
+
+    /** Width of all columns and the gutters between them: the text box of a single page of the same view. */
+    val spanWidth: Int get() = columns * contentWidth + (columns - 1) * gutter
+}
 
 /** Pure derivation of page geometry, LayoutConfig and the page-count cache key from settings (unit-tested). */
 object LayoutKeys {
@@ -37,9 +64,19 @@ object LayoutKeys {
      * lines for the same input, and only then, so an app update keeps every cached page count (A2). The typesetter
      * half is enforced by `LayoutGoldenTest` (test/.../engine), which hashes the layout of a fixed corpus and compares
      * it with [GOLDEN_HASH]: update both together. Measurer changes (FontManager, AndroidTextMeasurer, the synthetic
-     * stroke's advances or line metrics) are not covered by that test: whoever makes one bumps this by hand.
+     * stroke's advances or line metrics) are not covered by that test: whoever makes one bumps this by hand, unless the
+     * change only touches some fonts and their part of the key says so instead: the 2026-10-05 blank-glyph repairs
+     * (한자 빈칸: a blank 聖 was 0.95 em in 나눔명조 OTF, an empty Hangul syllable as wide as 가 in 마루 부리 / SUIT /
+     * 바른바탕) change the widths of the repaired fonts only, so the font identity carries `FontManager.layoutTag`
+     * (`|hg<rules>:<files>`, "" without a repair) and 나눔명조's own key changed with its file (OTF → TTF), while the
+     * system faces, Pretendard and every other font without blank glyphs keep their counts.
+     * 2 (2026-10-05, 마루뷰어만큼 선명하게): the body paints are hinted (`CrispText`: no LINEAR_TEXT_FLAG) at a whole-px
+     * size, so every font measures whole-px hinted advances (나눔명조 at 17 sp on the S25: a Hangul syllable 45 px, not
+     * 45.43; a space 14, not 14.33) and its metrics at that size. Every cached page count is counted once again; an open
+     * book keeps its first character (the reopen is an anchored layout).
+     * 3 (2026-10-06): a TXT chapter heading opens a page (TxtParagraphs), so TXT books' cached counts are counted again.
      */
-    const val ALGO_VERSION = 1
+    const val ALGO_VERSION = 3
 
     /** Hash of `LayoutGoldenTest`'s layouts at [ALGO_VERSION]; see there. */
     const val GOLDEN_HASH = "071717a86d158ac8"
@@ -47,13 +84,33 @@ object LayoutKeys {
     private val DEFAULTS = ReaderSettings()
     /** Margin used when the "페이지 여백" switch is off. */
     const val TINY_MARGIN_DP = 4
+    /** The space between the two pages of a landscape spread is at least this wide (twice the side margin otherwise). */
+    const val MIN_GUTTER_DP = 24
 
-    fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float): PageGeometry {
-        fun px(dp: Int): Int = Math.round((if (s.pageMargins) dp else TINY_MARGIN_DP) * density)
-        val ml = px(s.marginLeftDp.coerceAtLeast(0))
-        val mr = px(s.marginRightDp.coerceAtLeast(0))
-        val mt = px(s.marginTopDp.coerceAtLeast(0))
-        val mb = px(s.marginBottomDp.coerceAtLeast(0))
+    /**
+     * Pages across the view: 2 for a paged view wider than tall whose [landscapePages] is 2, else 1. The scroll mode
+     * ([paged] false) and portrait never split the width. [geometry] still falls back to 1 when a column would be too narrow.
+     */
+    fun columnsFor(landscapePages: Int, viewW: Int, viewH: Int, paged: Boolean): Int =
+        if (paged && landscapePages == 2 && viewW > viewH) 2 else 1
+
+    /**
+     * The content box of a [viewW] × [viewH] page view. From the top: [extraTop], px that a display cutout covers
+     * (fullscreen, system bars hidden: the S25's camera band; 0 elsewhere, the Comet has none), left out like a system
+     * bar; the header's band ([StatusBands]), which a cutout's band contains (the header is drawn inside it); the top
+     * margin; the text box; the bottom margin; the footer's band (footer items and the progress line) at the view's
+     * bottom. The 위·아래 여백 count from the bands since 2026-10-05 (user: "위 여백은 위 아래 애들을 제외하고 본문영역에서만
+     * 계산해야지"); band + margin is rounded once, so without a cutout the default box is where 40 dp from the top put it
+     * (Comet row 80); under the S25's 87 px band it starts one 15 dp margin below it (row 129). Only settings decide the
+     * bands: nothing shown or hidden on the page moves the box.
+     */
+    fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, extraTop: Int = 0, columns: Int = 1): PageGeometry {
+        fun px(dp: Int): Int = Math.round(dp * density)
+        fun margin(dp: Int): Int = if (s.pageMargins) dp.coerceAtLeast(0) else TINY_MARGIN_DP
+        val ml = px(margin(s.marginLeftDp))
+        val mr = px(margin(s.marginRightDp))
+        val mt = px(StatusBands.headerDp(s) + margin(s.marginTopDp))
+        val mb = px(StatusBands.footerDp(s) + margin(s.marginBottomDp))
         val minBox = Math.round(48 * density).coerceAtLeast(16)
         var w = viewW - ml - mr
         var left = ml
@@ -61,13 +118,34 @@ object LayoutKeys {
             w = minOf(minBox, viewW).coerceAtLeast(1)
             left = ((viewW - w) / 2).coerceAtLeast(0)
         }
-        var h = viewH - mt - mb
-        var top = mt
-        if (h < minBox) {
-            h = minOf(minBox, viewH).coerceAtLeast(1)
-            top = ((viewH - h) / 2).coerceAtLeast(0)
+        // Two columns: the text box splits into two pages with a gutter of twice the side margin (at least 24 dp) between
+        // them; a column that would be narrower than the minimum box leaves the view a single page.
+        var cols = 1
+        var gutter = 0
+        var pageW = viewW
+        if (columns >= 2) {
+            val g = maxOf(ml + mr, px(MIN_GUTTER_DP))
+            val colW = (w - g) / 2
+            if (colW >= minBox) {
+                cols = 2
+                gutter = g
+                pageW = ml + colW + mr
+                w = colW
+            }
         }
-        return PageGeometry(viewW, viewH, left, top, w, h)
+        val band = extraTop.coerceIn(0, viewH)
+        val below = viewH - band
+        // Under a display cutout the header is drawn inside the cutout's band (StatusFit.headerBaseline), so its own band
+        // is not stacked below it: the text starts one top margin under the taller of the two (user, 2026-10-06: "윗여백은
+        // 왤케 넓음?"; the S25 fullscreen text rose 70 px). Without a cutout: the header's band and the margin, as before.
+        val topEdge = if (band > 0) maxOf(band, px(StatusBands.headerDp(s))) + px(margin(s.marginTopDp)) else mt
+        var h = viewH - topEdge - mb
+        var top = topEdge
+        if (h < minBox) {
+            h = minOf(minBox, below).coerceAtLeast(1)
+            top = band + ((below - h) / 2).coerceAtLeast(0)
+        }
+        return PageGeometry(viewW, viewH, left, top, w, h, band, cols, gutter, pageW)
     }
 
     /** [txt]: TXT books always honour their parser's block hints (centred scene breaks, headings). */
@@ -97,9 +175,16 @@ object LayoutKeys {
         return (perLine * lines * 0.75f).toInt().coerceAtLeast(20)
     }
 
-    /** Settings with every field that does NOT change the layout normalised away. */
+    /**
+     * Settings with every field that does NOT change the layout normalised away. The status slots, the progress line and
+     * the status size count only through the bands they make ([bandsChanged]; the key through the box they leave).
+     */
     private fun layoutPart(s: ReaderSettings): ReaderSettings = s.copy(
         invert = false,
+        // The page width a spread makes is part of the geometry (and so of the key), and [columnsFor] decides it with the
+        // view and the read mode: the setting alone changes nothing about the layout.
+        landscapePages = DEFAULTS.landscapePages,
+        pageTheme = DEFAULTS.pageTheme,
         headerLeft = DEFAULTS.headerLeft, headerCenter = DEFAULTS.headerCenter, headerRight = DEFAULTS.headerRight,
         footerLeft = DEFAULTS.footerLeft, footerCenter = DEFAULTS.footerCenter, footerRight = DEFAULTS.footerRight,
         progressBar = DEFAULTS.progressBar, statusFontSizeSp = DEFAULTS.statusFontSizeSp,
@@ -107,11 +192,11 @@ object LayoutKeys {
 
     /**
      * [layoutPart] for a book of [format]: the other format's options are normalised away too. EPUB ignores every
-     * txt* option; a TXT layout always honours block hints (see [config]), so epubPublisherStyles is moot there.
+     * txt* option for its layout (those that change its text, chapter detection, re-parse it: [parseOptionsFor]); a TXT layout always honours block hints (see [config]), so the epub* options are moot there.
      */
     private fun layoutPart(s: ReaderSettings, format: BookFormat): ReaderSettings {
         val base = layoutPart(s)
-        if (format != BookFormat.EPUB) return base.copy(epubPublisherStyles = true)
+        if (format != BookFormat.EPUB) return base.copy(epubPublisherStyles = true, epubIgnoreBookSizes = true)
         val d = ReaderSettings()
         return base.copy(
             txtBlankLines = d.txtBlankLines,
@@ -124,12 +209,20 @@ object LayoutKeys {
         )
     }
 
-    /** True when going from [a] to [b] requires a new layout (anything but colours / footer items). */
-    fun layoutChanged(a: ReaderSettings, b: ReaderSettings): Boolean = layoutPart(a) != layoutPart(b)
+    /**
+     * True when going from [a] to [b] requires a new layout: anything but colours and which item a status slot shows. A
+     * status band that comes, goes or changes its height (all slots of a band none ↔ some item, the progress line, the
+     * status size of a band with items) moves the text box ([bandsChanged]); one item for another does not.
+     */
+    fun layoutChanged(a: ReaderSettings, b: ReaderSettings): Boolean = layoutPart(a) != layoutPart(b) || bandsChanged(a, b)
 
     /** [layoutChanged] for a book of [format]: options of the other format never force a re-layout. */
     fun layoutChanged(a: ReaderSettings, b: ReaderSettings, format: BookFormat): Boolean =
-        layoutPart(a, format) != layoutPart(b, format)
+        layoutPart(a, format) != layoutPart(b, format) || bandsChanged(a, b)
+
+    /** True when the status bands of [a] and [b] differ in height ([StatusBands]), so their text boxes do too. */
+    fun bandsChanged(a: ReaderSettings, b: ReaderSettings): Boolean =
+        StatusBands.headerDp(a) != StatusBands.headerDp(b) || StatusBands.footerDp(a) != StatusBands.footerDp(b)
 
     /** True when the document must be re-parsed. */
     fun parseChanged(a: ReaderSettings, b: ReaderSettings, encoding: String): Boolean =
@@ -141,13 +234,21 @@ object LayoutKeys {
 
     /**
      * The parse options a book of [format] actually depends on, with every other field at its default: EPUB reads
-     * only epubPublisherStyles; TXT reads the txt* options and the encoding (and always keeps block hints).
+     * epubPublisherStyles and epubIgnoreBookSizes and, for the chapters it detects when its own TOC is poor
+     * (`EpubHeadings`), txtDetectChapters, txtChapterRegex and txtEmphasizeHeadings; TXT reads the txt* options and
+     * the encoding (and always keeps block hints).
      */
     fun parseOptionsFor(s: ReaderSettings, format: BookFormat, encoding: String): ParseOptions =
         if (format == BookFormat.EPUB) {
-            ParseOptions(epubPublisherStyles = s.epubPublisherStyles)
+            ParseOptions(
+                txtDetectChapters = s.txtDetectChapters,
+                txtChapterRegex = s.txtChapterRegex,
+                txtEmphasizeHeadings = s.txtEmphasizeHeadings,
+                epubPublisherStyles = s.epubPublisherStyles,
+                epubIgnoreBookSizes = s.epubIgnoreBookSizes,
+            )
         } else {
-            s.parseOptions(encoding).copy(epubPublisherStyles = true)
+            s.parseOptions(encoding).copy(epubPublisherStyles = true, epubIgnoreBookSizes = true)
         }
 
     /**
@@ -244,10 +345,11 @@ object LayoutKeys {
         if (s.pageBreak != PageBreakMode.LINE) sb.append("|pb=").append(s.pageBreak.name)
         sb.append("|pub=").append(s.epubPublisherStyles)
         sb.append("|box=").append(g.contentWidth).append('x').append(g.contentHeight)
+        if (g.columns > 1) sb.append("|cols=").append(g.columns)
         sb.append("|d=").append(density)
         sb.append("|p=").append(parse.txtBlankLines).append(',').append(parse.txtStripIndent)
             .append(',').append(parse.txtJoinWrappedLines).append(',').append(parse.txtDetectChapters)
-            .append(',').append(parse.txtEmphasizeHeadings).append(',').append(parse.epubPublisherStyles)
+            .append(',').append(parse.txtEmphasizeHeadings).append(',').append(parse.epubPublisherStyles).append(',').append(parse.epubIgnoreBookSizes)
             .append(",enc=").append(parse.txtEncoding)
             .append(",re=").append(parse.txtChapterRegex.length).append(':').append(parse.txtChapterRegex)
             .append(",rr=").append(parse.txtReplaceRules.length).append(':').append(parse.txtReplaceRules)

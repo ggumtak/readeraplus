@@ -10,11 +10,13 @@ import java.util.Locale
 import java.util.zip.ZipException
 
 /**
- * Pure string formatting for the reader's footer, chrome and chips (unit-tested). Page numbers are shown as plain
- * numbers even while the counts are still estimates (no "~"): the estimate only settles into the exact number.
+ * Pure string formatting for the reader's chrome, panels and toasts (unit-tested; the page's status slots are
+ * formatted without allocation by [StatusText]). The page numbers of the status line and the chrome's page label
+ * show only once the pages are counted: until then they read [PAGES_COUNTING] ([PAGES_FAILED] if counting stopped),
+ * never an estimate that would settle into another number (user, 2026-10-05).
  */
 object ReaderFormat {
-    const val SEP = "  ·  "
+    const val SEP = " · "
 
     /** Shared TTS rate label in the reader and settings. */
     fun ttsRate(v: Float): String = String.format(Locale.US, "%.1f배", v)
@@ -22,25 +24,22 @@ object ReaderFormat {
     /** Shared TTS pitch label (pitch is a ratio, without the speed suffix). */
     fun ttsPitch(v: Float): String = String.format(Locale.US, "%.1f", v)
 
-    /** Shared chooser labels for volume page direction. */
-    fun volumeMode(mode: VolumeMode): String = when (mode) {
-        VolumeMode.OFF -> "넘기지 않음 (볼륨 조절)"
-        VolumeMode.DOWN_NEXT -> "아래 = 다음 페이지 (기본)"
-        VolumeMode.UP_NEXT -> "위 = 다음 페이지 (방향 반전)"
-    }
-
-    /** Short value beside the popup row. */
-    fun volumeModeShort(mode: VolumeMode): String = when (mode) {
-        VolumeMode.OFF -> "끔"
-        VolumeMode.DOWN_NEXT -> "아래 = 다음"
-        VolumeMode.UP_NEXT -> "위 = 다음"
-    }
-
     /** The error panel's message when nothing in [openError]'s list matches. */
     const val OPEN_FAILED = "책을 열지 못했습니다"
 
+    /** The status line's and the chrome's page numbers while the pages are being counted. */
+    const val PAGES_COUNTING = "쪽수 계산 중"
+    /** The same when counting stopped on an error (reading goes on; only the numbers are missing). */
+    const val PAGES_FAILED = "쪽수 확인 불가"
+
     /** "12 / 3259" (a total below the page, possible while estimating, shows the page as the total). */
     fun pageLabel(page: Int, total: Int): String = "$page / ${total.coerceAtLeast(page)}"
+
+    /**
+     * Where the chrome's page label stops being the current page: the index of " / " in a [pageLabel] (the total
+     * after it is shown smaller and grey), or -1 when the whole label is the primary part.
+     */
+    fun pageLabelCut(label: String): Int = label.indexOf(" / ")
 
     /** Percent 0..100 (floor; the last page shows 100). */
     fun percent(progress: Float): Int = (progress * 100f + 1e-4f).toInt().coerceIn(0, 100)
@@ -51,35 +50,11 @@ object ReaderFormat {
         return if (is24 && h < 10) "0$h:$mm" else "$h:$mm"
     }
 
-    /** "12 / 3259  ·  챕터 5쪽 남음" (null when there is nothing to show). */
-    fun footerLeft(pageLabel: String?, chapterPagesLeft: Int?): String? {
-        val parts = ArrayList<String>(2)
-        if (pageLabel != null) parts += pageLabel
-        if (chapterPagesLeft != null) parts += chapterLeft(chapterPagesLeft)
-        return if (parts.isEmpty()) null else parts.joinToString(SEP)
-    }
-
-    fun chapterLeft(pages: Int): String = if (pages <= 0) "챕터 마지막 쪽" else "챕터 ${pages}쪽 남음"
-
     /**
-     * The footer's left part (R2): the page label, the episode counter ("123/540화", T1-5), the pages left in the
-     * chapter and the time left ("이 화 3분", T1-7), each when given, joined with [SEP]; null when there is nothing.
-     * Built with one StringBuilder: the footer asks for it on every turn.
+     * The status's 챕터 쪽 번호 (R2): "2 / 32", the page within its chapter over the chapter's pages (total ≥ page),
+     * spaced as [pageLabel]: both page numbers can share a band.
      */
-    fun footerLeft(pageLabel: String?, episode: String?, chapterPagesLeft: Int?, timeLeft: String?): String? {
-        val sb = StringBuilder(48)
-        appendPart(sb, pageLabel)
-        appendPart(sb, episode)
-        if (chapterPagesLeft != null) appendPart(sb, chapterLeft(chapterPagesLeft))
-        appendPart(sb, timeLeft)
-        return if (sb.isEmpty()) null else sb.toString()
-    }
-
-    private fun appendPart(sb: StringBuilder, part: String?) {
-        if (part == null) return
-        if (sb.isNotEmpty()) sb.append(SEP)
-        sb.append(part)
-    }
+    fun chapterPage(page: Int, total: Int): String = "$page / ${maxOf(total, page)}"
 
     /**
      * The footer's 회차 item (T1-5): "123/540화" — the episode [number] of the current TOC entry over the book's
@@ -89,8 +64,8 @@ object ReaderFormat {
     fun episodeLabel(numbered: Boolean, number: Int, maxNumber: Int, index: Int, count: Int): String =
         if (numbered && number > 0) "$number/${maxOf(maxNumber, number)}화" else "${index + 1}/${maxOf(count, index + 1)}"
 
-    /** The footer's 남은 시간 item (T1-7): "이 화 3분" ([bookScope] false) or "책 7시간 20분". */
-    fun timeLeft(bookScope: Boolean, minutes: Int): String = (if (bookScope) "책 " else "이 화 ") + duration(minutes)
+    /** The footer's 남은 시간 item (T1-7): "챕터 3분" ([bookScope] false) or "책 7시간 20분". */
+    fun timeLeft(bookScope: Boolean, minutes: Int): String = (if (bookScope) "책 " else "챕터 ") + duration(minutes)
 
     /** Minutes needed for [chars] characters at [charsPerMinute] (whole minutes, rounded down: "1분 미만" below one). */
     fun minutesFor(chars: Long, charsPerMinute: Int): Int {
@@ -129,17 +104,6 @@ object ReaderFormat {
     fun durationOfSeconds(seconds: Long): String =
         duration((seconds.coerceAtLeast(0) / 60).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
 
-    /**
-     * "34%  ·  14:05" per enabled item (null when empty). The battery is not text: the renderer draws it after this
-     * as a small battery icon with its digits ([com.ggumtak.readeraplus.render.PageDecor.battery]).
-     */
-    fun footerRight(percent: Int?, clock: String?): String? {
-        val parts = ArrayList<String>(2)
-        if (percent != null) parts += "$percent%"
-        if (clock != null) parts += clock
-        return if (parts.isEmpty()) null else parts.joinToString(SEP)
-    }
-
     /** Bookmark list snippet: page text with newlines/objects as spaces, whitespace collapsed, ≤ [max] chars. */
     fun snippet(text: String, start: Int, end: Int, max: Int = 80): String {
         val s = start.coerceIn(0, text.length)
@@ -164,39 +128,46 @@ object ReaderFormat {
         return out
     }
 
-    /** Seekbar drag preview: "p. 12 · 3화 제목". */
-    fun previewLabel(page: Int, chapter: String?): String {
-        val p = "p. $page"
+    /** Seekbar drag preview while the pages are counted: "34% · 제3장 …" (no estimated page number). */
+    fun previewPercent(percent: Int, chapter: String?): String {
+        val p = "$percent%"
         return if (chapter.isNullOrBlank()) p else "$p · ${chapter.trim()}"
     }
 
-    /** Return chip text: "← 돌아가기 (p. 12)". */
-    fun returnChip(page: Int): String = "← 돌아가기 (p. $page)"
+    /** Seekbar drag preview: "1234쪽 · 제3장 …" (U polish 17). */
+    fun previewLabel(page: Int, chapter: String?): String {
+        val p = "${page}쪽"
+        return if (chapter.isNullOrBlank()) p else "$p · ${chapter.trim()}"
+    }
 
     fun brightness(value: Float): String =
         if (value < 0f) "밝기 자동" else "밝기 ${Math.round(value.coerceIn(0f, 1f) * 100f)}%"
 
-    fun autoTurnOn(seconds: Int): String = "자동 넘김 켜짐 (${seconds}초)"
+    fun autoTurnOn(seconds: Int): String = "자동 넘김 켜짐 · ${seconds}초마다"
 
     /**
      * Why a book could not be opened or shown, for the error panel and toasts: never an exception message or class
-     * name, except [DocumentException]s, whose messages are our own Korean sentences (only their first line: a
-     * second one holds a path or URI, see [openErrorDetail]).
+     * name, except [DocumentException]s, whose messages are our own Korean sentences (only their first line, without a
+     * closing period: a second line holds a path or URI, see [openErrorDetail]).
      */
     fun openError(t: Throwable): String = when {
-        t is DocumentException -> t.message?.lineSequence()?.first()?.trim()?.takeIf { it.isNotEmpty() } ?: OPEN_FAILED
-        t is OutOfMemoryError -> "메모리가 부족합니다"
+        t is DocumentException ->
+            t.message?.lineSequence()?.first()?.trim()?.removeSuffix(".")?.takeIf { it.isNotEmpty() } ?: OPEN_FAILED
+        t is OutOfMemoryError -> NO_MEMORY
         isNoSpace(t) -> "저장 공간이 부족합니다"
         t is SecurityException -> "파일 접근 권한이 없습니다"
         t is FileNotFoundException -> "파일을 찾을 수 없습니다"
         t is ZipException -> "EPUB 파일이 손상되었습니다"
-        t is IOException -> "파일을 읽지 못했습니다"
+        t is IOException -> READ_FAILED
         else -> OPEN_FAILED
     }
 
+    private const val NO_MEMORY = "메모리가 부족합니다"
+    private const val READ_FAILED = "파일을 읽지 못했습니다"
+
     /**
      * The small grey line under [openError] ("자세히: ZipException"), or null. A [DocumentException] shows the file
-     * path its message carries on a second line ("파일을 찾을 수 없습니다.\n/storage/…": which file is missing), else
+     * path its message carries on a second line ("파일을 찾을 수 없습니다\n/storage/…": which file is missing), else
      * names its cause; a URI there (percent-encoded, unreadable) is left out.
      */
     fun openErrorDetail(t: Throwable): String? {
@@ -207,13 +178,18 @@ object ReaderFormat {
     }
 
     /**
-     * The paragraph shown in place of a section that could not be loaded: "이 부분을 불러오지 못했습니다 (EPUB 파일이
-     * 손상되었습니다)", never an exception message (only the class, for a bug report, when nothing better is known).
+     * The paragraph shown in place of a section that could not be loaded, in the words of the toast that reports it:
+     * "이 부분을 표시하지 못했습니다 (EPUB 파일이 손상되었습니다)", never an exception message (only the class, for a
+     * bug report, when nothing better is known). A reason that is itself a "…지 못했습니다" becomes a short noun.
      */
     fun sectionError(t: Throwable): String {
-        if (t is OutOfMemoryError) return "메모리가 부족해 이 부분을 표시하지 못했습니다."
-        val why = openError(t)
-        return "이 부분을 불러오지 못했습니다 (" + (if (why == OPEN_FAILED) errorDetail(t) else why) + ")"
+        val why = when (val w = openError(t)) {
+            OPEN_FAILED -> errorDetail(t)
+            NO_MEMORY -> "메모리 부족"
+            READ_FAILED -> "파일 읽기 오류"
+            else -> w
+        }
+        return "이 부분을 표시하지 못했습니다 ($why)"
     }
 
     /** Label of a TXT encoding ("" = automatic detection): the one wording of the reader and the library. */

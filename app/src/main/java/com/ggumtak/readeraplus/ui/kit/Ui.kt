@@ -11,6 +11,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.StateListDrawable
 import android.os.Build
 import android.os.Looper
@@ -268,12 +269,31 @@ fun Context.toolbar(
 
 // ---------------------------------------------------------------- settings-style rows
 
-fun Context.sectionHeader(text: String): TextView = label(text, 14f, bold = true).apply {
-    setPadding(dp(16), dp(24), dp(16), dp(8))
+/** The black rule between groups (settings sections, ⋮ menu groups): 1 dp, at least 2 px (1 px is faint on e-ink). */
+fun Context.groupLinePx(): Int = dp(1).coerceAtLeast(2)
+
+/**
+ * A settings section's header: 18 sp bold black on one line (larger than the 17 sp row titles), on the rows' 16 dp
+ * start line, 16 dp under whatever is above it and right on its rows (the first row's own 10 dp padding is the only
+ * gap: nearer to its rows than rows are to each other). Marked as a heading for TalkBack (API 28+), so a swipe by
+ * headings jumps from group to group.
+ */
+fun Context.sectionHeader(text: String): TextView = label(text, 18f, bold = true, maxLines = 1).apply {
+    setPadding(dp(16), dp(16), dp(16), 0)
+    if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
 }
 
-/** Title + optional summary on the left, [trailing] view on the right. */
-fun Context.row(title: String, summary: String? = null, trailing: View? = null, onClick: ((View) -> Unit)? = null): LinearLayout {
+/**
+ * Title + optional summary on the left, [trailing] view on the right. [titleMaxLines] cuts a long title (a file or
+ * book name) with "…"; settings titles are short and never cut.
+ */
+fun Context.row(
+    title: String,
+    summary: String? = null,
+    trailing: View? = null,
+    titleMaxLines: Int = Int.MAX_VALUE,
+    onClick: ((View) -> Unit)? = null,
+): LinearLayout {
     val r = horizontal {
         minimumHeight = dp(56)
         setPadding(dp(16), dp(10), dp(16), dp(10))
@@ -283,7 +303,7 @@ fun Context.row(title: String, summary: String? = null, trailing: View? = null, 
         }
     }
     val texts = vertical()
-    texts.addView(label(title, 17f))
+    texts.addView(label(title, 17f, maxLines = titleMaxLines))
     if (summary != null) texts.addView(label(keepAll(summary), 14f, color = Ink.GRAY).apply { tag = "summary"; setPadding(0, dp(3), 0, 0) })
     r.addView(texts, lp(0, WRAP_CONTENT, 1f))
     if (trailing != null) r.addView(trailing)
@@ -317,9 +337,9 @@ fun TextView.lockWidthForValues(min: Float, max: Float, step: Float, format: (Fl
 }
 
 /**
- * "−  value  +" stepper. [format] renders the value; returns the row. The value box has a fixed width. A tap that
- * would leave the value unchanged (− at [min], + at [max]) does nothing: no redraw and no [onChange] (no save, no
- * re-layout behind it).
+ * "−  value  +" stepper; the buttons are "<title> 줄이기" / "<title> 늘리기". [format] renders the value; returns the
+ * row. The value box has a fixed width. A tap that would leave the value unchanged (− at [min], + at [max]) does
+ * nothing: no redraw and no [onChange] (no save, no re-layout behind it).
  */
 fun Context.stepperRow(
     title: String,
@@ -340,10 +360,11 @@ fun Context.stepperRow(
         valueText.text = format(v)
         onChange(v)
     }
+    // Named after the row ("글자 크기 줄이기"): TalkBack and the long-press label say which value they change.
     val box = horizontal {
-        addView(iconButton(com.ggumtak.readeraplus.R.drawable.ic_do_not_disturb_on, "줄이기") { set(v - step) })
+        addView(iconButton(com.ggumtak.readeraplus.R.drawable.ic_do_not_disturb_on, "$title 줄이기") { set(v - step) })
         addView(valueText)
-        addView(iconButton(com.ggumtak.readeraplus.R.drawable.ic_add_circle, "늘리기") { set(v + step) })
+        addView(iconButton(com.ggumtak.readeraplus.R.drawable.ic_add_circle, "$title 늘리기") { set(v + step) })
     }
     return row(title, null, box)
 }
@@ -391,7 +412,10 @@ fun Context.alert(): AlertDialog.Builder = AlertDialog.Builder(this, R.style.Ink
 fun Dialog.noAnimation(): Dialog = apply { window?.setWindowAnimations(0) }
 
 /** Shows an alert built with [alert] without animation. */
-fun AlertDialog.Builder.showNoAnim(): AlertDialog = create().also { d ->
+fun AlertDialog.Builder.showNoAnim(): AlertDialog = create().showNoAnim()
+
+/** Shows any dialog without animation, asking for the owner activity's system-bar state as an [alert] does. */
+fun <T : Dialog> T.showNoAnim(): T = also { d ->
     d.window?.setWindowAnimations(0)
     val owner = d.context.activityOrNull()?.window
     if (owner != null) d.window?.let { matchSystemBars(it, owner) }
@@ -411,23 +435,29 @@ fun Context.fullScreenDialog(content: View): Dialog {
         window?.let { w ->
             w.setWindowAnimations(0)
             w.setBackgroundDrawable(ColorDrawable(Ink.WHITE))
-            if (owner != null) matchSystemBars(w, owner)
+            if (owner != null) matchSystemBars(w, owner, look = false)
         }
     }
 }
 
-/** Makes [dialog] (not yet shown, decor installed) request [owner]'s current system-bar visibility and look. */
-private fun matchSystemBars(dialog: Window, owner: Window) {
-    dialog.statusBarColor = owner.statusBarColor
-    dialog.navigationBarColor = owner.navigationBarColor
+/**
+ * Makes [dialog] (not yet shown, decor installed) request [owner]'s current system-bar visibility and, with [look], its
+ * bar colours and icon shade. A full-screen dialog is white whatever page the reader shows (the reader's bars take the
+ * page colour): it keeps its theme's white bars with dark icons and copies only which bars are shown.
+ */
+private fun matchSystemBars(dialog: Window, owner: Window, look: Boolean = true) {
+    if (look) {
+        dialog.statusBarColor = owner.statusBarColor
+        dialog.navigationBarColor = owner.navigationBarColor
+    }
     val ownerDecor = owner.peekDecorView() ?: return
     if (Build.VERSION.SDK_INT >= 30) {
-        // Before show() the dialog has no decor yet, and PhoneWindow.getInsetsController() then throws (Android 14)
-        // instead of returning null: the call after show() applies the bars.
+        // PhoneWindow.getInsetsController() dereferences the decor, so a dialog without one yet (an AlertDialog
+        // before show()) would crash; showNoAnim() calls this again right after show().
         if (dialog.peekDecorView() == null) return
         val c = dialog.insetsController ?: return
         val oc = owner.insetsController
-        if (oc != null) {
+        if (oc != null && look) {
             val mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
             c.setSystemBarsAppearance(oc.systemBarsAppearance and mask, mask)
         }
@@ -445,17 +475,44 @@ private fun matchSystemBars(dialog: Window, owner: Window) {
     }
 }
 
-class MenuItem(val label: String, val iconRes: Int? = null, val checked: Boolean? = null, val enabled: Boolean = true, val onClick: () -> Unit)
+/** A row of [popupMenu]; [groupStart] starts a new group of rows (a black rule above it, unless it is the first row). */
+class MenuItem(
+    val label: String,
+    val iconRes: Int? = null,
+    val checked: Boolean? = null,
+    val enabled: Boolean = true,
+    val groupStart: Boolean = false,
+    val onClick: () -> Unit,
+)
 
-/** Anchored popup menu (no animation, black border). */
+/**
+ * Anchored popup menu (no animation, black border). A [MenuItem.groupStart] row draws the groups' black rule
+ * ([groupLinePx], as between settings sections) at its top inside its own 48 dp: the menu is no taller for it.
+ */
 fun Context.popupMenu(anchor: View, items: List<MenuItem>, widthDp: Int = 240): PopupWindow {
-    val list = vertical { background = borderBox(); setPadding(0, dp(4), 0, dp(4)) }
-    val popup = PopupWindow(list, dp(widthDp), WRAP_CONTENT, true)
-    items.forEach { item ->
+    val list = vertical { setPadding(0, dp(4), 0, dp(4)) }
+    // The rows scroll inside the border when the menu is taller than the room on either side of the anchor.
+    val scroll = android.widget.ScrollView(this).apply {
+        background = borderBox()
+        isVerticalScrollBarEnabled = true
+        isScrollbarFadingEnabled = false
+        isVerticalFadingEdgeEnabled = false
+        overScrollMode = View.OVER_SCROLL_NEVER
+        addView(list, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+    }
+    val popup = PopupWindow(scroll, dp(widthDp), WRAP_CONTENT, true)
+    items.forEachIndexed { i, item ->
         val r = horizontal {
             minimumHeight = dp(48)
             setPadding(dp(16), 0, dp(16), 0)
-            background = pressableBackground()
+            background = if (item.groupStart && i > 0) {
+                LayerDrawable(arrayOf(pressableBackground(), ColorDrawable(Ink.LINE))).apply {
+                    setLayerGravity(1, Gravity.TOP or Gravity.FILL_HORIZONTAL)
+                    setLayerHeight(1, groupLinePx())
+                }
+            } else {
+                pressableBackground()
+            }
             isEnabled = item.enabled
             setOnClickListener { popup.dismiss(); item.onClick() }
         }
@@ -467,23 +524,60 @@ fun Context.popupMenu(anchor: View, items: List<MenuItem>, widthDp: Int = 240): 
     popup.animationStyle = 0
     popup.isOutsideTouchable = true
     popup.elevation = 0f
-    popup.showAsDropDown(anchor)
+    // Below the anchor when it fits, else above it, else on the roomier side at that side's height (scrolling):
+    // never cut off by the screen's edge (a book row's ⋮ near the bottom).
+    val frame = android.graphics.Rect()
+    anchor.getWindowVisibleDisplayFrame(frame)
+    val at = IntArray(2)
+    anchor.getLocationOnScreen(at)
+    val edge = dp(8)
+    val below = frame.bottom - (at[1] + anchor.height) - edge
+    val above = at[1] - frame.top - edge
+    scroll.measure(
+        View.MeasureSpec.makeMeasureSpec(dp(widthDp), View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+    )
+    val h = scroll.measuredHeight
+    when {
+        h <= below -> popup.showAsDropDown(anchor)
+        h <= above -> popup.showAsDropDown(anchor, 0, -(anchor.height + h))
+        below >= above -> {
+            popup.height = below.coerceAtLeast(dp(96))
+            popup.showAsDropDown(anchor)
+        }
+        else -> {
+            val ph = above.coerceAtLeast(dp(96))
+            popup.height = ph
+            popup.showAsDropDown(anchor, 0, -(anchor.height + ph))
+        }
+    }
     return popup
 }
 
-/** Single-choice list dialog. */
-fun Context.chooser(title: String, options: List<String>, selected: Int, onPick: (Int) -> Unit) {
-    alert().setTitle(title)
+/**
+ * Single-choice list dialog. [extraButton] adds a button just left of 취소 (e.g. "기본" in 추천 스타일): it closes the
+ * dialog and runs [onExtra].
+ */
+fun Context.chooser(
+    title: String, options: List<String>, selected: Int,
+    extraButton: String? = null, onExtra: (() -> Unit)? = null,
+    onPick: (Int) -> Unit,
+) {
+    val b = alert().setTitle(title)
         .setSingleChoiceItems(options.toTypedArray(), selected) { d, which -> d.dismiss(); onPick(which) }
-        .setNegativeButton("취소", null)
-        .showNoAnim()
+    // The platform orders the bar [negative][positive] at the right edge: the extra one is the negative so it sits
+    // right next to 취소.
+    if (extraButton != null) b.setNegativeButton(extraButton) { _, _ -> onExtra?.invoke() }.setPositiveButton("취소", null)
+    else b.setNegativeButton("취소", null)
+    b.showNoAnim()
 }
 
 /**
  * Text input dialog (system keyboard: for text, Hangul included; numbers use the non-frozen `InkNumPad`). The caret
  * stays hidden until the user touches the field ([inkCursor]): a blinking caret is an e-ink update twice a second.
+ * [ok] names what the button does ("만들기", "바꾸기") where "확인" would not say it.
  */
-fun Context.prompt(title: String, initial: String = "", hint: String = "", onOk: (String) -> Unit) {
+fun Context.prompt(title: String, initial: String = "", hint: String = "", ok: String = "확인", onOk: (String) -> Unit) {
     val edit = android.widget.EditText(this).apply {
         setText(initial)
         this.hint = hint
@@ -493,7 +587,7 @@ fun Context.prompt(title: String, initial: String = "", hint: String = "", onOk:
     }
     val box = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(edit) }
     alert().setTitle(title).setView(box)
-        .setPositiveButton("확인") { _, _ -> onOk(edit.text.toString()) }
+        .setPositiveButton(ok) { _, _ -> onOk(edit.text.toString()) }
         .setNegativeButton("취소", null)
         .showNoAnim()
 }

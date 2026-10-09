@@ -156,4 +156,55 @@ class XhtmlFuzzPerfTest {
         println("tokenizer: 1 MB, $tokens tokens in $ms ms")
         assertTrue("tokenizer too slow: $ms ms", ms < 200)
     }
+
+    private fun bestMs(runs: Int, block: () -> Unit): Long {
+        var best = Long.MAX_VALUE
+        repeat(runs) {
+            val t0 = System.nanoTime()
+            block()
+            best = minOf(best, (System.nanoTime() - t0) / 1_000_000)
+        }
+        return best
+    }
+
+    /**
+     * A whole-book item as converters write it (`<p class=…>` everywhere, no '&'). Decoding each attribute used to
+     * search for '&' up to the end of the document: O(n²), 1.5/3 MB took 144/773 ms on the JVM (now 10/18 ms).
+     * Doubling the item must about double the time (the floor keeps a fast machine's few ms from failing the ratio).
+     */
+    @Test
+    fun bigConverterItemConvertsInLinearTime() {
+        val half = EpubTestUtil.converterItem(1_500_000)
+        val full = EpubTestUtil.converterItem(3_000_000)
+        fun convert(doc: String) = XhtmlConverter(true, null).convert(doc, "OEBPS/Text/book.xhtml")
+        repeat(3) { convert(half) } // warm-up (JIT)
+        val tHalf = bestMs(3) { convert(half) }
+        val tFull = bestMs(3) { convert(full) }
+        println("converter item: 1.5 MB $tHalf ms, 3 MB $tFull ms")
+        assertTrue("3 MB item took $tFull ms (limit 2000)", tFull < 2000)
+        assertTrue("1.5 MB $tHalf ms, 3 MB $tFull ms: not linear", tFull < 3 * maxOf(tHalf, 20L))
+        val c = convert(full)
+        checkInvariants(c)
+        assertTrue(c.anchors.containsKey("toc_9"))
+    }
+
+    /**
+     * Word-made HTML repeats `<?xml:namespace … />` with no "?>" after it: each one used to search to the end
+     * (1.5/3 MB took 153/619 ms on the JVM, now a few ms).
+     */
+    @Test
+    fun repeatedOpenProcessingInstructionsTokenizeInLinearTime() {
+        val half = EpubTestUtil.converterItem(1_500_000, wordPis = true)
+        val full = EpubTestUtil.converterItem(3_000_000, wordPis = true)
+        fun tokenize(doc: String) {
+            val r = MarkupReader(doc)
+            while (r.next() != MarkupReader.EOF) Unit
+        }
+        repeat(3) { tokenize(half) }
+        val tHalf = bestMs(3) { tokenize(half) }
+        val tFull = bestMs(3) { tokenize(full) }
+        println("Word processing instructions: 1.5 MB $tHalf ms, 3 MB $tFull ms")
+        assertTrue("3 MB item took $tFull ms (limit 1000)", tFull < 1000)
+        assertTrue("1.5 MB $tHalf ms, 3 MB $tFull ms: not linear", tFull < 3 * maxOf(tHalf, 10L))
+    }
 }

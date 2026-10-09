@@ -21,6 +21,8 @@ internal class TxtBook(
     override val file: File,
     private val index: TxtIndex,
     private val options: ParseOptions,
+    /** This open decoded the whole file (no usable index): diagnostics (the reader's RAPerf "open doc … parse"). */
+    internal val parsed: Boolean = false,
 ) : BookDocument {
     override val format: BookFormat get() = BookFormat.TXT
 
@@ -95,7 +97,7 @@ internal class TxtBook(
                     if (temporary) r.close()
                 }
             } catch (e: IOException) {
-                throw DocumentException("읽기 실패: ${file.name}", e)
+                throw DocumentException(TxtDocuments.READ_FAILED, e)
             }
         }
     }

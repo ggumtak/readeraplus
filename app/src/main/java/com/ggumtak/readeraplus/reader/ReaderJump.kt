@@ -54,4 +54,111 @@ object JumpAnchor {
         }
         return true
     }
+
+    /** [anchor] has something to compare (not only whitespace / object markers). */
+    fun hasText(anchor: String): Boolean {
+        for (c in anchor) if (!ignored(c)) return true
+        return false
+    }
+
+    /**
+     * N §6.4: the first offset of [text] (from [from]) where [anchor] [matches], whitespace and object markers
+     * ignored; -1 when absent or when [anchor] has nothing to compare.
+     */
+    fun find(text: CharSequence, anchor: String, from: Int = 0): Int {
+        var a = 0
+        while (a < anchor.length && ignored(anchor[a])) a++
+        if (a == anchor.length) return -1
+        val first = anchor[a]
+        for (i in from.coerceAtLeast(0) until text.length) {
+            if (text[i] == first && matches(text, i, anchor)) return i
+        }
+        return -1
+    }
+
+    /** Sections the anchor check reads (N §6.4 [Δ] cap): at most this many after the one it starts from... */
+    const val MAX_SECTIONS = 48
+    /** ...and at most this many chars in all, whichever comes first. */
+    const val MAX_CHARS = 3_000_000
+
+    /**
+     * The order of sections searched from [center]: the section itself, then outward (+1, −1, +2, −2, …, so ± 3 come
+     * first), skipping the ends of a [count]-section book; at most [max] entries.
+     */
+    fun searchOrder(center: Int, count: Int, max: Int = MAX_SECTIONS): IntArray {
+        if (count <= 0 || max <= 0) return IntArray(0)
+        val c = center.coerceIn(0, count - 1)
+        val out = IntArray(minOf(count, max))
+        var n = 0
+        out[n++] = c
+        var d = 1
+        while (n < out.size && (c + d < count || c - d >= 0)) {
+            if (c + d < count) out[n++] = c + d
+            if (n < out.size && c - d >= 0) out[n++] = c - d
+            d++
+        }
+        return out
+    }
+
+    /**
+     * N §6.4 step 2: searches [anchor] in the sections of [searchOrder] (texts from [load], null = unreadable, skipped)
+     * until the first hit, [maxSections] sections or [maxChars] chars. [check] runs between sections (the job's
+     * `ensureActive`). Returns the position found, or null.
+     */
+    fun search(
+        center: Int, count: Int, anchor: String, load: (Int) -> CharSequence?, check: () -> Unit = {},
+        maxSections: Int = MAX_SECTIONS, maxChars: Int = MAX_CHARS,
+    ): DocPosition? {
+        var chars = 0L
+        for (sec in searchOrder(center, count, maxSections)) {
+            check()
+            val text = load(sec) ?: continue
+            val at = find(text, anchor)
+            if (at >= 0) return DocPosition(sec, at)
+            chars += text.length
+            if (chars >= maxChars) return null
+        }
+        return null
+    }
+
+    /**
+     * PLAN K2: a quote is drawn on the page when it was made against this text ([sig] equals the session's place sig
+     * [sessionSig], `NotePlace.sig`: the NoteSig for TXT, '' for EPUB), or, for a legacy `''` or another sig, when its
+     * own [quoteText] is still found at [start] (≤ 24 visible chars). The same rule as the contents dialog's
+     * `QuoteRows.placeChanged` with the anchor result at hand, so both draw the same set.
+     */
+    fun quoteHolds(sig: String, sessionSig: String, text: CharSequence, start: Int, quoteText: String): Boolean =
+        sig == sessionSig || (start >= 0 && start < text.length && matches(text, start, quoteText))
 }
+
+/** N §6.5: how a note's place reads. */
+object NotePlaceText {
+    const val CHAPTER_MAX = 200
+
+    /** A TOC title for [com.ggumtak.readeraplus.data.NotePlace.chapter]: whitespace runs as one space, trimmed, ≤ 200. */
+    fun chapter(raw: String?): String {
+        if (raw.isNullOrEmpty()) return ""
+        val sb = StringBuilder(minOf(raw.length, CHAPTER_MAX))
+        var space = false
+        for (c in raw) {
+            if (c.isWhitespace()) {
+                space = sb.isNotEmpty()
+                continue
+            }
+            if (space) {
+                if (sb.length + 1 >= CHAPTER_MAX) break
+                sb.append(' ')
+                space = false
+            }
+            sb.append(c)
+            if (sb.length >= CHAPTER_MAX) break
+        }
+        return sb.toString()
+    }
+}
+
+/**
+ * Optional reader capability for the TOC's 인용문 rows (PLAN K2): whether [quote]'s stored place no longer holds its
+ * text, by the same result the page uses when known, else by the sig (non-empty and not the session's).
+ */
+interface QuotePlaceHost { fun quoteMoved(quote: com.ggumtak.readeraplus.data.Quote): Boolean }

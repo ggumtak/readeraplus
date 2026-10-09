@@ -3,6 +3,8 @@ package com.ggumtak.readeraplus.render
 import java.io.Closeable
 import java.io.File
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import java.nio.charset.Charset
 
 /** Random read access to font bytes (a file or an in-memory array). */
@@ -43,6 +45,25 @@ internal class FileSfntSource(file: File) : SfntSource, Closeable {
         try {
             raf.close()
         } catch (ignored: Exception) {
+        }
+    }
+}
+
+/** A font inside a larger file (an uncompressed APK asset's `AssetFileDescriptor`): [size] bytes from [start]. */
+internal class ChannelSfntSource(private val channel: FileChannel, private val start: Long, override val size: Long) : SfntSource {
+    override fun read(pos: Long, dst: ByteArray, off: Int, len: Int): Boolean {
+        if (pos < 0 || len < 0 || off < 0 || off + len > dst.size || pos + len > size) return false
+        return try {
+            val buf = ByteBuffer.wrap(dst, off, len)
+            var p = start + pos
+            while (buf.hasRemaining()) {
+                val n = channel.read(buf, p)
+                if (n < 0) return false
+                p += n
+            }
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 }

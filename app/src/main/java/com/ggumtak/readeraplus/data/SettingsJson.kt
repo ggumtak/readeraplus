@@ -1,5 +1,8 @@
 package com.ggumtak.readeraplus.data
 
+import com.ggumtak.readeraplus.settings.BrightnessEncoding
+import com.ggumtak.readeraplus.settings.MaruHeader
+import com.ggumtak.readeraplus.settings.MaruSize
 import com.ggumtak.readeraplus.settings.StatusMigration
 import com.ggumtak.readeraplus.settings.SideMargin
 import com.ggumtak.readeraplus.settings.VerticalMargin
@@ -7,6 +10,7 @@ import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_MODE_SYSTEM
 import com.ggumtak.readeraplus.settings.EINK_REFRESH_AUTO
 import com.ggumtak.readeraplus.settings.EINK_REFRESH_FLASH
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.TapAction
@@ -47,9 +51,12 @@ internal object SettingsJson {
 
     /**
      * Raw pref keys that are device/session state and must not travel with a backup (matched as lower-case
-     * substrings). The permission ones would hide the "모든 파일 접근" panel on a device that lacks the permission.
+     * substrings). The permission ones would hide the "모든 파일 접근" panel on a device that lacks the permission;
+     * [MaruHeader.KEY] and [MaruSize.KEY] are this device's one-time switches (a restore saves the backup's own header
+     * slots, status size and margins).
      */
-    private val TRANSIENT = listOf("lastscan", "lastbackup", "cacheepoch", "permpanelhidden", "legacypermasked", "installid", "restoreoffer", "backupauto", "deviceclass")
+    private val TRANSIENT = listOf("lastscan", "lastbackup", "cacheepoch", "permpanelhidden", "legacypermasked", "installid", "restoreoffer", "backupauto", "deviceclass",
+        MaruHeader.KEY.lowercase(), MaruSize.KEY.lowercase())
     val DROPPED_KEYS = StatusMigration.LEGACY_KEYS + listOf("a.pinChrome", "reader.brightnessCollapsed", "a.brightnessDevice")
 
     fun isTransient(key: String): Boolean {
@@ -75,6 +82,7 @@ internal object SettingsJson {
         .put("r.marginBottomDp", s.marginBottomDp)
         .put("r.pageMargins", s.pageMargins)
         .put("r.invert", s.invert)
+        .put("r.pageTheme", s.pageTheme.name)
         .put("r.headerLeft", s.headerLeft.name)
         .put("r.headerCenter", s.headerCenter.name)
         .put("r.headerRight", s.headerRight.name)
@@ -83,8 +91,9 @@ internal object SettingsJson {
         .put("r.footerRight", s.footerRight.name)
         .put("r.progressBar", s.progressBar)
         .put("r.pageBreak", s.pageBreak.name)
+        .put("r.landscapePages", s.landscapePages)
         .put(SideMargin.KEY, SideMargin.ZERO_DP)
-        .put(VerticalMargin.KEY, VerticalMargin.ZERO_DP)
+        .put(VerticalMargin.KEY, VerticalMargin.BANDS)
         .put("r.statusFontSizeSp", s.statusFontSizeSp.toDouble())
         .put("r.widowOrphanControl", s.widowOrphanControl)
         .put("r.txtBlankLines", s.txtBlankLines)
@@ -95,8 +104,13 @@ internal object SettingsJson {
         .put("r.txtEmphasizeHeadings", s.txtEmphasizeHeadings)
         .put("r.txtReplaceRules", s.txtReplaceRules)
         .put("r.epubPublisherStyles", s.epubPublisherStyles)
+        .put("r.epubIgnoreBookSizes", s.epubIgnoreBookSizes)
 
-    /** Fields missing from [o] keep their value from [base] (as do fields this mapper doesn't name). */
+    /**
+     * Fields missing from [o] keep their value from [base] (as do fields this mapper doesn't name), except the 화면 색
+     * ([ReaderSettings.pageTheme]): a backup without it was made before the themes, on the white page, so it restores
+     * [PageTheme.PAPER] (as does a theme this build does not know).
+     */
     fun readerFromJson(o: JSONObject, base: ReaderSettings): ReaderSettings = base.copy(
         fontId = BackupJson.str(o, "r.fontId", base.fontId).trim().ifEmpty { base.fontId },
         fontSizeSp = BackupJson.float(o, "r.fontSizeSp", base.fontSizeSp)
@@ -114,6 +128,7 @@ internal object SettingsJson {
         marginBottomDp = BackupJson.int(o, "r.marginBottomDp", base.marginBottomDp).coerceIn(0, 300),
         pageMargins = BackupJson.bool(o, "r.pageMargins", base.pageMargins),
         invert = BackupJson.bool(o, "r.invert", base.invert),
+        pageTheme = enumOf(BackupJson.strOrNull(o, "r.pageTheme"), PageTheme.PAPER),
         headerLeft = enumOf(BackupJson.strOrNull(o, "r.headerLeft"), base.headerLeft),
         headerCenter = enumOf(BackupJson.strOrNull(o, "r.headerCenter"), base.headerCenter),
         headerRight = enumOf(BackupJson.strOrNull(o, "r.headerRight"), base.headerRight),
@@ -122,6 +137,7 @@ internal object SettingsJson {
         footerRight = enumOf(BackupJson.strOrNull(o, "r.footerRight"), base.footerRight),
         progressBar = BackupJson.bool(o, "r.progressBar", base.progressBar),
         pageBreak = enumOf(BackupJson.strOrNull(o, "r.pageBreak"), base.pageBreak),
+        landscapePages = ReaderSettings.cleanLandscapePages(BackupJson.int(o, "r.landscapePages", base.landscapePages)),
         statusFontSizeSp = BackupJson.float(o, "r.statusFontSizeSp", base.statusFontSizeSp).coerceIn(6f, 40f),
         widowOrphanControl = BackupJson.bool(o, "r.widowOrphanControl", base.widowOrphanControl),
         txtBlankLines = BackupJson.int(o, "r.txtBlankLines", base.txtBlankLines).coerceIn(0, 3),
@@ -132,18 +148,29 @@ internal object SettingsJson {
         txtEmphasizeHeadings = BackupJson.bool(o, "r.txtEmphasizeHeadings", base.txtEmphasizeHeadings),
         txtReplaceRules = BackupJson.str(o, "r.txtReplaceRules", base.txtReplaceRules),
         epubPublisherStyles = BackupJson.bool(o, "r.epubPublisherStyles", base.epubPublisherStyles),
+        epubIgnoreBookSizes = BackupJson.bool(o, "r.epubIgnoreBookSizes", base.epubIgnoreBookSizes),
     ).let { loaded ->
         val hasSlots = listOf("r.headerLeft", "r.headerCenter", "r.headerRight", "r.footerLeft", "r.footerCenter", "r.footerRight").any(o::has)
         val migrated = if (!hasSlots && StatusMigration.LEGACY_KEYS.any(o::has))
             StatusMigration.migrate(StatusMigration.Legacy.from(o)).applyTo(loaded) else loaded
+        val sideBase = if (o.has(SideMargin.KEY)) BackupJson.int(o, SideMargin.KEY, -1) else null
         val side = o.has("r.marginLeftDp") && o.has("r.marginRightDp") &&
-            SideMargin.isLegacyDefault(o.has(SideMargin.KEY), migrated.marginLeftDp, migrated.marginRightDp)
+            SideMargin.isLegacyDefault(sideBase, migrated.marginLeftDp, migrated.marginRightDp)
+        val verticalBase = if (o.has(VerticalMargin.KEY)) BackupJson.int(o, VerticalMargin.KEY, -1) else null
         val vertical = o.has("r.marginTopDp") && o.has("r.marginBottomDp") &&
-            VerticalMargin.isLegacyDefault(o.has(VerticalMargin.KEY), migrated.marginTopDp, migrated.marginBottomDp)
-        migrated.copy(marginLeftDp = if (side) 40 else migrated.marginLeftDp,
-            marginRightDp = if (side) 40 else migrated.marginRightDp,
-            marginTopDp = if (vertical) 40 else migrated.marginTopDp,
-            marginBottomDp = if (vertical) 40 else migrated.marginBottomDp)
+            VerticalMargin.isLegacyDefault(verticalBase != null, migrated.marginTopDp, migrated.marginBottomDp)
+        val moved = migrated.copy(marginLeftDp = if (side) SideMargin.ZERO_DP else migrated.marginLeftDp,
+            marginRightDp = if (side) SideMargin.ZERO_DP else migrated.marginRightDp,
+            marginTopDp = if (vertical) VerticalMargin.EDGE_DP else migrated.marginTopDp,
+            marginBottomDp = if (vertical) VerticalMargin.EDGE_DP else migrated.marginBottomDp)
+        // Top/bottom the backup saved from the screen's edge: counted from the bands of the restored settings (the
+        // backup's own status slots, progress line and size), so its text box comes back where it was.
+        val counted = if (!VerticalMargin.countsFromEdge(verticalBase)) moved
+        else VerticalMargin.fromEdge(moved, o.has("r.marginTopDp"), o.has("r.marginBottomDp"))
+        // A bottom margin saved before its "0" moved from 22 to 10 dp (2026-10-06): 12 dp less, as in Settings.
+        if (o.has("r.marginBottomDp") && VerticalMargin.needsBottomShift(verticalBase))
+            counted.copy(marginBottomDp = VerticalMargin.shiftBottom(counted.marginBottomDp))
+        else counted
     }
 
     // ---- app ----
@@ -197,6 +224,7 @@ internal object SettingsJson {
         .put("a.excludedFolders", JSONArray().also { a -> s.excludedFolders.sorted().forEach { a.put(it) } })
         .put("a.orientationLock", s.orientationLock)
         .put("a.brightness", if (s.brightness.isFinite()) s.brightness.toDouble() else -1.0)
+        .put(BrightnessEncoding.KEY_VERSION, BrightnessEncoding.VERSION)
 
     /**
      * Fields missing from [o] keep their value from [base]. Fields this mapper doesn't name (newer settings) are
@@ -204,7 +232,14 @@ internal object SettingsJson {
      * [unmappedFromJson].
      */
     fun appFromJson(o: JSONObject, base: AppSettings): AppSettings {
-        val brightness = BackupJson.float(o, "a.brightness", base.brightness)
+        // A backup with the encoding marker holds a slider position, used as is. One without it is legacy (window
+        // path: linear light), converted once: by the backup's own device-control flag when it has one, else by the
+        // flag of the device restoring it. Builds that wrote no marker never exported the flag (DROPPED_KEYS), so that
+        // is the usual case. The flag itself is never restored.
+        val stored = BackupJson.floatOrNull(o, "a.brightness")
+        val version = if (o.has(BrightnessEncoding.KEY_VERSION)) BackupJson.int(o, BrightnessEncoding.KEY_VERSION, BrightnessEncoding.VERSION) else null
+        val brightness = if (stored == null) base.brightness else BrightnessEncoding.fromStored(
+            stored, version, BackupJson.bool(o, "a.brightnessDevice", base.brightnessDevice))
         return base.copy(
             tapZoneMode = enumOf(BackupJson.strOrNull(o, "a.tapZoneMode"), base.tapZoneMode),
             customTapZones = tapZones(o.opt("a.customTapZones")) ?: base.customTapZones,

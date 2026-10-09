@@ -1,0 +1,31 @@
+{
+  "lane": "EX-N",
+  "files": [
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/ContentsDialog.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/QuoteRows.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/extras/QuoteRowsTest.kt",
+    "docs/next/EX_N_STATUS.md",
+    "docs/next/lanes/EX-N.result.json"
+  ],
+  "summary": "N §7.2 W1 in ContentsDialog: quote rows with a non-clickable 48 dp swatch column decided by the DOWN x (InkPager drag-to-page intact), palette recolour via Library.updateQuoteStyle + refreshQuoteHighlights (style passed, last style pref written), 색 바꾸기 in the long-press menu, in-memory style chips [전체 N] [● n] with '인용문 5 / 12', tagged share-all capped at SHARE_MAX_CHARS on an entry boundary, '· 위치 바뀜' per PLAN K2 (session NoteSig via NotePlaceHost + JumpAnchor when the section is laid out; same rule filters refreshQuoteHighlights), hub link '모든 책의 노트' → NotesActivity.open on 북마크/인용문 tabs; TOC title through the kit toolbar (20 sp bold). Pure logic in new QuoteRows with QuoteRowsTest.",
+  "checks": "module typecheck (--own reader/extras) green; module unittest (ContentsDialog, QuoteRows + 5 lane tests) OK (68 tests); full tools/typecheck.sh green; full tools/unittest.sh OK (1204 tests); stub grep over lane files empty. Note: listing every lane file with --own exceeds the tools' output-dir name length, so typecheck used --own reader/extras (other extras files equal the snapshot).",
+  "contractRequests": [
+    "A host capability to open a quote through the note jump path (ReaderJump.resolve: char-fraction locate + JumpAnchor), e.g. NotePlaceHost.openNote(ReaderJump) or a ReaderPanels interface; ContentsDialog now falls back to PageJumpHost.goToProgress(q.frac), which uses the footer's page measure.",
+    "Expose the reader's per-(generation, section) quote-drawn result (PLAN K2) to ContentsDialog, e.g. NotePlaceHost.quotePlaceChanged(q: Quote): Boolean?; ContentsDialog currently recomputes it only for the laid-out section and otherwise uses the sig.",
+    "tools/typecheck.sh / unittest.sh: the module-mode output directory is named after all --own paths, which exceeds the filesystem name limit for lanes with many files (hash or truncate TAG)."
+  ],
+  "rcaNotes": [
+    "Implement NotePlaceHost on ReaderActivity's host (main thread): notePlace(pos).sig = the session NoteSig ('' for EPUB). ContentsDialog.sessionSig(host) calls notePlace(host.currentPosition()) once per quote load/refresh to decide '· 위치 바뀜' and which quotes refreshQuoteHighlights draws.",
+    "reloadAnnotations should use the same rule as ContentsDialog.refreshQuoteHighlights / QuoteRows.placeChanged(q.sig, sessionSig, anchorMatch) so a refresh after recolour/delete/save draws the same set (one e-ink update, sameDecor true).",
+    "Implement PageJumpHost on the host: ContentsDialog opens a moved quote with goToProgress(q.frac) after dismissing (main thread).",
+    "ContentsDialog is still opened by ReaderPanels.showContents(host, tab); the hub link dismisses it and calls NotesActivity.open(ctx, NotesTab.BOOKMARKS/QUOTES); the reader should reloadAnnotations on window focus (existing 1 s guard) to pick up hub recolours."
+  ],
+  "deviations": [
+    "Moved quotes open via PageJumpHost.goToProgress(q.frac) instead of the frac + anchor jump path (no host API for it; see contractRequests).",
+    "QuoteExport.tagged (EX-S, not in the base) is duplicated as QuoteRows.tagged with the same rule; swap after merge if desired.",
+    "With 5 or more chips the chips share the row width (weighted, 4 dp padding) instead of wrap_content, so all fit 360 dp without a smooth-scrolling HorizontalScrollView.",
+    "The kit toolbar adds its hairline under the title row (a line between title and tabs that was not there before).",
+    "Library.setQuoteStyles is not used in the TOC (no multi-select there; the hub's batch recolour uses it)."
+  ],
+  "complete": true
+}

@@ -46,6 +46,29 @@ class ScrollWindowTest {
             }
         }
     }
+    @Test fun virtualPagesGiveEverySectionOnScreenInOrderAndAgreeWithTheSingleVirtualPage() {
+        val l = layout(); val source = Source(l); val w = ScrollWindow(); val pos = ScrollPos()
+        val r = Random(2209)
+        var seams = 0
+        repeat(2000) {
+            pos.section = r.nextInt(3); pos.page = r.nextInt(5); pos.dy = r.nextFloat() * 40f
+            val ct = r.nextInt(15, 90).toFloat(); val h = r.nextInt(80, 150).toFloat()
+            w.fill(source, pos, h, ct)
+            val all = w.virtualPages(ct, h)
+            assertEquals(all.map { it.section }.sorted(), all.map { it.section })
+            assertEquals(all.size, all.map { it.section }.distinct().size)
+            for (s in 0..2) {
+                val one = w.virtualPage(s, ct, h)
+                val got = all.firstOrNull { it.section == s }
+                if (one == null) { assertNull(got); continue }
+                assertNotNull(got)
+                assertEquals(one.page.lines.map { it.start to it.top }, got!!.page.lines.map { it.start to it.top })
+            }
+            if (all.size > 1) seams++
+        }
+        // The screen over a seam (the end of one section, the start of the next) is the case the tree must cover.
+        assertTrue(seams > 0)
+    }
     @Test fun stepClipEndsAtARoundedWholeLineAndClearedWindowsReleaseLayouts() {
         val l = layout(); val w = ScrollWindow(); val pos = ScrollPos()
         pos.dy = 7.35f
@@ -55,6 +78,38 @@ class ScrollWindowTest {
         assertEquals(-1, w.focusAt(w.wholeBottom + 1f, 40f, w.wholeBottom))
         w.clear()
         assertEquals(0, w.count); assertTrue(w.layouts.all { it == null }); assertTrue(w.quotes.all { it.isEmpty() })
+    }
+    @Test fun aLayoutStoredOutsideTheWindowLeavesItsStripsAsTheyWere() {
+        // ScrollReader.onSectionStored redraws only when rebuildWindow sees other strips (S §1.8): a neighbour prefetch
+        // (s ± 1 after the first page and every settle) is not asked for while the window does not reach it.
+        val l = layout(); val have = BooleanArray(3); val asked = ArrayList<Int>()
+        val source = object : StripSource {
+            override val sectionCount = 3
+            override fun layoutOf(section: Int): SectionLayout? { asked += section; return if (have[section]) l else null }
+            override fun unitGap(section: Int) = 11.1f
+        }
+        val w = ScrollWindow(); val pos = ScrollPos()
+        have[1] = true; pos.section = 1; pos.page = 1; pos.dy = 7f
+        w.fill(source, pos, 100f, 40f)
+        assertEquals(-1, w.blockedAt); assertEquals(1, w.first); assertEquals(1, w.last)
+        assertEquals(listOf(1), asked.distinct())
+        val count = w.count; val pages = w.pages.copyOf(count); val tops = w.tops.copyOf(count)
+        val gaps = w.gaps.copyOf(count); val bottom = w.wholeBottom
+        have[0] = true; have[2] = true
+        w.fill(source, pos, 100f, 40f)
+        assertEquals(count, w.count); assertEquals(-1, w.blockedAt); assertEquals(bottom, w.wholeBottom, 0f)
+        for (i in 0 until count) {
+            assertEquals(1, w.sections[i]); assertSame(l, w.layouts[i]); assertEquals(pages[i], w.pages[i])
+            assertEquals(tops[i], w.tops[i], 0f); assertEquals(gaps[i], w.gaps[i], 0f)
+        }
+        // A window that reaches an unstored section is blocked there; storing it changes the strips.
+        have[2] = false; pos.page = 4; pos.dy = 0f
+        w.fill(source, pos, 100f, 40f)
+        assertEquals(2, w.blockedAt); assertEquals(1, w.last)
+        val blockedCount = w.count
+        have[2] = true
+        w.fill(source, pos, 100f, 40f)
+        assertEquals(-1, w.blockedAt); assertEquals(2, w.last); assertTrue(w.count > blockedCount)
     }
     @Test fun longEarlierHighlightsAreNeverLostBehindThousandsOfShorterRanges() {
         val quotes = ArrayList<Highlight>()

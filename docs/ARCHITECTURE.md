@@ -187,9 +187,14 @@ Owns `format/txt/`. Implements `TxtDocuments` (open / readMeta / preview / ENCOD
    - K5 `^[=\-*~#]{3,}\s*(\S.{0,40}?)\s*[=\-*~#]{3,}$` (only if the inner text matches K1–K3 or has a digit)
    - K6 `^\S.{0,30}?\s+\d{1,5}\s*화$` (title + N화)
    - K4 `^\d{1,4}\s*[.)]\s+\S.{0,40}$` only when it wins by the scoring below (list-prone).
-   - user regex `txtChapterRegex` (if valid) is tried first.
-   Reject lines ending with `다.`, `?”`, `!”`, `."`. Scoring: per rule count matches spaced > 1000 chars apart;
-   the best rule (plus K3 specials always) defines chapters; require ≥ 2 chapters. Prune runs of ≥ 3 headings
+   - user rule `txtChapterRegex` (if valid), a regex or an easy pattern stored as `simple:<text>`
+     (`format/txt/HeadingRule.kt`: `N` = number, `*` = any text, spaces optional, `|` separates alternatives, each
+     alternative matches the whole trimmed line). It adds to the built-in rules, it does not replace them.
+   Reject lines ending with `다.`, `?”`, `!”`, `."` (a numbered title `7. 제목.` is not rejected for its final `.`;
+   a line the user rule matches is never rejected). Scoring: per rule count matches spaced > 1000 chars apart;
+   the best built-in rule (plus K3 specials always) defines chapters, and the user rule's matches are added to
+   them (a book may use `76화` and then `< 77 >`); with no qualifying built-in rule the user rule alone defines
+   them when it matches ≥ 2 lines; require ≥ 2 chapters. Prune runs of ≥ 3 headings
    with no body between them (a TOC listing at the top). If the first body line equals the heading, drop it
    (duplicate title).
 6. **Sections**: each chapter starts a section; text before the first chapter is section 0 (if non-empty).
@@ -303,30 +308,53 @@ as you like, same package & signatures).
     `setFontVariationSettings("'wght' N")`. Static fonts: use the bold file when `weight ≥ 600` and one
     exists, else the regular file. Italic: `Typeface.create(base, weight, true)` (API 28+) or no-op (the
     measurer applies skew). Unknown id → default (`FontCatalog.DEFAULT_ID`, `nanummyeongjo` since R2).
+    **2026-10-05 (한자 빈칸):** every face gets the system's default fallback chain, named explicitly on API 29+
+    (`Typeface.CustomFallbackBuilder(...).setSystemFallback(FontMath.SYSTEM_FALLBACK)`, `"sans-serif"`; 26–28
+    `Typeface.Builder`'s own default), 명조 / 바탕 faces too: MaruViewer draws 聖 / 俗 in the system's gothic, and
+    advances stay what they were. A font file that maps characters to glyphs without an outline (`HollowGlyphs`:
+    the old 나눔명조 OTF's 4,888 Hanja, the syllables outside KS X 1001 in 마루 부리 / SUIT / 바른바탕) loads from a
+    private copy whose cmap leaves them out (`FontRepairs`, cacheDir/fonts-fixed, one scan per font file version:
+    an asset is keyed by its length and table directory, a user file by size and mtime), so the system font draws
+    them. The reader checks its font's two files next to its warm-up (`FontManager.prepare`); the page-count key
+    names the repaired files (`FontManager.layoutTag`). 나눔명조 ships as Naver's TTF (no Hanja in its cmap, like
+    MaruViewer's).
   - `syntheticStroke(id, weight, sizePx)`: static fonts only. `w = weight` minus 300 if the bold file is used
     (i.e. bold file ≈ 700), result `max(0, (w - 400) / 100f) * 0.012f * sizePx` (so 900 ≈ 6% of size).
   - `importFont(context, uri)`: copy via ContentResolver into `filesDir/fonts/` (validate the sfnt header
     `00 01 00 00` / `OTTO` / `true` / `ttcf`), register, return. `deleteUserFont` only for files under
     `filesDir/fonts`.
 - **AndroidTextMeasurer**: `emPx = TypedValue.applyDimension(SP, settings.fontSizeSp)`. `paintFor(style)`
-  cached per `RunStyle`: `TextPaint(ANTI_ALIAS_FLAG or SUBPIXEL_TEXT_FLAG or LINEAR_TEXT_FLAG)`, typeface from
-  FontManager (bold → weight+300 capped at 900; monospace → `Typeface.MONOSPACE`), `textSize = emPx *
-  sizeScale` (×0.75 for super/sub — the parser already sets sizeScale; don't double apply),
-  `letterSpacing = settings.letterSpacingPm / 1000f`, synthetic stroke via `Style.FILL_AND_STROKE` +
-  `strokeWidth`, italic skew `-0.2f` when the typeface isn't italic, underline/strike flags, color black.
+  cached per `RunStyle`: `TextPaint(CrispText.PAINT_FLAGS)` = `ANTI_ALIAS_FLAG` only (since 2026-10-05, MaruViewer's
+  look: no `LINEAR_TEXT_FLAG`, which makes hwui draw unhinted, and no `SUBPIXEL_TEXT_FLAG`, so glyphs sit on whole
+  pixels; measuring and drawing share the paint, so advances are the hinted whole-px ones; `LayoutKeys.ALGO_VERSION` 2),
+  typeface from FontManager (bold → weight+300 capped at 900; monospace → `Typeface.MONOSPACE`), `textSize =
+  CrispText.paintTextPx(emPx, sizeScale)` (whole px, rounded down; load-bearing: minikin lays out a non-linear paint at
+  `(int) textSize`, but hwui draws the glyphs at the paint's own size and FreeType hints NanumMyeongjo, head.flags bit 3,
+  at the rounded ppem, so an unrounded 47.81 px would draw 48-ppem glyphs on 47-px advances; `emPx` itself, the
+  layout's em, stays unrounded; ×0.75 for super/sub — the parser already sets sizeScale; don't double apply),
+  `letterSpacing = settings.letterSpacingPm / 1000f` (whole px per glyph on this non-linear paint: minikin rounds
+  `letterSpacing × size`, so at 47 px ±1 % draws nothing; `CrispText.PAINT_FLAGS`), synthetic stroke via
+  `Style.FILL_AND_STROKE` + `strokeWidth`, italic skew `-0.2f` when the typeface isn't italic, underline/strike flags,
+  color black.
   `measure` uses `paint.getTextWidths(String, start, end, FloatArray)` into a reusable temp array, then
   zeroes `'\n'` and `OBJECT_CHAR`. `metrics(style)`: from `paint.fontMetrics` (ascent = -ascent), cached.
 - **ImageCache**: bounds via `BitmapFactory` `inJustDecodeBounds`; decode with `inSampleSize` (largest power
   of 2 keeping ≥ target), then scale to fit; `LruCache` by bytes; `RGB_565` when no alpha. Composite
   transparent images on white.
 - **PageRenderer.draw**: background white (black if `invert`). Header (chapter title, ellipsized, small font
-  `statusFontSizeSp`, system sans) centred in the top margin area above the content box; footer left/right
+  `statusFontSizeSp`, system sans) centred in the top margin area above the content box (R3 2026-10-05: in its own
+  band at the top edge, see the R3 revision below); footer left/right
   strings in the bottom margin area; both only when non-null. Then highlights (under text): QUOTE light grey
   fill `#D8D8D8` + 1px underline, SELECTION `#A8A8A8` fill, SEARCH `#C0C0C0` fill + 1px outline, TTS
   underline 2px + `#E0E0E0` fill (inverted variants when `invert`). Text lines: use
   `LineGeometry.charPositions` (reusable FloatArray) and draw **segments** — split at style changes and at
   expansion points — with `canvas.drawText(text, s, e, x, baseline + shift, paint)`; skip whitespace-only
-  segments; superscript shift `-0.35 em`, subscript `+0.2 em`; underline/strike/link underline as lines.
+  segments; superscript shift `-0.35 em`, subscript `+0.2 em`; underline/strike/link underline as lines. The
+  baseline (with its shift) is rounded to a whole row and a page look's text shadow offset to whole px
+  (`CrispText.baselineY`, `CrispText.shadowOffsetPx`; 2026-10-05), so every glyph's shadow lies the same distance away.
+  Skia rounds each segment's x to a whole pixel (no `SUBPIXEL_TEXT_FLAG`): every glyph lies within half a pixel of its
+  layout x, so the gaps between a justified line's words (or, in EXPAND_CHARS lines, letters) can differ by 1 px, as in
+  MaruViewer and TextView.
   Images: `drawBitmap(src, null, dstRect, filterPaint)`. Rules: centred line 25% of width, 1dp.
   Bookmarked: a black ribbon (small pentagon) at the view's top-right corner. No allocations per draw beyond
   first use (reuse Paint/RectF/arrays). Night mode draws images through one shared inverting `ColorMatrixColorFilter`.
@@ -485,6 +513,13 @@ Owns `reader/` except `reader/ReaderHost.kt` and `reader/extras/`. `ReaderActivi
     counted sections' pages/char ratio (blended with a geometry prior) × `SectionInfo.approxChars`; labels never
     show a "~" (user request) — estimates are plain numbers.
   - Global page (1-based) = Σ counts[0 until section] + pageInSection + 1.
+- **Landscape spread** (`ReaderSettings.landscapePages` = 2, a paged view wider than tall; `LayoutKeys.columnsFor`):
+  the content box splits into two columns with a gutter of twice the side margin (at least 24 dp), sections are
+  typeset at the column width (`PageGeometry.contentWidth`; the key and the page counts carry the column count), and
+  one frame paints page i (left) and i + 1 (right) of the same layout (the next section's page 0 when the left page
+  ends its section and that layout is cached, else blank). The current page is the left one, spreads start at even
+  pages (`SpreadMath`), a turn moves two pages, touches right of the gutter's middle belong to the right page
+  (`PageFrame.right`), and the status line reads "12-13 / 3259". The scroll mode and thumbnails stay one column.
 - Navigation: next/prev within the section; crossing sections uses the prefetched layout (else lay out,
   showing nothing new until ready — no spinner flash for < 300 ms). `goTo(pos, remember)`: remember pushes the
   previous position to a stack; show the "← 돌아가기 (p. N)" chip until used, dismissed (its × button) or
@@ -660,7 +695,7 @@ that outlive the release.
    `einkRefreshEveryNight = -1` (same as day), `einkFlashImages = false`; closing a panel only counts one turn toward
    a cadence that is already on. The default e-ink mode stays "system" (the device keeps its own waveform).
 6. **At most one `TxtIndexStore.VERSION` bump per release.** Each bump makes every large TXT parse in full once
-   (≈ 1–1.5 s for 14 MB on the A53). Release 2 spends it on A5 (3 → 4). While a TXT over 4 MB is parsed in full
+   (≈ 1–1.5 s for 14 MB on the A53). Release 2 spends it on A5 (3 → 4) and on the user heading rule (4 → 5: it adds to the built-in rules). While a TXT over 4 MB is parsed in full
    (`TxtDocuments.isBuildingIndex`) the delayed loading text reads "목차를 만드는 중…". The bump is also
    `TxtDocuments.PARSE_VERSION`, part of `LayoutKeys.textSignature`: a saved TXT position is found again once by its
    char fraction, since the new parse may split sections differently.
@@ -679,7 +714,8 @@ throttled (only auto-repeat is paced).
   every `LineInfo` field and compares with `LayoutKeys.GOLDEN_HASH`; on a mismatch it fails with "layout output
   changed: bump ALGO_VERSION and update GOLDEN_HASH". Measurer changes (`FontManager`, `AndroidTextMeasurer`,
   synthetic stroke) are NOT covered by the test: whoever changes glyph advances or line metrics bumps `ALGO_VERSION`
-  by hand.
+  by hand, unless the change touches some fonts only and the font identity in the key says so (the blank-glyph
+  repairs: `FontManager.layoutTag`, "" for a font without one, so the other fonts keep their counts).
 - Counts are saved partially: the `page_counts` BLOB (little-endian int32 per section) may hold -1 for a section not
   counted yet (or counted as its error page: those are never cached). The reader saves every 25 counted sections, when
   complete and on close (on `ReaderIo`, array copied on the main thread first; an older save never overwrites a newer
@@ -761,14 +797,31 @@ adb logcat -s RAPerf
 The release gates compare these numbers with the Wave 0 baseline recorded on the Comet: the cached reopen of the
 14.8 MB TXT within +10 ms, page-turn time unchanged, library cold start (`am start -W`) within +5 %.
 
+The same switch adds the measuring lines of `reader/PerfTrace.kt` `PerfLines` (DEVICE_CHECKLIST §15d): per turn
+"turn #n tap: contact … ms, wait … ms, up+… ms, down+… ms, onDraw … ms" (a key shows the system's hold as `wait`) and
+the FrameMetrics of its frame, "frame #n: total … ms (…), done up+… ms" (`reader/FrameWatch.kt`, registered only with
+the tag on); per open "open doc …" (TXT index / parse, EPUB plan / scan / small; also for a re-parse in the reader),
+"open layout s: …" (BookSession, every layout logs a "layout s: …" line, ", prefetch" when nothing waited for it) and
+"open <id>: onDraw … ms". The two turn lines are written after the turn's frame, so its FrameMetrics hold no logging.
+`reportFullyDrawn()` runs once per reader after the first page is drawn, also only with the tag on: since Android 10
+it ends ART's startup phase too (VMRuntime.notifyStartupCompleted), which a normal open leaves to ART (~5 s after
+launch).
+
 
 ## Contract revision R3 (2026-10-02)
 
 - **Chrome / insets:** reader bars and the return chip overlay the page. Pinned chrome is removed; page view size
   depends only on InsetsGate-approved system insets. Popups/dialogs preserve the underlying geometry.
-- **Status / margins:** six `StatusItem` slots and a progress lane draw inside existing margins. Text box = view
-  minus margins, with no header/footer subtraction. Defaults are 40 dp = UI `0`. Model/renderer reuse buffers;
-  redraw only for a changed visible value or changed dot pixel. `footerEpisode`/`footerTimeLeft` become typed slots.
+- **Status / margins:** six `StatusItem` slots and a progress lane. Until 2026-10-05 they drew inside the margins
+  (text box = view minus margins). Since then (user: "위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지")
+  each band has its own place at its screen edge (`StatusBands`: whole dp from the settings only, never from what is
+  on screen), and the text box = view minus a display cutout's band, the bands and the margins: the 위·아래 여백 are
+  the paper between a band and the text, 0 puts the text right under the header, and no margin hides or shrinks a band
+  (no '가려짐' note). Another item in a slot repaints; a band that comes, goes or changes height relays out anchored
+  (`LayoutKeys.bandsChanged`). Defaults keep the text box 40 dp from the edges (sides 20 dp, MaruViewer; top 18 dp
+  under the 22 dp header band, bottom 22 dp over the 18 dp progress line; a fullscreen camera band is left out like a
+  system bar, the header centred between it and the text box as before). Model/renderer reuse buffers; redraw only
+  for a changed visible value or changed dot pixel. `footerEpisode`/`footerTimeLeft` become typed slots.
 - **Pagination:** `PageBreakMode.LINE` preserves the golden output; PARAGRAPH keeps a whole paragraph when it fits.
   Relayout opens an anchored generation so the first character stays; its changed section is masked from saved
   counts. Scroll stitches `PageInfo.lead` and real line bodies; it never uses page-bottom blank space.

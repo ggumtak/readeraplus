@@ -2,10 +2,16 @@ package com.ggumtak.readeraplus.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import android.os.Build
 import android.util.Log
+import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
+import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
+import java.io.BufferedWriter
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -13,12 +19,13 @@ import java.io.OutputStreamWriter
 
 /**
  * JSON export/import of library state (flags, positions, bookmarks, quotes, collections, reviews, reading log,
- * per-book prefs) + settings. File format: see [BackupJson] / [SettingsJson].
+ * per-book prefs, lookups) + settings. File format: see [BackupJson] / [SettingsJson]; restore rules: [BackupMerge].
+ * The auto backup ([AutoBackup]) writes the same file from [snapshot].
  */
 object Backup {
     private const val TAG = "Backup"
     /** Backups larger than this are rejected (a real one is a few MB at most). */
-    private const val MAX_BYTES = 64L * 1024 * 1024
+    internal const val MAX_BYTES = 64L * 1024 * 1024
 
     /**
      * The reader's per-book parse records ("b<id>" → `TextPositions.encode`), which ReaderActivity keeps in the
@@ -26,62 +33,140 @@ object Backup {
      */
     internal const val TEXT_POSITIONS_PREFS = "reader_text_positions"
 
-    /** Writes a backup JSON to [out]. */
+    /** Writes a backup JSON to [out] (a manual export: `origin.auto = false`). Streams book by book. */
     fun export(context: Context, out: OutputStream) {
+        val snap = snapshot(context) { false } ?: return
+        val data = headed(snap.data, System.currentTimeMillis(), origin(context, auto = false))
+        BackupJson.write(data, BufferedWriter(OutputStreamWriter(out, Charsets.UTF_8), 64 * 1024))
+    }
+
+    /** Thrown inside a snapshot or a write when the caller's busy() turned true (S §3.2). */
+    internal class BusyException : RuntimeException("busy")
+
+    /** A library + settings snapshot; [settingsAreDefault] feeds [AutoBackup.isBlank]. */
+    internal class Snapshot(val data: BackupData, val settingsAreDefault: Boolean)
+
+    /**
+     * The whole backup as model objects ([BackupData], `createdAt = 0`, no origin, the summary set), read query by
+     * query with [busy] checked after each (books, bookmarks, quotes, memberships, collections, reading log, book
+     * prefs, lookups, settings); null when it turned true. Raw prefs go in sorted key order, so an unchanged state
+     * always serialises — and hashes — the same. Blocking (IO thread). This is S §3.2's `snapshotJson`, kept as
+     * models: the 10–20 MB JSON tree is never built; [BackupJson.write] streams it (K11).
+     */
+    internal fun snapshot(context: Context, busy: () -> Boolean): Snapshot? {
         Library.init(context)
         Settings.init(context)
         val db = Library.db()
-        val books = db.queryList(LibrarySql.SELECT_ALL_BOOKS_FOR_BACKUP, null) { c ->
-            BookRows.book(c) to (c.getInt(LibrarySql.BOOK_COLUMN_COUNT) != 0)
+        val extra = BackupSql.BOOK_EXTRA
+        val books = db.queryList(BackupSql.SELECT_BOOKS, null) { c ->
+            BookRow(BookRows.book(c).copy(missingAt = c.getLong(extra + 2)), c.getInt(extra) != 0, c.getLong(extra + 1))
         }
-        val bookmarks = db.queryList(LibrarySql.SELECT_ALL_BOOKMARKS, null, BookRows::bookmark).groupBy { it.bookId }
-        val quotes = db.queryList(LibrarySql.SELECT_ALL_QUOTES, null, BookRows::quote).groupBy { it.bookId }
+        if (busy()) return null
+        val bookmarks = db.queryList(BackupSql.SELECT_ALL_BOOKMARKS, null, ::bookmark).groupBy { it.bookId }
+        if (busy()) return null
+        val quotes = db.queryList(BackupSql.SELECT_ALL_QUOTES, null, ::quote).groupBy { it.bookId }
+        if (busy()) return null
         val memberships = db.queryList(LibrarySql.SELECT_ALL_MEMBERSHIPS, null) { c ->
             c.getLong(0) to (c.getString(1) ?: "")
         }.groupBy({ it.first }, { it.second })
         val collectionNames = db.queryList(LibrarySql.SELECT_COLLECTION_NAMES, null) { it.getString(0) ?: "" }
             .filter { it.isNotBlank() }
+        if (busy()) return null
         val logs = db.queryList(LibrarySql.SELECT_ALL_LOG, null) { c ->
             c.getLong(0) to BackupLogDay(c.getInt(1), c.getLong(2), c.getInt(3), c.getLong(4))
         }.groupBy({ it.first }, { it.second })
+        if (busy()) return null
         val prefs = HashMap<Long, BackupPrefs>()
-        db.queryList(LibrarySql.SELECT_ALL_BOOK_PREFS, null) { c ->
+        db.queryList(BackupSql.SELECT_ALL_BOOK_PREFS, null) { c ->
             c.getLong(0) to BackupPrefs(
                 txtOverride = if (c.isNull(1)) null else TxtOverride.fromJson(c.getString(1)),
                 finishedAt = c.getLong(2),
                 episodeLabel = if (c.isNull(3)) null else c.getString(3),
+                returnMark = if (c.isNull(4)) null else c.getString(4)?.ifEmpty { null },
             )
         }.forEach { (id, p) -> if (!p.isEmpty) prefs[id] = p }
+        if (busy()) return null
+        val lookups = db.queryList(BackupSql.SELECT_ALL_LOOKUPS, null, ::lookup).groupBy { it.bookId }
+        if (busy()) return null
 
+        val reader = Settings.reader
+        val app = Settings.app
+        val styles = Settings.userStyles
         val settings = try {
-            SettingsJson.settingsToJson(Settings.reader, Settings.app, Settings.raw().all, Settings.userStyles)
+            SettingsJson.settingsToJson(reader, app, java.util.TreeMap(Settings.raw().all), styles)
         } catch (t: Throwable) {
             Log.w(TAG, "settings export failed", t)
             null
         }
+        val settingsAreDefault = reader == ReaderSettings() && app == AppSettings() && styles.isEmpty()
+        if (busy()) return null
+        val backupBooks = books.map { r ->
+            val b = r.book
+            BackupJson.fromBook(
+                b, r.metaLocked,
+                memberships[b.id].orEmpty(),
+                bookmarks[b.id].orEmpty(),
+                quotes[b.id].orEmpty(),
+                logs[b.id].orEmpty(),
+                prefs[b.id],
+                r.reviewAt,
+                lookups[b.id].orEmpty(),
+            )
+        }
         val data = BackupData(
             version = BackupJson.VERSION,
-            createdAt = System.currentTimeMillis(),
-            books = books.map { (b, locked) ->
-                BackupJson.fromBook(
-                    b, locked,
-                    memberships[b.id].orEmpty(),
-                    bookmarks[b.id].orEmpty(),
-                    quotes[b.id].orEmpty(),
-                    logs[b.id].orEmpty(),
-                    prefs[b.id],
-                )
-            },
+            createdAt = 0L,
+            books = backupBooks,
             collections = collectionNames,
             settings = settings,
             txtParseVersion = TxtDocuments.PARSE_VERSION,
+            summary = BackupJson.summaryOf(backupBooks),
         )
-        val w = OutputStreamWriter(out, Charsets.UTF_8)
-        w.write(BackupJson.toJson(data).toString(1))
-        w.flush()
+        return Snapshot(data, settingsAreDefault)
     }
 
-    /** Restores from JSON; books are matched by path, then by file name + size. Returns restored book count. */
+    /** [d] with its header set: [createdAt] and [origin] (the summary counted when missing). */
+    internal fun headed(d: BackupData, createdAt: Long, origin: BackupOrigin?): BackupData =
+        BackupData(d.version, createdAt, d.books, d.collections, d.settings, d.txtParseVersion, origin,
+            d.summary ?: BackupJson.summaryOf(d.books))
+
+    /** The `origin` header of a file this install writes (one PackageManager call; IO thread). */
+    internal fun origin(context: Context, auto: Boolean): BackupOrigin {
+        val app = try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        } catch (t: Throwable) {
+            ""
+        }
+        val device = listOf(Build.MANUFACTURER ?: "", Build.MODEL ?: "").filter { it.isNotBlank() }.joinToString(" ")
+        return BackupOrigin(InstallState.installId(context), auto, app, device)
+    }
+
+    private class BookRow(val book: Book, val metaLocked: Boolean, val reviewAt: Long)
+
+    private fun bookmark(c: Cursor): Bookmark = Bookmark(
+        id = c.getLong(0), bookId = c.getLong(1), section = c.getInt(2), offset = c.getInt(3),
+        snippet = c.getString(4) ?: "", createdAt = c.getLong(5), note = c.getString(6) ?: "",
+        chapter = c.getString(7) ?: "", frac = c.getFloat(8), sig = c.getString(9) ?: "",
+    )
+
+    private fun quote(c: Cursor): Quote = Quote(
+        id = c.getLong(0), bookId = c.getLong(1), section = c.getInt(2), start = c.getInt(3), end = c.getInt(4),
+        text = c.getString(5) ?: "", note = c.getString(6) ?: "", createdAt = c.getLong(7),
+        style = c.getInt(8), chapter = c.getString(9) ?: "", frac = c.getFloat(10), sig = c.getString(11) ?: "",
+    )
+
+    private fun lookup(c: Cursor): Lookup = Lookup(
+        id = 0, bookId = c.getLong(0), word = c.getString(1) ?: "", section = c.getInt(2), start = c.getInt(3),
+        end = c.getInt(4), context = c.getString(5) ?: "", chapter = c.getString(6) ?: "", frac = c.getFloat(7),
+        sig = c.getString(8) ?: "", via = c.getInt(9), app = c.getString(10) ?: "", note = c.getString(11) ?: "",
+        createdAt = c.getLong(12),
+    )
+
+    /**
+     * Restores from JSON (N §5.6 merge: a union, nothing is deleted); books are matched by path, then by file name +
+     * size; a book with notes whose file is not here becomes a placeholder in 휴지통. Settles the restore offer
+     * (S §3.4). Returns the number of books matched on this device.
+     */
     fun import(context: Context, input: InputStream): Int {
         Library.init(context)
         Settings.init(context)
@@ -89,9 +174,11 @@ object Backup {
         val data = BackupJson.parse(String(bytes, Charsets.UTF_8))
         val matches = resolveBooks(data.books)
         val remap = applyLibrary(data, matches)
+        Library.notesChanged() // after applyLibrary's commit (N §5.1 / §5.6)
         markTextPositions(context, remap)
         data.settings?.let { applySettings(it) }
-        return matches.size
+        InstallState.settleOffer(context)
+        return matches.count { !it.placeholder }
     }
 
     private fun readLimited(input: InputStream): ByteArray {
@@ -108,11 +195,20 @@ object Backup {
         return buf.toByteArray()
     }
 
-    private class Match(val id: Long, val currentLastReadAt: Long, val backup: BackupBook)
+    /** A backup entry and its library row; [placeholder] = no file here, [id] is made by [applyLibrary]. */
+    private class Match(
+        val id: Long,
+        val backup: BackupBook,
+        val fileFound: Boolean,
+        val placeholder: Boolean = false,
+    )
 
     private class Row(val id: Long, val path: String, val size: Long, val fileName: String, val lastReadAt: Long)
 
-    /** Library ids for backup entries: path → file name + size → the file itself if it exists (added). */
+    /**
+     * Library ids for backup entries: path → file name + size → the file itself if it exists (added). An entry that
+     * resolves to nothing but holds notes becomes a placeholder ([BackupMerge.needsPlaceholder]).
+     */
     private fun resolveBooks(books: List<BackupBook>): List<Match> {
         val db = Library.db()
         val rows = db.queryList(LibrarySql.SELECT_SCAN_STATE, null) { c ->
@@ -125,15 +221,27 @@ object Backup {
             byNameSize.getOrPut(nameSizeKey(r.fileName, r.size)) { ArrayList(1) } += r
         }
         val used = HashSet<Long>()
-        val out = ArrayList<Match>(books.size)
-        for (b in books) {
-            val path = if (b.path.isNotEmpty()) Library.normalizePath(b.path) else ""
-            var row = byPath[path]?.takeIf { it.id !in used }
-            if (row == null && b.fileName.isNotEmpty() && b.size >= 0) {
-                row = byNameSize[nameSizeKey(b.fileName, b.size)]?.firstOrNull { it.id !in used }
+        // Paths a placeholder must not take: every row's, the files added below, earlier placeholders.
+        val taken = HashSet<String>(byPath.keys)
+        val paths = books.map { if (it.path.isNotEmpty()) Library.normalizePath(it.path) else "" }
+        val out = arrayOfNulls<Match>(books.size)
+        // Pass 1: exact paths, so a name + size fallback of another entry can't take a row whose own entry follows.
+        for ((i, b) in books.withIndex()) {
+            val row = byPath[paths[i]]?.takeIf { paths[i].isNotEmpty() && it.id !in used } ?: continue
+            used += row.id
+            out[i] = Match(row.id, b, b.missingAt > 0 && fileExists(row.path))
+        }
+        // Pass 2: file name + size, then the file itself if it exists (added), else a placeholder.
+        for ((i, b) in books.withIndex()) {
+            if (out[i] != null) continue
+            val path = paths[i]
+            val row = if (b.fileName.isNotEmpty() && b.size >= 0) {
+                byNameSize[nameSizeKey(b.fileName, b.size)]?.firstOrNull { it.id !in used }
+            } else {
+                null
             }
             var id = row?.id
-            var lastRead = row?.lastReadAt ?: 0L
+            var found = row != null && b.missingAt > 0 && fileExists(row.path)
             if (id == null && path.isNotEmpty()) {
                 val added = try {
                     val f = File(path)
@@ -142,19 +250,50 @@ object Backup {
                     Log.w(TAG, "could not add ${b.fileName}: $t")
                     null
                 }
+                if (added != null) taken += added.path
                 if (added != null && added.id !in used) {
                     id = added.id
-                    lastRead = added.lastReadAt
+                    found = true
                 }
             }
-            if (id == null) continue
+            if (id == null) {
+                // Its notes would be lost silently: keep them under a placeholder (N §5.6). A path already taken by a
+                // row or by an earlier placeholder can't hold another one.
+                if (BackupMerge.needsPlaceholder(b) && path.isNotEmpty() && taken.add(path)) {
+                    out[i] = Match(-1, b.copy(path = path), fileFound = false, placeholder = true)
+                }
+                continue
+            }
             used += id
-            out += Match(id, lastRead, b)
+            out[i] = Match(id, b, found)
         }
-        return out
+        return out.filterNotNull()
+    }
+
+    private fun fileExists(path: String): Boolean = try {
+        path.isNotEmpty() && File(path).isFile
+    } catch (t: Throwable) {
+        false
     }
 
     private fun nameSizeKey(fileName: String, size: Long): String = "$fileName\u0000$size"
+
+    /** A new placeholder row for [b] (title, author, format from the backup); its id, or null when the path is taken. */
+    private fun SQLiteDatabase.insertPlaceholder(b: BackupBook, now: Long): Long? {
+        val format = BookFormat.entries.firstOrNull { it.name == b.format } ?: BookFormat.forFile(b.fileName)
+            ?: BookFormat.TXT
+        val fileName = b.fileName.ifEmpty { b.path.substringAfterLast('/') }
+        val series = b.series?.let { MetaInfo.clean(it, 500) }?.ifEmpty { null }
+        val id = insertRow(
+            BackupSql.INSERT_PLACEHOLDER,
+            b.path, fileName, b.path.substringBeforeLast('/', ""),
+            MetaInfo.clean(b.title, DataLimits.TITLE), MetaInfo.clean(b.author, DataLimits.AUTHOR),
+            series, if (series == null) null else b.seriesIndex,
+            format.name, b.size.coerceAtLeast(0L), b.mtime, if (b.addedAt > 0) b.addedAt else now, b.language,
+        )
+        // -1: the path is in the library after all (added since the resolve); never trash that real book.
+        return id.takeIf { it > 0 }
+    }
 
     /** Restores [matches]; returns (book id, progress) of the restored positions to find again by fraction. */
     private fun applyLibrary(data: BackupData, matches: List<Match>): List<Pair<Long, Float>> {
@@ -172,7 +311,21 @@ object Backup {
             for (n in data.collections) collection(n)
             for (m in matches) {
                 val b = m.backup
-                val id = m.id
+                // A placeholder whose path turned up in the library meanwhile merges into that row like a match.
+                val placeholderId = if (m.placeholder) insertPlaceholder(b, now) else null
+                val id = when {
+                    !m.placeholder -> m.id
+                    placeholderId != null -> placeholderId
+                    else -> queryFirst(LibrarySql.SELECT_ID_BY_PATH, args(b.path)) { it.getLong(0) } ?: continue
+                }
+                val cur = queryFirst(BackupSql.SELECT_BOOK_STATE, args(id)) { c ->
+                    BackupMerge.BookState(
+                        lastReadAt = c.getLong(0), favorite = c.getInt(1) != 0, toRead = c.getInt(2) != 0,
+                        haveRead = c.getInt(3) != 0, trashed = c.getInt(4) != 0, review = c.getString(5) ?: "",
+                        reviewAt = c.getLong(6), encoding = c.getString(7) ?: "", missingAt = c.getLong(8),
+                    )
+                } ?: continue
+                val r = BackupMerge.book(cur, b, m.fileFound, if (placeholderId != null) now else 0L)
                 if (b.metaLocked && b.title.isNotBlank()) {
                     val series = b.series?.let { MetaInfo.clean(it, 500) }?.ifEmpty { null }
                     exec(
@@ -182,13 +335,19 @@ object Backup {
                     )
                 }
                 exec(
-                    LibrarySql.RESTORE_FLAGS,
-                    b.favorite, b.toRead && !b.haveRead, b.haveRead, b.trashed, b.review, b.encoding,
+                    BackupSql.RESTORE_BOOK,
+                    r.favorite, r.toRead, r.haveRead, r.trashed, r.review, r.reviewAt, r.encoding, r.missingAt,
                     b.readingSeconds, if (b.addedAt > 0) b.addedAt else Long.MAX_VALUE, id,
                 )
-                // A backup entry that was never read doesn't wipe progress made on this device.
-                if (b.lastReadAt > 0 || m.currentLastReadAt == 0L) {
-                    exec(LibrarySql.UPDATE_POSITION, b.posSection, b.posOffset, b.progress, b.lastReadAt, id)
+                // Newer wins: an older backup doesn't move a position read later on this device.
+                if (r.applyPosition) {
+                    // The backup's own read time is the guard too: a row already read later keeps its place. Never
+                    // later than now (a backup from a device with a fast clock must not stamp the row in the future).
+                    val at = minOf(b.lastReadAt, now)
+                    exec(
+                        LibrarySql.UPDATE_POSITION,
+                        b.posSection, b.posOffset, b.progress, at, id, at, at + LibrarySql.FUTURE_STAMP_MS,
+                    )
                     if (BackupJson.remapsTextPosition(data.txtParseVersion, b)) remap += id to b.progress
                 }
                 for (name in b.collections) {
@@ -196,22 +355,18 @@ object Backup {
                     if (cid > 0) insertRow(LibrarySql.INSERT_MEMBERSHIP, id, cid)
                 }
                 if (b.bookmarks.isNotEmpty()) {
-                    val existing = queryList(LibrarySql.SELECT_BOOKMARKS, args(id), BookRows::bookmark)
-                        .associateBy { it.section.toLong() shl 32 or (it.offset.toLong() and 0xffffffffL) }
-                        .toMutableMap()
-                    for (bm in b.bookmarks) {
-                        val key = bm.section.toLong() shl 32 or (bm.offset.toLong() and 0xffffffffL)
-                        val cur = existing[key]
-                        if (cur == null) {
-                            val newId = insertRow(
-                                LibrarySql.INSERT_BOOKMARK,
-                                id, bm.section, bm.offset, bm.snippet, bm.note,
-                                if (bm.createdAt > 0) bm.createdAt else now,
-                            )
-                            existing[key] = Bookmark(newId, id, bm.section, bm.offset, bm.snippet, bm.createdAt, bm.note)
-                        } else if (cur.note.isEmpty() && bm.note.isNotEmpty()) {
-                            exec(LibrarySql.UPDATE_BOOKMARK_NOTE, bm.note, cur.id)
-                        }
+                    val existing = queryList(BackupSql.SELECT_BOOKMARKS_OF_BOOK, args(id), ::bookmark)
+                    val plan = BackupMerge.bookmarks(existing, b.bookmarks)
+                    for (bm in plan.inserts) {
+                        insertRow(
+                            BackupSql.INSERT_BOOKMARK,
+                            id, bm.section, bm.offset, bm.snippet, bm.note, if (bm.createdAt > 0) bm.createdAt else now,
+                            bm.chapter, bm.frac, bm.sig,
+                        )
+                    }
+                    for (f in plan.fills) {
+                        f.note?.let { exec(LibrarySql.UPDATE_BOOKMARK_NOTE, it, f.id) }
+                        f.place?.let { exec(BackupSql.FILL_BOOKMARK_PLACE, it.chapter, it.frac, it.sig, f.id) }
                     }
                 }
                 for (d in b.readingLog) {
@@ -220,25 +375,34 @@ object Backup {
                         insertRow(LibrarySql.LOG_INSERT, d.day, d.seconds, d.pages, d.chars, id)
                     }
                 }
-                restorePrefs(this, id, b)
+                restorePrefs(this, id, b, r)
                 if (b.quotes.isNotEmpty()) {
-                    val existing = HashMap<String, Quote>()
-                    for (q in queryList(LibrarySql.SELECT_QUOTES, args(id), BookRows::quote)) {
-                        existing["${q.section}:${q.start}:${q.end}"] = q
+                    val existing = queryList(BackupSql.SELECT_QUOTES_OF_BOOK, args(id), ::quote)
+                    val plan = BackupMerge.quotes(existing, b.quotes)
+                    for (q in plan.inserts) {
+                        insertRow(
+                            BackupSql.INSERT_QUOTE,
+                            id, q.section, q.start, q.end, q.text, q.note, if (q.createdAt > 0) q.createdAt else now,
+                            q.style, q.chapter, q.frac, q.sig,
+                        )
                     }
-                    for (q in b.quotes) {
-                        val key = "${q.section}:${q.start}:${q.end}"
-                        val cur = existing[key]
-                        if (cur == null) {
-                            val newId = insertRow(
-                                LibrarySql.INSERT_QUOTE,
-                                id, q.section, q.start, q.end, q.text, q.note,
-                                if (q.createdAt > 0) q.createdAt else now,
-                            )
-                            existing[key] = Quote(newId, id, q.section, q.start, q.end, q.text, q.note, q.createdAt)
-                        } else if (cur.note.isEmpty() && q.note.isNotEmpty()) {
-                            exec(LibrarySql.UPDATE_QUOTE_NOTE, q.note, cur.id)
-                        }
+                    for (f in plan.fills) {
+                        f.style?.let { exec(BackupSql.FILL_QUOTE_STYLE, it, f.id) }
+                        f.place?.let { exec(BackupSql.FILL_QUOTE_PLACE, it.chapter, it.frac, it.sig, f.id) }
+                        f.note?.let { exec(LibrarySql.UPDATE_QUOTE_NOTE, it, f.id) }
+                    }
+                }
+                if (b.lookups.isNotEmpty()) {
+                    val existing = HashSet<String>()
+                    queryList(BackupSql.SELECT_LOOKUP_KEYS_OF_BOOK, args(id)) { c ->
+                        BackupMerge.lookupKey(c.getString(0) ?: "", c.getInt(1), c.getInt(2), c.getLong(3))
+                    }.forEach { existing += it }
+                    for ((l, key) in BackupMerge.lookups(existing, b.lookups, LookupWords::key)) {
+                        insertRow(
+                            BackupSql.INSERT_LOOKUP,
+                            id, l.word, key, l.section, l.start, l.end, l.context, l.chapter, l.frac, l.sig, l.via,
+                            l.app, l.note, if (l.createdAt > 0) l.createdAt else now,
+                        )
                     }
                 }
             }
@@ -263,16 +427,22 @@ object Backup {
     }
 
     /** [b]'s prefs over the book's current row ([BackupJson.mergePrefs]); must run inside a transaction. */
-    private fun restorePrefs(db: SQLiteDatabase, id: Long, b: BackupBook) {
-        val current = db.queryFirst(LibrarySql.SELECT_BOOK_PREFS, args(id)) { c ->
-            PrefsRow(if (c.isNull(0)) null else c.getString(0), c.getLong(1), if (c.isNull(2)) null else c.getString(2))
+    private fun restorePrefs(db: SQLiteDatabase, id: Long, b: BackupBook, r: BackupMerge.BookResult) {
+        val current = db.queryFirst(BackupSql.SELECT_BOOK_PREFS, args(id)) { c ->
+            PrefsRow(
+                if (c.isNull(0)) null else c.getString(0), c.getLong(1), if (c.isNull(2)) null else c.getString(2),
+                if (c.isNull(3)) null else c.getString(3),
+            )
         }
-        val merged = BackupJson.mergePrefs(current, b.prefs, b.haveRead)
+        val merged = BackupJson.mergePrefs(current, b.prefs, r.haveRead, r.deviceNewer)
         if (merged == current) return
+        // Deleted only when nothing is left, return_mark included (PrefsRow.isEmpty covers it): no column is lost.
         if (merged == null) {
             db.exec(LibrarySql.DELETE_BOOK_PREFS_OF_BOOK, id)
-        } else if (db.exec(LibrarySql.SET_PREFS_ROW, merged.txtOverride, merged.finishedAt, merged.episodeLabel, id) == 0) {
-            db.insertRow(LibrarySql.INSERT_PREFS_ROW, merged.txtOverride, merged.finishedAt, merged.episodeLabel, id)
+        } else if (db.exec(BackupSql.SET_PREFS_ROW, merged.txtOverride, merged.finishedAt, merged.episodeLabel,
+                merged.returnMark, id) == 0) {
+            db.insertRow(BackupSql.INSERT_PREFS_ROW, merged.txtOverride, merged.finishedAt, merged.episodeLabel,
+                merged.returnMark, id)
         }
     }
 

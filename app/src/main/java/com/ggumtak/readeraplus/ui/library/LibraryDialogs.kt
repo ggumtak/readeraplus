@@ -20,6 +20,9 @@ import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.BookCollection
 import com.ggumtak.readeraplus.data.BookFileProvider
 import com.ggumtak.readeraplus.data.Library
+import com.ggumtak.readeraplus.data.LibraryQuery
+import com.ggumtak.readeraplus.data.Notes
+import com.ggumtak.readeraplus.data.NotesTab
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
 import com.ggumtak.readeraplus.format.BookFormat
@@ -27,6 +30,7 @@ import com.ggumtak.readeraplus.format.txt.TxtDocuments
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
 import com.ggumtak.readeraplus.render.Covers
 import com.ggumtak.readeraplus.settings.LibraryListMode
+import com.ggumtak.readeraplus.settings.LibrarySort
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.MenuItem
 import com.ggumtak.readeraplus.ui.kit.alert
@@ -42,6 +46,7 @@ import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
+import com.ggumtak.readeraplus.ui.notes.NotesActivity
 import com.ggumtak.readeraplus.ui.settings.ErrorLines
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -69,7 +74,8 @@ internal fun LibraryActivity.confirmDialog(title: String, message: String, ok: S
 /**
  * The single-book menu (⋮ on a card or compact row, [더보기] while selecting, a long-press in the trash). [onPick] runs
  * before the chosen item's action (the selection toolbar ends selection mode there). [flags]: offer the shelf flags
- * (by default only where no card flag buttons show: 간단히 and 표지).
+ * (by default only where no card flag buttons show: 간단히 and the 표지 views). No 읽기: a tap opens the book, and 책 정보
+ * edits the title and author.
  */
 internal fun LibraryActivity.bookMenu(
     row: BookRow,
@@ -85,9 +91,9 @@ internal fun LibraryActivity.bookMenu(
     if (b.trashed) {
         item("복원", R.drawable.ic_restore_from_trash) { setTrashed(b, false) }
         item("책 정보", R.drawable.ic_info) { documentInfo(b) }
+        item("독서 노트", R.drawable.ic_format_quote) { NotesActivity.open(this, NotesTab.ALL, b.id) }
         item("영구 삭제", R.drawable.ic_delete_forever) { confirmDelete(b) }
     } else {
-        item("읽기", R.drawable.ic_menu_book) { openBook(b) }
         if (flags) {
             item(LibraryText.flagMenuLabel(Shelf.FAVORITES, b.favorite), if (b.favorite) R.drawable.ic_star_fill else R.drawable.ic_star) {
                 toggleFlag(row, BookFlag.FAVORITE)
@@ -99,15 +105,26 @@ internal fun LibraryActivity.bookMenu(
                 toggleFlag(row, BookFlag.HAVE_READ)
             }
         }
+        // 편집 first: the title, author and series straight from ⋮ (user, 2026-10-06), not via 책 정보.
+        item("책 정보 편집", R.drawable.ic_edit) { editInfo(b) }
+        item("컬렉션에 추가", R.drawable.ic_library_books) { collectionsDialog(b) }
+        item("독서 노트", R.drawable.ic_format_quote) { NotesActivity.open(this, NotesTab.ALL, b.id) }
         item("책 정보", R.drawable.ic_info) { documentInfo(b) }
         item("파일 공유", R.drawable.ic_share) { shareBook(b) }
-        item("컬렉션에 추가", R.drawable.ic_library_books) { collectionsDialog(b) }
-        item("책 정보 편집", R.drawable.ic_edit) { editBookInfo(b) }
-        if (b.format == BookFormat.TXT) item("인코딩 변경", R.drawable.ic_text_fields) { chooseEncoding(b) }
+        if (b.format == BookFormat.TXT) item("인코딩 바꾸기", R.drawable.ic_text_fields) { chooseEncoding(b) }
         item("읽은 위치 초기화", R.drawable.ic_autorenew) { confirmReset(b) }
-        item("휴지통으로 이동", R.drawable.ic_delete) { setTrashed(b, true) }
+        item("휴지통으로 옮기기", R.drawable.ic_delete) { setTrashed(b, true) }
     }
     popupMenu(anchor, items, 240)
+}
+
+private fun LibraryActivity.editInfo(b: Book) {
+    try {
+        // After the save: the reload also drops the in-memory cover drawn with the old title.
+        ReaderPanels.editBookInfo(this, b) { checkTitles = true; changed() }
+    } catch (t: Throwable) {
+        toast(ErrorLines.line("책 정보를 편집할 수 없습니다", t))
+    }
 }
 
 private fun LibraryActivity.documentInfo(b: Book) {
@@ -121,18 +138,9 @@ private fun LibraryActivity.documentInfo(b: Book) {
     }
 }
 
-/** "책 정보 편집": the one metadata editor, shared with the reader's 책 정보 (A8). */
-private fun LibraryActivity.editBookInfo(b: Book) {
-    ReaderPanels.editBookInfo(this, b) {
-        // The editor saved and invalidated the disk cover; drop the in-memory one too (the title is drawn on it).
-        CoverLoader.forget(b.id)
-        changed()
-    }
-}
-
 private fun LibraryActivity.setTrashed(b: Book, value: Boolean) {
     io("저장하지 못했습니다", { Library.setTrashed(b.id, value) }) {
-        toast(if (value) "휴지통으로 이동했습니다" else "복원했습니다")
+        toast(if (value) LibraryText.trashedMessage(1) else "복원했습니다")
         changed()
     }
 }
@@ -175,7 +183,7 @@ private fun LibraryActivity.chooseEncoding(b: Book) {
 }
 
 private fun LibraryActivity.confirmReset(b: Book) {
-    confirm("읽은 위치 초기화", "‘${b.title}’의 읽은 위치와 진행률을 지웁니다.", "초기화") {
+    confirm("읽은 위치 초기화", "‘${b.title}’의 읽은 위치를 초기화할까요?", "초기화") {
         io("초기화하지 못했습니다", { Library.resetProgress(b.id) }) { changed() }
     }
 }
@@ -226,42 +234,73 @@ private fun Context.checkList(labels: List<String>, checked: BooleanArray, onTog
     }
 }
 
-private fun LibraryActivity.confirmDelete(b: Book) {
-    val cb = deleteFileCheckBox()
-    val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
-    alert().setTitle("영구 삭제")
-        .setMessage("‘${b.title}’을(를) 서재에서 삭제합니다. 북마크와 형광펜도 함께 지워집니다.")
-        .setView(box)
-        .setPositiveButton("삭제") { _, _ ->
-            val deleteFile = cb.isChecked
-            val app = applicationContext
-            io("삭제하지 못했습니다", {
-                Library.remove(b.id, deleteFile)
-                Covers.invalidate(app, b.id)
-            }) {
-                CoverLoader.forget(b.id)
-                changed(collections = true)
-            }
-        }
-        .setNegativeButton("취소", null)
-        .showNoAnim()
+/** Counts notes on IO, then [then] on main; a failed count shows the question without the notes line (0). */
+private fun LibraryActivity.notesCountThen(count: () -> Int, then: (Int) -> Unit) {
+    scope.launch {
+        val n = withContext(Dispatchers.IO) { runCatching(count).getOrDefault(0) }
+        if (!isFinishing && !isDestroyed) then(n)
+    }
 }
 
-internal fun LibraryActivity.confirmEmptyTrash() {
-    val cb = deleteFileCheckBox()
-    val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
-    alert().setTitle("휴지통 비우기")
-        .setMessage("휴지통의 모든 책을 서재에서 삭제합니다.")
-        .setView(box)
-        .setPositiveButton("비우기") { _, _ ->
-            val deleteFiles = cb.isChecked
-            io("비우지 못했습니다", { Library.emptyTrash(deleteFiles) }) {
-                toast("휴지통을 비웠습니다")
-                changed(collections = true)
+/**
+ * "영구 삭제" of one book. The book's notes are counted first (IO): when it has some, the question says so and offers
+ * [독서 노트] (the hub filtered to this book) to export them first (NOTES_SPEC §10.1).
+ */
+private fun LibraryActivity.confirmDelete(b: Book) {
+    notesCountThen({ Notes.countForBooks(listOf(b.id)) }) { notes ->
+        val cb = deleteFileCheckBox()
+        val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
+        val d = alert().setTitle("영구 삭제")
+            .setMessage(LibraryText.deleteMessage(b.title, notes))
+            .setView(box)
+            .setPositiveButton("삭제") { _, _ ->
+                val deleteFile = cb.isChecked
+                val app = applicationContext
+                io("삭제하지 못했습니다", {
+                    Library.remove(b.id, deleteFile)
+                    Covers.invalidate(app, b.id)
+                }) {
+                    CoverLoader.forget(b.id)
+                    changed(collections = true)
+                }
             }
-        }
-        .setNegativeButton("취소", null)
-        .showNoAnim()
+            .setNegativeButton("취소", null)
+        if (notes > 0) d.setNeutralButton("독서 노트") { _, _ -> NotesActivity.open(this, NotesTab.ALL, b.id) }
+        d.showNoAnim()
+    }
+}
+
+/**
+ * "휴지통 비우기": like [confirmDelete], for every trashed book ([독서 노트] opens the hub unfiltered). Only the books
+ * counted here are deleted: one trashed while the question is open keeps its notes ([Library.emptyTrash]).
+ */
+internal fun LibraryActivity.confirmEmptyTrash() {
+    var counted: List<Long>? = null
+    notesCountThen({
+        val ids = Library.books(LibraryQuery(Shelf.TRASH, null, ""), LibrarySort.RECENT).map { it.id }
+        counted = ids
+        if (ids.isEmpty()) 0 else Notes.countForBooks(ids)
+    }) { notes ->
+        val ids = counted
+        val cb = deleteFileCheckBox()
+        val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
+        val d = alert().setTitle("휴지통 비우기")
+            .setMessage(LibraryText.emptyTrashMessage(notes, ids?.size ?: 0))
+            .setView(box)
+            .setPositiveButton("비우기") { _, _ ->
+                val deleteFiles = cb.isChecked
+                io("비우지 못했습니다", {
+                    // The trash could not be listed: nothing was counted, so nothing is deleted.
+                    Library.emptyTrash(ids ?: error("trash not listed"), deleteFiles)
+                }) {
+                    toast("휴지통을 비웠습니다")
+                    changed(collections = true)
+                }
+            }
+            .setNegativeButton("취소", null)
+        if (notes > 0) d.setNeutralButton("독서 노트") { _, _ -> NotesActivity.open(this) }
+        d.showNoAnim()
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ collections
@@ -276,7 +315,7 @@ internal fun LibraryActivity.collectionsDialog(b: Book) {
         var changedAny = false
         val builder = alert().setTitle("컬렉션")
         if (colls.isEmpty()) {
-            builder.setMessage("컬렉션이 없습니다. ‘새 컬렉션’으로 만드세요.")
+            builder.setMessage("아직 컬렉션이 없습니다.")
         } else {
             builder.setView(checkList(colls.map { it.name }, checked) { i ->
                 changedAny = true
@@ -303,14 +342,14 @@ internal fun LibraryActivity.collectionsDialog(b: Book) {
 }
 
 /**
- * Collection picker of the multi-select [컬렉션에 추가]: a tap on a name picks it and closes; [새 컬렉션] makes one and
+ * Collection picker of the multi-select [컬렉션]: a tap on a name picks it and closes; [새 컬렉션] makes one and
  * picks it; [닫기] cancels. [onPick] runs on the main thread.
  */
 internal fun LibraryActivity.pickCollection(onPick: (BookCollection) -> Unit) {
     io("컬렉션을 불러오지 못했습니다", { Library.collections() }) { colls ->
         val builder = alert().setTitle("컬렉션에 추가")
         if (colls.isEmpty()) {
-            builder.setMessage("컬렉션이 없습니다. ‘새 컬렉션’으로 만드세요.")
+            builder.setMessage("아직 컬렉션이 없습니다.")
         } else {
             builder.setItems(colls.map { it.name }.toTypedArray()) { _, which -> onPick(colls[which]) }
         }
@@ -322,13 +361,13 @@ internal fun LibraryActivity.pickCollection(onPick: (BookCollection) -> Unit) {
 
 /** Asks for a name and creates a collection; [then] gets the created collection. */
 internal fun LibraryActivity.newCollection(then: ((BookCollection) -> Unit)?) {
-    prompt("새 컬렉션", hint = "컬렉션 이름") { raw ->
+    prompt("새 컬렉션", hint = "컬렉션 이름", ok = "만들기") { raw ->
         val name = raw.trim()
         if (name.isEmpty()) {
             toast("이름을 입력하세요")
             return@prompt
         }
-        io("만들지 못했습니다 (같은 이름이 있을 수 있습니다)", { Library.createCollection(name) }) { c ->
+        io("컬렉션을 만들지 못했습니다", { Library.createCollection(name) }) { c ->
             changed(collections = true)
             then?.invoke(c)
         }
@@ -339,15 +378,17 @@ internal fun LibraryActivity.newCollection(then: ((BookCollection) -> Unit)?) {
 internal fun LibraryActivity.collectionGroupMenu(g: ShelfGroup) {
     val id = g.key.toLongOrNull() ?: return
     alert().setTitle(g.label)
-        .setItems(arrayOf("이름 변경", "삭제")) { _, which ->
+        .setItems(arrayOf("이름 바꾸기", "삭제")) { _, which ->
             if (which == 0) {
-                prompt("이름 변경", initial = g.label, hint = "컬렉션 이름") { raw ->
+                prompt("이름 바꾸기", initial = g.label, hint = "컬렉션 이름", ok = "바꾸기") { raw ->
                     val name = raw.trim()
                     if (name.isEmpty() || name == g.label) return@prompt
-                    io("이름을 바꾸지 못했습니다", { Library.renameCollection(id, name) }) { changed(collections = true) }
+                    io("이름을 바꾸지 못했습니다 (같은 이름의 컬렉션이 있을 수 있습니다)", { Library.renameCollection(id, name) }) {
+                        changed(collections = true)
+                    }
                 }
             } else {
-                confirm("컬렉션 삭제", "‘${g.label}’ 컬렉션을 삭제합니다. 책은 삭제되지 않습니다.", "삭제") {
+                confirm("컬렉션 삭제", "‘${g.label}’ 컬렉션을 삭제할까요? 책은 그대로 남습니다.", "삭제") {
                     io("삭제하지 못했습니다", { Library.deleteCollection(id) }) { changed(collections = true) }
                 }
             }
@@ -363,14 +404,27 @@ internal fun LibraryActivity.showNoPermissionScreen() {
     alert().setTitle("권한 화면을 열 수 없습니다")
         .setMessage(
             "이 기기에서는 ‘모든 파일 접근’ 설정 화면을 열 수 없습니다.\n\n" +
-                "• ‘폴더 추가’로 책 폴더를 고르면 그 폴더의 책을 가져올 수 있습니다.\n" +
-                "• PC에 연결해 다음 명령으로 권한을 줄 수도 있습니다:\n\n" + LibraryText.ADB_HINT,
+                "· ‘스캔 폴더 추가’로 책 폴더를 고르면 그 폴더의 책을 가져올 수 있습니다.\n" +
+                "· PC에 연결해 다음 명령으로 권한을 줄 수도 있습니다.\n\n" + LibraryText.ADB_HINT,
         )
-        .setPositiveButton("폴더 추가") { _, _ -> pickTree() }
+        .setPositiveButton("스캔 폴더 추가") { _, _ -> pickTree() }
         .setNeutralButton("명령 복사") { _, _ ->
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             cm?.setPrimaryClip(ClipData.newPlainText("adb", LibraryText.ADB_HINT))
             toast("명령을 복사했습니다")
+        }
+        .setNegativeButton("닫기", null)
+        .showNoAnim()
+}
+
+/** "앱이 종료되었습니다": the last crash's record, with 복사 so it can be sent. */
+internal fun LibraryActivity.crashDialog(text: String) {
+    alert().setTitle("지난번에 앱이 갑자기 종료되었습니다")
+        .setMessage("아래 내용을 복사해 보내 주시면 원인을 찾는 데 도움이 됩니다.\n\n" + text.take(1500))
+        .setPositiveButton("복사") { _, _ ->
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            cm?.setPrimaryClip(ClipData.newPlainText("ReaderaPlus crash", text))
+            toast("복사했습니다")
         }
         .setNegativeButton("닫기", null)
         .showNoAnim()

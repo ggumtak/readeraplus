@@ -12,7 +12,8 @@ import java.io.FileOutputStream
  * Section plan of an EPUB's oversized spine items (A12-1), persisted under `Documents.cacheDir/epubplan/<hash>.bin`
  * so a reopen skips the text scan of every item above [EpubSplit.SCAN_MIN_BYTES] (`EpubBook.planSections`).
  *
- * - Key `"v$VERSION|path|size|mtime"`; the file repeats the key, the spine size, the scanned items and a hash of
+ * - Key `"v$VERSION|path|size|mtime"` plus, when chapters are detected for a poor TOC, the options that decide the
+ *   result (`|d<regex>`, see [EpubHeadings]); the file repeats the key, the spine size, the scanned items and a hash of
  *   the TOC anchors they were scanned for, and is used only when all of them still agree.
  * - [load] runs on the opening thread, and only for a book that has such an item (a small EPUB never pays for a
  *   cache-miss file open). A fresh plan is not written there: [stage] keeps its bytes and [writePending] writes them
@@ -22,10 +23,11 @@ import java.io.FileOutputStream
 internal object EpubPlanCache {
     /**
      * Bump whenever [EpubSplit.partsFor], [EpubSplit.scan] or [EpubSplit.assign] can give a different result for the
-     * same item: a stale plan would cut sections differently from a fresh one. `EpubPlanCacheTest`'s golden values
-     * fail when they change.
+     * same item, or [EpubHeadings] / `TxtChapters` can detect other headings in it: a stale plan would cut sections
+     * differently from a fresh one. `EpubPlanCacheTest`'s golden values fail when the scan changes.
+     * 2: detected chapter headings ([Plan.heads]).
      */
-    const val VERSION = 1
+    const val VERSION = 2
     private const val MAGIC = 0x52504550 // "RPEP"
     private const val MAX_FILES = 300
     private const val KEEP_FILES = 200
@@ -46,6 +48,11 @@ internal object EpubPlanCache {
         val chars: IntArray,
         /** Split items: TOC anchor → part (as [EpubSplit.assign] gave it); null for an item that is not split. */
         val frags: Array<Map<String, Int>?>,
+        /**
+         * Detected chapter headings of each item that has any (null: none), in document order, with their section and
+         * offset once cut ([EpubHeadings.Head.part]); see [EpubHeadings].
+         */
+        val heads: Array<Array<EpubHeadings.Head>?> = arrayOfNulls(items.size),
     )
 
     private class Pending(val key: String, val data: ByteArray?)
@@ -54,7 +61,9 @@ internal object EpubPlanCache {
 
     fun dir(): File? = Documents.cacheDir?.let { File(it, "epubplan") }
 
-    fun key(file: File): String = "v$VERSION|${file.absolutePath}|${file.length()}|${file.lastModified()}"
+    /** [detect]: the detection options of a book whose headings are looked for ("" when they are not). */
+    fun key(file: File, detect: String = ""): String =
+        "v$VERSION|${file.absolutePath}|${file.length()}|${file.lastModified()}" + if (detect.isEmpty()) "" else "|d$detect"
 
     fun fileFor(key: String): File? {
         val d = dir() ?: return null
@@ -191,6 +200,17 @@ internal object EpubPlanCache {
                         out.writeInt(part)
                     }
                 }
+                val h = p.heads.getOrNull(k)
+                out.writeInt(h?.size ?: -1)
+                if (h != null) {
+                    for (e in h) {
+                        out.writeUTF(e.title)
+                        out.writeUTF(e.key)
+                        out.writeInt(e.occurrence)
+                        out.writeInt(e.part)
+                        out.writeInt(e.offset)
+                    }
+                }
             }
             out.writeInt(MAGIC)
         }
@@ -215,6 +235,7 @@ internal object EpubPlanCache {
         val parts = IntArray(n)
         val chars = IntArray(n)
         val frags = arrayOfNulls<Map<String, Int>>(n)
+        val heads = arrayOfNulls<Array<EpubHeadings.Head>>(n)
         for (k in 0 until n) {
             items[k] = inp.readInt()
             parts[k] = inp.readInt()
@@ -236,8 +257,24 @@ internal object EpubPlanCache {
             } else if (parts[k] > 1) {
                 return null
             }
+            val h = inp.readInt()
+            if (h < -1 || h > size / 16) return null
+            if (h >= 0) {
+                heads[k] = Array(h) {
+                    val title = inp.readUTF()
+                    val key = inp.readUTF()
+                    val occurrence = inp.readInt()
+                    val part = inp.readInt()
+                    val offset = inp.readInt()
+                    if (occurrence < 0 || part < -1 || part >= parts[k] || offset < 0) return null
+                    EpubHeadings.Head(title, key, occurrence).also {
+                        it.part = part
+                        it.offset = offset
+                    }
+                }
+            }
         }
         if (inp.readInt() != MAGIC) return null
-        return Plan(spineSize, anchors, items, parts, chars, frags)
+        return Plan(spineSize, anchors, items, parts, chars, frags, heads)
     }
 }

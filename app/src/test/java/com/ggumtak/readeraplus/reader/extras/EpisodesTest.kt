@@ -219,4 +219,12 @@ class EpisodesTest {
         assertTrue(e.gaps().isEmpty())
         assertTrue("2,000 titles took $ms ms", ms < 500)
     }
+
+    @Test
+    fun rule4SkipsLeadingDecoration() {
+        assertEquals(2, EpisodeNumbers.parse("◈ 002. [STAGE 0] 튜토리얼 시작합니다"))
+        assertEquals(3, EpisodeNumbers.parse("◆ 3. 귀환"))
+        assertEquals(15, EpisodeNumbers.parse("★15 새벽"))
+        assertNull(EpisodeNumbers.parse("◈ 그날 3시"))
+    }
 }

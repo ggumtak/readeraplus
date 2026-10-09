@@ -284,7 +284,7 @@ internal class SpeakClock {
     }
 }
 
-/** Episode bookkeeping of TTS on a [ChapterIndex] (sleep timer "이 화 / 2화 끝까지", the notification's title). Pure. */
+/** Episode bookkeeping of TTS on a [ChapterIndex] (멈춤 예약 "이 챕터 / 다음 챕터 끝까지", the notification's title). Pure. */
 internal object TtsChapters {
     /** (section, offset) as one comparable number. */
     fun pack(section: Int, offset: Int): Long = (section.toLong() shl 32) or (offset.toLong() and 0xFFFFFFFFL)

@@ -31,6 +31,8 @@ internal interface XhtmlResources {
 internal class XhtmlConverter(
     private val publisherStyles: Boolean,
     private val resources: XhtmlResources?,
+    /** The book's font-size declarations count on headings only; every other element keeps its parent's size. */
+    private val ignoreBookSizes: Boolean = false,
 ) {
     // ---------------------------------------------------------------- output
     private val sb = StringBuilder(4096)
@@ -952,7 +954,7 @@ internal class XhtmlConverter(
                 shift = decl.vAlign
                 factor = if (shift != 0) 0.75f else 1f
             }
-            if (decl.has(CssDecl.SIZE) && name != "body" && name != "html") {
+            if (decl.has(CssDecl.SIZE) && name != "body" && name != "html" && !(ignoreBookSizes && headingLevel(name) == 0)) {
                 if (decl.sizeAbs) {
                     scale = decl.size
                     factor = 1f
@@ -1182,6 +1184,9 @@ internal class XhtmlConverter(
             "html", "center", "address", "nav", "main", "hgroup", "caption", "thead", "tbody", "tfoot", "details",
             "summary", "fieldset", "legend", "form", "dir", "menu", "listing", "plaintext", "xmp",
         )
+
+        /** Block-level element names: the converter closes the open paragraph at each (also read by [EpubSplit.scan]). */
+        fun isBlockTag(name: String): Boolean = name in BLOCK
 
         private val TABLE_STRUCT = hashSetOf("table", "tr", "thead", "tbody", "tfoot", "caption")
         private val LIST_BOUNDARY = hashSetOf("ul", "ol", "menu", "dir", "table")

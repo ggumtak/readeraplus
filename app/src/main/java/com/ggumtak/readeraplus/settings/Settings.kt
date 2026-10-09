@@ -85,6 +85,7 @@ object Settings {
             putInt("r.marginBottomDp", s.marginBottomDp)
             putBoolean("r.pageMargins", s.pageMargins)
             putBoolean("r.invert", s.invert)
+            putString("r.pageTheme", s.pageTheme.name)
             putString("r.headerLeft", s.headerLeft.name)
             putString("r.headerCenter", s.headerCenter.name)
             putString("r.headerRight", s.headerRight.name)
@@ -93,8 +94,11 @@ object Settings {
             putString("r.footerRight", s.footerRight.name)
             putBoolean("r.progressBar", s.progressBar)
             putString("r.pageBreak", s.pageBreak.name)
+            putInt("r.landscapePages", s.landscapePages)
             putInt(SideMargin.KEY, SideMargin.ZERO_DP)
-            putInt(VerticalMargin.KEY, VerticalMargin.ZERO_DP)
+            putInt(VerticalMargin.KEY, VerticalMargin.BANDS)
+            putBoolean(MaruHeader.KEY, true)
+            putBoolean(MaruSize.KEY, true)
             for (key in StatusMigration.LEGACY_KEYS) remove(key)
             putFloat("r.statusFontSizeSp", s.statusFontSizeSp)
             putBoolean("r.widowOrphanControl", s.widowOrphanControl)
@@ -106,6 +110,7 @@ object Settings {
             putBoolean("r.txtEmphasizeHeadings", s.txtEmphasizeHeadings)
             putString("r.txtReplaceRules", s.txtReplaceRules)
             putBoolean("r.epubPublisherStyles", s.epubPublisherStyles)
+            putBoolean("r.epubIgnoreBookSizes", s.epubIgnoreBookSizes)
         }.apply()
         notifyListeners()
     }
@@ -164,6 +169,7 @@ object Settings {
             putStringSet("a.excludedFolders", s.excludedFolders)
             putInt("a.orientationLock", s.orientationLock)
             putFloat("a.brightness", s.brightness)
+            putInt(BrightnessEncoding.KEY_VERSION, BrightnessEncoding.VERSION)
         }.apply()
         notifyListeners()
     }
@@ -186,8 +192,10 @@ object Settings {
         val d = ReaderSettings()
         val p = prefs
         val mig = if (p.contains(StatusMigration.MARKER_KEY)) null else StatusMigration.migrate(StatusMigration.Legacy.from(p))
-        val sideLegacy = SideMargin.isLegacyDefault(p.contains(SideMargin.KEY), p.getInt("r.marginLeftDp", d.marginLeftDp), p.getInt("r.marginRightDp", d.marginRightDp))
-        val verticalLegacy = VerticalMargin.isLegacyDefault(p.contains(VerticalMargin.KEY), p.getInt("r.marginTopDp", d.marginTopDp), p.getInt("r.marginBottomDp", d.marginBottomDp))
+        val sideBase = if (p.contains(SideMargin.KEY)) p.getInt(SideMargin.KEY, 0) else null
+        val sideLegacy = SideMargin.isLegacyDefault(sideBase, p.getInt("r.marginLeftDp", d.marginLeftDp), p.getInt("r.marginRightDp", d.marginRightDp))
+        val verticalBase = if (p.contains(VerticalMargin.KEY)) p.getInt(VerticalMargin.KEY, 0) else null
+        val verticalLegacy = VerticalMargin.isLegacyDefault(verticalBase != null, p.getInt("r.marginTopDp", d.marginTopDp), p.getInt("r.marginBottomDp", d.marginBottomDp))
         return ReaderSettings(
             fontId = p.getString("r.fontId", d.fontId) ?: d.fontId,
             fontSizeSp = p.getFloat("r.fontSizeSp", d.fontSizeSp),
@@ -200,10 +208,11 @@ object Settings {
             lineBreak = enumOr(p.getString("r.lineBreak", null), d.lineBreak),
             marginLeftDp = if (sideLegacy) SideMargin.ZERO_DP else p.getInt("r.marginLeftDp", d.marginLeftDp),
             marginRightDp = if (sideLegacy) SideMargin.ZERO_DP else p.getInt("r.marginRightDp", d.marginRightDp),
-            marginTopDp = if (verticalLegacy) VerticalMargin.ZERO_DP else p.getInt("r.marginTopDp", d.marginTopDp),
-            marginBottomDp = if (verticalLegacy) VerticalMargin.ZERO_DP else p.getInt("r.marginBottomDp", d.marginBottomDp),
+            marginTopDp = if (verticalLegacy) VerticalMargin.EDGE_DP else p.getInt("r.marginTopDp", d.marginTopDp),
+            marginBottomDp = if (verticalLegacy) VerticalMargin.EDGE_DP else p.getInt("r.marginBottomDp", d.marginBottomDp),
             pageMargins = p.getBoolean("r.pageMargins", d.pageMargins),
             invert = p.getBoolean("r.invert", d.invert),
+            pageTheme = enumOr(p.getString("r.pageTheme", null), d.pageTheme),
             headerLeft = mig?.headerLeft ?: enumOr(p.getString("r.headerLeft", null), d.headerLeft),
             headerCenter = mig?.headerCenter ?: enumOr(p.getString("r.headerCenter", null), d.headerCenter),
             headerRight = mig?.headerRight ?: enumOr(p.getString("r.headerRight", null), d.headerRight),
@@ -212,6 +221,7 @@ object Settings {
             footerRight = mig?.footerRight ?: enumOr(p.getString("r.footerRight", null), d.footerRight),
             progressBar = p.getBoolean("r.progressBar", d.progressBar),
             pageBreak = enumOr(p.getString("r.pageBreak", null), d.pageBreak),
+            landscapePages = ReaderSettings.cleanLandscapePages(p.getInt("r.landscapePages", d.landscapePages)),
             statusFontSizeSp = p.getFloat("r.statusFontSizeSp", d.statusFontSizeSp),
             widowOrphanControl = p.getBoolean("r.widowOrphanControl", d.widowOrphanControl),
             txtBlankLines = p.getInt("r.txtBlankLines", d.txtBlankLines),
@@ -222,7 +232,28 @@ object Settings {
             txtEmphasizeHeadings = p.getBoolean("r.txtEmphasizeHeadings", d.txtEmphasizeHeadings),
             txtReplaceRules = p.getString("r.txtReplaceRules", d.txtReplaceRules) ?: "",
             epubPublisherStyles = p.getBoolean("r.epubPublisherStyles", d.epubPublisherStyles),
-        )
+            epubIgnoreBookSizes = p.getBoolean("r.epubIgnoreBookSizes", d.epubIgnoreBookSizes),
+        ).let { if (p.contains(MaruHeader.KEY)) it else MaruHeader.applyTo(it) } // saved before MaruViewer's header
+            .let { before ->
+                // MaruViewer's status size for an untouched 11 sp (not while 여백 사용 is off: its minimal margin could not
+                // give the bands' growth back, MaruSize.applyTo). Then top/bottom saved from the screen's edge are
+                // counted from the bands the page now has (MaruViewer's header and size included), and those counted from
+                // the 11 sp bands lose what the 13 sp bands add: either way the text box stays. Read only: the next
+                // saveReader writes VerticalMargin.BANDS and MaruSize.KEY.
+                val sized = if (p.contains(MaruSize.KEY)) before else MaruSize.applyTo(before)
+                when {
+                    VerticalMargin.countsFromEdge(verticalBase) ->
+                        VerticalMargin.fromEdge(sized, p.contains("r.marginTopDp"), p.contains("r.marginBottomDp"))
+                    sized !== before -> MaruSize.keepBox(before, sized)
+                    else -> sized
+                }
+            }
+            .let {
+                // A bottom margin saved before its "0" moved from 22 to 10 dp comes 12 dp closer to the progress line.
+                if (p.contains("r.marginBottomDp") && VerticalMargin.needsBottomShift(verticalBase))
+                    it.copy(marginBottomDp = VerticalMargin.shiftBottom(it.marginBottomDp))
+                else it
+            }
     }
 
     private fun loadApp(): AppSettings {
@@ -280,8 +311,32 @@ object Settings {
             scanFolders = p.getStringSet("a.scanFolders", d.scanFolders)?.toSet() ?: d.scanFolders,
             excludedFolders = p.getStringSet("a.excludedFolders", d.excludedFolders)?.toSet() ?: d.excludedFolders,
             orientationLock = p.getInt("a.orientationLock", d.orientationLock),
-            brightness = p.getFloat("a.brightness", d.brightness),
-        )
+            brightness = BrightnessEncoding.fromStored(p.getFloat("a.brightness", d.brightness),
+                brightnessVersion(p), p.getBoolean("a.brightnessDevice", d.brightnessDevice)),
+        ).also { migrateLastBrightness(p, p.getBoolean("a.brightnessDevice", d.brightnessDevice)) }
+    }
+
+    /** The stored brightness encoding version, null when the marker is absent; a marker of another type counts as current. */
+    private fun brightnessVersion(p: SharedPreferences): Int? =
+        if (!p.contains(BrightnessEncoding.KEY_VERSION)) null
+        else runCatching { p.getInt(BrightnessEncoding.KEY_VERSION, BrightnessEncoding.VERSION) }.getOrDefault(BrightnessEncoding.VERSION)
+
+    /**
+     * The reader's Ⓐ last manual position, once: the key written before the encoding marker is converted by the device
+     * flag in effect now (the one the main value was converted with), stored under its new key and removed, so a later
+     * toggle of the device control never reads it again. Nothing to do (and nothing written) without the old key.
+     */
+    private fun migrateLastBrightness(p: SharedPreferences, devicePath: Boolean) {
+        if (!p.contains(BrightnessEncoding.KEY_LAST_LEGACY)) return
+        val legacy = runCatching { p.getFloat(BrightnessEncoding.KEY_LAST_LEGACY, 0.5f) }.getOrNull()
+        val pos = if (p.contains(BrightnessEncoding.KEY_LAST_POS)) {
+            runCatching { p.getFloat(BrightnessEncoding.KEY_LAST_POS, 0.5f) }.getOrNull() ?: 0.5f
+        } else null
+        val v = BrightnessEncoding.migrateLastManual(pos, legacy, devicePath)
+        p.edit().apply {
+            if (v != null) putFloat(BrightnessEncoding.KEY_LAST_POS, v)
+            remove(BrightnessEncoding.KEY_LAST_LEGACY)
+        }.apply()
     }
 
     private inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =
@@ -292,8 +347,9 @@ object Settings {
         map.entries.sortedBy { it.key }.joinToString(",") { "${it.key}:${it.value.name}" }
 
     /**
-     * Inverse of [encodeKeyBindings]. Tolerant: blank → empty; entries with a bad key code or an unknown action name
-     * are skipped (a newer build's action read by an older one); for a repeated key code the last entry wins.
+     * Inverse of [encodeKeyBindings]. Tolerant: blank → empty; entries with a bad key code (not a number, negative) or
+     * an unknown action name are skipped (a newer build's action read by an older one); for a repeated key code the
+     * last entry wins. Key code 0 (KEYCODE_UNKNOWN: every key without a code of its own) is a real binding.
      */
     fun decodeKeyBindings(text: String?): Map<Int, TapAction> {
         if (text.isNullOrBlank()) return emptyMap()
@@ -302,7 +358,7 @@ object Settings {
             val colon = part.indexOf(':')
             if (colon <= 0) continue
             val code = part.substring(0, colon).trim().toIntOrNull() ?: continue
-            if (code <= 0) continue
+            if (code < 0) continue
             val name = part.substring(colon + 1).trim()
             val action = TapAction.entries.firstOrNull { it.name == name } ?: continue
             out[code] = action

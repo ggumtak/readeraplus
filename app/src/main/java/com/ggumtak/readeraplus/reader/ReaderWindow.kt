@@ -1,11 +1,13 @@
 package com.ggumtak.readeraplus.reader
 
 import android.app.Activity
+import android.graphics.Color
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.RoundedCorner
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -60,47 +62,158 @@ internal object ReaderWindow {
         }
     }
 
-    /** [value] 0..1, or < 0 for the system brightness. */
+    /**
+     * API 30+: the status and navigation bars (shown when 전체 화면 is off, or swiped in over it) let the reader show
+     * through: the page colour, or the chrome's surface while it is open, so a dark page never gets white system bars
+     * (U §2.1, 2026-10-05). Dark icons over a light page, light ones over a dark page ([dark]). Before API 30 the bars
+     * keep the theme's colours and [applyFullscreen]'s light-status-bar flag.
+     */
+    fun applyBarLook(activity: Activity, dark: Boolean) {
+        if (Build.VERSION.SDK_INT < 30) return
+        val w = activity.window
+        w.statusBarColor = Color.TRANSPARENT
+        w.navigationBarColor = Color.TRANSPARENT
+        // No system scrim behind a transparent navigation bar: the chrome's bottom bar reaches the screen edge.
+        w.isNavigationBarContrastEnforced = false
+        val c = w.insetsController ?: return
+        val mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+            WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+        c.setSystemBarsAppearance(if (dark) 0 else mask, mask)
+    }
+
+    /** [value] = slider position 0..1 (the window shows [LightCurve.windowLevel] of it), or < 0 for the system brightness. */
     fun applyBrightness(activity: Activity, value: Float) {
         val w = activity.window
         val lp = w.attributes
-        val target = if (value < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else value.coerceIn(0.01f, 1f)
+        val target = if (value < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else LightCurve.windowLevel(value)
         if (lp.screenBrightness != target) {
             lp.screenBrightness = target
             w.attributes = lp
         }
     }
 
-    /** Current system brightness as 0..1 (approximate; used as the start of a manual adjustment). */
+    /** Current system light as 0..1, linear (approximate; [LightCurve.windowPos] / [LightCurve.pos] turn it into a slider position). */
     fun systemBrightness(activity: Activity): Float = try {
         SystemSettings.System.getInt(activity.contentResolver, SystemSettings.System.SCREEN_BRIGHTNESS, 128) / 255f
     } catch (t: Throwable) {
         0.5f
     }
 
+    /** Height of the bottom strip the system keeps for its swipes (home, recents); 0 before API 29. */
+    fun gestureBottom(insets: WindowInsets): Int = when {
+        Build.VERSION.SDK_INT >= 30 -> insets.getInsets(WindowInsets.Type.mandatorySystemGestures()).bottom
+        Build.VERSION.SDK_INT >= 29 -> @Suppress("DEPRECATION") insets.mandatorySystemGestureInsets.bottom
+        else -> 0
+    }
+
     /**
-     * Insets to keep the page and chrome clear of: cutouts always, system bars only when they are shown.
-     * API 30+: [WindowInsets.getInsets] only reports *visible* bars (hidden and swipe-revealed transient bars
-     * count as 0), so asking for system bars even in fullscreen costs nothing, and keeps the page clear of a
-     * navigation bar that a vendor firmware refuses to hide (the Comet cut-off-bottom-bar problem).
+     * The window ends above the display's bottom edge: the upper window of a split screen, a pop-up window. Only in
+     * multi-window mode (a full-screen window always reaches the edge, the Comet's too), and only from the window's
+     * bounds on the display (API 30+). Before API 30 the position is unknown and the insets cannot tell either: in full
+     * screen [insetsOf] reports no bottom bar inset there although multi-window keeps the navigation bar, and there is
+     * no gesture inset before API 29, so a lower split window would look like a floating one. It counts as reaching the
+     * bottom: the 16 dp minimum stays (`ChromeMath.bottomGap`; an upper window there keeps a gap it does not need).
      */
+    fun floatsAboveBottom(activity: Activity): Boolean {
+        if (!activity.isInMultiWindowMode) return false
+        if (Build.VERSION.SDK_INT < 30) return false
+        val wm = activity.windowManager
+        return wm.currentWindowMetrics.bounds.bottom < wm.maximumWindowMetrics.bounds.bottom
+    }
+
+    /**
+     * Insets to keep the page and chrome clear of: cutouts always, system bars only when they are shown, as
+     * [left, top, right, bottom, cutoutTop]. cutoutTop is the part of top that only a display cutout takes (no system
+     * bar shown there: fullscreen on the S25); the page view reaches into it with its paper, its header and text start
+     * below it (`applyPageInsets`), the chrome does not. API 30+: [WindowInsets.getInsets] only reports *visible* bars (hidden and swipe-revealed
+     * transient bars count as 0), so asking for system bars even in fullscreen costs nothing, and keeps the page clear
+     * of a navigation bar that a vendor firmware refuses to hide (the Comet cut-off-bottom-bar problem).
+     */
+
     fun insetsOf(insets: WindowInsets, fullscreen: Boolean): IntArray {
         if (Build.VERSION.SDK_INT >= 30) {
             val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-            return intArrayOf(i.left, i.top, i.right, i.bottom)
+            val bars = insets.getInsets(WindowInsets.Type.systemBars())
+            return intArrayOf(i.left, i.top, i.right, i.bottom, InsetSplit.cutoutTop(i.top, bars.top))
         }
         if (fullscreen) {
             if (Build.VERSION.SDK_INT >= 28) {
                 val c = insets.displayCutout
-                if (c != null) return intArrayOf(c.safeInsetLeft, c.safeInsetTop, c.safeInsetRight, c.safeInsetBottom)
+                // Fullscreen before API 30: no bar shows, the whole top inset is the cutout's.
+                if (c != null) return intArrayOf(c.safeInsetLeft, c.safeInsetTop, c.safeInsetRight, c.safeInsetBottom,
+                    InsetSplit.cutoutTop(c.safeInsetTop, 0))
             }
-            return IntArray(4)
+            return IntArray(INSETS)
         }
         @Suppress("DEPRECATION")
         return intArrayOf(
             insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
-            insets.systemWindowInsetRight, insets.systemWindowInsetBottom,
+            insets.systemWindowInsetRight, insets.systemWindowInsetBottom, 0,
         )
+    }
+
+    /** Size of [insetsOf]'s array. */
+    const val INSETS = 5
+
+    /**
+     * The display's rounded top-left and top-right corners in window px into [out] (radius, centre x, centre y each; see
+     * [InsetSplit.pageCorners]): API 31+ from [WindowInsets.getRoundedCorner], radius 0 where the window has none (a
+     * square panel, the inner corner of a split screen). Before API 31 they are unknown: radius −1. On insets dispatch
+     * only (allocates the corners' centre points).
+     */
+    fun topCorners(insets: WindowInsets, out: IntArray) {
+        if (Build.VERSION.SDK_INT < 31) {
+            out.fill(0)
+            out[0] = -1
+            out[3] = -1
+            return
+        }
+        for (i in 0..1) {
+            val position = if (i == 0) RoundedCorner.POSITION_TOP_LEFT else RoundedCorner.POSITION_TOP_RIGHT
+            val c = insets.getRoundedCorner(position)
+            val centre = c?.center
+            out[i * 3] = c?.radius ?: 0
+            out[i * 3 + 1] = centre?.x ?: 0
+            out[i * 3 + 2] = centre?.y ?: 0
+        }
+    }
+
+    /** Size of [topCorners]' array. */
+    const val CORNERS = 6
+}
+
+/**
+ * How [ReaderWindow.insetsOf] splits a top inset (pure, unit-tested): the part only a display cutout takes, which the
+ * page view reaches into with its paper while the header and the text start below it (fullscreen on the S25: the camera
+ * band, `LayoutKeys.geometry`'s extraTop), and the margin the page view keeps.
+ */
+internal object InsetSplit {
+    /**
+     * The cutout-only part of a [top] inset (system bars and cutout together): all of it when no system bar shows there
+     * ([barsTop] 0: fullscreen), none when a bar does (the bar is at least as tall as the cutout and the page goes
+     * below it, as before). 0 for a top without a cutout (the Comet, a side cutout in landscape).
+     */
+    fun cutoutTop(top: Int, barsTop: Int): Int = if (barsTop <= 0) top.coerceAtLeast(0) else 0
+
+    /** The page view's top margin: the inset less the cutout band the view reaches into. */
+    fun pageTopMargin(top: Int, cutoutTop: Int): Int = (top - cutoutTop.coerceIn(0, maxOf(0, top))).coerceAtLeast(0)
+
+    /**
+     * The display's top corners [window] (`ReaderWindow.topCorners`: radius, centre x, centre y in window px, top-left then
+     * top-right) relative to a page view whose left, top and right edges are at [left], [top] and [right] in the window,
+     * into [out]: radius, how far the centre lies inside the view's left (right) edge, how far below its top. A radius
+     * that is 0 (square) or unknown (< 0) is kept as it is, with no centre. The header's side insets clear these
+     * (`StatusFit.sideInset`).
+     */
+    fun pageCorners(window: IntArray, left: Int, top: Int, right: Int, out: IntArray) {
+        val l = window[0] > 0
+        val r = window[3] > 0
+        out[0] = window[0]
+        out[1] = if (l) window[1] - left else 0
+        out[2] = if (l) window[2] - top else 0
+        out[3] = window[3]
+        out[4] = if (r) right - window[4] else 0
+        out[5] = if (r) window[5] - top else 0
     }
 }
 

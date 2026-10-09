@@ -85,7 +85,12 @@ private fun pageTouch(ev: MotionEvent, drag: PageDrag, pager: ListPager?): Boole
     return true
 }
 
-/** A tap stays a tap; a directional drag makes exactly one page decision on release. */
+/**
+ * A tap stays a tap; any drag past [slop] is the list's (intercepted, so it never ends as a tap on a row) and makes
+ * exactly one page decision on release. [axisBoth] (the grids) pages on the axis the drag first crossed the slop on (a
+ * tie is vertical). A vertical-only list pages by where the finger lifts: mostly vertical and past the slop
+ * ([TapSlop.releaseToList]), else nothing, so a swipe that starts sideways and turns up or down still pages.
+ */
 class PageDrag(private val slop: Float, private val axisBoth: Boolean=false) {
     private var x=0f; private var y=0f; private var active=false; private var horizontal=false
     var dragging=false; private set
@@ -94,12 +99,16 @@ class PageDrag(private val slop: Float, private val axisBoth: Boolean=false) {
         if (!active) return false
         if (dragging) return true
         val dx=abs(x-this.x);val dy=abs(y-this.y)
-        if (maxOf(dx,dy)>slop && (axisBoth || dy>dx)) { dragging=true;horizontal=axisBoth && dx>dy }
+        if (maxOf(dx,dy)>slop) { dragging=true;horizontal=axisBoth && dx>dy }
         return dragging
     }
     fun up(x: Float,y: Float): Int {
         move(x,y)
-        val delta=if (horizontal) this.x-x else this.y-y
+        val delta=when {
+            axisBoth -> if (horizontal) this.x-x else this.y-y
+            TapSlop.releaseToList(x-this.x,y-this.y,slop) -> this.y-y
+            else -> 0f
+        }
         val dir=if (!dragging || delta==0f) 0 else if (delta>0f) 1 else -1
         cancel();return dir
     }
@@ -111,7 +120,11 @@ object PageFit {
         return rows to h/rows
     }
 }
-object ListPaging { fun paged(setting: Int,eink: Boolean?): Boolean = setting==1 || (setting==0 && eink==true) }
+/**
+ * 목록 넘기기: only 한 화면씩 (1) pages the library and the notes hub; 자동 (0, the default) and 스크롤 (2) scroll on
+ * every device, e-ink included: the lists follow the finger and fling like the contents lists (user, 2026-10-04).
+ */
+object ListPaging { fun paged(setting: Int): Boolean = setting==1 }
 
 /** Immediate list jumps: setSelection only, never smoothScroll or a fling. Main thread. */
 class ListPager(val list: AbsListView,val bar: InkPagerBar,private val cols: Int=1) {
@@ -120,18 +133,34 @@ class ListPager(val list: AbsListView,val bar: InkPagerBar,private val cols: Int
     var onPaged: ((first: Int,last: Int)->Unit)?=null
     private val count: Int get()=list.adapter?.count ?: 0
     init {
-        bar.prev.setOnClickListener { page(-1) };bar.next.setOnClickListener { page(1) };bar.label.setOnClickListener { openNumPad() }
+        bindBar()
         list.setOnScrollListener(object : AbsListView.OnScrollListener {
             override fun onScrollStateChanged(view: AbsListView,state: Int) {}
-            override fun onScroll(view: AbsListView,first: Int,visible: Int,total: Int) { update();onPaged?.invoke(first,(first+visible-1).coerceAtLeast(first)) }
+            override fun onScroll(view: AbsListView,first: Int,visible: Int,total: Int) {
+                // A hidden bar (scroll mode) needs no label on every scroll frame; showing it lays the list out again.
+                if (bar.visibility==View.VISIBLE) update()
+                // Every move, scroll mode included: the hub's prefetch (N §9.7) keeps placeholders off screen.
+                onPaged?.invoke(first,(first+visible-1).coerceAtLeast(first))
+            }
         })
+    }
+    /** Points the bar's ◀ / ▶ / "3 / 27" at this pager (one bar can serve two lists; the shown one binds it). */
+    fun bindBar() {
+        bar.prev.setOnClickListener { page(-1) };bar.next.setOnClickListener { page(1) };bar.label.setOnClickListener { openNumPad() }
     }
     private fun fully(): Int {
         var n=0
         for (i in 0 until list.childCount) { val c=list.getChildAt(i);if (c.top>=list.paddingTop && c.bottom<=list.height-list.paddingBottom) n++ }
         return n.coerceAtLeast(1)
     }
-    private fun step(): Int = if (rowsPerPage>0) rowsPerPage else PagerMath.step((list.childCount/cols.coerceAtLeast(1)).coerceAtLeast(1))*cols.coerceAtLeast(1)
+    /**
+     * Rows one page moves. Fixed rows: [rowsPerPage]. Measured (rows of unequal height): the whole rows on screen, so
+     * the cut row, if any, leads the next page and an exactly filled page repeats nothing.
+     */
+    private fun step(): Int = if (rowsPerPage>0) rowsPerPage else {
+        val c=cols.coerceAtLeast(1)
+        (fully()/c).coerceAtLeast(1)*c
+    }
     private fun end(): Boolean = count==0 || list.childCount>0 && list.lastVisiblePosition>=count-1 && list.getChildAt(list.childCount-1).bottom<=list.height-list.paddingBottom
     private fun total(): Int = if (rowsPerPage>0) ((count+rowsPerPage-1)/rowsPerPage).coerceAtLeast(1) else PagerMath.total(count,fully(),step())
     fun page(dir: Int): Boolean {
@@ -141,8 +170,8 @@ class ListPager(val list: AbsListView,val bar: InkPagerBar,private val cols: Int
     fun showRow(index: Int) { if (count>0) { list.setSelection(index.coerceIn(0,count-1));update() } }
     fun openNumPad() {
         val max=total()
-        InkNumPad.show(list.context,"쪽 번호","1~$max",max.toString().length) { p ->
-            if (p !in 1..max) "1~${max}쪽 사이로 입력하세요" else { showRow((p-1)*step());null }
+        InkNumPad.show(list.context,"화면 번호","1–$max",max.toString().length) { p ->
+            if (p !in 1..max) "1–$max 사이로 입력하세요" else { showRow((p-1)*step());null }
         }
     }
     fun update() {

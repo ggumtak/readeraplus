@@ -52,9 +52,10 @@ internal class TxtIndex(
 internal object TxtIndexStore {
     /**
      * Bump whenever parsing output could change for the same input. At most once per release (every large TXT then
-     * parses in full once): 4 = release 2, author-note pruning (A5).
+     * parses in full once): 4 = release 2, author-note pruning (A5); 5 = the user heading rule adds to the built-in
+     * rules, easy patterns (HeadingRule), numbered headings ending with '.'.
      */
-    const val VERSION = 4
+    const val VERSION = 5
     private const val MAGIC = 0x52505458 // "RPTX"
     /** Fixed bytes per section record: byteStart, byteEnd, flags, chars, headLine, headChar, title marker. */
     private const val SECTION_BYTES = 6 * 4 + 1

@@ -10,3 +10,8 @@ build/
 *.keystore
 *.jks
 *.apk
+__pycache__/
+*.pyc
+
+# Temporary git worktrees of agent workflows
+.claude/worktrees/

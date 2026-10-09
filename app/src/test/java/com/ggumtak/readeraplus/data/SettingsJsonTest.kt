@@ -4,8 +4,10 @@ import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.engine.Align
 import com.ggumtak.readeraplus.engine.LineBreakMode
 import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.BrightnessEncoding
 import com.ggumtak.readeraplus.settings.LibraryListMode
 import com.ggumtak.readeraplus.settings.LibrarySort
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.settings.TapZoneMode
@@ -25,6 +27,7 @@ class SettingsJsonTest {
         footerCenter = StatusItem.CHAPTER_PAGES_LEFT, statusFontSizeSp = 12.5f, widowOrphanControl = false, txtBlankLines = 2,
         txtStripIndent = false, txtJoinWrappedLines = 0, txtDetectChapters = false, txtChapterRegex = "^제\\d+장$",
         txtEmphasizeHeadings = false, txtReplaceRules = "a => b\n# c", epubPublisherStyles = false,
+        epubIgnoreBookSizes = false,
     )
 
     private val app = AppSettings(
@@ -56,6 +59,20 @@ class SettingsJsonTest {
     fun missingFieldsKeepBase() {
         assertEquals(reader, SettingsJson.readerFromJson(JSONObject(), reader))
         assertEquals(app, SettingsJson.appFromJson(JSONObject(), app))
+    }
+
+    @Test
+    fun pageThemeTravelsAndOldBackupsAreOnTheWhitePage() {
+        val maru = reader.copy(pageTheme = PageTheme.MARU)
+        val json = JSONObject(SettingsJson.readerToJson(maru).toString())
+        assertEquals("MARU", json.getString("r.pageTheme"))
+        assertEquals(maru, SettingsJson.readerFromJson(json, ReaderSettings()))
+        // A backup made before 화면 색 was taken on the white page: it restores 흰 바탕 even over a 마루뷰어 device.
+        json.remove("r.pageTheme")
+        assertEquals(maru.copy(pageTheme = PageTheme.PAPER), SettingsJson.readerFromJson(json, maru))
+        // A theme this build does not know: 흰 바탕 too.
+        assertEquals(PageTheme.PAPER, SettingsJson.readerFromJson(json.put("r.pageTheme", "SEPIA"), maru).pageTheme)
+        assertEquals(PageTheme.MARU, SettingsJson.readerFromJson(json.put("r.pageTheme", "maru"), reader).pageTheme)
     }
 
     @Test
@@ -151,5 +168,59 @@ class SettingsJsonTest {
         val o = SettingsJson.settingsToJson(reader, app, mapOf("x" to 1))
         assertTrue(o.has("reader") && o.has("app") && o.has("other") && o.has("otherTypes"))
         assertEquals("int", o.getJSONObject("otherTypes").getString("x"))
+    }
+
+    @Test
+    fun brightnessTravelsWithItsEncodingMarker() {
+        val json = JSONObject(SettingsJson.appToJson(AppSettings(brightness = 0.4f)).toString())
+        assertEquals(BrightnessEncoding.VERSION, json.getInt(BrightnessEncoding.KEY_VERSION))
+        // With the marker: used as is (never converted twice), whatever the device's own state.
+        assertEquals(0.4f, SettingsJson.appFromJson(json, AppSettings(brightness = 0.9f, brightnessDevice = true)).brightness, 0f)
+        assertEquals(0.4f, SettingsJson.appFromJson(json, AppSettings(brightness = 0.9f)).brightness, 0f)
+        // Export, restore, export again: stable.
+        val again = SettingsJson.appToJson(SettingsJson.appFromJson(json, AppSettings()))
+        assertEquals(0.4, again.getDouble("a.brightness"), 1e-6)
+    }
+
+    @Test
+    fun legacyBackupBrightnessIsConvertedOnceByTheFlagInEffect() {
+        val pos = Math.sqrt((0.25 - 0.01) / 0.99).toFloat()
+        // No marker, no flag (builds that wrote no marker never exported it): the restoring device's flag decides.
+        // Window path (flag off): linear light, restored as its position.
+        val legacy = JSONObject().put("a.brightness", 0.25)
+        assertEquals(pos, SettingsJson.appFromJson(legacy, AppSettings()).brightness, 1e-6f)
+        // Device path (flag on): already a position. The flag itself is not restored.
+        val restored = SettingsJson.appFromJson(legacy, AppSettings(brightnessDevice = true))
+        assertEquals(0.25f, restored.brightness, 0f)
+        assertTrue(restored.brightnessDevice)
+        // A backup that carries its own device flag wins over the device's.
+        val device = JSONObject().put("a.brightness", 0.25).put("a.brightnessDevice", true)
+        assertEquals(0.25f, SettingsJson.appFromJson(device, AppSettings()).brightness, 0f)
+        val window = JSONObject().put("a.brightness", 0.25).put("a.brightnessDevice", false)
+        assertEquals(pos, SettingsJson.appFromJson(window, AppSettings(brightnessDevice = true)).brightness, 1e-6f)
+        // Auto stays; a missing value keeps the device's own.
+        assertEquals(-1f, SettingsJson.appFromJson(JSONObject().put("a.brightness", -1), AppSettings(brightness = 0.7f)).brightness, 0f)
+        assertEquals(0.7f, SettingsJson.appFromJson(JSONObject(), AppSettings(brightness = 0.7f)).brightness, 0f)
+    }
+
+    @Test
+    fun backupMarkerIsReadByItsVersionValue() {
+        val v = BrightnessEncoding.KEY_VERSION
+        val pos = Math.sqrt((0.25 - 0.01) / 0.99).toFloat()
+        // An older version is legacy; a newer unknown one is the current meaning, made safe.
+        assertEquals(pos, SettingsJson.appFromJson(JSONObject().put("a.brightness", 0.25).put(v, 1), AppSettings()).brightness, 1e-6f)
+        assertEquals(0.25f, SettingsJson.appFromJson(JSONObject().put("a.brightness", 0.25).put(v, 3), AppSettings()).brightness, 0f)
+        assertEquals(1f, SettingsJson.appFromJson(JSONObject().put("a.brightness", 4).put(v, 2), AppSettings()).brightness, 0f)
+        assertEquals(-1f, SettingsJson.appFromJson(JSONObject().put("a.brightness", -0.2).put(v, 2), AppSettings(brightness = 0.7f)).brightness, 0f)
+    }
+
+    @Test
+    fun brightnessMarkerIsAMappedKeyNotARawEntry() {
+        val raw = mapOf(BrightnessEncoding.KEY_VERSION to 2, "a.brightness" to 0.4f)
+        val a = SettingsJson.settingsToJson(ReaderSettings(), AppSettings(brightness = 0.4f), raw).getJSONObject("app")
+        assertEquals(2, a.getInt(BrightnessEncoding.KEY_VERSION))
+        assertTrue(SettingsJson.unmappedFromJson(a, SettingsJson.APP_PREFIX, raw).isEmpty())
+        // Exported from the typed settings even when the raw prefs have no marker yet (never saved since the update).
+        assertEquals(2, SettingsJson.settingsToJson(ReaderSettings(), AppSettings(), emptyMap<String, Any?>()).getJSONObject("app").getInt(BrightnessEncoding.KEY_VERSION))
     }
 }

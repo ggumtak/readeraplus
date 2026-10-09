@@ -5,7 +5,16 @@ import com.ggumtak.readeraplus.format.DocMeta
 
 /** Stored-length caps shared by the library API and the backup restore (defensive; the UI passes far less). */
 internal object DataLimits {
-    const val CHAPTER=200; const val WORD=200; const val CONTEXT=300; const val APP=100; const val QUOTE_STYLE_MAX=15
+    /** v3 (N §4.1): a note's chapter title at creation. */
+    const val CHAPTER = 200
+    /** v3: a 단어장 word (the trimmed selection). */
+    const val WORD = 200
+    /** v3: the sentence around a looked-up word. */
+    const val CONTEXT = 300
+    /** v3: a lookup's app label or search host. */
+    const val APP = 100
+    /** v3: highest stored QuoteStyles id (unknown ids draw as 0). */
+    const val QUOTE_STYLE_MAX = 15
     const val TITLE = 500
     const val AUTHOR = 300
     const val SNIPPET = 500

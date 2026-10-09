@@ -23,6 +23,8 @@ class FontInfo(
     /** Has a 'wght' variation axis. */
     val variable: Boolean = false,
     val serif: Boolean = true,
+    /** The font's own weight, shown as 굵기 "기본": a variable font's default `wght`, else 400 (a static file as is). */
+    val naturalWeight: Int = 400,
 )
 
 /** Range highlight kinds drawn under/over text. */
@@ -37,6 +39,21 @@ class PageDecor(
     /** UI-thread status of the visible page; covers and thumbnails pass null. */
     val status: StatusDecor? = null,
     val statusVersion: Int = 0,
+)
+
+/**
+ * The right page of a landscape spread ([PageRenderer.draw]): page [pageIndex] of [layout] (null = blank: the left page
+ * is a section's last and the next section is not laid out), its text box at x [left], the highlights and bookmark it
+ * carries in [decor] (no status: the bands belong to the left page's decor and span the view), and [section] its section.
+ * [boundary] is the view x from which a touch belongs to this page (the middle of the gutter).
+ */
+class SpreadPage(
+    val section: Int,
+    val layout: com.ggumtak.readeraplus.engine.SectionLayout?,
+    val pageIndex: Int,
+    val left: Float,
+    val boundary: Float,
+    val decor: PageDecor = PageDecor(),
 )
 
 /** Application context captured by [FontManager.init] (used by Eink/Covers helpers that have no context). */

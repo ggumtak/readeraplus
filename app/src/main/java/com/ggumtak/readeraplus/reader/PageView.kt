@@ -13,10 +13,14 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.VelocityTracker
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeProvider
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.render.PageDecor
 import com.ggumtak.readeraplus.render.PageRenderer
+import com.ggumtak.readeraplus.render.SpreadPage
 
 /** Everything needed to draw one page; immutable so a stale frame keeps drawing consistently during relayout. */
 class PageFrame(
@@ -27,7 +31,16 @@ class PageFrame(
     val left: Float,
     val top: Float,
     val decor: PageDecor,
-)
+    /** The right page of a landscape spread (drawn with the left one in the same frame); null with a single page. */
+    val right: SpreadPage? = null,
+) {
+    /** The same frame with another [decor] (and [right] page's), e.g. after a highlight or bookmark changed. */
+    fun withDecor(decor: PageDecor, right: SpreadPage? = this.right, renderer: PageRenderer = this.renderer): PageFrame =
+        PageFrame(renderer, layout, pageIndex, left, top, decor, right)
+
+    /** True when the view x [x] belongs to the right page of a spread. */
+    fun isRightAt(x: Float): Boolean = right != null && x >= right.boundary
+}
 
 /**
  * The page surface. Draws [frame] with its PageRenderer and turns raw touches into taps, swipes, long-presses
@@ -46,11 +59,17 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     var scroll: ScrollInput? = null
     interface ScrollInput {
         val live: Boolean
+        /** A drag starts at the platform touch slop (else at the wider tap slop: e-ink taps are often a little sloppy). */
+        val fineDrag: Boolean get() = live
         /** Apply a pending device/style choice only at the beginning of a new gesture. */
         fun onDown() {}
+        /** A drag started: the finger is down until [release] / [cancelDrag] (also in STEP, where nothing moves). */
+        fun beginDrag() {}
         fun isMoving(): Boolean; fun stopMotion(): Boolean; fun dragBy(dy: Float)
         fun release(totalDy: Float, velocityY: Float); fun cancelDrag()
-        fun a11yStep(next: Boolean): Boolean; fun computeScroll(); fun draw(canvas: Canvas, width: Int, height: Int)
+        fun a11yStep(next: Boolean): Boolean; fun computeScroll()
+        /** False when nothing of the body was painted (no renderer or geometry yet): not a first frame. */
+        fun draw(canvas: Canvas, width: Int, height: Int): Boolean
     }
 
     interface Callbacks {
@@ -68,6 +87,12 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         fun onViewSizeChanged(w: Int, h: Int)
         /** Mouse wheel / wheel-emulating page-turner remote: [next] = scrolled down. */
         fun onWheel(next: Boolean)
+        /** TalkBack scroll action: the turn a key makes. False when nothing turned (the book's first / last page). */
+        fun onAccessibilityTurn(next: Boolean): Boolean { onWheel(next); return true }
+        /** The page shown (paged: the page; scroll: the virtual page), for the screen-reader tree; null when there is none. */
+        fun accessibilitySource(): A11ySource? = null
+        /** A screen reader clicked a link of [section]: the same handler a tap on the link reaches. */
+        fun onAccessibilityLink(section: Int, href: String) {}
     }
 
     /** The next page replaces the frame at once: no fade, slide, curl or timed interpolation. */
@@ -85,11 +110,25 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
     /** Event time (uptime ms) of the last tap, swipe or wheel notch delivered to [cb]: where a turn's time starts. */
     var lastInputAt = 0L
         private set
+    /** Down time of the touch behind [lastInputAt] (0 = none: wheel, accessibility) and what it was ([PerfLines]). */
+    var lastInputDownAt = 0L
+        private set
+    var lastInputKind = PerfLines.INPUT_NONE
+        private set
     /** Open being timed: book id and start (uptime ms) until the next draw ends (0 = none). See [ReaderPerf]. */
     private var openTraceId = 0L
     private var openTraceFrom = 0L
     /** Turn being timed: its input event time until the next draw ends (0 = none). See [ReaderPerf]. */
     private var turnTraceFrom = 0L
+    /** That turn's down time, event wait (ms, -1 = unknown) and input kind for its "turn #n" line ([traceTurn]). */
+    private var turnTraceDown = 0L
+    private var turnTraceWait = -1L
+    private var turnTraceKind = PerfLines.INPUT_NONE
+    /** Turns logged so far: the n of "turn #n" and "frame #n". */
+    private var turnSeq = 0
+    private var perfText: StringBuilder? = null
+    /** RAPerf DEBUG only: traced frames waiting for their FrameMetrics ([FrameWatch]); null otherwise. */
+    internal var frameTrace: FrameTrace? = null
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private val swipeMin = 60f * resources.displayMetrics.density
@@ -144,6 +183,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         isHapticFeedbackEnabled = false
         isSoundEffectsEnabled = false
         isFocusable = false
+        // A canvas without text of its own: the page text and the scroll actions below are what a screen reader gets.
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         defaultFocusHighlightEnabled = false
         overScrollMode = OVER_SCROLL_NEVER
     }
@@ -153,20 +194,32 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         cb.onViewSizeChanged(w, h)
     }
 
+    var afterFirstFrame: Runnable? = null
+
+    private fun finishFirstFrame() {
+        if (drawFailed) return
+        val task = afterFirstFrame ?: return
+        afterFirstFrame = null
+        post(task)
+    }
+
     override fun onDraw(canvas: Canvas) {
+        // RAPerf DEBUG: the draw of a traced open or turn is timed too (one static read on such a frame only).
+        val drawFrom = if ((openTraceFrom != 0L || turnTraceFrom != 0L) && ReaderPerf.turns) System.nanoTime() else 0L
         val scrolling = scroll
         if (scrolling != null) {
-            try {
-                scrolling.draw(canvas, width, height)
-                drawFailed = false
+            val painted = try {
+                scrolling.draw(canvas, width, height).also { drawFailed = false }
             } catch (t: Throwable) {
                 if (!drawFailed) Log.w(TAG, "scroll draw failed", t)
                 drawFailed = true
                 canvas.drawColor(Color.WHITE)
-                canvas.drawText("페이지를 그리지 못했습니다.", 12f * resources.displayMetrics.density,
+                canvas.drawText("페이지를 그리지 못했습니다", 12f * resources.displayMetrics.density,
                     errorPaint.textSize * 2f, errorPaint)
+                false
             }
-            if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces()
+            if (painted) finishFirstFrame()
+            if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces(drawFrom)
             return
         }
         val f = frame
@@ -175,7 +228,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
             return
         }
         try {
-            f.renderer.draw(canvas, f.layout, f.pageIndex, f.left, f.top, width, height, f.decor)
+            f.renderer.draw(canvas, f.layout, f.pageIndex, f.left, f.top, width, height, f.decor, f.right)
             drawFailed = false
         } catch (t: Throwable) {
             if (!drawFailed) Log.w(TAG, "page draw failed", t)
@@ -183,7 +236,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
             canvas.drawColor(Color.WHITE)
             canvas.drawText("페이지를 그리지 못했습니다: ${t.javaClass.simpleName}", f.left, f.top + errorPaint.textSize * 2, errorPaint)
         }
-        if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces()
+        finishFirstFrame()
+        if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces(drawFrom)
     }
 
     /** The first page of a book is set: log how long the open took once it has been drawn ([ReaderPerf]). */
@@ -192,23 +246,53 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         openTraceFrom = startedAt
     }
 
-    /** A turned page is set: log the time from [inputAt] (its input event) once it has been drawn ([ReaderPerf]). */
-    fun traceTurn(inputAt: Long) {
+    /**
+     * A turned page is set: log the time from [inputAt] (its input event) once it has been drawn ([ReaderPerf]), with
+     * the touch's or key's [downAt] (0 = none), how long the event waited before the reader took it ([waitMs]) and its
+     * [kind] ([PerfLines]). The reader calls it only with RAPerf DEBUG on.
+     */
+    fun traceTurn(inputAt: Long, downAt: Long = 0L, waitMs: Long = -1L, kind: Int = PerfLines.INPUT_NONE) {
+        // Two shows before one frame (a waited-for page, then the queued turns' flush in the same message): the frame
+        // is timed from the earliest input it answers, with that input's contact, wait and kind.
+        if (turnTraceFrom != 0L && turnTraceFrom <= inputAt) return
         turnTraceFrom = inputAt
+        turnTraceDown = downAt
+        turnTraceWait = waitMs
+        turnTraceKind = kind
     }
 
-    private fun logTraces() {
+    /** [drawFrom]: System.nanoTime when this onDraw began (RAPerf DEBUG), else 0. */
+    private fun logTraces(drawFrom: Long) {
         val now = SystemClock.uptimeMillis()
+        val drawNs = if (drawFrom != 0L) System.nanoTime() - drawFrom else -1L
         if (openTraceFrom != 0L) {
             // Timed here, written after this frame (once per open): the first page is not kept waiting for the log.
             val id = openTraceId
-            val ms = now - openTraceFrom
+            val from = openTraceFrom
+            val ms = now - from
             openTraceFrom = 0L
-            post { Log.i(ReaderPerf.TAG, "open $id: first page $ms ms") }
+            if (drawNs >= 0L) frameTrace?.expect(drawingTime, 0, PerfLines.INPUT_NONE, from, 0L)
+            post {
+                if (drawNs >= 0L) Log.d(ReaderPerf.TAG, PerfLines.openDrawLine(StringBuilder(40), id, drawNs).toString())
+                Log.i(ReaderPerf.TAG, "open $id: first page $ms ms")
+            }
         }
         if (turnTraceFrom != 0L) {
-            Log.d(ReaderPerf.TAG, "turn ${now - turnTraceFrom} ms")
+            // "turn N ms" and the same turn in detail ([traceTurn] is only called with RAPerf DEBUG). Timed here and
+            // written after this frame like the open's lines, so the frame measured as "frame #n" (FrameWatch) holds
+            // no logging.
+            val ms = now - turnTraceFrom
+            val n = ++turnSeq
+            val sb = perfText ?: StringBuilder(160).also { perfText = it }
+            sb.setLength(0)
+            PerfLines.turnLine(sb, n, turnTraceKind, turnTraceFrom, turnTraceDown, turnTraceWait, now, drawNs)
+            val detail = sb.toString()
+            frameTrace?.expect(drawingTime, n, turnTraceKind, turnTraceFrom, turnTraceDown)
             turnTraceFrom = 0L
+            post {
+                Log.d(ReaderPerf.TAG, "turn $ms ms")
+                Log.d(ReaderPerf.TAG, detail)
+            }
         }
     }
 
@@ -368,13 +452,13 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                 val x = ev.getX(index); val y = ev.getY(index)
                 val dx = x - downX; val dy = y - downY
                 maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
-                val slop = if (input.live) touchSlop else tapSlop
+                val slop = if (input.fineDrag) touchSlop else tapSlop
                 if (!moved && maxDist > slop) {
                     moved = true
                     removeCallbacks(longPress)
                     if (ScrollMath.isVertical(dx, dy)) {
                         if (brightnessMode) { brightnessDragging = true; brightnessFrom = cb.brightnessStart() }
-                        else { scrollDragging = true; cb.onScrollStart() }
+                        else { scrollDragging = true; input.beginDrag(); cb.onScrollStart() }
                     }
                     scrollLastY = y
                     if (brightnessDragging) cb.onBrightness(Gestures.brightness(brightnessFrom, dy, height), false)
@@ -404,15 +488,15 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                     if (input.live) input.dragBy(scrollLastY - y)
                     val tracker = velocityTracker
                     tracker?.computeCurrentVelocity(1000, maxFling)
-                    lastInputAt = ev.eventTime
+                    noteInput(PerfLines.INPUT_SWIPE, primaryDownAt, ev.eventTime)
                     input.release(downY - y, -(tracker?.getYVelocity(primaryId) ?: 0f))
                 } else if (!scrollStopper && !longPressFired) {
                     val dx = x - downX; val dy = y - downY
                     maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
                     when (Gestures.end(dx, dy, maxDist, tapSlop, swipeMin, swipeToTurn, false)) {
-                        GestureEnd.NEXT -> swipe(SwipeDir.NEXT, ev.eventTime)
-                        GestureEnd.PREV -> swipe(SwipeDir.PREV, ev.eventTime)
-                        GestureEnd.TAP -> deliverTap(downX, downY, ev.eventTime)
+                        GestureEnd.NEXT -> swipe(SwipeDir.NEXT, primaryDownAt, ev.eventTime)
+                        GestureEnd.PREV -> swipe(SwipeDir.PREV, primaryDownAt, ev.eventTime)
+                        GestureEnd.TAP -> deliverTap(downX, downY, primaryDownAt, ev.eventTime)
                         GestureEnd.NONE -> {}
                     }
                 }
@@ -431,27 +515,83 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
 
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
-        if (scroll != null) {
-            info.isScrollable = true
-            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
-            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
-        }
+        // No text here: the page's words are the children of [PageA11y] (touch exploration on); a UI dump or another
+        // service sees a plain view and never the whole page as one node's text.
+        // Both modes turn by the same commands as the keys (the scroll viewport steps one screen).
+        info.isScrollable = true
+        info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
+        info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
     }
 
     override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
-        val input = scroll
-        if (input != null) {
-            if (action == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) return input.a11yStep(true)
-            if (action == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) return input.a11yStep(false)
+        val next = when (action) {
+            AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> true
+            AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> false
+            else -> return super.performAccessibilityAction(action, arguments)
         }
-        return super.performAccessibilityAction(action, arguments)
+        val input = scroll
+        return if (input != null) input.a11yStep(next) else accessibilityStep(next)
     }
 
     /** Use the same reader command as a tap/remote, including manual-turn and auto-turn bookkeeping. */
     internal fun accessibilityStep(next: Boolean): Boolean {
-        lastInputAt = SystemClock.uptimeMillis()
-        cb.onWheel(next)
-        return true
+        noteInput(PerfLines.INPUT_NONE, 0L, SystemClock.uptimeMillis())
+        return cb.onAccessibilityTurn(next)
+    }
+
+    private val accessibilityManager by lazy { context.getSystemService(AccessibilityManager::class.java) }
+
+    private fun touchExploring(): Boolean = accessibilityManager?.isTouchExplorationEnabled == true
+
+    private var a11y: PageA11y? = null
+
+    /** The page tree for a screen reader, only while touch exploration is on; otherwise the plain view (null). */
+    override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider? {
+        if (!touchExploring()) {
+            a11y?.reset()
+            return null
+        }
+        return a11y ?: PageA11y(this, cb).also {
+            a11y = it
+            if (isAttachedToWindow) it.attach()
+        }
+    }
+
+    /** Touch exploration's hover finds the text under the finger (a node enter / exit), see [PageA11y.onHover]. */
+    override fun dispatchHoverEvent(event: MotionEvent): Boolean {
+        if (touchExploring() && a11y?.onHover(event) == true) return true
+        return super.dispatchHoverEvent(event)
+    }
+
+    private var pageEventPending = false
+    private val pageEvent = Runnable {
+        pageEventPending = false
+        flushPageChanged()
+    }
+
+    /**
+     * A new page is on screen (a turn, jump or open; a scroll settle): tells a screen reader to read the text again.
+     * The tree's nodes are dropped at once; one event follows on the next frame however many pages were set before
+     * it, and only while an accessibility service is on. Decoration repaints and background count updates never call
+     * it. Draws nothing.
+     */
+    fun notifyPageChanged() {
+        a11y?.invalidate()
+        if (accessibilityManager?.isEnabled != true || pageEventPending) return
+        pageEventPending = true
+        postOnAnimation(pageEvent)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun flushPageChanged() {
+        if (accessibilityManager?.isEnabled != true) return
+        val tree = if (touchExploring()) a11y else null
+        val e = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        // With the tree the children are new; without it the page's one text changed.
+        e.contentChangeTypes =
+            if (tree != null) AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE else AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT
+        sendAccessibilityEventUnchecked(e)
+        tree?.afterPageChange()
     }
 
     /** The first finger of the gesture lifted (pointer index [i] of [ev]): tap, swipe or the end of a drag. */
@@ -469,13 +609,15 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
         if (multi) {
             // Another finger touched meanwhile: only a short, still touch counts (a tap), never a swipe.
-            if (maxDist <= tapSlop && ev.eventTime - primaryDownAt < longPressMs) deliverTap(downX, downY, ev.eventTime)
+            if (maxDist <= tapSlop && ev.eventTime - primaryDownAt < longPressMs) {
+                deliverTap(downX, downY, primaryDownAt, ev.eventTime)
+            }
             return
         }
         when (Gestures.end(dx, dy, maxDist, tapSlop, swipeMin, swipeToTurn, verticalSwipe)) {
-            GestureEnd.NEXT -> swipe(SwipeDir.NEXT, ev.eventTime)
-            GestureEnd.PREV -> swipe(SwipeDir.PREV, ev.eventTime)
-            GestureEnd.TAP -> deliverTap(downX, downY, ev.eventTime)
+            GestureEnd.NEXT -> swipe(SwipeDir.NEXT, primaryDownAt, ev.eventTime)
+            GestureEnd.PREV -> swipe(SwipeDir.PREV, primaryDownAt, ev.eventTime)
+            GestureEnd.TAP -> deliverTap(downX, downY, primaryDownAt, ev.eventTime)
             GestureEnd.NONE -> {}
         }
     }
@@ -486,7 +628,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         if (k < 0) return
         val t = extraTaps.removeAt(k)
         val d = maxOf(t.maxDist, Math.abs(ev.getX(i) - t.x), Math.abs(ev.getY(i) - t.y))
-        if (d <= tapSlop && ev.eventTime - t.downAt < longPressMs) deliverTap(t.x, t.y, ev.eventTime)
+        if (d <= tapSlop && ev.eventTime - t.downAt < longPressMs) deliverTap(t.x, t.y, t.downAt, ev.eventTime)
     }
 
     private fun trackExtraTaps(ev: MotionEvent) {
@@ -497,16 +639,23 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         }
     }
 
-    private fun swipe(dir: SwipeDir, upTime: Long) {
-        lastInputAt = upTime
+    private fun swipe(dir: SwipeDir, downTime: Long, upTime: Long) {
+        noteInput(PerfLines.INPUT_SWIPE, downTime, upTime)
         cb.onSwipe(dir)
     }
 
     /** Every tap reaches the reader, however fast; only a duplicate report of the same touch is dropped. */
-    private fun deliverTap(x: Float, y: Float, upTime: Long) {
+    private fun deliverTap(x: Float, y: Float, downTime: Long, upTime: Long) {
         if (!tapDedup.accept(x, y, upTime, tapSlop)) return
-        lastInputAt = upTime
+        noteInput(PerfLines.INPUT_TAP, downTime, upTime)
         cb.onTap(x, y)
+    }
+
+    /** The input about to reach [cb] (a turn's time starts at [at]; [downTime] = its finger's, 0 = none). */
+    private fun noteInput(kind: Int, downTime: Long, at: Long) {
+        lastInputAt = at
+        lastInputDownAt = downTime
+        lastInputKind = kind
     }
 
     override fun onGenericMotionEvent(ev: MotionEvent): Boolean {
@@ -517,7 +666,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                 // a wheel-emulating page-turner remote keeps up with fast clicks.
                 if (ev.eventTime - lastWheelAt >= WHEEL_INTERVAL_MS) {
                     lastWheelAt = ev.eventTime
-                    lastInputAt = ev.eventTime
+                    noteInput(PerfLines.INPUT_WHEEL, 0L, ev.eventTime)
                     cb.onWheel(v < 0f)
                 }
                 return true
@@ -536,8 +685,16 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         cb.onBrightness(Gestures.brightness(brightnessFrom, y - downY, height), true)
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        a11y?.attach()
+    }
+
     override fun onDetachedFromWindow() {
         removeCallbacks(longPress)
+        removeCallbacks(pageEvent)
+        pageEventPending = false
+        a11y?.detach()
         if (scrollDragging) scroll?.cancelDrag()
         scrollDragging = false; tracking = false
         velocityTracker?.recycle()
@@ -562,7 +719,8 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
  * Timing logs for comparing builds on the device (`adb logcat -s RAPerf`): "open <id>: first page N ms" (from
  * startOpen to the end of the first page's draw) always, at INFO; "turn N ms" (from the input event to the end of the
  * turned page's draw) only when `adb shell setprop log.tag.RAPerf DEBUG` was set before the app started, so a normal
- * turn pays one static read and allocates nothing.
+ * turn pays one static read and allocates nothing. The same switch adds the Comet measuring lines of [PerfLines] (the
+ * finger's contact time, a key's system hold, the turn frame's FrameMetrics via [FrameWatch], the open's steps).
  */
 internal object ReaderPerf {
     const val TAG = "RAPerf"

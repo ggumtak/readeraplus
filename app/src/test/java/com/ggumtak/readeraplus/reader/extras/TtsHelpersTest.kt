@@ -9,7 +9,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** T1-11 / T1-6: TTS time counted with the reader in the background, and the "이 화 / 2화 끝까지" sleep boundaries. */
+/** T1-11 / T1-6: TTS time counted with the reader in the background, and the "이 챕터 / 다음 챕터 끝까지" sleep boundaries. */
 class TtsHelpersTest {
 
     // ------------------------------------------------------------------ SpeakClock

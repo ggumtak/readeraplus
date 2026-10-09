@@ -17,6 +17,13 @@ import java.util.concurrent.ConcurrentHashMap
 object TxtDocuments {
     /** Larger files are refused instead of risking an out-of-memory crash. */
     private const val MAX_FILE_BYTES = 128L * 1024 * 1024
+
+    /**
+     * Error reasons, shown under "책을 열 수 없습니다" and in toasts: the reason only (no file name, no period). The
+     * size limit is [MAX_FILE_BYTES].
+     */
+    private val TOO_LARGE = "파일이 너무 큽니다 (${MAX_FILE_BYTES / (1024 * 1024)}MB까지)"
+    internal const val READ_FAILED = "파일을 읽지 못했습니다"
     private const val SNIFF_BYTES = 64 * 1024
 
     /**
@@ -35,9 +42,9 @@ object TxtDocuments {
      * @throws DocumentException when the file can't be read or is too large.
      */
     fun open(file: File, options: ParseOptions): BookDocument {
-        if (!file.isFile) throw DocumentException("파일을 찾을 수 없습니다: ${file.name}")
+        if (!file.isFile) throw DocumentException("파일을 찾을 수 없습니다")
         val length = file.length()
-        if (length > MAX_FILE_BYTES) throw DocumentException("파일이 너무 큽니다: ${file.name}")
+        if (length > MAX_FILE_BYTES) throw DocumentException(TOO_LARGE)
         val key = TxtIndexStore.key(file, options)
         val cached = TxtIndexStore.load(key, length)
         if (cached != null) return TxtBook(file, cached, options)
@@ -50,16 +57,16 @@ object TxtDocuments {
             if (bytes.size.toLong() == length && file.length() == length) TxtIndexStore.save(idx)
             idx
         } catch (e: IOException) {
-            throw DocumentException("파일을 읽을 수 없습니다: ${file.name}", e)
+            throw DocumentException(READ_FAILED, e)
         } catch (e: OutOfMemoryError) {
-            throw DocumentException("메모리가 부족합니다: ${file.name}", e)
+            throw DocumentException("메모리가 부족합니다", e)
         } catch (e: RuntimeException) {
             // never expected; keeps the "throws DocumentException" contract for callers that only catch that
-            throw DocumentException("TXT 파일을 열지 못했습니다: ${file.name}", e)
+            throw DocumentException(READ_FAILED, e)
         } finally {
             building.computeIfPresent(path) { _, n -> if (n > 1) n - 1 else null }
         }
-        return TxtBook(file, index, options)
+        return TxtBook(file, index, options, parsed = true)
     }
 
     /**
@@ -158,7 +165,7 @@ object TxtDocuments {
                 if (n == buf.size) {
                     val b = inp.read()
                     if (b < 0) break
-                    if (buf.size >= MAX_FILE_BYTES) throw DocumentException("파일이 너무 큽니다: ${file.name}")
+                    if (buf.size >= MAX_FILE_BYTES) throw DocumentException(TOO_LARGE)
                     buf = buf.copyOf(maxOf(4096, buf.size + (buf.size shr 1)))
                     buf[n++] = b.toByte()
                     continue

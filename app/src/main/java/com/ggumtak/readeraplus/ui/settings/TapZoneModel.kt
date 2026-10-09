@@ -23,22 +23,22 @@ object TapZoneModel {
     private const val T1 = 1f / 3f
     private const val T2 = 2f / 3f
 
-    /** Short Korean mode name. */
+    /** Short Korean mode name: the radio rows and the main list's 넘기기·터치·키 summary (one source). */
     fun modeName(mode: TapZoneMode): String = when (mode) {
         TapZoneMode.LEFT_RIGHT -> "좌우 넘김"
-        TapZoneMode.ALL_NEXT -> "어디든 다음 페이지"
-        TapZoneMode.ALL_PREV -> "어디든 이전 페이지"
+        TapZoneMode.ALL_NEXT -> "어디든 다음"
+        TapZoneMode.ALL_PREV -> "어디든 이전"
         TapZoneMode.TOP_BOTTOM -> "위아래 넘김"
-        TapZoneMode.CUSTOM -> "사용자 지정"
+        TapZoneMode.CUSTOM -> "직접 지정"
     }
 
-    /** One-line description of a mode. */
+    /** One-line description of a mode (the centre is the menu in every mode; the preview below shows it). */
     fun modeDescription(mode: TapZoneMode): String = when (mode) {
-        TapZoneMode.LEFT_RIGHT -> "왼쪽 1/3은 이전, 나머지는 다음, 가운데는 메뉴"
-        TapZoneMode.ALL_NEXT -> "어디를 눌러도 다음 페이지 (왼쪽 가장자리만 이전, 가운데는 메뉴)"
-        TapZoneMode.ALL_PREV -> "어디를 눌러도 이전 페이지 (오른쪽 가장자리만 다음, 가운데는 메뉴)"
-        TapZoneMode.TOP_BOTTOM -> "위쪽은 이전, 아래쪽은 다음, 가운데는 메뉴"
-        TapZoneMode.CUSTOM -> "3×3 칸마다 동작을 직접 지정"
+        TapZoneMode.LEFT_RIGHT -> "왼쪽 1/3은 이전, 나머지는 다음"
+        TapZoneMode.ALL_NEXT -> "왼쪽 가장자리만 이전"
+        TapZoneMode.ALL_PREV -> "오른쪽 가장자리만 다음"
+        TapZoneMode.TOP_BOTTOM -> "위는 이전, 아래는 다음"
+        TapZoneMode.CUSTOM -> "9칸에 동작을 직접 지정"
     }
 
     /** Compact label drawn inside the preview ('\n' = line break). */
@@ -51,7 +51,7 @@ object TapZoneModel {
         TapAction.TOC -> "목차"
         TapAction.SEARCH -> "검색"
         TapAction.SETTINGS -> "읽기\n설정"
-        TapAction.TTS -> "TTS"
+        TapAction.TTS -> "듣기"
         TapAction.NEXT_CHAPTER -> "다음\n챕터"
         TapAction.PREV_CHAPTER -> "이전\n챕터"
         TapAction.REFRESH -> "새로\n고침"

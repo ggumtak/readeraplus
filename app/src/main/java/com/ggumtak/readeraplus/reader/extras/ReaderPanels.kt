@@ -66,6 +66,11 @@ object ReaderPanels {
         InfoDialogs.goTo(host)
     }
 
+    /** A relayout (font size, rotation) changed the page numbers: the search-results bar over the page reads its own again. */
+    fun refreshSearchBar() {
+        SearchNavBar.refresh()
+    }
+
     /**
      * Closes the search-results bar over [host]'s page (and clears its search highlight), if shown. Returns true
      * when a bar was closed, so the reader's BACK handling can close it first and only leave the book on the next
@@ -154,12 +159,12 @@ interface BookInsightsHost {
 
 /**
  * Optional [ReaderHost] capability (R2, T1-9 / T1-10): TXT options for the open book only. Implemented by
- * ReaderActivity (READER_A); used by the reading-settings popup ("TXT 파일 · 이 책에만 적용") and the selection's
- * "이 문구 지우기" (EXTRAS_TOOLS). Main thread only.
+ * ReaderActivity (READER_A); used by the selection's "이 문구 지우기" (EXTRAS_TOOLS). Main thread only. Since
+ * 2026-10-04 the book's TXT rows are on 설정 → 이 책의 TXT 정리 (`ui.settings.BookTxtPage`), which hands its edits to
+ * the reader through `ui.settings.OpenBook` instead.
  *
- * The effective settings of the book are `Settings.reader.withTxt(txtOverride)`; the popup shows them in its TXT
- * rows. [ReaderHost.applySettings] keeps taking GLOBAL settings (typography, status bar, …): the host saves them and
- * applies them merged with the override.
+ * The effective settings of the book are `Settings.reader.withTxt(txtOverride)`. [ReaderHost.applySettings] keeps
+ * taking GLOBAL settings (typography, status bar, …): the host saves them and applies them merged with the override.
  */
 interface TxtOverrideHost {
     /** This book's override (BookPrefs, read in the open path's IO block), or null when it follows the defaults. */
@@ -168,18 +173,11 @@ interface TxtOverrideHost {
     /**
      * Makes [o] this book's override (null or empty = follow the defaults again): saved with BookPrefs on IO, and the
      * book is re-parsed only when the effective parse options changed (position kept by its char fraction). Other
-     * books' TXT indexes are untouched. Callers debounce bursts of changes (the popup's reparse debounce) — each
+     * books' TXT indexes are untouched. Callers debounce bursts of changes — each
      * re-parse of a 14 MB file costs about a second. [onApplied] runs on the main thread once the book shows the
      * result (right away when nothing had to be re-parsed); not at all when the re-open fails or the book closes.
      */
     fun applyTxtOverride(o: TxtOverride?, onApplied: (() -> Unit)? = null)
-
-    /**
-     * "모든 TXT 기본값으로 저장": the effective TXT options become the global defaults (Settings.saveReader) and this
-     * book's override is cleared. Nothing is re-parsed here (the effective options are unchanged); other TXT books
-     * pick up the new defaults (and rebuild their index) when next opened.
-     */
-    fun saveTxtAsDefaults()
 }
 
 /**
@@ -187,7 +185,7 @@ interface TxtOverrideHost {
  * (EXTRAS_TOOLS) calls it when speech reaches the end of the book, as "next" on the last page does. Main thread only.
  */
 interface ReaderEndHost {
-    /** Shows the end panel ("다 읽었습니다", 다음 권, 완독 처리, …), marking the book finished when so configured. */
+    /** Shows the end panel ("다 읽었습니다", 다음 권, 다 읽은 책으로 표시, …), marking the book finished when so configured. */
     fun showBookEnd()
 }
 
@@ -262,8 +260,14 @@ internal object PanelRegistry {
 /** Optional main-thread status samples; never parses or allocates during a page turn. */
 interface StatusSampleHost { fun statusSample(item: com.ggumtak.readeraplus.settings.StatusItem): String? }
 /** Optional reader-only place capture. The notes hub never opens a book file. */
-interface NotePlaceHost { fun notePlace(pos: com.ggumtak.readeraplus.format.DocPosition): com.ggumtak.readeraplus.data.NotePlace }
+interface NotePlaceHost {
+    fun notePlace(pos: com.ggumtak.readeraplus.format.DocPosition): com.ggumtak.readeraplus.data.NotePlace
+    /** The reader's K2 anchor check of [q] on its section's laid-out text (any section it has); null = not at hand. */
+    fun quoteAnchorMatch(q: com.ggumtak.readeraplus.data.Quote): Boolean? = null
+}
+interface NoteJumpHost { fun openNote(jump: com.ggumtak.readeraplus.reader.ReaderJump) }
 interface PageThumbsHost {
+    val thumbnailsShown: Boolean get() = true
     fun thumbTotal(): Int; fun thumbCurrent(): Int; fun thumbAspect(): Float
     fun requestThumbs(first: Int, count: Int, widthPx: Int, heightPx: Int, progressive: Boolean, onBatch: (ThumbBatch)->Unit)
     fun cancelThumbs()

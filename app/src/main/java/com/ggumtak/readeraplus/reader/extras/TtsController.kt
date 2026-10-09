@@ -48,6 +48,7 @@ import com.ggumtak.readeraplus.ui.kit.stepperRow
 import com.ggumtak.readeraplus.ui.kit.switchRow
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
+import com.ggumtak.readeraplus.ui.settings.TtsVoices
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
@@ -169,7 +170,7 @@ class TtsController(private val host: ReaderHost) {
         startFrom(host.currentPosition())
     }
 
-    /** Starts (or restarts) reading at [p] (used by the selection popup's "여기서 읽기"). */
+    /** Starts (or restarts) reading at [p] (used by the selection popup's "여기부터 듣기"). */
     fun startFrom(p: DocPosition) {
         if (host.document == null) {
             ctx.toast("책을 여는 중입니다")
@@ -317,7 +318,7 @@ class TtsController(private val host: ReaderHost) {
             runCatching { engine.shutdown() }
             tts = null
             afterInit = null
-            ctx.toast("TTS 엔진을 사용할 수 없습니다. 설정에서 TTS 엔진을 확인하세요.")
+            ctx.toast("음성 엔진을 쓸 수 없습니다 · 기기의 음성 엔진 설정을 확인하세요")
             stop()
             return
         }
@@ -348,7 +349,7 @@ class TtsController(private val host: ReaderHost) {
         } else if (runCatching { engine.isLanguageAvailable(Locale.KOREAN) >= TextToSpeech.LANG_AVAILABLE }.getOrDefault(false)) {
             runCatching { engine.language = Locale.KOREAN }
         } else if (hangul) {
-            ctx.toast("한국어 음성이 없습니다. TTS 엔진에서 한국어 음성 데이터를 설치하세요.")
+            ctx.toast("한국어 음성이 없습니다 · 음성 엔진 설정에서 받으세요")
         }
     }
 
@@ -485,7 +486,7 @@ class TtsController(private val host: ReaderHost) {
         if (!playing) return
         val stopAt = sleepStop()
         if (stopAt != null && enqueued == pos && itemAt(pos)?.let { !before(it, stopAt) } == true) {
-            // "이 화 끝까지": the episode's last sentence is done and nothing of the next one was queued.
+            // "이 챕터 끝까지": the episode's last sentence is done and nothing of the next one was queued.
             sleepNow()
             return
         }
@@ -500,7 +501,7 @@ class TtsController(private val host: ReaderHost) {
                 errorStreak++
                 if (errorStreak >= MAX_ERRORS) {
                     pause()
-                    ctx.toast("TTS 오류: 음성 데이터와 TTS 엔진 설정을 확인하세요")
+                    ctx.toast("듣기 오류 · 음성 데이터를 확인하세요")
                     return
                 }
             }
@@ -542,7 +543,7 @@ class TtsController(private val host: ReaderHost) {
             errorStreak++
             if (errorStreak >= MAX_ERRORS) {
                 pause()
-                ctx.toast("TTS 오류: 음성 데이터와 TTS 엔진 설정을 확인하세요")
+                ctx.toast("듣기 오류 · 음성 데이터를 확인하세요")
                 return
             }
         }
@@ -554,9 +555,10 @@ class TtsController(private val host: ReaderHost) {
         val p = UtteranceId.parse(id) ?: return
         if (p[4] != uttGen || !playing) return
         val u = itemAt(p[3]) ?: return
-        val page = host.currentPage ?: return
+        host.currentPage ?: return
         val off = u.start + start
-        if (host.currentPosition().section == u.sec && off >= page.end) follow(u.sec, off)
+        // A landscape spread follows once the voice leaves its right page too (visibleEnd).
+        if (host.currentPosition().section == u.sec && off >= host.visibleEnd) follow(u.sec, off)
     }
 
     /** Drops sentences of sections already finished (keeps memory flat over a long book). */
@@ -581,9 +583,10 @@ class TtsController(private val host: ReaderHost) {
             if (cur.section != sec) {
                 host.goTo(DocPosition(sec, off), remember = false)
                 if (background) spoken.addPage()
-            } else if (page != null && layout != null && (off >= page.end || off < page.start)) {
+            } else if (page != null && layout != null && (off >= host.visibleEnd || off < page.start)) {
                 val target = layout.pageForOffset(off)
-                val turned = if (target == host.currentPageIndex + 1) {
+                // One turn moves pageStep pages (2 in a landscape spread): the next spread's left page is the target.
+                val turned = if (target == host.currentPageIndex + host.pageStep) {
                     host.nextPage()
                 } else {
                     host.goTo(DocPosition(sec, off), remember = false)
@@ -628,7 +631,7 @@ class TtsController(private val host: ReaderHost) {
             val cur = host.currentPosition()
             val u = itemAt(pos)
             // Our own page turn echoed back by the host: still on the page being spoken.
-            if (u != null && u.sec == cur.section && u.start >= page.start && u.start < page.end) return
+            if (u != null && u.sec == cur.section && u.start >= page.start && u.start < host.visibleEnd) return
             val autoplay = playing || pendingPlay
             flushEngine()
             playing = false
@@ -784,12 +787,12 @@ class TtsController(private val host: ReaderHost) {
         }
     }
 
-    /** The sleep timer ran out: pause (the session, its bar and the notification stay; play resumes here). */
+    /** 멈춤 예약 ran out: pause (the session, its bar and the notification stay; play resumes here). */
     private fun sleepNow() {
         cancelSleep()
         if (playing || pendingPlay) {
             pause()
-            ctx.toast("수면 타이머: TTS를 멈췄습니다")
+            ctx.toast("예약대로 듣기를 멈췄습니다")
         }
     }
 
@@ -802,7 +805,7 @@ class TtsController(private val host: ReaderHost) {
                 sleepFrom = itemAt(pos)?.let { DocPosition(it.sec, it.start) } ?: host.currentPosition()
                 sleepCount = app.ttsSleepChapters
                 sleepStopDirty = true
-                if ((chapterIndex()?.size ?: 0) == 0) ctx.toast("목차가 없어 화 단위 수면 타이머를 쓸 수 없습니다")
+                if ((chapterIndex()?.size ?: 0) == 0) ctx.toast("목차가 없어 챕터 단위로 예약할 수 없습니다")
             }
             return
         }
@@ -827,7 +830,7 @@ class TtsController(private val host: ReaderHost) {
         sleepLeft = 0
     }
 
-    /** Speech moves elsewhere (여기서 읽기, pages turned by hand): "이 화 끝까지" counts from where it resumes. */
+    /** Speech moves elsewhere (여기부터 듣기, pages turned by hand): "이 챕터 끝까지" counts from where it resumes. */
     private fun restartEpisodeCount() {
         sleepFrom = null
         sleepStop = null
@@ -835,7 +838,7 @@ class TtsController(private val host: ReaderHost) {
         sleepLeft = 0
     }
 
-    /** Where "이 화 / 2화 끝까지" stops: the start of the [sleepCount]-th episode after [sleepFrom]; null = no stop. */
+    /** Where "이 챕터 / 다음 챕터 끝까지" stops: the start of the [sleepCount]-th episode after [sleepFrom]; null = no stop. */
     private fun sleepStop(): DocPosition? {
         val from = sleepFrom ?: return null
         if (sleepStopDirty) {
@@ -917,15 +920,15 @@ class TtsController(private val host: ReaderHost) {
         val inset = Overlay.bottomInset(host.pageView)
         val row = Overlay.bar(ctx)
         row.setPadding(row.paddingLeft, row.paddingTop, row.paddingRight, inset)
-        row.addView(ctx.flatIcon(R.drawable.ic_close, "TTS 끄기") { stop() })
-        row.addView(ctx.flatIcon(R.drawable.ic_settings, "TTS 설정") { settingsDialog() })
+        row.addView(ctx.flatIcon(R.drawable.ic_close, "듣기 끝내기") { stop() })
+        row.addView(ctx.flatIcon(R.drawable.ic_settings, "듣기 설정") { settingsDialog() })
         val label = ctx.label("", 15f, maxLines = 1).apply { gravity = Gravity.CENTER }
         row.addView(label, lp(0, WRAP_CONTENT, 1f))
         row.addView(ctx.flatIcon(R.drawable.ic_chevron_left, "이전 문장") { jump(-1) })
         row.addView(ctx.flatIcon(R.drawable.ic_chevron_right, "다음 문장") { jump(+1) })
         parent.addView(row, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
 
-        val play = ctx.roundBlackButton(R.drawable.ic_pause, "재생 / 일시정지", 60) {
+        val play = ctx.roundBlackButton(R.drawable.ic_pause, "재생·일시정지", 60) {
             if (playing || pendingPlay) pause() else start()
         }
         val lpPlay = FrameLayout.LayoutParams(ctx.dp(60), ctx.dp(60), Gravity.BOTTOM or Gravity.END).apply {
@@ -936,9 +939,11 @@ class TtsController(private val host: ReaderHost) {
         bar = row
         playButton = play
         barLabel = label
+        host.addCountsListener(countsListener)
     }
 
     private fun removeBar() {
+        host.removeCountsListener(countsListener)
         bar?.let { (it.parent as? ViewGroup)?.removeView(it) }
         playButton?.let { (it.parent as? ViewGroup)?.removeView(it) }
         bar = null
@@ -947,6 +952,8 @@ class TtsController(private val host: ReaderHost) {
     }
 
     private var lastBarText: String? = null
+    /** The pages are counted (or counting failed): the bar's 쪽수 계산 중 becomes the page number. */
+    private val countsListener: () -> Unit = { updateBar() }
     private var lastPlayIcon = 0
 
     private fun updateBar() {
@@ -958,10 +965,11 @@ class TtsController(private val host: ReaderHost) {
             playButton?.setImageResource(icon)
             lastPlayIcon = icon
         }
-        val page = PageLabel.clean(runCatching { host.pageLabel(host.currentPosition()) }.getOrNull())
+        val page = runCatching { host.pagesPending() }.getOrNull()
+            ?: PageLabel.clean(runCatching { host.pageLabel(host.currentPosition()) }.getOrNull())
         val remaining = if (sleepDeadline > 0L) (sleepDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(1L) else 0L
         val note = SleepChoice.barNote(remaining, if (sleepFrom != null && sleepStop() != null) sleepLeft.coerceAtLeast(1) else 0)
-        val text = if (note.isEmpty()) page else "$page  ·  $note"
+        val text = if (note.isEmpty()) page else "$page · $note"
         if (text != lastBarText) {
             barLabel?.text = text
             lastBarText = text
@@ -971,6 +979,9 @@ class TtsController(private val host: ReaderHost) {
     private fun settingsDialog() {
         val app = Settings.app
         val box = ctx.vertical { setPadding(0, ctx.dp(4), 0, ctx.dp(4)) }
+        lateinit var voiceRow: LinearLayout
+        voiceRow = ctx.row("목소리", currentVoiceName()) { chooseVoiceDialog { name -> voiceRow.findViewWithTag<TextView>("summary")?.text = name } }
+        box.addView(voiceRow, lp())
         box.addView(ctx.stepperRow("속도", app.ttsRate, 0.5f, 3f, 0.1f, ReaderFormat::ttsRate) { v ->
             Settings.saveApp(Settings.app.copy(ttsRate = v))
             paramsChanged()
@@ -980,12 +991,12 @@ class TtsController(private val host: ReaderHost) {
             paramsChanged()
         })
         lateinit var sleepRow: LinearLayout
-        sleepRow = ctx.row("수면 타이머", SleepChoice.summary(app.ttsSleepMinutes, app.ttsSleepChapters)) {
+        sleepRow = ctx.row("멈춤 예약", SleepChoice.summary(app.ttsSleepMinutes, app.ttsSleepChapters)) {
             val a = Settings.app
             val opts = SleepChoice.OPTIONS
-            ctx.chooser("수면 타이머", opts.map { it.label }, SleepChoice.indexOf(a.ttsSleepMinutes, a.ttsSleepChapters)) { i ->
+            ctx.chooser("멈춤 예약", opts.map { it.label }, SleepChoice.indexOf(a.ttsSleepMinutes, a.ttsSleepChapters)) { i ->
                 val o = opts[i]
-                // A minutes choice keeps no episode count; an episode choice keeps the minutes for later.
+                // A minutes choice keeps no chapter count; a chapter choice keeps the minutes for later.
                 val next = if (o.chapters > 0) Settings.app.copy(ttsSleepChapters = o.chapters) else Settings.app.copy(ttsSleepMinutes = o.minutes, ttsSleepChapters = 0)
                 Settings.saveApp(next)
                 sleepRow.findViewWithTag<TextView>("summary")?.text = SleepChoice.summary(next.ttsSleepMinutes, next.ttsSleepChapters)
@@ -999,17 +1010,14 @@ class TtsController(private val host: ReaderHost) {
             }
         }
         box.addView(sleepRow, lp())
-        box.addView(ctx.switchRow("읽는 문장 표시", "끄면 문장이 바뀔 때 화면을 다시 그리지 않습니다", app.ttsHighlight) { on ->
+        box.addView(ctx.switchRow("읽는 문장 표시", "읽는 문장에 밑줄 · 끄면 화면 갱신이 줄어듭니다", app.ttsHighlight) { on ->
             Settings.saveApp(Settings.app.copy(ttsHighlight = on))
             if (!on) clearHighlight() else if (session) itemAt(pos)?.let { highlight(it) }
         }, lp())
-        lateinit var voiceRow: LinearLayout
-        voiceRow = ctx.row("목소리", currentVoiceName()) { chooseVoiceDialog { name -> voiceRow.findViewWithTag<TextView>("summary")?.text = name } }
-        box.addView(voiceRow, lp())
-        box.addView(ctx.row("TTS 엔진 설정", "시스템 TTS 엔진 · 음성 데이터 설치") {
+        box.addView(ctx.row("음성 엔진 설정", "음성 데이터 설치") {
             TextActions.start(ctx, Intent("com.android.settings.TTS_SETTINGS"))
         }, lp())
-        PanelRegistry.dialog(ctx, ctx.alert().setTitle("TTS 설정")
+        PanelRegistry.dialog(ctx, ctx.alert().setTitle("듣기 설정")
             .setView(ctx.einkScroll(box))
             .setPositiveButton("닫기", null)
             .showNoAnim())
@@ -1020,10 +1028,10 @@ class TtsController(private val host: ReaderHost) {
         main.postDelayed(paramsRestart, 500)
     }
 
-    /** The saved voice's readable name (once the engine lists its voices), else "기본 음성" / "고른 목소리". */
+    /** The saved voice's readable name (once the engine lists its voices), else "기본 목소리" / "고른 목소리". */
     private fun currentVoiceName(): String {
         val saved = runCatching { Settings.app.ttsVoice }.getOrDefault("")
-        if (saved.isEmpty()) return "기본 음성"
+        if (saved.isEmpty()) return TtsVoices.DEFAULT
         val engine = tts?.takeIf { ready } ?: return "고른 목소리"
         return voiceChoices(engine).firstOrNull { it.first.name == saved }?.second ?: "고른 목소리"
     }
@@ -1056,14 +1064,14 @@ class TtsController(private val host: ReaderHost) {
                 ctx.toast("고를 수 있는 목소리가 없습니다")
                 return@withEngine
             }
-            val labels = listOf("기본 음성") + voices.map { it.second }
+            val labels = listOf(TtsVoices.DEFAULT) + voices.map { it.second }
             val current = runCatching { Settings.app.ttsVoice }.getOrDefault("")
             val sel = if (current.isEmpty()) 0 else voices.indexOfFirst { it.first.name == current }.let { if (it < 0) -1 else it + 1 }
             ctx.chooser("목소리", labels, sel) { i ->
                 if (i == 0) {
                     Settings.saveApp(Settings.app.copy(ttsVoice = ""))
                     chooseVoice(engine)
-                    onChosen("기본 음성")
+                    onChosen(TtsVoices.DEFAULT)
                 } else {
                     val (v, label) = voices[i - 1]
                     runCatching { engine.setVoice(v) }

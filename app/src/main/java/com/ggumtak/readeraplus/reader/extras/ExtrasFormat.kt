@@ -1,19 +1,21 @@
 package com.ggumtak.readeraplus.reader.extras
 
 import com.ggumtak.readeraplus.data.TxtOverride
+import com.ggumtak.readeraplus.engine.PageBreakMode
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.ReaderFormat
+import com.ggumtak.readeraplus.render.FontMath
 import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.settings.StylePreset
 import com.ggumtak.readeraplus.settings.UserStyle
 import com.ggumtak.readeraplus.settings.UserStyles
 import com.ggumtak.readeraplus.ui.kit.isNoSpace
 import com.ggumtak.readeraplus.ui.kit.ownMessage
 import com.ggumtak.readeraplus.ui.kit.userMessage
+import com.ggumtak.readeraplus.ui.library.LibraryText
+import com.ggumtak.readeraplus.ui.settings.SettingsFormat
 import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.regex.PatternSyntaxException
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -24,23 +26,8 @@ import kotlin.math.roundToInt
 
 internal object Fmt {
 
-    /** "532 B", "812 KB", "15.3 MB", "1.05 GB". */
-    fun fileSize(bytes: Long): String {
-        if (bytes < 1024) return "${bytes.coerceAtLeast(0)} B"
-        val units = arrayOf("KB", "MB", "GB", "TB")
-        var v = bytes / 1024.0
-        var u = 0
-        while (v >= 1024 && u < units.size - 1) {
-            v /= 1024.0
-            u++
-        }
-        val num = when {
-            v < 10 -> String.format(Locale.US, "%.2f", v)
-            v < 100 -> String.format(Locale.US, "%.1f", v)
-            else -> v.roundToInt().toString()
-        }
-        return "$num ${units[u]}"
-    }
+    /** "532B", "812KB", "3.4MB": the library card's wording ([LibraryText.formatSize]), one size wording in the app. */
+    fun fileSize(bytes: Long): String = LibraryText.formatSize(bytes)
 
     /** Reading time: "0분", "1분 미만", "45분", "3시간 12분". */
     fun duration(seconds: Long): String {
@@ -51,13 +38,11 @@ internal object Fmt {
         return if (h > 0) "${h}시간 ${m}분" else "${m}분"
     }
 
-    /** "2026.09.29 14:05", or "-" for 0. */
-    fun dateTime(ms: Long): String =
-        if (ms <= 0) "-" else SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA).format(Date(ms))
+    /** "9월 29일 14:05" (another year: "2025년 9월 29일 14:05"), or "-" for 0: the app's one wording ([SettingsFormat]). */
+    fun dateTime(ms: Long): String = if (ms <= 0) "-" else SettingsFormat.dateTime(ms)
 
-    /** "yyyy.MM.dd" or "-". */
-    fun date(ms: Long): String =
-        if (ms <= 0) "-" else SimpleDateFormat("yyyy.MM.dd", Locale.KOREA).format(Date(ms))
+    /** A list's date, "9월 29일" (another year: "2025년 9월 29일"), or "-" for 0. */
+    fun date(ms: Long): String = if (ms <= 0) "-" else SettingsFormat.date(ms)
 
     /** 0..1 → "34%", "0.4%", "100%". */
     fun percent(fraction: Float): String {
@@ -73,28 +58,45 @@ internal object Fmt {
 
     fun pct(v: Int): String = "$v%"
 
-    /** Indent in % of em → "없음", "1em", "1.25em". */
+    /** Indent in % of a character's width (em) → "없음", "1자", "1.25자". */
     fun em(pct: Int): String {
         if (pct <= 0) return "없음"
         val whole = pct / 100
         val frac = pct % 100
         return when {
-            frac == 0 -> "${whole}em"
-            frac % 10 == 0 -> "$whole.${frac / 10}em"
-            else -> "$whole.${frac.toString().padStart(2, '0')}em"
+            frac == 0 -> "${whole}자"
+            frac % 10 == 0 -> "$whole.${frac / 10}자"
+            else -> "$whole.${frac.toString().padStart(2, '0')}자"
         }
     }
 
-    /** Letter spacing in per-mille of em → "기본", "+2%", "-1%", "+1.5%". */
+    /** Letter spacing in per-mille of em → "기본", "+2%", "−1%" (U+2212, as [signed]), "+1.5%". */
     fun letterSpacing(pm: Int): String {
         if (pm == 0) return "기본"
-        val sign = if (pm > 0) "+" else "-"
+        val sign = if (pm > 0) "+" else "\u2212"
         val a = abs(pm)
         return if (a % 10 == 0) "$sign${a / 10}%" else "$sign${a / 10}.${a % 10}%"
     }
 
-    /** Font weight as a plain number ("500"): short and constant-width, so steppers never shift. */
-    fun weight(w: Int): String = w.toString()
+    /** Signed whole number for the margin steppers: "0", "+4", "−10" (U+2212, read as "minus" by TalkBack). */
+    fun signed(v: Int): String = when {
+        v > 0 -> "+$v"
+        v < 0 -> "\u2212${-v}"
+        else -> "0"
+    }
+
+    /**
+     * Font weight as steps from the font's own weight [natural] ("기본", one step = 50): with 400, "+2" for 500 and
+     * "-1" for 350. Short, so steppers never shift.
+     */
+    fun weight(w: Int, natural: Int = FontMath.REGULAR): String {
+        val steps = (FontMath.normalizeWeight(w) - FontMath.normalizeWeight(natural)) / 50
+        return when {
+            steps == 0 -> "기본"
+            steps > 0 -> "+$steps"
+            else -> steps.toString()
+        }
+    }
 
     /** TTS rate/pitch "1.0x". */
     fun rate(v: Float): String {
@@ -123,10 +125,13 @@ internal object Fmt {
         return clean.coerceIn(min, max)
     }
 
-    /** "없음" or "N개 켜짐" for TXT replace rules: the rules the parser applies ([RuleList.enabledCount]). */
+    /**
+     * The 바꾸기 규칙 row: "N개 켜짐" (the rules the parser applies, [RuleList.enabledCount]), or "없음 · 광고 문구 등
+     * 지우기" saying what the rules are for.
+     */
     fun rulesLabel(rules: String): String {
         val n = RuleList.enabledCount(rules)
-        return if (n == 0) "없음" else "${n}개 켜짐"
+        return if (n == 0) "없음 · 광고 문구 등 지우기" else "${n}개 켜짐"
     }
 
     /** Number of non-comment rule lines without "=>" or whose pattern does not compile. */
@@ -195,6 +200,29 @@ internal object PageLabel {
         val p = parse(label)
         return if (p.page < 0) clean(label).trim() else p.page.toString()
     }
+
+    /**
+     * The page text a label that is read again should show: the [exact] page when there is one; else, while the pages
+     * are still [counting], the [previous] text it showed (a label that had a page does not go blank for the seconds
+     * a count takes); else (no count under way, or it failed) nothing.
+     */
+    fun retain(exact: String?, previous: String?, counting: Boolean): String = when {
+        hasPage(exact) -> exact!!.trim()
+        counting && hasPage(previous) -> previous!!.trim()
+        else -> ""
+    }
+
+    /** True when [page] is a real page number: not empty, not the "-" placeholder shown while the pages are counted. */
+    fun hasPage(page: String?): Boolean = !page.isNullOrBlank() && page.trim() != "-"
+
+    /** "12쪽 · rest" for a row's meta line; just [rest] while there is no page ("-쪽 · rest" never shows). */
+    fun metaLine(page: String?, rest: String): String = if (hasPage(page)) "${page!!.trim()}쪽 · $rest" else rest
+
+    /** [prefix] + " · 12쪽" for a status line; just [prefix] while there is no page. */
+    fun withPage(prefix: String, page: String?): String = if (hasPage(page)) "$prefix · ${page!!.trim()}쪽" else prefix
+
+    /** "  (12쪽)\n" for a shared text's entry; "" while there is no page (the line is left out entirely). */
+    fun shareLine(page: String?): String = if (hasPage(page)) "  (${page!!.trim()}쪽)\n" else ""
 
     /** Position at [fraction] (0..1) of the book, by section char counts. */
     fun positionForFraction(chars: IntArray, fraction: Float): DocPosition {
@@ -287,10 +315,13 @@ internal object GoToText {
     /** Percent exactly as the reader footer prints it for [fraction] (0..1). */
     fun percent(fraction: Float): String = "${ReaderFormat.percent(if (fraction.isNaN()) 0f else fraction)}%"
 
-    /** "현재 12 / 3259쪽  ·  34%" (+ a note while the page count is still running). */
-    fun info(page: Int, total: Int, fraction: Float, pagesKnown: Boolean): String {
-        val where = if (page > 0) "현재 $page${if (total > 0) " / $total" else ""}쪽  ·  " else "현재 "
-        val note = if (!pagesKnown) "\n(쪽수 계산 중 — 퍼센트로 이동할 수 있습니다)" else ""
+    /**
+     * "현재 12 / 3259쪽 · 34%"; until the pages are counted only "현재 34%" and a note ([pending]: 쪽수 계산 중, or 쪽수 확인
+     * 불가 when counting stopped), never the estimated page.
+     */
+    fun info(page: Int, total: Int, fraction: Float, pagesKnown: Boolean, pending: String = ReaderFormat.PAGES_COUNTING): String {
+        val where = if (pagesKnown && page > 0) "현재 $page${if (total > 0) " / $total" else ""}쪽 · " else "현재 "
+        val note = if (!pagesKnown) "\n$pending · %로 이동하세요" else ""
         return where + percent(fraction) + note
     }
 }
@@ -330,28 +361,42 @@ internal object SearchText {
     fun percent(scanned: Int, total: Int): Int =
         if (total <= 0) 0 else (scanned.toLong() * 100 / total).toInt().coerceIn(0, 99)
 
-    /** "검색 중 34%" (+ "  ·  8개" once something is found), then "57개 결과", "결과 없음" or the capped count. */
+    /** "검색 중 34%" (+ " · 8개" once something is found), then "57개 결과", "결과 없음" or the capped count. */
     fun status(scanned: Int, total: Int, hits: Int, complete: Boolean, capped: Boolean, max: Int): String = when {
-        !complete -> "검색 중 ${percent(scanned, total)}%" + if (hits > 0) "  ·  ${hits}개" else ""
-        capped -> "${hits}개 결과 (최대 ${max}개까지 표시)"
+        !complete -> "검색 중 ${percent(scanned, total)}%" + if (hits > 0) " · ${hits}개" else ""
+        capped -> "${max}개 이상 (앞 ${max}개만 표시)"
         hits == 0 -> "결과 없음"
         else -> "${hits}개 결과"
     }
+
+    /** The empty list after a search: "‘등불’이 들어간 곳이 없습니다". */
+    fun noHits(query: String): String = "‘$query’${Josa.iGa(query)} 들어간 곳이 없습니다"
 }
 
 /**
- * Size / placement maths of the compact reading-settings popup and the drop-down lists it opens (px in the reader
- * window). Sized for the ~6" 360×720 dp e-ink screen: the whole width but a 4 dp gap on each side (≤ 420 dp, A9: a
- * narrower popup left a strip of clipped page text beside it) and at most 55% of the height, so the lower half of the
- * page stays in view as the preview.
+ * Size / placement maths of the quick reading options (⚙) and the drop-down lists they open (px in the reader
+ * window). Sized for the ~6" 360×720 dp e-ink screen (U polish 7): centred, the whole width but 8 dp on each side
+ * (≤ 400 dp), 8 dp under the status-bar inset, and at most 62% of the height ([SETTINGS_FRACTION]), so the lower part of
+ * the page stays in view as the preview while the whole popup ([QUICK_HEIGHT_DP] = 432 dp) never scrolls.
  */
 internal object PopupGeometry {
-    /** Rows of the popup's main section: 스타일, 글꼴, 글자 크기, 굵기, 줄 간격, 문단 간격, 들여쓰기, 정렬, 줄바꿈, 더보기. */
-    const val MAIN_ROWS = 10
-    /** Space left beside the popup, both sides together (dp): it sits 4 dp inside the right edge. */
-    const val SIDE_GAP_DP = 8
-    const val MAX_WIDTH_DP = 420
-    const val HEIGHT_FRACTION = 0.55f
+    /** The quick options' rows under the top bar: 글자 크기, 굵기, 줄 간격, 문단 간격, 좌우 여백, 상하 여백, 글꼴, 배경. */
+    const val QUICK_ROWS = 8
+    /** The whole popup: the top bar ("전체 읽기 설정 ›" · 닫기) and [QUICK_ROWS] rows (48 + 8 × 48 = 432 dp). */
+    const val QUICK_HEIGHT_DP = Compact.BAR_DP + QUICK_ROWS * Compact.ROW_DP
+    /** Space left beside the popup, both sides together (dp): it is centred, 8 dp from each edge. */
+    const val SIDE_GAP_DP = 16
+    const val MAX_WIDTH_DP = 400
+    const val HEIGHT_FRACTION = 0.56f
+    /**
+     * The quick options' own cap: 62% of the height, so its eight rows (432 dp, 864 px on the Comet) fit under it
+     * (892 px of 1440) with the same ≈ 28 px to spare the seven had under 56% (2026-10-05: 배경 added).
+     */
+    const val SETTINGS_FRACTION = 0.62f
+    /** Drop-down lists with many entries may take this much of the screen (e.g. 12 rows × 48 dp). */
+    const val TALL_LIST_FRACTION = 0.8f
+    /** Gap between the status-bar inset and the popup's top edge (dp). */
+    const val TOP_GAP_DP = 8
     /** Smallest useful height (dp) when the space under the anchor is short (landscape / split screen). */
     const val MIN_HEIGHT_DP = 160
     /** Gap kept to the window edges (dp). */
@@ -360,18 +405,19 @@ internal object PopupGeometry {
     /** Top and maximum (or actual, for a list) height. */
     class Placement(val top: Int, val height: Int)
 
-    /** Popup width: min([screenW] − 8 dp, 420 dp), never wider than the screen. */
+    /** Popup width: min([screenW] − 16 dp, 400 dp), never wider than the screen. */
     fun width(screenW: Int, density: Float): Int =
         minOf(screenW - (SIDE_GAP_DP * density).roundToInt(), (MAX_WIDTH_DP * density).roundToInt(), screenW).coerceAtLeast(1)
 
     /**
-     * The settings popup under the top bar whose bottom edge is at [anchorBottom]: its top and max height
-     * (55% of [screenH], and never past the bottom edge; moved up when less than [MIN_HEIGHT_DP] is left).
+     * The settings popup [TOP_GAP_DP] under [topInset] (the status bar / cutout; the reader's bars are hidden while it
+     * is open): its top and max height ([SETTINGS_FRACTION] of [screenH], and never past the bottom edge; moved up when less than
+     * [MIN_HEIGHT_DP] is left).
      */
-    fun settings(screenH: Int, anchorBottom: Int, density: Float): Placement {
+    fun settings(screenH: Int, topInset: Int, density: Float): Placement {
         val edge = (EDGE_DP * density).roundToInt()
-        val cap = (screenH * HEIGHT_FRACTION).toInt().coerceAtLeast(1)
-        val top = anchorBottom.coerceIn(0, screenH)
+        val cap = (screenH * SETTINGS_FRACTION).toInt().coerceAtLeast(1)
+        val top = (topInset.coerceAtLeast(0) + (TOP_GAP_DP * density).roundToInt()).coerceIn(0, screenH)
         val room = screenH - top - edge
         val min = minOf(cap, (MIN_HEIGHT_DP * density).roundToInt())
         if (room >= min) return Placement(top, minOf(cap, room))
@@ -381,11 +427,18 @@ internal object PopupGeometry {
 
     /**
      * A drop-down list [contentHeight] px tall for a row spanning [anchorTop]..[anchorBottom]: height capped at
-     * 55% of [screenH]; placed under the row when it fits, else above it, else as low as fits on screen.
+     * [maxHeightFraction] of [screenH]; placed under the row when it fits, else above it, else as low as fits on screen.
      */
-    fun dropdown(screenH: Int, anchorTop: Int, anchorBottom: Int, contentHeight: Int, density: Float): Placement {
+    fun dropdown(
+        screenH: Int,
+        anchorTop: Int,
+        anchorBottom: Int,
+        contentHeight: Int,
+        density: Float,
+        maxHeightFraction: Float = HEIGHT_FRACTION,
+    ): Placement {
         val edge = (EDGE_DP * density).roundToInt()
-        val h = minOf(contentHeight, (screenH * HEIGHT_FRACTION).toInt(), screenH - 2 * edge).coerceAtLeast(1)
+        val h = minOf(contentHeight, maxHeight(screenH, maxHeightFraction), screenH - 2 * edge).coerceAtLeast(1)
         val top = when {
             anchorBottom + h <= screenH - edge -> anchorBottom
             anchorTop - h >= edge -> anchorTop - h
@@ -394,9 +447,41 @@ internal object PopupGeometry {
         return Placement(top, h)
     }
 
+    /** The list's height cap: [fraction] (clamped to 0.1..1) of [screenH]. */
+    fun maxHeight(screenH: Int, fraction: Float): Int = (screenH * fraction.coerceIn(0.1f, 1f)).toInt().coerceAtLeast(1)
+
     /** Left edge of a [width]-px list whose right edge lines up with [anchorRight], kept inside [screenW]. */
     fun dropdownLeft(screenW: Int, anchorRight: Int, width: Int): Int =
         (anchorRight - width).coerceIn(0, (screenW - width).coerceAtLeast(0))
+}
+
+/**
+ * "상태 표시" wording (U §5.5, A §2.7): slot wording, which rows show and 외톨이 줄 방지's summary (읽기 설정). The bands
+ * have their own places since 2026-10-05 (`StatusBands`): a band that comes or goes re-lays the page at the same first
+ * character, and no margin hides one any more, so there is no fit note.
+ */
+internal object StatusUi {
+    const val PROGRESS_SUMMARY = "화면 맨 아래 가는 선"
+
+    /** "위" / "아래". */
+    fun bandWord(band: Int): String = if (band == 0) "위" else "아래"
+
+    /** "왼쪽" / "가운데" / "오른쪽". */
+    fun posWord(pos: Int): String = when (pos) {
+        0 -> "왼쪽"
+        1 -> "가운데"
+        else -> "오른쪽"
+    }
+
+    /** The slot button's content description: "아래 오른쪽: 시계" (CI reads it). */
+    fun slotDescription(band: Int, pos: Int, item: StatusItem): String = "${bandWord(band)} ${posWord(pos)}: ${item.label}"
+
+    /** "상태 글자 크기" shows only while some band has text. */
+    fun showsSize(s: ReaderSettings): Boolean = s.hasHeader || s.hasFooterText
+
+    /** "외톨이 줄 방지" summary: in 문단 단위 only paragraphs taller than a page are split. */
+    fun widowSummary(mode: PageBreakMode): String =
+        if (mode == PageBreakMode.PARAGRAPH) "한 쪽보다 긴 문단에만" else "문단 첫 줄 · 끝 줄이 홀로 남지 않게"
 }
 
 /**
@@ -407,8 +492,33 @@ internal object StyleChoice {
     /** Label of the saved-styles button when no saved style matches. */
     const val USER_LABEL = "내 스타일"
 
-    /** The first preset whose typography equals [s] exactly, or null ("사용자 설정"). */
+    /** The first preset whose typography and page colours equal [s] exactly, or null ("기본" or "직접 설정"). */
     fun selected(s: ReaderSettings): StylePreset? = StylePreset.entries.firstOrNull { it.matches(s) }
+
+    /**
+     * True when [s] has the defaults' typography and page colours (the fields a preset sets): "기본". The defaults
+     * match no preset since 웹소설 became the 마루뷰어 page (2026-10-04); untouched settings are not "직접 설정".
+     */
+    fun isDefault(s: ReaderSettings): Boolean {
+        val d = ReaderSettings()
+        return s.fontId == d.fontId && s.fontWeight == d.fontWeight && s.lineHeightPct == d.lineHeightPct &&
+            s.paragraphSpacingPct == d.paragraphSpacingPct && s.indentPct == d.indentPct &&
+            s.letterSpacingPm == d.letterSpacingPm && s.align == d.align && s.lineBreak == d.lineBreak &&
+            s.pageTheme == d.pageTheme
+    }
+
+    /**
+     * [s] with the defaults' typography and page colours: exactly the fields a preset sets ([isDefault] is then true),
+     * so a preset can always be undone. Font size, margins, status bar, 흑백 반전 and the TXT options stay.
+     */
+    fun applyDefault(s: ReaderSettings): ReaderSettings {
+        val d = ReaderSettings()
+        return s.copy(
+            fontId = d.fontId, fontWeight = d.fontWeight, lineHeightPct = d.lineHeightPct,
+            paragraphSpacingPct = d.paragraphSpacingPct, indentPct = d.indentPct, letterSpacingPm = d.letterSpacingPm,
+            align = d.align, lineBreak = d.lineBreak, pageTheme = d.pageTheme,
+        )
+    }
 
     /** The first saved style [s] looks exactly like, or null. */
     fun selectedUser(s: ReaderSettings, styles: List<UserStyle>): UserStyle? = styles.firstOrNull { it.matches(s) }
@@ -436,7 +546,7 @@ internal object StyleChoice {
 }
 
 /**
- * The TXT options of the reading-settings popup (T1-9): what it shows are the book's effective values
+ * The TXT options of one book (T1-9, 설정 → 이 책의 TXT 정리): what it shows are the book's effective values
  * (`Settings.reader.withTxt(override)`); what it stores is the override those values need. Pure, unit-tested.
  */
 internal object TxtEdits {
@@ -556,35 +666,36 @@ internal object VoiceChoice {
 }
 
 /**
- * The TTS sleep timer choices (T1-11): 끔 / 15 / 30 / 45 / 60 / 90분 / 이 화 끝까지 / 2화 끝까지. Chapters
+ * The 멈춤 예약 choices (T1-11): 끔 · 15 · 30 · 45 · 60 · 90분 · 이 챕터 끝까지 · 다음 챕터 끝까지. Chapters
  * ([AppSettings.ttsSleepChapters]) win over minutes. Pure.
  */
 internal object SleepChoice {
     class Option(val minutes: Int, val chapters: Int, val label: String)
 
     val OPTIONS: List<Option> = listOf(0, 15, 30, 45, 60, 90).map { Option(it, 0, Fmt.minutes(it)) } +
-        Option(0, 1, "이 화 끝까지") + Option(0, 2, "2화 끝까지")
+        Option(0, 1, "이 챕터 끝까지") + Option(0, 2, "다음 챕터 끝까지")
 
     /** Chooser index of the saved values; -1 when they are not among the options (an older build's 10 / 120분). */
     fun indexOf(minutes: Int, chapters: Int): Int =
         if (chapters > 0) OPTIONS.indexOfFirst { it.chapters == chapters } else OPTIONS.indexOfFirst { it.chapters == 0 && it.minutes == minutes }
 
-    /** Row summary: "끔", "30분", "이 화 끝까지", "2화 끝까지". */
+    /** Row summary: "끔", "30분", "이 챕터 끝까지", "다음 챕터 끝까지" ("챕터 3개 끝까지" from an older build). */
     fun summary(minutes: Int, chapters: Int): String = when {
-        chapters == 1 -> "이 화 끝까지"
-        chapters >= 2 -> "${chapters}화 끝까지"
+        chapters == 1 -> "이 챕터 끝까지"
+        chapters == 2 -> "다음 챕터 끝까지"
+        chapters > 2 -> "챕터 ${chapters}개 끝까지"
         else -> Fmt.minutes(minutes)
     }
 
     /**
-     * The control bar's note while the timer runs: "3분 후 멈춤" ([remainingMs], rounded up), "이 화 끝나면 멈춤" /
-     * "다음 화 끝나면 멈춤" ([chaptersLeft] boundaries to go); "" when no timer runs.
+     * The control bar's note while the timer runs: "3분 뒤 멈춤" ([remainingMs], rounded up), "이 챕터 끝나면 멈춤" /
+     * "다음 챕터 끝나면 멈춤" / "챕터 3개 끝나면 멈춤" ([chaptersLeft] boundaries to go); "" when no timer runs.
      */
     fun barNote(remainingMs: Long, chaptersLeft: Int): String = when {
-        chaptersLeft == 1 -> "이 화 끝나면 멈춤"
-        chaptersLeft == 2 -> "다음 화 끝나면 멈춤"
-        chaptersLeft > 2 -> "${chaptersLeft}화 뒤 멈춤"
-        remainingMs > 0 -> "${(remainingMs + 59_999L) / 60_000L}분 후 멈춤"
+        chaptersLeft == 1 -> "이 챕터 끝나면 멈춤"
+        chaptersLeft == 2 -> "다음 챕터 끝나면 멈춤"
+        chaptersLeft > 2 -> "챕터 ${chaptersLeft}개 끝나면 멈춤"     // as 설정's summary (SettingsFormat.sleepSummary)
+        remainingMs > 0 -> "${(remainingMs + 59_999L) / 60_000L}분 뒤 멈춤"
         else -> ""
     }
 }

@@ -138,4 +138,20 @@ class TapZoneModelTest {
             assertTrue(TapZoneModel.modeDescription(m).isNotEmpty())
         }
     }
+
+    @Test
+    fun modeNamesAreShortKorean() {
+        // The radio rows and the main list's 넘기기·터치·키 summary use these one names.
+        assertEquals(
+            listOf("좌우 넘김", "어디든 다음", "어디든 이전", "위아래 넘김", "직접 지정"),
+            TapZoneMode.values().map { TapZoneModel.modeName(it) },
+        )
+        // Plain sentences, no "=" (2026-10-04).
+        assertEquals("왼쪽 1/3은 이전, 나머지는 다음", TapZoneModel.modeDescription(TapZoneMode.LEFT_RIGHT))
+        assertEquals("위는 이전, 아래는 다음", TapZoneModel.modeDescription(TapZoneMode.TOP_BOTTOM))
+        assertEquals("9칸에 동작을 직접 지정", TapZoneModel.modeDescription(TapZoneMode.CUSTOM))
+        // The preview and the key chooser say 듣기, as the reader does.
+        assertEquals("듣기", TapZoneModel.shortLabel(TapAction.TTS))
+        assertEquals("듣기", TapAction.TTS.label)
+    }
 }

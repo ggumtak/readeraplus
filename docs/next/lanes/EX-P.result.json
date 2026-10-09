@@ -1,0 +1,25 @@
+{
+  "lane": "EX-P",
+  "files": [
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/ReadingSettingsPopup.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/CompactUi.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/extras/ExtrasFormat.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/extras/CompactSettingsTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/extras/PopupGeometryTest.kt",
+    "docs/next/EX_P_STATUS.md",
+    "docs/next/lanes/EX-P.result.json"
+  ],
+  "summary": "Reading-settings popup rebuilt to PLAN §1.6.3: 9-row non-scrolling main section (merged 정렬│줄바꿈 row, 더보기 label+chevron), 44dp compact metrics, light/black group lines, joined segmented control (CompactSegments), centred popup (min(W−16dp,400dp), inset+8dp, 0.56), 더보기: 넘기는 방식 (+DeviceClass.probeAsync on SCROLL) · 화면 터치 · 볼륨 키, 글자 간격, 좌우/상하 여백 steppers (−40…+40, '0'=40dp, Fmt.signed, live region), 페이지 여백, 흑백 반전, 페이지 나눔 (immediate), 외톨이 줄 방지 (PARAGRAPH summary), TXT/EPUB, 상태 표시 (slot cells with dashed 없음, live samples via StatusSampleHost, 0.8 chooser, 진행 막대, size row iff bands, StatusFit note). CompactList.show / PopupGeometry.dropdown gained maxHeightFraction.",
+  "checks": "module typecheck OK; module unittest OK (40 tests); full tools/typecheck.sh OK; full tools/unittest.sh OK (1201 tests); stub grep empty; two reviewer passes, 2 findings fixed",
+  "contractRequests": [],
+  "rcaNotes": [
+    "No new wiring: ReaderActivity keeps calling ReaderPanels.showReadingSettings(this, chrome.gear) on main (U §2.6: delete the pinned openReadingSettings branch there). The popup itself hides the chrome via host.setChromeVisible(false).",
+    "For live samples in the 상태 표시 chooser, the ReaderActivity host should implement StatusSampleHost.statusSample(item) (main thread, no IO); without it the chooser shows StatusItem.example.",
+    "넘기는 방식 saves Settings.saveApp(app.copy(readMode = m)); ReaderActivity.onAppSettingsSaved must switch the open book live (viewPart includes a.readMode)."
+  ],
+  "deviations": [
+    "compactRowBackground keeps the black full-width line as its default and draws the LINE_LIGHT 12dp-inset line only with light=true (compactRow uses it), so RulesDialog (another lane) is unchanged.",
+    "더보기 expanded state stays remembered for the process (pre-existing); the no-scroll guarantee applies to the collapsed main section."
+  ],
+  "complete": true
+}

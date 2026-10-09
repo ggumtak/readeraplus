@@ -91,8 +91,7 @@ data class FinishedBook(val bookId: Long, val finishedAt: Long)
  * book, created on the first write and deleted with the book (`Library.deleteBookRows`) and exported by the backup
  * (keyed by path, like bookmarks). A row that no longer holds anything is dropped.
  *
- * Owner: DATA. Users: READER_A (open path, end panel), EXTRAS_TOOLS (popup through TxtOverrideHost), SETTINGS
- * (statistics). Every function is blocking (Dispatchers.IO), thread-safe and never throws for a missing row.
+ * Owner: DATA. Users: READER_A (open path, end panel, TxtOverrideHost), SETTINGS (이 책의 TXT 정리, statistics). Every function is blocking (Dispatchers.IO), thread-safe and never throws for a missing row.
  * [txtOverride] runs on the open path: one primary-key read on the connection `Library` already has open.
  *
  * Writes (SQLite 3.18 has no UPSERT): `UPDATE` the column and, when no row changed, `INSERT` a row for a book that
@@ -100,14 +99,46 @@ data class FinishedBook(val bookId: Long, val finishedAt: Long)
  * clears it (`Library.setHaveRead`), and the reads ignore a leftover one.
  */
 object BookPrefs {
-    fun returnMark(bookId: Long): String? = null // R3 stub (owner: DA-C)
-    fun setReturnMark(bookId: Long, value: String?) {} // R3 stub (owner: DA-C)
-
     private const val TAG = "BookPrefs"
 
     /** Longest stored override JSON (chars): the row must fit a 2 MB CursorWindow with room to spare. */
     internal const val MAX_OVERRIDE_CHARS = 200_000
     internal const val MAX_EPISODE_LABEL = 40
+    /**
+     * Longest stored return history (ReturnHistoryCodec text: up to 2 × 20 places of about 20 chars; its encoder leaves
+     * the oldest places out to stay under this, and anything longer is not one).
+     */
+    internal const val MAX_RETURN_MARK = 1_000
+
+    /**
+     * This book's return history (U §3.3; ReturnHistoryCodec text) or null (no row, NULL). One primary-key read;
+     * the reader runs it after the first page (`afterOpen`), never before.
+     */
+    fun returnMark(bookId: Long): String? {
+        if (bookId <= 0) return null
+        return Library.db().queryFirst(LibrarySql.SELECT_RETURN_MARK, args(bookId)) {
+            if (it.isNull(0)) null else it.getString(0)
+        }?.ifEmpty { null }
+    }
+
+    /**
+     * Stores [value] (null or blank clears). UPDATE, then INSERT when no row changed; the row's other columns are
+     * kept, and a row left empty by a clear is dropped. `Library.resetProgress` ("읽은 기록 초기화") clears it too.
+     */
+    fun setReturnMark(bookId: Long, value: String?) {
+        val v = returnMarkValue(value)
+        if (value != null && v == null && value.isNotBlank()) {
+            Log.w(TAG, "return mark of book $bookId too long (${value.length} chars): not stored")
+            return
+        }
+        write(bookId, LibrarySql.SET_PREFS_RETURN, LibrarySql.INSERT_PREFS_RETURN, v, clears = v == null)
+    }
+
+    /** The stored text of a return mark: null for null / blank / longer than [MAX_RETURN_MARK]; else trimmed. */
+    internal fun returnMarkValue(value: String?): String? {
+        val t = value?.trim() ?: return null
+        return if (t.isEmpty() || t.length > MAX_RETURN_MARK) null else t
+    }
 
     /** This book's TXT override, or null when it follows the global TXT settings (no row, NULL or malformed JSON). */
     fun txtOverride(bookId: Long): TxtOverride? {

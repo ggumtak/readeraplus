@@ -860,8 +860,8 @@ since the emulator resolves as a phone:
 | `61_scroll_drag` | `input swipe 360 1100 360 500 400` | The text moved; header and footer fixed; no half-drawn glyph band at the top edge beyond the clip |
 | `62_scroll_step` | `input tap 600 900` | The line that was cut at the bottom of `61` is now the top line |
 | `63_scroll_keys` | PAGE_DOWN ×3 | Advanced; footer page increases |
-| `64_scroll_toc` | Chrome → 목차 → second entry | Chapter heading at the top; return chip shown |
-| `65_scroll_select` | `input swipe 300 700 300 700 900` | Selection handles sit on the text (origin calibration still right) |
+| `64_scroll_toc` | Chrome → 목차 → fourth entry (61–63 already reach about the start of chapter 2, and a jump to text on screen remembers no return point) | Chapter heading at the top; return chip shown |
+| `65_scroll_select` | `select_at 300 700` (a long-press, 48 px lower while it selects nothing) | Selection handles sit on the text (origin calibration still right) |
 | `66_scroll_seam` | Keep stepping until the footer's chapter changes | The chapter gap is visible; no page-bottom holes |
 | `67_step_release` | Settings → 넘김 → 스크롤 움직임 → 손을 떼면 이동; reopen; slow swipe of 300 px | The top is line-aligned; the bottom cut line is hidden |
 | `68_back_to_paged` | ⋮ → "페이지로 보기" | The page contains the previous top line |

@@ -1,35 +1,184 @@
 package com.ggumtak.readeraplus.settings
 
-/** Scroll SPEC §2.2 (as specified there). */
+/**
+ * Scroll SPEC §2.2 (as specified there), with MaruViewer's side margin as the "0" since 2026-10-05 (user: "기본 좌우여백이
+ * 너무 넓다 마루뷰어랑 비교해서 … 맞춰"): 20 dp, 5.6 % of the width on the S25 and on the Comet alike (dp, not px).
+ * Stored values stay actual dp. [KEY] (prefs and the backup's reader object; [STYLE_KEY] in a saved style) holds the "0"
+ * the margins were saved with, so margins still at an older build's untouched default ([isLegacyDefault]) move to this
+ * one's, and every value the user chose stays.
+ */
 object SideMargin {
-    const val ZERO_DP = 40
+    const val ZERO_DP = 20
+    /** ≤ R2 default, saved without [KEY]. */
     const val LEGACY_DEFAULT_DP = 18
-    const val UI_MIN = -40
-    const val UI_MAX = 40
+    /** The "0" from R3 until the MaruViewer margins: [KEY] = 40. */
+    const val R3_ZERO_DP = 40
+    /** −20..+60: 0..80 dp, the range of the 40 dp scale. */
+    const val UI_MIN = -20
+    const val UI_MAX = 60
     const val UI_STEP = 2
     const val KEY = "r.marginBase"
+    const val STYLE_KEY = "marginBase"
     fun toUi(actualDp: Int): Int = actualDp - ZERO_DP
     fun toDp(ui: Int): Int = (ui + ZERO_DP).coerceAtLeast(0)
     fun label(ui: Int): String = when { ui > 0 -> "+$ui"; ui < 0 -> "−${-ui}"; else -> "0" }
-    fun isLegacyDefault(hasMarker: Boolean, left: Int, right: Int): Boolean =
-        !hasMarker && left == LEGACY_DEFAULT_DP && right == LEGACY_DEFAULT_DP
+
+    /**
+     * True when [left] / [right] are the untouched default of the build that saved them: [LEGACY_DEFAULT_DP] without a
+     * marker ([base] null, ≤ R2), [R3_ZERO_DP] under the R3 marker. Margins saved on this scale ([ZERO_DP]) and any
+     * other value are the user's and stay.
+     */
+    fun isLegacyDefault(base: Int?, left: Int, right: Int): Boolean = left == right && when (base) {
+        null -> left == LEGACY_DEFAULT_DP
+        R3_ZERO_DP -> left == R3_ZERO_DP
+        else -> false
+    }
 }
 
-/** U3: top/bottom margins on the same "40 dp = 0" scale as [SideMargin]; stored values stay actual dp. */
+/**
+ * The status bands' heights in whole dp (pure). Since 2026-10-05 (user: "위 여백은 위 아래 애들을 제외하고 본문영역에서만
+ * 계산해야지") the header, the footer and the progress line each have a band of their own at the screen's edges, and the
+ * 위·아래 여백 ([VerticalMargin]) are the paper between those bands and the text: a margin of 0 puts the text right under
+ * the header, and no margin ever hides or shrinks a band. Only the settings decide them, never what is on screen (an
+ * empty title, a page number not known yet, the menu, a selection): showing or hiding anything never moves the text box.
+ * Whole dp, so whole-dp margins put the text box on the same pixels on every density (`LayoutKeys.geometry` rounds band +
+ * margin once).
+ */
+object StatusBands {
+    /** Paper between a band and the screen's edge: the Comet's bezel hides the panel's outer rows (`StatusFit.EDGE_DP`). */
+    const val EDGE_DP = 4
+    /** Paper between the status glyphs and the margin or the progress lane next to them. */
+    const val PAD_DP = 2
+    /** The progress line's lane: its line and dots sit low in it, ReadEra's 8 dp above the edge (`ProgressMath`). */
+    const val LANE_DP = ReaderSettings.PROGRESS_LANE_DP
+    /**
+     * Glyph box per sp of status text: the ink of the status glyphs (a parenthesis ≈ 1.05 em, Hangul ≈ 0.9 em on the
+     * S25's screenshot) with paper to spare, and Roboto's ascent + descent (≈ 1.17 em). Not every font's: the S25's
+     * system font has a far taller font box, so the renderer keeps the glyphs' ink, not that box, inside it
+     * (`StatusFit.headerBaseline`), and makes the text smaller once only if the ink is taller (`StatusFit.fitTextPx`: a
+     * large system font scale, which the bands, counted in the settings' sp, do not follow).
+     */
+    const val GLYPH_EM = 1.45
+
+    /** The default status size ([ReaderSettings.statusFontSizeSp]): MaruViewer's ([MaruSize]; 11 sp before). */
+    const val DEFAULT_SP = 13f
+
+    /** The status text size the page draws (sp): [ReaderSettings.statusFontSizeSp] within 6..40, else [DEFAULT_SP]. */
+    fun statusSp(s: ReaderSettings): Float =
+        s.statusFontSizeSp.let { if (it.isFinite() && it > 0f) it.coerceIn(6f, 40f) else DEFAULT_SP }
+
+    /** The status glyph box in whole dp, rounded up: 19 dp at 13 sp (16 dp at 11 sp). */
+    fun glyphDp(s: ReaderSettings): Int = Math.ceil(statusSp(s) * GLYPH_EM - 1e-3).toInt()
+
+    /** The header's band: [EDGE_DP], the glyph box and [PAD_DP]; 0 without header items. 25 dp by default (13 sp). */
+    fun headerDp(s: ReaderSettings): Int = if (s.hasHeader) EDGE_DP + glyphDp(s) + PAD_DP else 0
+
+    /**
+     * The footer's band from the bottom edge: [EDGE_DP], the lane and [PAD_DP] above it while the progress line is on
+     * (the text never comes near its dots), and with footer items the glyph box and [PAD_DP]; 0 with neither. 18 dp by
+     * default (the progress line alone).
+     */
+    fun footerDp(s: ReaderSettings): Int {
+        val lane = if (s.progressBar) LANE_DP + PAD_DP else 0
+        if (!s.hasFooterText) return if (s.progressBar) EDGE_DP + lane else 0
+        return EDGE_DP + lane + glyphDp(s) + PAD_DP
+    }
+}
+
+/**
+ * U3: top/bottom margins, stored as actual dp. Since 2026-10-05 they count from the status bands ([StatusBands]), not
+ * from the screen's edge: the top margin is the paper between the header's band and the text, the bottom one between the
+ * text and the footer's band. The defaults keep the text box where 40 dp from the edge put it with the default bands
+ * (user: "코멧에서 본문 지금 자리 그대로 되게 숫자 맞춰줘"): [TOP_ZERO_DP] = 40 − 25 (MaruViewer's 13 sp header; 40 − 22
+ * at 11 sp before [MaruSize]); [BOTTOM_ZERO_DP] was 40 − 18 until 2026-10-06 and is 10 dp now: the Comet's rows 80..1384. Each side's default
+ * is its "0"; the one 상하 여백 stepper moves both by its value.
+ * [KEY] (prefs and the backup's reader object; [STYLE_KEY] in a saved style) says how the values were saved: [BANDS] now,
+ * [EDGE] from U3 until the bands ("40 dp = 0" from the edge), nothing ≤ R2. Values saved from the edge move once when
+ * they are read ([fromEdge]: the text box stays where it was); the next save writes [BANDS], so nothing moves twice.
+ * Values counted from the 11 sp bands lose the 13 sp bands' growth once ([MaruSize.keepBox]).
+ */
 object VerticalMargin {
-    const val ZERO_DP = SideMargin.ZERO_DP
+    /** Where the text box starts and ends from the screen's edges with the default margins and bands (dp). */
+    const val EDGE_DP = 40
+    /** The top margin's "0": [EDGE_DP] less the default header band (25 dp at 13 sp). */
+    const val TOP_ZERO_DP = 15
+    /**
+     * The bottom margin's "0": 10 dp above the footer band (user, 2026-10-06: "위에 여백좀 줄여줘"; [OLD_BOTTOM_ZERO_DP] =
+     * [EDGE_DP] less the default footer band before). Margins saved before ([BANDS_V1]) lose [BOTTOM_SHIFT_DP] once
+     * ([shiftBottom]), so every bottom margin, default or not, comes 12 dp closer to the progress line.
+     */
+    const val BOTTOM_ZERO_DP = 10
+    /** The bottom margin's "0" from 2026-10-05 until [BOTTOM_ZERO_DP]: 40 − 18. */
+    const val OLD_BOTTOM_ZERO_DP = 22
+    const val BOTTOM_SHIFT_DP = OLD_BOTTOM_ZERO_DP - BOTTOM_ZERO_DP
+    /** Either margin's largest value on the steppers. */
+    const val MAX_DP = 80
     /** ≤ R2 default of marginTopDp / marginBottomDp. */
     const val LEGACY_DEFAULT_DP = 16
-    const val UI_MIN = SideMargin.UI_MIN
-    const val UI_MAX = SideMargin.UI_MAX
+    /** −15..+70: both margins 0..80 dp (each stops at its end: the bottom at −10 and the top at +65 first). */
+    const val UI_MIN = -TOP_ZERO_DP
+    const val UI_MAX = MAX_DP - BOTTOM_ZERO_DP
     const val UI_STEP = SideMargin.UI_STEP
-    /** Marker: the top/bottom margins were saved by a U3+ build (prefs, backup reader object; style JSON "marginBaseV"). */
+    /** Marker: how the top/bottom margins were saved (prefs, backup reader object; style JSON "marginBaseV"). */
     const val KEY = "r.marginBaseV"
     const val STYLE_KEY = "marginBaseV"
-    fun toUi(actualDp: Int): Int = SideMargin.toUi(actualDp)
-    fun toDp(ui: Int): Int = SideMargin.toDp(ui)
+    /** [KEY]: counted from the status bands, the bottom from its 10 dp "0" (2026-10-06). */
+    const val BANDS = 3
+    /** [KEY]: counted from the status bands with the bottom's "0" at 22 dp (2026-10-05): [shiftBottom] once. */
+    const val BANDS_V1 = 2
+    /** [KEY] from U3 until the bands: counted from the screen's edge, 40 dp = "0". */
+    const val EDGE = EDGE_DP
+
+    fun topDp(ui: Int): Int = (TOP_ZERO_DP + ui).coerceIn(0, MAX_DP)
+    fun bottomDp(ui: Int): Int = (BOTTOM_ZERO_DP + ui).coerceIn(0, MAX_DP)
+
+    /**
+     * The stepper value of [top] / [bottom]: the top margin's, or the bottom one's where the top stopped at [MAX_DP]
+     * (above +65); both at 0 is the stepper's lower end.
+     */
+    fun toUi(top: Int, bottom: Int): Int = when {
+        top <= 0 && bottom <= 0 -> UI_MIN
+        top >= MAX_DP -> bottom - BOTTOM_ZERO_DP
+        else -> top - TOP_ZERO_DP
+    }.coerceIn(UI_MIN, UI_MAX)
+
+    /**
+     * The margins after the 상하 여백 stepper went from [from] to [to], with [top] / [bottom] on the page. A pair on the
+     * defaults' line ([topDp] / [bottomDp] of [from]) stays on it, so "0" is always the defaults; any other pair (bands
+     * other than the defaults when it was counted from the edge, the minimal margins while 여백 사용 is off) moves both
+     * sides by the step, each within 0..[MAX_DP], so neither side jumps. [top] first, then [bottom].
+     */
+    fun step(top: Int, bottom: Int, from: Int, to: Int): IntArray =
+        if (top == topDp(from) && bottom == bottomDp(from)) intArrayOf(topDp(to), bottomDp(to))
+        else intArrayOf((top + to - from).coerceIn(0, MAX_DP), (bottom + to - from).coerceIn(0, MAX_DP))
+
     fun label(ui: Int): String = SideMargin.label(ui)
+
     /** Values saved before U3 that equal the old untouched default 16/16. */
     fun isLegacyDefault(hasMarker: Boolean, top: Int, bottom: Int): Boolean =
         !hasMarker && top == LEGACY_DEFAULT_DP && bottom == LEGACY_DEFAULT_DP
+
+    /** True when margins saved with marker [base] (null: none) count from the screen's edge. */
+    fun countsFromEdge(base: Int?): Boolean = base != BANDS && base != BANDS_V1
+
+    /** True when a bottom margin saved with marker [base] still counts from the 22 dp "0" ([shiftBottom] once). */
+    fun needsBottomShift(base: Int?): Boolean = base != BANDS
+
+    /** A bottom margin saved before [BOTTOM_ZERO_DP] moved to 10 dp: [BOTTOM_SHIFT_DP] less (never below 0). */
+    fun shiftBottom(dp: Int): Int = (dp - BOTTOM_SHIFT_DP).coerceAtLeast(0)
+
+    /** A top margin saved from the screen's edge, counted from the header band of [s] instead (never below 0). */
+    fun topFromEdge(top: Int, s: ReaderSettings): Int = (top - StatusBands.headerDp(s)).coerceAtLeast(0)
+
+    /** A bottom margin saved from the screen's edge, counted from the footer band of [s] instead (never below 0). */
+    fun bottomFromEdge(bottom: Int, s: ReaderSettings): Int = (bottom - StatusBands.footerDp(s)).coerceAtLeast(0)
+
+    /**
+     * [s] with the margins it read from the edge ([top], [bottom]: those that were saved) counted from its own bands, so
+     * its text box stays where it was: 40/40 with the default bands become the defaults 15/22.
+     */
+    fun fromEdge(s: ReaderSettings, top: Boolean = true, bottom: Boolean = true): ReaderSettings = s.copy(
+        marginTopDp = if (top) topFromEdge(s.marginTopDp, s) else s.marginTopDp,
+        marginBottomDp = if (bottom) bottomFromEdge(s.marginBottomDp, s) else s.marginBottomDp,
+    )
 }

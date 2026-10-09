@@ -73,6 +73,23 @@ internal class ScrollWindow {
         }
         return -1
     }
+    /**
+     * The virtual page of every section the screen shows, in reading order (a screen over a seam gives two): what a
+     * screen reader walks, where [virtualPage] gives the one section the reader is in.
+     */
+    fun virtualPages(contentTop: Float, clip: Float): List<VirtualPage> {
+        var out: ArrayList<VirtualPage>? = null
+        var seen = -1
+        for (i in 0 until count) {
+            val s = sections[i]
+            if (s == seen) continue
+            seen = s
+            val vp = virtualPage(s, contentTop, clip) ?: continue
+            if (out == null) out = ArrayList(2)
+            out.add(vp)
+        }
+        return out ?: emptyList()
+    }
     fun virtualPage(section: Int, contentTop: Float, clip: Float): VirtualPage? {
         var layout: SectionLayout? = null
         var pageIndex = -1
@@ -134,25 +151,4 @@ internal class ScrollHighlights(val source: List<Highlight>) {
         visit(1, 0, size)
         return out ?: emptyList()
     }
-}
-
-/** No tap is dropped while a foreground section is loading. Growth is confined to command input. */
-internal class ScrollCommands {
-    private var values = BooleanArray(16)
-    private var first = 0
-    var size = 0
-        private set
-    fun add(next: Boolean) {
-        if (size == values.size) {
-            val grown = BooleanArray(values.size * 2)
-            for (i in 0 until size) grown[i] = values[(first + i) % values.size]
-            values = grown; first = 0
-        }
-        values[(first + size) % values.size] = next; size++
-    }
-    fun remove(): Boolean {
-        check(size > 0)
-        val next = values[first]; first = (first + 1) % values.size; size--; return next
-    }
-    fun clear() { first = 0; size = 0 }
 }

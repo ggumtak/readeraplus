@@ -1,13 +1,15 @@
 package com.ggumtak.readeraplus.ui.settings
 
 import android.view.View
+import android.widget.LinearLayout
 import com.ggumtak.readeraplus.BuildConfig
+import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.render.FontCatalog
 import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.LibraryListMode
 import com.ggumtak.readeraplus.settings.LibrarySort
-import com.ggumtak.readeraplus.settings.ReaderSettings
+import com.ggumtak.readeraplus.settings.ReadMode
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.confirm
@@ -19,91 +21,99 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** The ReadEra-like main list: 일반 · 읽기 설정 · 기타. */
+/**
+ * The main list, in small groups of one kind of row each (2026-10-04: the old 읽기 block of eight look-alike rows was
+ * too hard to scan): 읽기 화면 (how the page looks), 조작·기능 (turning, listening, looking up), 서재 (the library's
+ * choices), 책 가져오기 (the library's pages that bring books in) and 기타 (읽기 기록, 백업·복원, 캐시 비우기, 설정
+ * 초기화, 정보). Each setting has one home: the screen, brightness and corner switches live on 화면·밝기 and
+ * 넘기기·터치·키, the TXT defaults on 읽기 설정 → 파일.
+ *
+ * Opened from the reader ([OpenBook.info] set; memory only, no IO) it leaves out what belongs to the library: the
+ * 서재 and 책 가져오기 groups, 읽기 기록, 백업·복원 (restoring under an open book is unsafe) and 캐시 비우기 (no walk
+ * over the open book's cache); a TXT book gets "이 책의 TXT 정리" as the first row.
+ */
 internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_MAIN, "설정") {
-    private var scanRow: View? = null
-    private var permRow: View? = null
-    private var turnRow: View? = null
+    private var bookTxtRow: View? = null
     private var fontRow: View? = null
+    private var turnRow: View? = null
+    private var einkRow: View? = null
     private var ttsRow: View? = null
     private var lookupRow: View? = null
-    private var cacheRow: View? = null
+    private var scanRow: View? = null
     private var sortRow: View? = null
     private var listModeRow: View? = null
-    private var orientationRow: View? = null
+    private var listPagingRow: View? = null
+    private var backupRow: View? = null
+    private var cacheRow: View? = null
     private var cacheBusy = false
     /** Cache-size walk in flight (onShown and onResume both refresh on first open; walk the tree once). */
     private var sizeJob: Job? = null
 
     override fun build(): View {
         val app = Settings.app
+        val book = OpenBook.info
         val body = ctx.pageBody()
 
-        body.section("일반", first = true)
-        scanRow = ctx.navRow("파일 스캔", scanSummary(app)) { activity.push(SettingsActivity.PAGE_SCAN) }.also(body::addView)
-        body.addView(ctx.navRow("백업 및 복원", "서재 기록 · 북마크 · 형광펜 · 설정을 파일로 저장하고 되살립니다") {
-            activity.push(SettingsActivity.PAGE_BACKUP)
-        })
-        body.addView(ctx.navRow("Wi-Fi로 책 받기", "같은 Wi-Fi의 PC · 휴대폰 브라우저에서 TXT · EPUB 파일을 보냅니다") {
-            activity.push(SettingsActivity.PAGE_WIFI)
-        })
-        body.addView(ctx.navRow("읽기 기록", "읽은 시간 · 연속 기록 · 잔디 · 올해 다 읽은 책") { activity.push(SettingsActivity.PAGE_STATS) })
-        body.addView(ctx.toggleRow("앱 시작 시 읽던 책 열기", "앱을 열면 마지막으로 읽던 책을 이어서 봅니다. 꺼도 읽던 중 시스템이 앱을 닫았다면 그 책으로 돌아갑니다", app.openLastOnStart) { v ->
-            editApp { it.copy(openLastOnStart = v) }
-        })
-        permRow = ctx.row("모든 파일 접근 권한", StorageAccess.summary(ctx)) { StorageAccess.request(activity) }.also(body::addView)
-        sortRow = ctx.valueRow("서재 정렬", app.librarySort.label) {
+        body.section("읽기 화면")
+        if (book?.format == BookFormat.TXT) {
+            bookTxtRow = ctx.navRow(BookTxtPage.TITLE, bookTxtSummary(book)) { activity.push(SettingsActivity.PAGE_BOOK_TXT) }
+                .also(body::addView)
+        }
+        body.addView(ctx.navRow("읽기 설정", "스타일 · 글꼴 · 간격 · 여백") { activity.push(SettingsActivity.PAGE_READING) })
+        fontRow = ctx.navRow("글꼴 관리", "…") { activity.push(SettingsActivity.PAGE_FONTS) }.also(body::addView)
+        body.addView(ctx.navRow("화면·밝기", "상태 표시줄 · 전체 화면 · 밝기") { activity.push(SettingsActivity.PAGE_SCREEN) })
+        einkRow = ctx.navRow(EinkPage.TITLE, EinkChoices.mainSummary(app)) { activity.push(SettingsActivity.PAGE_EINK) }.also(body::addView)
+
+        body.section("조작·기능")
+        turnRow = ctx.navRow("넘기기·터치·키", turnSummary(app)) { activity.push(SettingsActivity.PAGE_PAGE_TURNING) }.also(body::addView)
+        ttsRow = ctx.navRow("듣기 설정", ttsSummary(app)) { activity.push(SettingsActivity.PAGE_TTS) }.also(body::addView)
+        lookupRow = ctx.navRow("사전·번역·검색", lookupSummary(app)) { activity.push(SettingsActivity.PAGE_LOOKUP) }.also(body::addView)
+
+        if (book == null) addLibrary(body, app)
+
+        body.section("기타")
+        if (book == null) {
+            body.addView(ctx.navRow("읽기 기록", "읽은 시간 · 연속 기록 · 다 읽은 책") { activity.push(SettingsActivity.PAGE_STATS) })
+            backupRow = ctx.navRow("백업·복원", backupSummary(app)) { activity.push(SettingsActivity.PAGE_BACKUP) }.also(body::addView)
+            cacheRow = ctx.row("캐시 비우기", "계산 중…") { clearCache() }.also(body::addView)
+        }
+        body.addView(ctx.row("설정 초기화", SettingsReset.SUMMARY) { resetSettings() })
+        body.addView(ctx.navRow("정보", "버전 ${BuildConfig.VERSION_NAME}") { activity.push(SettingsActivity.PAGE_ABOUT) })
+        return ctx.pageScroll(body)
+    }
+
+    /** "서재": the library's own choices (choosers and a switch); "책 가져오기": its pages that bring books in. */
+    private fun addLibrary(body: LinearLayout, app: AppSettings) {
+        body.section("서재")
+        sortRow = ctx.valueRow("정렬", app.librarySort.label) {
             val all = LibrarySort.entries
-            ctx.chooser("서재 정렬", all.map { it.label }, all.indexOf(Settings.app.librarySort)) { i ->
+            ctx.chooser("정렬", all.map { it.label }, all.indexOf(Settings.app.librarySort)) { i ->
                 editApp { it.copy(librarySort = all[i]) }
                 sortRow?.setSummary(all[i].label)
             }
         }.also(body::addView)
-        listModeRow = ctx.valueRow("서재 보기", app.libraryListMode.label) {
+        listModeRow = ctx.valueRow("보기", app.libraryListMode.label) {
             val all = LibraryListMode.entries
-            ctx.chooser("서재 보기", all.map { it.label }, all.indexOf(Settings.app.libraryListMode)) { i ->
+            ctx.chooser("보기", all.map { R3Rows.libraryViewChoice(it) }, all.indexOf(Settings.app.libraryListMode)) { i ->
                 editApp { it.copy(libraryListMode = all[i]) }
                 listModeRow?.setSummary(all[i].label)
             }
         }.also(body::addView)
-
-        body.section("읽기 설정")
-        turnRow = ctx.navRow("넘김·화면 설정", turnSummary(app)) { activity.push(SettingsActivity.PAGE_PAGE_TURNING) }.also(body::addView)
-        fontRow = ctx.navRow("글꼴 관리", "읽기 글꼴: …") { activity.push(SettingsActivity.PAGE_FONTS) }.also(body::addView)
-        body.addView(ctx.navRow("TXT 기본 정리 설정", "빈 줄 · 줄 합치기 · 챕터 인식 · 치환 규칙 (따로 정하지 않은 모든 TXT)") {
-            activity.push(SettingsActivity.PAGE_TXT_DEFAULTS)
-        })
-        ttsRow = ctx.navRow("Text to speech (TTS)", ttsSummary(app)) { activity.push(SettingsActivity.PAGE_TTS) }.also(body::addView)
-        lookupRow = ctx.navRow("사전 · 번역 · 웹 검색", "웹 검색: ${WebEngines.nameOf(app.webSearchUrl)}") {
-            activity.push(SettingsActivity.PAGE_LOOKUP)
-        }.also(body::addView)
-        body.addView(ctx.toggleRow("전체 화면 모드", "상태표시줄과 네비게이션바 숨김", app.fullscreen) { v -> editApp { it.copy(fullscreen = v) } })
-        body.addView(ctx.toggleRow("스와이프로 밝기 조절", "화면 좌측을 위아래로 스와이프하여 밝기를 조절합니다", app.brightnessSwipe) { v ->
-            editApp { it.copy(brightnessSwipe = v) }
-        })
-        body.addView(ctx.toggleRow("터치로 흑백 반전", "좌측 상단을 터치해 흰 바탕 ↔ 검은 바탕 전환", app.invertByTouch) { v ->
-            editApp { it.copy(invertByTouch = v) }
-        })
-        body.addView(ctx.toggleRow("터치로 북마크", "우측 상단을 터치해 북마크 추가 / 삭제", app.bookmarkByTouch) { v ->
-            editApp { it.copy(bookmarkByTouch = v) }
-        })
-        body.addView(ctx.toggleRow("화면 켜짐 유지", "시스템 화면 꺼짐 시간보다 10분 더 화면 켜짐을 유지합니다", app.keepScreenOn) { v ->
-            editApp { it.copy(keepScreenOn = v) }
-        })
-        orientationRow = ctx.valueRow("화면 방향", SettingsFormat.orientation(app.orientationLock)) {
-            val opts = SettingsFormat.ORIENTATIONS
-            val sel = opts.indexOfFirst { it.second == Settings.app.orientationLock }.coerceAtLeast(0)
-            ctx.chooser("화면 방향", opts.map { it.first }, sel) { i ->
-                editApp { it.copy(orientationLock = opts[i].second) }
-                orientationRow?.setSummary(opts[i].first)
+        listPagingRow = ctx.valueRow("목록 넘기기", R3Rows.listPaging(app.listPaging)) {
+            val opts = R3Rows.LIST_PAGINGS
+            ctx.chooser("목록 넘기기", opts.map { R3Rows.listPaging(it) }, R3Rows.listPagingIndex(Settings.app.listPaging)) { i ->
+                editApp { it.copy(listPaging = opts[i]) }
+                listPagingRow?.setSummary(R3Rows.listPaging(opts[i]))
             }
         }.also(body::addView)
+        // Off, the app still comes back to a book the system closed while it was open (LibraryText.startMode: RESUME).
+        body.addView(ctx.toggleRow("시작할 때 읽던 책 열기", "끄면 서재부터 · 앱이 강제로 닫혔을 때는 그 책으로", app.openLastOnStart) { v ->
+            editApp { it.copy(openLastOnStart = v) }
+        })
 
-        body.section("기타")
-        cacheRow = ctx.row("캐시 비우기", "표지 · TXT 색인 · 쪽수 캐시 (계산 중…)") { clearCache() }.also(body::addView)
-        body.addView(ctx.row("설정 초기화", "읽기 · 넘김 · 화면 설정을 기본값으로 (TXT 정리 설정 · 스캔 폴더 · 키 지정은 유지)") { resetSettings() })
-        body.addView(ctx.navRow("정보", "버전 ${BuildConfig.VERSION_NAME}") { activity.push(SettingsActivity.PAGE_ABOUT) })
-        return ctx.pageScroll(body)
+        body.section("책 가져오기")
+        scanRow = ctx.navRow("책 스캔", scanSummary(app)) { activity.push(SettingsActivity.PAGE_SCAN) }.also(body::addView)
+        body.addView(ctx.navRow("Wi-Fi로 책 받기", "PC · 휴대폰 브라우저에서 보내기") { activity.push(SettingsActivity.PAGE_WIFI) })
     }
 
     override fun onShown() {
@@ -114,55 +124,77 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         refreshSummaries()
     }
 
+    /** The summaries other pages may have changed (rows left out in the reader's context are null). */
     private fun refreshSummaries() {
         val app = Settings.app
-        scanRow?.setSummary(scanSummary(app))
-        permRow?.setSummary(StorageAccess.summary(ctx))
+        OpenBook.info?.let { book -> bookTxtRow?.setSummary(bookTxtSummary(book)) }
         turnRow?.setSummary(turnSummary(app))
+        einkRow?.setSummary(EinkChoices.mainSummary(app))
         ttsRow?.setSummary(ttsSummary(app))
-        lookupRow?.setSummary("웹 검색: ${WebEngines.nameOf(app.webSearchUrl)}")
+        lookupRow?.setSummary(lookupSummary(app))
+        scanRow?.setSummary(scanSummary(app))
         sortRow?.setSummary(app.librarySort.label)
         listModeRow?.setSummary(app.libraryListMode.label)
-        orientationRow?.setSummary(SettingsFormat.orientation(app.orientationLock))
+        listPagingRow?.setSummary(R3Rows.listPaging(app.listPaging))
+        backupRow?.setSummary(backupSummary(app))
         val fontId = Settings.reader.fontId
         activity.scope.launch {
             val name = withContext(Dispatchers.IO) {
                 runCatching { FontManager.font(fontId)?.name }.getOrNull()
                     ?: FontCatalog.BUNDLED.firstOrNull { it.id == fontId }?.name ?: fontId
             }
-            fontRow?.setSummary("읽기 글꼴: $name")
+            fontRow?.setSummary(name)
         }
+        val row = cacheRow ?: return
         if (!cacheBusy && sizeJob?.isActive != true) {
             sizeJob = activity.scope.launch {
                 val size = withContext(Dispatchers.IO) { cacheDirs().sumOf { dirSize(it) } }
-                if (!cacheBusy) cacheRow?.setSummary("표지 · TXT 색인 · 쪽수 캐시 · ${SettingsFormat.bytes(size)}")
+                if (!cacheBusy) row.setSummary(cacheSummary(size))
             }
         }
     }
 
-    private fun scanSummary(app: AppSettings): String = when (app.scanFolders.size) {
-        0 -> "내부 저장소 전체" + if (app.excludedFolders.isEmpty()) "" else " · 제외 ${app.excludedFolders.size}개"
-        1 -> FolderSets.displayName(app.scanFolders.first()) + if (app.excludedFolders.isEmpty()) "" else " · 제외 ${app.excludedFolders.size}개"
-        else -> "폴더 ${app.scanFolders.size}개" + if (app.excludedFolders.isEmpty()) "" else " · 제외 ${app.excludedFolders.size}개"
+    /** "이 책의 TXT 정리": whether the open book has TXT options of its own (memory only). */
+    private fun bookTxtSummary(book: OpenBook.Info): String = if (book.override != null) "따로 정함" else "기본값 따름"
+
+    private fun scanSummary(app: AppSettings): String {
+        val where = when (app.scanFolders.size) {
+            // No folder: the scanner walks the internal storage and the SD card.
+            0 -> "전체 저장소"
+            1 -> FolderSets.displayName(app.scanFolders.first())
+            else -> "폴더 ${app.scanFolders.size}개"
+        }
+        return where + if (app.excludedFolders.isEmpty()) "" else " · 제외 ${app.excludedFolders.size}개"
     }
 
+    /**
+     * "터치: 좌우 넘김 · 볼륨 키 · 지정 키 2개", with "스크롤" first in scroll mode (paged is the default: not named, so
+     * "넘김" is never said twice; the e-ink cadence has its own row).
+     */
     private fun turnSummary(app: AppSettings): String {
         val parts = ArrayList<String>()
-        parts += TapZoneModel.modeName(app.tapZoneMode)
+        if (app.readMode == ReadMode.SCROLL) parts += R3Rows.readMode(app.readMode)
+        parts += "터치: " + TapZoneModel.modeName(app.tapZoneMode)
         if (app.volumeKeysTurn) parts += "볼륨 키"
         val keys = KeyAssign.entries(app).size
         if (keys > 0) parts += "지정 키 ${keys}개"
-        if (app.einkRefreshEvery > 0) parts += "새로고침 ${SettingsFormat.refreshEvery(app.einkRefreshEvery)}"
         return parts.joinToString(" · ")
     }
 
+    /** "속도 1.0배 · 음높이 1.0", then the timer while one is set ("30분 뒤 멈춤"). */
     private fun ttsSummary(app: AppSettings): String =
-        "속도 ${SettingsFormat.rate(app.ttsRate)} · 음높이 ${SettingsFormat.pitch(app.ttsPitch)}" +
-            if (app.ttsSleepMinutes > 0 || app.ttsSleepChapters > 0) {
-                " · 수면 ${SettingsFormat.sleepChoice(app.ttsSleepMinutes, app.ttsSleepChapters)}"
-            } else {
-                ""
-            }
+        listOfNotNull(
+            "속도 ${SettingsFormat.rate(app.ttsRate)}",
+            "음높이 ${SettingsFormat.pitch(app.ttsPitch)}",
+            SettingsFormat.sleepSummary(app.ttsSleepMinutes, app.ttsSleepChapters),
+        ).joinToString(" · ")
+
+    private fun lookupSummary(app: AppSettings): String = "웹 검색: ${WebEngines.nameOf(app.webSearchUrl)}"
+
+    private fun backupSummary(app: AppSettings): String = if (app.autoBackup) "자동 백업 켜짐" else "자동 백업 꺼짐"
+
+    /** "12MB · 표지 · 색인 · 페이지 수": the size first, then what the cache holds. */
+    private fun cacheSummary(size: Long): String = "${SettingsFormat.bytes(size)} · 표지 · 색인 · 페이지 수"
 
     private fun cacheDirs(): List<File> = listOfNotNull(activity.cacheDir, activity.externalCacheDir)
 
@@ -170,8 +202,8 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         if (cacheBusy) return
         ctx.confirm(
             "캐시 비우기",
-            "표지 이미지, TXT 색인, 쪽수 계산 결과를 지웁니다. 책을 처음 열 때 다시 만들어지므로 잠시 느려질 수 있습니다.",
-            ok = "비우기",
+            "표지 이미지 · TXT 색인 · 페이지 수 계산을 지울까요? 책을 처음 열 때 다시 만들어 잠시 느려질 수 있습니다.",
+            ok = "지우기",
         ) {
             cacheBusy = true
             cacheRow?.setSummary("지우는 중…")
@@ -189,43 +221,22 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
                     total
                 }
                 cacheBusy = false
-                cacheRow?.setSummary("표지 · TXT 색인 · 쪽수 캐시 · 0 B")
+                cacheRow?.setSummary(cacheSummary(0L))
                 ctx.toast("${SettingsFormat.bytes(freed)} 비웠습니다")
             }
         }
     }
 
     /**
-     * Back to the defaults, except what took the user work to set up: scan folders, assigned keys, the library view
-     * and the TXT cleanup defaults (their replacement rules; resetting them would also re-parse every TXT once).
+     * Back to the defaults, except what took the user work to set up (scan folders, assigned keys, the library view,
+     * the TXT cleanup defaults: their replacement rules; resetting them would also re-parse every TXT once, a typed
+     * web search address, the chosen voice) and the privacy and device choices (자동 백업, 찾아본 단어 기록, 기기 밝기
+     * 직접 조절, 목록 넘기기): see [SettingsReset].
      */
     private fun resetSettings() {
-        val msg = "글꼴 · 글자 크기 · 간격 · 여백과 넘김 · 화면 설정을 기본값으로 되돌릴까요?\nTXT 정리 설정 · 스캔 폴더 · 지정한 키는 그대로 둡니다."
-        ctx.confirm("설정 초기화", msg, ok = "초기화") {
-            val old = Settings.app
-            Settings.saveApp(
-                AppSettings().copy(
-                    scanFolders = old.scanFolders,
-                    excludedFolders = old.excludedFolders,
-                    nextPageKeys = old.nextPageKeys,
-                    prevPageKeys = old.prevPageKeys,
-                    keyBindings = old.keyBindings,
-                    librarySort = old.librarySort,
-                    libraryListMode = old.libraryListMode,
-                ),
-            )
-            val r = Settings.reader
-            Settings.saveReader(
-                ReaderSettings().copy(
-                    txtBlankLines = r.txtBlankLines,
-                    txtStripIndent = r.txtStripIndent,
-                    txtJoinWrappedLines = r.txtJoinWrappedLines,
-                    txtDetectChapters = r.txtDetectChapters,
-                    txtChapterRegex = r.txtChapterRegex,
-                    txtEmphasizeHeadings = r.txtEmphasizeHeadings,
-                    txtReplaceRules = r.txtReplaceRules,
-                ),
-            )
+        ctx.confirm("설정 초기화", SettingsReset.MESSAGE, ok = "초기화") {
+            Settings.saveApp(SettingsReset.app(Settings.app))
+            Settings.saveReader(SettingsReset.reader(Settings.reader))
             // Rebuild so every switch shows its new value.
             activity.rebuildTop()
             ctx.toast("기본값으로 되돌렸습니다")

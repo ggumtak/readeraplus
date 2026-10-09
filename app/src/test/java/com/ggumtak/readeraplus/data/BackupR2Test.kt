@@ -175,4 +175,18 @@ class BackupR2Test {
         assertNull(BackupJson.mergePrefs(null, null, haveRead = true))
         assertEquals(PrefsRow(null, 5, null), BackupJson.mergePrefs(null, BackupPrefs(finishedAt = 5), haveRead = true))
     }
+
+    @Test
+    fun theOverrideFollowsTheNewerReading() {
+        // It changes the parse (every quote's offsets), so like the encoding the newer side wins (N §5.6).
+        val cur = PrefsRow("{\"stripIndent\":false}", 0, null)
+        val older = BackupPrefs(TxtOverride(stripIndent = true))
+        assertEquals(cur, BackupJson.mergePrefs(cur, older, haveRead = false, deviceNewer = true))
+        // An override cleared on this device after the backup stays cleared.
+        assertNull(BackupJson.mergePrefs(null, older, haveRead = false, deviceNewer = true))
+        assertNull(BackupJson.mergePrefs(PrefsRow(null, 0, "3화"), older, false, deviceNewer = true)!!.txtOverride)
+        // The backup is newer: its override wins, and a backup without one keeps the device's.
+        assertEquals(older.txtOverride!!.toJson(), BackupJson.mergePrefs(cur, older, false)!!.txtOverride)
+        assertEquals(cur, BackupJson.mergePrefs(cur, BackupPrefs(finishedAt = 5), false))
+    }
 }

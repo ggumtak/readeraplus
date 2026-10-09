@@ -41,7 +41,7 @@ is the intended implementation unless this file overrides a detail.
 | 1 | The page number floats awkwardly left of centre in the bottom bar. It looks cheap. | The bottom bar copies ReadEra's structure (§2.4). **"N / M"** is centred on the **full width**: 17 sp bold, tabular digits, no underline. Only **[rotation][pin]** sit on the right. The bookmark moves to the top action row, into ReadEra's 6th-icon slot. No grey "selected" squares anywhere: state is shown by swapping the icon. |
 | 2 | Let me pick what shows at bottom-left, bottom-centre and bottom-right (chapter title, time, battery, …). If I pick nothing, show no footer. A thin progress line like ReadEra's would be good too. | `enum StatusItem` (12 entries). Three **footer** slots, all `NONE` by default, so a fresh install has **no footer text**. There are also three **header** slots (default: chapter title in the centre, same as today), so the user can build the "마루뷰어" top line (7a7a0a23). A **progress line** (`progressBar = true`) sits in the bottom margin: a 1 px line with end caps and a position dot. With default margins it costs no text height. |
 | 3 | Moving the brightness bar at the top changes nothing. | The window override stays the default (it works on phones). Add an opt-in **device path** that writes `Settings.System.SCREEN_BRIGHTNESS` with WRITE_SETTINGS. On e-ink devices, a **one-time question** after the first drag finds out which path works. If neither works, the reader says so honestly and links to the device's own light panel instead of leaving a dead slider (§4). **[Δ]** The device path never puts back a stale value over one the user set in the system panel, always gives auto-brightness back, and is a device-local choice (not in backups). |
-| 4 | The pin makes pages flip back and forth. It should pin a page so I can return to it anytime, like the "< 10 페이지로 · 지우기" strip. | "메뉴 고정" (pinned chrome) and all its relayout paths are **deleted**. That is the root cause of the flipping (§2.6). The pin now sets the book's **return point**, stored per book. A **return strip** docked in the bottom bar reads "‹ 10 페이지로 · 지우기 · 512 페이지로 ›". The old "← 돌아가기 (p. N)" chip becomes the same component's floating form, shown after a remembered jump whenever the chrome is hidden (§3). **[Δ]** That includes a seek made with the menu open (today's chip survives closing the menu; so does the new one), and scrubbing the seek bar several times keeps the *first* origin. |
+| 4 | The pin makes pages flip back and forth. It should pin a page so I can return to it anytime, like the "< 10 페이지로 · 지우기" strip. | "메뉴 고정" (pinned chrome) and all its relayout paths are **deleted**. That is the root cause of the flipping (§2.6). The pin now sets the book's **return point**, stored per book. A **return strip** docked in the bottom bar reads "‹ 10 페이지로 · 지우기 · 512 페이지로 ›". The old "← 돌아가기 (p. N)" chip becomes the same component's floating form, shown after a remembered jump whenever the chrome is hidden (§3). **[Δ]** That includes a seek made with the menu open (today's chip survives closing the menu; so does the new one), and scrubbing the seek bar several times keeps the *first* origin (2026-10-05: for the chip only; the history row keeps every origin, as ReadEra's). |
 | 5 | The icon to the right of the brightness slider opens options (ReadEra: "스와이프로 밝기 조절" + switch). | The icon is ⌄/⌃ (`ic_expand_more`/`ic_expand_less`) and opens an **options panel** under the slider. The brightness row is never hidden again (§2.3). |
 | 6 | Care much more about the UI. | §2.1 defines one visual system for the chrome: keylines, bands, type scale and state rules. §6 is the ranked polish list with exact values. §8 lists the CI screenshots that must prove each item. |
 
@@ -54,7 +54,7 @@ is the intended implementation unless this file overrides a detail.
 | Bookmark icon | removed from the bar | bottom-left of the bar | – | **top action row**, left of TTS | ReadEra's bottom bar has only [rotation][pin]. The top row has a free 6th slot (ReadEra's crown), which is also next to the ribbon's corner. |
 | Progress line span | page edges, 12 dp | text column | – | **page edges, 12 dp** (ReadEra) | This is the user's reference. With the scroll spec's 40 dp side margins, a column-wide line would look detached. |
 | Chapter ticks | none | 2–60 chapters | – | **none** (P2 option later) | Web-novel TXT files have hundreds of chapters, so ticks never show there. Leaving them out drops code, a redraw path and a test class. |
-| Pin model | single pin + strip | mark/other state machine + chip | – | **chrome.md's model**, with 2 changes (§3.2), **[Δ] plus 3 from the critic** (★3 chain keeps its first origin, ★4 the reading place survives a visit to the pin, ★5 the chip's offer survives the menu) | It keeps the jump origin reachable, and one component replaces the old chip. |
+| Pin model | single pin + strip | mark/other state machine + chip | – | **chrome.md's model**, with 2 changes (§3.2), **[Δ] plus 3 from the critic** (★3 chain keeps its first origin, ★4 the reading place survives a visit to the pin, ★5 the chip's offer survives the menu). **2026-10-05 (user): replaced by a back / forward history as ReadEra's (§3); ★5 stays, ★3 only for the chip (every jump's origin is a place, as in ReadEra)** | It keeps the jump origin reachable, and one component replaces the old chip. |
 | Brightness curve | linear | – | p² for both paths | **window path linear (unchanged); device path p²** | This avoids a one-time shift of every phone user's saved brightness. p² is only needed for the 1..255 device int. |
 | Brightness wiring | in ReaderActivity | – | in ReaderActivity (~200 lines) | **`LightController` (READER_UI) behind a `LightHost` interface** | Keeps ReaderActivity small, because the scroll spec edits the same file in parallel (§7). |
 | DB column | `BookPrefs` pin | `book_prefs.return_mark`, no bump (v2 unshipped) | – | **`return_mark` + `DB_VERSION = 3` via `ADDED_COLUMNS`** | R2 (v2) will very likely have shipped to the device before this lands. The column guard makes this safe either way. |
@@ -287,7 +287,7 @@ const val CREATE_BOOK_PREFS = "CREATE TABLE IF NOT EXISTS book_prefs(" +
     "txt_override TEXT," +
     "finished_at INTEGER NOT NULL DEFAULT 0," +
     "episode_label TEXT," +
-    "return_mark TEXT)"            // v3: the book's pinned return point (ReturnMarkCodec text), NULL = none
+    "return_mark TEXT)"            // v3: the book's return history (ReturnHistoryCodec text, §3.3), NULL = none
 /** v3 column for databases created by v2. */
 const val ADD_RETURN_MARK = "ALTER TABLE book_prefs ADD COLUMN return_mark TEXT"
 private val ADDED_COLUMNS = listOf(
@@ -413,43 +413,77 @@ Both specs edit `ReaderSettings.kt`, `Settings.kt`, `SettingsJson.kt`, `ReaderHo
 | Token | Value |
 |---|---|
 | Keylines | **Text** starts 20 dp from the left: the stroke of the back arrow (the 48 dp button at 4 dp row padding centres its 24 dp glyph at 16..40 dp, and `ic_arrow_back`'s ink starts at 4/24). **Trailing** content ends 16 dp from the right: icon glyph boxes and toggle tracks. |
-| Bands | Actions 56 · title ≈ 32 (17 sp line + 10 dp bottom) · brightness 48 · option rows ≥ 56 · return strip 44 · label 52 · seek 48 dp. Every tap target is ≥ 44 dp. |
-| Lines | Bar edges and band breaks: 1 **physical px** `Ink.LINE` (black). Inside a band group (strip → label row, between option rows): 1 px `Ink.LINE_LIGHT`, inset 20 dp on the left and 16 dp on the right. |
-| Type | **Primary** 17 sp bold (title, page label). **Secondary** 15 sp regular (strip items, option titles, question). **Tertiary** 13 sp regular `Ink.GRAY` (subtitles). **Disabled** `Ink.DISABLED`. Only two weights (§0.2). |
+| Bands | Actions 56 · title ≈ 32 (17 sp line + 10 dp bottom) · brightness 48 · option rows ≥ 56 · return strip 44 · label 52 · seek 48 dp. Every tap target is ≥ 44 dp. **[2026-10-05]** Actions 56 · title ≈ 36 (18 sp line + 12 dp bottom) · brightness 48 · option rows ≥ 56 · history row 48 · label 48 · seek 48 dp: every control of the bars is a ≥ 48 dp target. **[2026-10-05, ReadEra side by side]** The bottom panel as low as ReadEra's: label row 50 (its 48 dp controls centred, the label's centre 25 dp under the panel's top) and seek row 48 from 37 dp (track centre 61 dp): **85 dp** of panel, then the bottom gap. The two rows' 48 dp targets overlap by 12 dp, exactly the space between their 24 dp glyphs, where the label row takes the touch (`ChromeMath.LABEL_CENTRE_DP` / `SEEK_CENTRE_DP` / `PANEL_DP`). **[2026-10-05, review]** The title row starts 9 dp inside the actions row's empty foot (`ChromeMath.TITLE_LIFT_DP`): the title block 83 dp as ReadEra's (was 92); the history row's text sits 10 dp low in its 48 dp box (`ChromeMath.HISTORY_TEXT_TOP_DP`), 19 dp above the panel as ReadEra's (was 24). |
+| Colours **[2026-10-05]** | From `render/ChromePalette` (table below), never `Ink` constants: the bars follow the page's theme (흰 바탕, 마루뷰어, 흑백 반전). |
+| Lines **[2026-10-05]** | **Phone:** where a bar meets the page, a 4 dp shadow (`ChromeBar`, linear, `shadow` → transparent; 흑백 반전: a 1 px `edge` line instead); **[2026-10-05, later]** the top bar's panel ends under the title, so its edge lies between the title and the brightness row (no title rule any more) and nothing lies under the brightness row, which sits on the page colour as in ReadEra; with the options open a second edge lies under them; the options rule 1 px `rule`, inset 20 / 16 dp; option rows 1 px `divider`, inset 20 / 16 dp. The dock's own line and the bars' black hairlines are gone. **E-ink:** solid 1 px lines only: the bar edges `edge` (black on 흰 바탕), the rules `rule` across the full width as before, option rows `divider`, and a 1 px `divider` on top of the history row. |
+| Type **[2026-10-05]** | Title > page label > history row, as in ReadEra (title ≈ 17 sp, at least its page label's ≈ 16.5 sp). **Title** 18 sp bold. **Page label** 17 sp: the current page bold `text`, " / total" ×0.82 (≈ 14 sp) regular `text2`. **History row** 14 sp regular `hist`. **Option titles, question** 15 sp regular. **Subtitles** 13 sp regular `text2`. **Seek preview** 16 sp bold. Disabled titles `text2`. Only two weights (§0.2). |
 | Digits | Page label and strip labels: `fontFeatureSettings = "tnum"` (set once) |
-| State | **Icon swap only**. `isSelected` is never used for looks. Bookmark: `ic_bookmark` ↔ `ic_bookmark_fill`. Rotation: `ic_screen_rotation` ↔ `ic_screen_lock_rotation`. Pin: `ic_push_pin` ↔ `ic_push_pin_fill`. Brightness: `ic_brightness_auto` (auto) ↔ `ic_brightness_medium` (manual). Options: `ic_expand_more` (closed) ↔ `ic_expand_less` (open). **[Δ]** Return strip, mark page on screen: `ic_chevron_left` ↔ a 16 dp `ic_push_pin_fill` and "N 페이지로" ↔ "N 페이지" (§3.4), so grey is never the only signal. |
-| Motion | None: no ripples (`pressableBackground`), `animationStyle = 0`, and no autosize steps (autosize is computed per text change, not animated) |
+| Icons **[2026-10-05]** | Every chrome icon is a 24 dp Material Symbols glyph in a 48 × 48 dp target, drawn inside the 20 dp live area with ≈ 2 dp strokes: the glyphs that fill their whole box (`ic_screen_rotation`, `ic_screen_lock_rotation`, `ic_brightness_medium`, `ic_brightness_auto`) are scaled to 85 % by a `<group>` in their XML (≈ 20 dp, ≈ 1.7 dp strokes), so rotation and the pin, or the sun and the chevron, read the same size. The pin (`ic_push_pin`, `_fill`) is the Material Symbols file (24-unit viewport), 12 × 20 dp. The history row's chevrons are 16 dp. Left icons centre at 28 dp, right icons at W − 28 (rotation W − 76); the text keyline is 20 dp; both slider tracks run from 64 dp to W − 64. |
+| State | **Icon swap**, plus **[2026-10-05]** on a phone the accent on a state that stays (bookmark, pin, rotation lock: icon tinted `accent` over a 40 dp `active` circle) and a pressed overlay (`pressed`: a 40 dp circle behind icons, the same circle stacked over the `active` one, an 8 dp rounded rect hugging a text cell's words, a full-width rect on option rows, fading out in 120 ms, at once when the animator scale is 0). The `active` circle is set apart from the `pressed` one (≥ 1.4 : 1), so an active toggle never looks like a press that did not release. **E-ink: icon swap only, no pressed state** (one update per action). `isSelected` is never used for looks. Bookmark: `ic_bookmark` ↔ `ic_bookmark_fill`. Rotation: `ic_screen_rotation` ↔ `ic_screen_lock_rotation`. Pin: `ic_push_pin` ↔ `ic_push_pin_fill`. Brightness: `ic_brightness_auto` (auto) ↔ `ic_brightness_medium` (manual). Options: `ic_expand_more` (closed) ↔ `ic_expand_less` (open). **[2026-10-05]** The history row has no state of its own: it only ever shows places to go to, and a side without one is invisible (§3.4). |
+| Motion **[2026-10-05]** | **Phone:** the bars fade and slide 12 dp from their edge, 180 ms in (`PathInterpolator(0, 0, 0.2, 1)`) and 150 ms out (`(0.4, 0, 1, 1)`), alpha and translation only (the page never re-lays out); a new touch passes to the page while they leave (a drag that started on a bar, such as the seek bar, still ends there); instant when the system's animator duration scale is 0 (개발자 옵션, 접근성 "애니메이션 제거": `ChromeMath.animates` with `animatorScale()` = `ValueAnimator.getDurationScale()` from API 33, `areAnimatorsEnabled()` before; e-ink never reads it). **E-ink and an unprobed device:** none, the bars switch in one frame. No ripples, `animationStyle = 0`, no autosize steps. Page turns stay instant everywhere (PLAN 2026-10-02). |
+
+**[2026-10-05] Tokens** (`render/ChromePalette.of(page, eink)`; six shared instances; `eink == null` → the e-ink set).
+The accent is the page's own status colour. E-ink sets are the old `Ink` colours as the page's greys
+(`PagePalette.grey`): 흰 바탕 on e-ink is exactly the chrome of before.
+
+| token | 흰 바탕 phone | 마루뷰어 phone | 흑백 반전 phone | e-ink (흰 바탕 / 마루뷰어 / 흑백 반전) |
+|---|---|---|---|---|
+| page (the history row; **[2026-10-05, later]** the brightness row and its options: the page's own pixels) | #FFFFFF | #323232 | #000000 | the page |
+| surface | #F5F5F5 | #3C3C3C | #1A1A1A | the page |
+| text / text2 | #1A1A1A / #5E5E5E | #DDDDDD / #A8A8A8 | #FFFFFF / #B3B3B3 | grey(0) / grey(0x55): #000/#555, #DDD/#A4A4A4, #FFF/#AAA |
+| accent | #000000 | #FFD387 (**[2026-10-05, later]** MaruViewer's status gold re-measured on its PNGs; was #F0D096) | #FFFFFF | the page's status colour |
+| divider = rule | #DDDDDD | #4E4E4E | #333333 | divider grey(0xCC), rule grey(0) |
+| edge | none | none | #333333 | grey(0) |
+| track (also, on a phone, the 1 px border of the chip and the seek preview) | #C8C8C8 | #606060 | #4A4A4A | grey(0x99) |
+| hist (also the brightness row's icons and its NONE link) | #5E5E5E | #A8A8A8 | #B3B3B3 | grey(0) |
+| shadow | #33000000 | #80000000 | none | none |
+| pressed / active | #14000000 / #38000000 | #1AFFFFFF / #4DFFD387 | #1AFFFFFF / #42FFFFFF | none |
+
+Contrast floors (`ChromePaletteTest`): text on surface ≥ 7, text2 ≥ 4.5, history row on the page ≥ 4.5, accent ≥ 3;
+**[2026-10-05, later]** on the page colour too, for the brightness row and its options: `hist` ≥ 4.5, text ≥ 7, text2 ≥ 4.5,
+accent ≥ 3, track ≥ 1.6 (the accent ≥ 2 on the track); and that row's colour is `PagePalette.background` in every look;
+a phone's surface is within 1.3 : 1 of its page; on a phone also the
+floating boxes' border (`track`) on the page ≥ 1.6 (and below the text), and the `active` circle ≥ 1.4 apart from the
+`pressed` one with the accent ≥ 3 on it. API 30+: the system bars are transparent over the page (or the open bar's
+surface), with light icons on a dark page (`ReaderWindow.applyBarLook`); full-screen dialogs keep white bars.
+**Exception (this pass, PLAN 2026-10-05):** the surfaces opened from the bars (the ⋮ menu, the ⚙ quick options, the
+rotation chooser, the full-screen TOC and search dialogs) stay white on every page colour; only the bars, the history
+row, the chip and the seek preview take the tokens.
 
 ### 2.2 Top bar (`ReaderChrome.top`, a vertical `LinearLayout`, white, clickable, top inset as padding)
 
 ```
 ┌──────────────────────────────────────────────┐
 │ ←                  🔖  🔊  🔍  ☰  ⚙  ⋮       │ actions 56dp, row padding 4dp h
-│ 배드 본 블러드 1-353 완                         │ title row: 17sp bold, 1 line, END ellipsis
-├──────────────────────────────────────────────┤ 1px black
-│ Ⓐ  ━━━━━━━━●───────────────────────   ⌄     │ brightness row 48dp
-├──────────────────────────────────────────────┤ 1px black (only while the options panel is open)
-│ [question row, only while asked, §4.4]        │
-│ 스와이프로 밝기 조절                     (●  ) │ option row ≥56dp
-│ 화면 왼쪽 가장자리를 위아래로 밀어 밝기를 바꿉니다 │
-│ ─────────────────────────────── (light)       │
-│ 기기 밝기 직접 조절                      (●  ) │ option row (§4.4)
-│ 전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다 │
-│ [기기 조명 설정 열기 ›, conditional, §4.4]      │
-└──────────────────────────────────────────────┘ 1px black (bar edge)
+│ 배드 본 블러드 1-353 완                         │ title row: 18sp bold, 1 line, END ellipsis
+└──────────────────────────────────────────────┘ panel edge [2026-10-05]: 4 dp shadow (phone) / 1px edge (e-ink, 흑백 반전)
+  Ⓐ  ━━━━━━━━●───────────────────────   ⌄       brightness row 48dp on the PAGE colour, nothing under it
+  ────────────────────────────────────────────   1px rule (only while the options panel is open)
+  [question row, only while asked, §4.4]          the options, on the page colour too
+  스와이프로 밝기 조절                     (●  )   option row ≥56dp
+  화면 왼쪽 가장자리를 위아래로 밀어 밝기를 바꿉니다
+  ─────────────────────────────── (light)
+  기기 밝기 직접 조절                      (●  )   option row (§4.4)
+  전면광이 안 바뀔 때 켜세요 · 기기 전체 밝기를 바꿉니다
+  [기기 조명 설정 열기 ›, conditional, §4.4]
+ ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔  while open: the same edge under the options
 ```
 
 | View | Spec |
 |---|---|
+| bar **[2026-10-05]** | `ChromeBar(edgeAtTop = false)`: fills the surface from the screen's top through the inset padding, draws its edge band in its own bottom padding (`edgeArea`: 4 dp with a shadow, 1 px with a line) over the page. **[2026-10-05, later]** `pageFrom` = the brightness row's index: the panel (surface) ends at that row's top, the rows from it on are filled with `page` (the page's own background, so the row reads as part of the page: the user, "색 조절하는 부분만이라도 색을 아예 똑같이"), and the edge band covers the brightness row's head. The bar pads its bottom by `edgeArea` only while the options are open, and draws a second band there; closed, the brightness row ends the bar with nothing under it. Still one view: the phone's fade and slide move it as one unit, and nothing in the page re-lays out. |
 | actions row | `horizontal`, `minimumHeight 56dp`, padding `(4, 0, 4, 0)` dp. Contents: `[back 48]` `[spacer weight 1]` `[bookmark 48][tts 48][search 48][toc 48][gear 48][more 48]`. Content descriptions: "뒤로", "북마크 추가"/"북마크 삭제", "TTS 읽기", "검색", "목차", "읽기 설정", "더보기". On the Comet: 8 + 7·48 = 344 dp, spacer 16 dp. **Width guard [Δ]:** `bookmark` is `GONE` when the bar is under 352 dp wide. It is decided in `setVisible(true)` from `root.width − left − right insets` (cached; recomputed only when that width changes), **never inside an `OnLayoutChangeListener`**: changing visibility or sizes during a layout pass forces a second layout and draw, i.e. a second e-ink update on the first show. While it is hidden, the ⋮ menu gains "북마크 추가" / "북마크 삭제" (READER_CORE, `ReaderMenus`), so the action is never lost on a narrow phone. |
-| title row | Padding `(20, 0, 16, 10)` dp. `label("", 17f, bold = true, maxLines = 1)`, END ellipsis. One line, so the bar height never depends on the title. `setTitle` sets it only on change (existing guard). |
-| hairline | `ctx.hairline()` |
-| brightness row | Padding `(4, 0, 4, 0)` dp. Contents: `[auto 48]` `[SeekBar weight 1]` `[options 48]`. The auto button's content description is "시스템 밝기 따르기" (manual) or "직접 밝기 조절" (auto). The options button's is **"밝기 옵션"**. Verdict NONE (§4.4) replaces the auto button and the SeekBar with one 15 sp link "기기 조명 설정에서 조절 ›". |
-| SeekBar (`einkSeekBar`, shared with the seek row) | Thumb 16 dp (was 20), `thumbOffset 8dp`, padding `(12, 16, 12, 16)` dp, `minimumHeight 48dp`. Progress tint black, background tint `Ink.DISABLED`, `splitTrack = false`. **Auto look:** progress tint `Ink.DISABLED` and a hollow 16 dp ring thumb (white fill, 1.5 dp black stroke). **Manual look:** solid black thumb. Both thumb drawables are cached and swapped only when the look changes. The first `onProgressChanged(fromUser)` switches to the manual look immediately, so the icon never says "auto" mid-drag. **[Δ]** Content descriptions: "밝기" (brightness bar) and "페이지 위치" (seek bar). A bare SeekBar is read only as a percentage. |
-| options panel | A vertical `LinearLayout`, `GONE` by default, preceded by a black hairline that is visible with it. **[Δ] Built lazily:** the constructor adds only the empty container; its rows (question, two toggles, the panel link) are created on the first `setBrightnessOptionsOpen(true)`, so opening a book inflates nothing new before the first page. The `setLight*` / `setSwipeOption` setters only cache their values until the rows exist. It is **closed by `setVisible(false)`**. `LightController.bind()` reopens it while a question is pending. Rows are built by the private `optionRow(title, subtitle, trailing)`: `minHeight 56dp`, padding `(20, 8, 16, 8)` dp, title 15 sp, subtitle 13 sp GRAY `keepAll`, max 2 lines, tapping anywhere toggles; the trailing `InkToggle` ends at W − 16 dp. A light hairline separates rows. **[Δ] Accessibility:** the row is the one focusable unit. The toggle gets `importantForAccessibility = NO`, and the row's `AccessibilityDelegate` reports `isCheckable = true`, `isChecked` = the toggle's state, and the title and subtitle as its text. Otherwise TalkBack announces an unlabelled switch next to a clickable text block. |
-| bottom hairline | Black, the bar edge |
+| title row | Padding `(20, 0, 16, 12)` dp. `label("", 18f, bold = true, maxLines = 1)` **[2026-10-05]** (the top of the type scale, §2.1), END ellipsis. One line, so the bar height never depends on the title. `setTitle` sets it only on change (existing guard). **[2026-10-05, review]** Top margin −9 dp (`ChromeMath.TITLE_LIFT_DP`): the box starts at 47 dp, inside the actions row's empty foot (its 48 dp buttons end at 52 dp, their 40 dp pressed circle at 48 dp, the title's glyphs start ≈ 51 dp). The title is not clickable, so a tap there still reaches the buttons. Its glyph centre ≈ 59 dp under the bar's top and the surface's end ≈ 83 dp, as ReadEra's (59.8 / 83.7 dp on the user's S25; ours were 68.8 / 91.7, the icons at the same 28 dp). |
+| rule | ~~1 px `rule`~~ **[2026-10-05, later]** gone: the panel's edge separates the title from the brightness row |
+| brightness row | Padding `(4, 0, 4, 0)` dp. Contents: `[auto 48]` `[SeekBar weight 1]` `[options 48]`. The auto button's content description is "시스템 밝기 따르기" (manual) or "직접 밝기 조절" (auto). The options button's is **"밝기 옵션"**. Verdict NONE (§4.4) replaces the auto button and the SeekBar with one 15 sp link "기기 조명 설정에서 조절 ›". **[2026-10-05, later]** On the page colour: the two icons and the link in `hist` (the history row's colour on the page), the phone's pressed circle as elsewhere. |
+| SeekBar (`chromeSeekBar`, shared with the seek row; **[2026-10-05]**) | A rounded track (`LayerDrawable`: background + `ClipDrawable` progress, `setLayerHeight`, centred), inactive part `track`, progress `accent`, and an `accent` dot thumb (`thumbOffset` = half its width): **2 dp track and 16 dp thumb on a phone** (ReadEra measures 2 dp / 12 dp on the S25; 16 dp is this spec's smallest thumb), **3 dp / 18 dp on e-ink**. `sizeSliders` builds new drawables only when the device class changes (once, when the probe says phone, in the update that shows the bars). Padding `(12, 15, 12, 15)` dp, fixed 48 dp height (the drag area), `splitTrack = false`, still a `SwipeSafeSeekBar`. **Auto look:** progress `track` and a hollow ring thumb of the same size (`page` fill **[2026-10-05, later]**, was `surface`; 1.5 dp `text` stroke). **Manual look:** solid accent thumb. Both thumb drawables are cached and swapped only when the look changes. The first `onProgressChanged(fromUser)` switches to the manual look immediately, so the icon never says "auto" mid-drag. **[Δ]** Content descriptions: "밝기" (brightness bar) and "페이지 위치" (seek bar). A bare SeekBar is read only as a percentage. |
+| options panel | A vertical `LinearLayout`, `GONE` by default, preceded by a black hairline that is visible with it. **[2026-10-05, later]** On the page colour like the brightness row (the toggles' paper `page`), with the bar's edge under it while open. **[Δ] Built lazily:** the constructor adds only the empty container; its rows (question, two toggles, the panel link) are created on the first `setBrightnessOptionsOpen(true)`, so opening a book inflates nothing new before the first page. The `setLight*` / `setSwipeOption` setters only cache their values until the rows exist. It is **closed by `setVisible(false)`**. `LightController.bind()` reopens it while a question is pending. Rows are built by the private `optionRow(title, subtitle, trailing)`: `minHeight 56dp`, padding `(20, 8, 16, 8)` dp, title 15 sp, subtitle 13 sp GRAY `keepAll`, max 2 lines, tapping anywhere toggles; the trailing `InkToggle` ends at W − 16 dp. A light hairline separates rows. **[Δ] Accessibility:** the row is the one focusable unit. The toggle gets `importantForAccessibility = NO`, and the row's `AccessibilityDelegate` reports `isCheckable = true`, `isChecked` = the toggle's state, and the title and subtitle as its text. Otherwise TalkBack announces an unlabelled switch next to a clickable text block. |
+| bar edge | Drawn by `ChromeBar` (no view): a 4 dp shadow on a phone, 1 px `edge` on e-ink and 흑백 반전. **[2026-10-05, later]** Between the title and the brightness row (over the row's head), and under the open options |
 
-Heights: 56 + ≈32 + 1 + 48 + 1 ≈ **138 dp** closed, plus the top inset. About 252 dp with two option rows open.
+Heights **[2026-10-05, later]**: 56 + ≈ 36 + 48 ≈ **140 dp** closed (the edge lies over the brightness row's head; was
+145 with the title rule and the edge under the bar), plus the top inset. About 257 dp with two option rows open (the rule,
+the rows and the edge under them). **[2026-10-05, review]** 56 − 9 + ≈ 36 + 48 ≈ **131 dp** closed (the surface block
+≈ 83 dp, ReadEra's ≈ 83; the brightness track's centre ≈ 107 dp under the bar's top, ReadEra's ≈ 103), ≈ 248 dp open.
 
 ### 2.3 Brightness row behaviour (item 5)
 
@@ -471,24 +505,36 @@ Heights: 56 + ≈32 + 1 + 48 + 1 ≈ **138 dp** closed, plus the top inset. Abou
 ### 2.4 Bottom bar (`ReaderChrome.bottom`, a vertical `LinearLayout`, white, clickable, bottom inset as padding)
 
 ```
-├──────────────────────────────────────────────┤ 1px black (bar edge)
-│ ‹ 10 페이지로            지우기          512 페이지로 › │ return strip 44dp — GONE when empty (§3)
-│ ─────────────────────────────── (light)       │ part of the strip
-│                  10 / 3614             ⟳  📌  │ label row 52dp (FrameLayout)
-│ ⏮  ━━━━━━●──────────────────────────────  ⏭  │ seek row 48dp
-└──────────────────────────────────────────────┘ (bottom inset)
+  ‹ 10쪽으로          지우기          512쪽으로 ›    history row 48dp on the PAGE colour, 3 equal columns — GONE when empty (§3)
+├──────────────────────────────────────────────┤ panel edge: 4 dp shadow over the row's foot (phone) / 1px edge (e-ink)
+│                  10 / 3614             ⟳  📌  │ label row 50dp: its 48dp controls centred 25 dp under the panel's top
+│ ⏮  ━━━━━━●──────────────────────────────  ⏭  │ seek row 48dp from 37 dp: track centre 61 dp (36 dp under the label's)
+└──────────────────────────────────────────────┘ 85 dp, then ChromeMath.bottomGap: max(nav inset, gesture strip, 16 dp),
+                                                   0 in a window above the display's bottom with no bottom inset
 ```
 
 | View | Spec |
 |---|---|
-| return strip | `ReturnNav.dock` (§3.4), inserted at index 1 by the constructor |
-| label row | `FrameLayout`, `minimumHeight 52dp`. |
-| ↳ `pageLabel` | `label("", 17f, bold = true, maxLines = 1)`. **[Δ]** `FrameLayout.LayoutParams(labelW, 48dp, Gravity.CENTER)` with a **fixed** width `labelW = rowW − 2·RESERVE` (`RESERVE = 4 + 48 + 48 + 8 = 108 dp`; `ChromeMath.labelMaxWidth`), not `WRAP_CONTENT`. Android documents autosize as unreliable with `wrap_content` (it can re-measure on every text change), and a fixed box also gives a steady, larger tap target. `labelW` is computed in `setVisible(true)` from `root.width − insets` and applied only when it changes, never in a layout listener (see the width guard in §2.2). `gravity = CENTER`, padding 12 dp on each side, `fontFeatureSettings = "tnum"`, `pressableBackground()`, tap → `actions.onPageLabel()`. **No underline**: delete the working tree's `Paint.UNDERLINE_TEXT_FLAG`. On the Comet `labelW` is 144 dp: "12345 / 23259" at 17 sp bold tnum measures about 110 dp plus 24 dp of padding. `setAutoSizeTextTypeUniformWithConfiguration(14, 17, 1, SP)` (API 26) covers large font scales. The label stays centred on the **full width** and can never run under an icon. **[Δ] Accessibility:** the content description is "페이지 이동, 3 / 167", set together with the text in `setPage` (chrome visible only, so the String is not a per-turn cost while reading). A fixed "페이지 이동" would hide the page number from TalkBack. CI taps it with `tap_label "페이지 이동" contains`. |
+| bar **[2026-10-05]** | `ChromeBar(edgeAtTop = true)`, `panelFrom = 1`: the panel (surface) starts at the label row and reaches the screen edge; the edge band sits in the bar's top padding (`edgeArea`) or, with the history row shown, over that row's bottom 4 dp, as in ReadEra. The row's top margin is −`edgeArea` (`ChromeBar.fitLead`, set with the look, never in a layout pass): it starts over that padding, so no strip of bare page is left above it where the clickable bar would swallow a tap. |
+| history row | `ReturnNav.dock` (§3.4), **[2026-10-05]** at index 0, right above the panel, on the page colour |
+| label row | `FrameLayout`, `minimumHeight 48dp` **[2026-10-05]** (was 52). **[2026-10-05, later]** 50 dp (`ChromeMath.LABEL_ROW_DP`), its 48 dp children centred (the label's centre 25 dp under the panel's top, as in ReadEra), in one `FrameLayout` with the seek row; added after it, so in the 12 dp the two rows' targets share (37..49 dp, empty space between the glyphs) the label row's controls take the touch and a near miss of the pin or the label never jumps to another chapter or page. Where the label row is empty (left of the label) the touch reaches the seek row. **[2026-10-05, review]** So in that 12 dp band the label row's controls win: ⏭ under the pin, and the seek bar under the label and rotation, answer from 49 dp down (36 dp of their own; their views and hit rects stay 48 dp); ⏮ and the seek bar's left end keep all 48 dp (11f-17). |
+| ↳ `pageLabel` | **[2026-10-05]** `label("", 17f, maxLines = 1)`: the weight and colours come from spans. **[Δ]** `FrameLayout.LayoutParams(labelW, 48dp, Gravity.CENTER)` with a **fixed** width `labelW = rowW − 2·RESERVE` (`RESERVE = 4 + 48 + 48 + 8 = 108 dp`; `ChromeMath.labelMaxWidth`), not `WRAP_CONTENT`. Android documents autosize as unreliable with `wrap_content` (it can re-measure on every text change), and a fixed box also gives a steady, larger tap target. `labelW` is computed in `setVisible(true)` from `root.width − insets` and applied only when it changes, never in a layout listener (see the width guard in §2.2). `gravity = CENTER`, padding 12 dp on each side, `fontFeatureSettings = "tnum"`, a phone's pressed rect (none on e-ink), tap → `actions.onPageLabel()`. **[2026-10-05]** The text is a `SpannableString` split at `ReaderFormat.pageLabelCut` (" / "): the page `StyleSpan(BOLD)` in `text`, the total `RelativeSizeSpan(0.82)` (≈ 14 sp) regular in `text2` (`ForegroundColorSpan`); 17 sp base, below the 18 sp title. **No underline**: delete the working tree's `Paint.UNDERLINE_TEXT_FLAG`. On the Comet `labelW` is 144 dp: "12345 / 23259" (17 sp bold head, ≈ 14 sp total, tnum) measures under the 110 dp it took all at 17 sp bold, plus 24 dp of padding. `setAutoSizeTextTypeUniformWithConfiguration(14, 17, 1, SP)` (API 26) covers large font scales. The label stays centred on the **full width** and can never run under an icon. **[Δ] Accessibility:** the content description is "페이지 이동, 3 / 167", set together with the text in `setPage` (chrome visible only, so the String is not a per-turn cost while reading). A fixed "페이지 이동" would hide the page number from TalkBack. CI taps it with `tap_label "페이지 이동" contains`. |
 | ↳ right cluster | `horizontal`, `LayoutParams(WRAP, 48dp, END or CENTER_VERTICAL)`, `marginEnd 4dp`: `[rotation 48][pin 48]`. Rotation: content description "화면 회전 잠금", long-press → `onRotationChooser()`, icon swap only. Pin: content descriptions in §3.1. |
-| seek row | `horizontal`, padding `(4, 0, 4, 0)` dp: `[⏮ 48 "이전 화"][SeekBar weight 1][⏭ 48 "다음 화"]` (the working tree's T1-5 buttons, kept) |
-| seek preview box | Unchanged mechanics. Its text changes to `ReaderFormat.previewLabel(page, chapter)` = **"1234쪽 · 제3장 …"** (was "p. 1234 · …"; READER_A, §6 P1-17). |
+| seek row | `horizontal`, padding `(4, 0, 4, 0)` dp: `[⏮ 48 "이전 화"][SeekBar weight 1][⏭ 48 "다음 화"]` (the working tree's T1-5 buttons, kept). **[2026-10-05, later]** Top margin 37 dp in the panel's `FrameLayout` (`ChromeMath.SEEK_TOP_DP`): the track's centre 61 dp under the panel's top and 24 dp above its content's bottom (ReadEra's 36 dp from the label, ours were 47). |
+| seek preview box | Unchanged mechanics. Its text changes to `ReaderFormat.previewLabel(page, chapter)` = **"1234쪽 · 제3장 …"** (was "p. 1234 · …"; READER_A, §6 P1-17). **[2026-10-05]** `surface` box, 16 sp bold `text`; on a phone an 8 dp rounded 1 px border in `track` (it floats over the page text, where `divider` would vanish), on e-ink a square 1 dp `edge`. |
 
-Heights: 1 + 52 + 48 = **101 dp**, or 146 dp with the strip.
+Heights **[2026-10-05]**: 4 + 48 + 48 = **100 dp** on a phone (1 px edge on e-ink), 144 dp with the history row (48 dp,
+starting over the 4 dp edge padding), plus the bottom padding. **[2026-10-05, later] (the user beside ReadEra: "하단에 …
+바가 훨씬 위로 크지")** 4 + 85 = **89 dp**, 133 dp with the history row, plus the bottom gap `ChromeMath.bottomGap(bar
+inset, mandatory gesture inset, 16 dp, floats)`: one value, never a sum. S25 full screen: the 48 px gesture strip → a 101
+dp panel (ReadEra 100), the seek track's centre 40 dp above the edge; the S25's upper split-screen window
+(`ReaderWindow.floatsAboveBottom`: multi-window and, API 30+, the window's bottom above the display's; no bottom inset at
+all) → 0: nothing of the system's under it, an 85 dp panel (ReadEra's panel content, measured in the user's shots with
+ReadEra in the LOWER window, above its own 15 dp navigation strip); the lower window keeps its navigation bar / gesture
+inset; the Comet (full screen, no gesture navigation, a bezel over the outer rows) → 16 dp, never dropped. Was 112 dp in
+the S25's upper window. **[2026-10-05, review]** Before API 30 `floatsAboveBottom` is false for every window: its
+position is unknown there, and a lower split window in full screen reports no bottom inset at all (`insetsOf` zeroes the
+bars, no gesture inset before API 29), so it keeps the 16 dp.
 
 ### 2.5 `ReaderChrome` API (fixed at phase 0)
 
@@ -508,12 +554,13 @@ internal class ReaderChrome(
         fun onPageLabel()
         fun onChapter(next: Boolean)
         fun onRotation(); fun onRotationChooser()
-        /** The pin: this page becomes the book's return point (or is released, on that page). */
+        /** The pin: this page is saved as the newest place to go back to (or, when it already is, released). */
         fun onPinHere()
         fun onSeekStart(); fun onSeekPreview(progress: Int): String; fun onSeekDone(progress: Int)
         // deleted: onPin (메뉴 고정), onBrightnessAuto, onBrightness, onBrightnessCollapsed (→ LightController)
     }
-    val top: LinearLayout; val bottom: LinearLayout; val gear: ImageButton; val more: ImageButton
+    val top: ChromeBar; val bottom: ChromeBar; val gear: ImageButton; val more: ImageButton   // ChromeBar is a LinearLayout
+    fun setLook(page: PagePalette, eink: Boolean?)   // [2026-10-05] stored while hidden, applied at show (or at once)
     val isSeeking: Boolean; val isVisible: Boolean; val bottomHeight: Int
     fun attach(root: FrameLayout)
     fun setVisible(visible: Boolean)          // hiding also closes the options panel and the seek preview
@@ -522,7 +569,7 @@ internal class ReaderChrome(
     fun setTitle(text: CharSequence)
     fun setPage(label: String, max: Int, progress: Int)
     fun setBookmarked(on: Boolean)            // top-row icon; cached, no redraw when unchanged
-    fun setPinned(pinned: Boolean, onMarkPage: Boolean)   // icon + content description (§3.1)
+    fun setPinned(on: Boolean)                // icon + content description (§3.1): filled "고정 해제" / outline
     fun setRotationLocked(locked: Boolean)    // icon only
     // Bound by LightController only (same owner):
     fun setBrightness(pos: Float, auto: Boolean)
@@ -575,190 +622,242 @@ visibility, and a tap with the chrome up always closes it.
 
 ---
 
-## 3. Pin = return point (READER_UI: `reader/ReturnNav.kt`; wiring READER_A)
+## 3. Pin and return history (READER_UI: `reader/ReturnNav.kt`; wiring READER_A)
+
+**[2026-10-05] User decision: a browser-style history, as ReadEra's.** The user rejected the mark/other model (★1–★4
+below the line, until 2026-10-05) after CI showed the row "104쪽 | 지우기 | 106쪽으로" with a grey, non-clickable
+"📌 104쪽" on the pinned page: "이전이 없으면 왼쪽에 사라지고 이전이 있으면 왼쪽이 생기는 방식이어야지. 오른쪽은 다음이
+있으면 생기고 없으면 없고". Their two ReadEra screenshots (3259 pages): on page 1749 the row above the bottom panel reads
+"< 1 페이지로 | 지우기 | 150 페이지로 >"; on page 1 it reads "지우기 | 1749 페이지로 >" (no left item, 지우기 still in the
+middle). That is a back / forward history: at 1, seek to 1749 (back [1]); seek to 150, with or without reading 1749
+first (back [1, 1749]); "‹ 1749" → on 1749 back [1], forward [150] = shot 1; "‹ 1" → on 1 back [], forward
+[150, 1749] (the nearest, 1749, shows) = shot 2.
+Kept from before: the pin button of the bottom bar (chrome.md item 4: "pin a RETURN POINT, not the chrome"), the row
+right above the bottom panel in three equal columns with 지우기 that never moves (c184879), the floating chip after a
+jump made with the menu hidden and ★5 (the chip's visibility is derived). **Review fix (2026-10-05):** ★3 (several
+jumps before a manual turn keep only the first origin) swallowed the user's own sequence (a seek to 1749 looked at
+without turning a page, then a seek to 150, left no 1749), so every remembered jump's origin is now a place, as in
+ReadEra; ★3 stays only for the chip, which offers the first origin of such a chain.
 
 ### 3.1 What the user sees
 
 | Action | Result |
 |---|---|
-| Menu open, tap the **pin** (outline icon, content description **"이 페이지 고정"**) | The icon fills. The strip appears: **"[pin icon] 10 페이지"** in grey and **"지우기"**. **[Δ]** On the mark's own page the left item swaps the chevron for a small filled pin and drops "로" (it is where you are, not a link), so the state survives e-ink waveforms that turn grey into white. The page does not move or relayout, and there is no toast. |
-| Read on, open the menu | The strip reads "‹ 10 페이지로" (black, tappable) · "지우기". The pin's content description is "이 페이지로 고정 옮기기". |
-| Tap "‹ 10 페이지로" | Jump to page 10 with the menu still open. The strip reads "[pin icon] 10 페이지" (grey) · "지우기" · **"512 페이지로 ›"** (where you were). Tapping them alternately toggles between the two places. |
-| On page 10, tap the pin (filled, content description **"고정 해제"**) | Same as 지우기: cleared. The icon returns to outline and the strip disappears. |
-| TOC, search, bookmark or go-to jump **with the menu hidden** | A **floating chip** appears bottom-left: "‹ 37 페이지로 \| ✕". It hides after 2 manual turns, on ✕, or on using or clearing a place. **[Δ]** Opening the menu only *covers* it (the strip shows the same place); closing the menu brings it back while the 2 turns have not passed. |
-| Seek-bar jump (menu open) | The origin appears at once in the strip as "‹ N 페이지로". **[Δ]** Closing the menu shows it as the chip, as today's chip does after a seek (the old code showed it even with the menu up). **[Δ] Scrubbing:** further seeks, go-tos or TOC jumps made before any manual turn keep the *first* origin, so fine-tuning the seek bar never loses the way back to where you were reading. |
-| Next day, reopen the book | The pin is still there. It loads **after** the first page and shows in the strip the next time the menu opens. |
+| TOC, search, bookmark, go-to, seek bar, link or note jump (a *remembered* jump) from page F | F becomes the newest place to go back to; places gone back from are forgotten (as in a browser). With the menu open the row reads "‹ F쪽으로" · 지우기. |
+| The same **with the menu hidden** | A **floating chip** appears bottom-left: "‹ F쪽으로 \| ✕". It hides after 2 manual turns, on ✕, on using the history (row or chip), on the pin and on 지우기. Opening the menu only *covers* it (the row shows F, or after several jumps in a row the newest origin, which steps back to F); closing the menu brings it back while the 2 turns have not passed. |
+| Several remembered jumps before a manual turn (seek, seek again; TOC, then a link) | Every origin is a place, as in ReadEra: at 1, seek to 1749, then (with or without a page turned, the menu open or closed) seek to 150 → on 150 "‹ 1749쪽으로", then "‹ 1쪽으로". ★3 (the chip only): the chip shown after such a chain offers its **first** origin (where you were reading, not a page passed while scrubbing); a tap on it goes there as that many ‹ taps would (the pages passed become places ahead). |
+| Tap "‹ N쪽으로" (left) on page H | Go to N with the menu still open. N leaves the back list and H becomes the nearest place ahead: the row reads "‹ (the next older place)" or nothing on the left, 지우기, "H쪽으로 ›". |
+| Tap "M쪽으로 ›" (right) on page H | Go to M. H becomes the newest place back; the right item shows the next place ahead, or nothing. |
+| A tap on the row or the chip while a jump is still on its way (a far layout) | Ignored: the row still describes the page on screen. A use whose page cannot be laid out ("이 부분을 표시하지 못했습니다") is undone, so its place is not lost. |
+| A new remembered jump after going back | The places ahead are forgotten (browser rule). |
+| Menu open, tap the **pin** (outline icon, content description **"이 페이지 고정"**) | This page is saved as the newest place to go back to (the places ahead stay, less this page). The icon fills ("고정 해제"). The row never offers the page you are on and keeps offering the older place, so it does not change on this page (on 1749 in ReadEra's first shot it still reads "‹ 1쪽으로 · 지우기 · 150쪽으로 ›"); once you leave, "‹ P쪽으로" shows. The page does not move or relayout, and there is no toast. |
+| On that page, tap the filled pin ("고정 해제") | That place is removed again; the icon is an outline. |
+| 지우기 | Both lists are emptied (also in storage); the row and the chip go. |
+| Next day, reopen the book | The history (both lists) is still there. It loads **after** the first page and shows in the row the next time the menu opens. |
 
-Where the pin stays off the page:
-- Pinned places never float over the page. The page stays clean, and the pin is "언제든" one menu tap away.
-- **[Δ]** This is the one reading of "띄워주는" that could still be wrong (§9 R13). If D2 shows that the user expects the
-  pinned link on the page with the menu closed, set `ReturnNav.PIN_FLOATS = true` (one constant, default false). The
-  chip then shows "‹ N 페이지로 | ✕" whenever a pin exists, the menu is hidden and the mark is not on screen. It
-  never hides by turns, and ✕ hides it until the next pin or jump. No other code changes, and there is still no
-  relayout because the chip is an overlay.
-- Chapter ⏮/⏭, auto turn and TTS do not create return points (unchanged).
+**Pin rule (decided 2026-10-05, the simplest that gives clear feedback):** the pin icon is **filled iff back's top was
+saved by the pin and is on the current page** (`pinTop`), i.e. right after pinning while you stay on that page, and
+again when you page back to it by hand or reopen the book there. A jump's origin on this page is no pin: the icon is an
+outline there, and a tap turns that place into the pin (no new entry). A tap on the filled pin removes that place
+("고정 해제"); a tap on the outline pin saves this page. Pinning the page that is the nearest place ahead moves it to the
+back list (it is not on both sides). Going back to a pinned page uses the pin up: it leaves the back list (you are on
+that page) and the page you left becomes the nearest place ahead, so the icon is an outline there and, once you read
+on, the pinned page is in neither list; pinning it again is one tap. Going back past a pin from its own page (‹ to an
+older place) takes the pin along with the page you leave: it becomes the nearest place ahead.
 
-### 3.2 `ReturnPoints` (pure, JVM-tested; in `ReturnNav.kt`)
+Where the history stays off the page:
+- Places never float over the page except the chip after a remembered jump. The page stays clean, and the history is
+  one menu tap away.
+- **[Δ]** `ReturnNav.PIN_FLOATS = true` (one constant, default **false**, §9 R13) would show the chip "‹ N쪽으로 | ✕"
+  whenever back's top exists, the menu is hidden and that place is not on screen. It never hides by turns, and ✕ hides
+  it until the next pin or jump. No other code changes, and there is still no relayout because the chip is an overlay.
+- Chapter ⏮/⏭, auto turn, TTS and manual turns do not create places (unchanged).
+
+### 3.2 `ReturnHistory` (pure, JVM-tested; in `ReturnNav.kt`)
 
 State:
-- `mark: DocPosition?`: pinned, or temporary (a jump origin);
-- `pinned: Boolean`;
-- `other: DocPosition?`: the second place;
-- **[Δ]** `offer: Chip { NONE, MARK, OTHER }`: the place the last remembered jump offers back. It replaces the
-  earlier `chip` field, which also encoded whether the chrome was up. The floating chip shows iff `offer != NONE`,
-  the chrome is hidden and that place is not on screen (§3.4), so the offer survives opening and closing the menu;
-- `turns: Int`: manual turns since that jump; **[Δ]** `chainOffer: Chip`: the `offer` the first jump of the current
-  chain set;
-- **[Δ]** `landed: Boolean`: true after a remembered jump until the next manual turn, use, pin or clear. It means
-  "only passing through; not reading here yet".
+- `back: List<DocPosition>`: the places to go back to, **the most recent last**;
+- `forward: List<DocPosition>`: the places gone back from, **the nearest last**;
+- both keep `MAX = 20` places; the oldest go first;
+- `offer: Boolean`: the chip offers back's top (the last remembered jump's way back). The chip shows iff `offer`, the
+  chrome is hidden and back's top is not on screen (★5), so the offer survives opening and closing the menu;
+- `turns: Int`: manual turns since that jump;
+- `landed: Boolean`: a chain of remembered jumps is open (from a jump until the next manual turn, use, pin or clear);
+- `chainBase` (private): the index in back of the chain's first origin, the chip's place while `offer` (★3, the chip
+  only); a trim of the oldest place keeps it on the chain's oldest place still kept;
+- `pinTop: Boolean`: back's top was saved by the pin and has not been replaced since (stored with the history).
 
-Transitions (chrome.md §4.2 with the changes marked ★; ★3–★5 are the critic's [Δ]):
+"The same page" is the host's question, so every call takes `here: (DocPosition) -> Boolean` = `isOnCurrentPage`.
+Every place pushed is the current one, so **a push is skipped when the list's top is `here`** (one entry per page).
+The row asks for **each list's newest place that is not `here`**, so a place on this page (a pin, a jump's origin,
+two places a re-parse put on one page) never hides an older one; these queries use index loops and allocate nothing.
 
 | Call | Effect |
 |---|---|
-| `pin(here, onMark)` | If `pinned && onMark` → `clear()`. ★1 Else if `!pinned && mark != null && !onMark` → `other = mark` (a temporary origin is kept as the other place), then `mark = here; pinned = true`. Otherwise `mark = here; pinned = true`, and `other = null` if `other` is on this page. Always `offer = NONE; landed = false`. |
-| `jumped(from, fromOnMark)` **[Δ]** (no `chrome` argument any more) | ★3 If `landed`: the places stay as they are (the chain keeps its **first** origin: scrubbing the seek bar three times still returns to where you were reading); `offer = chainOffer` (re-armed if ✕ had hidden it) and `turns = 0`. Otherwise: if `!pinned` → `mark = from; other = null; offer = MARK`. If pinned and `fromOnMark` → `offer = MARK`, and ★4 **`other` is kept** (the place you were reading before you visited the pin stays reachable; the old rule set it to null and lost it). If pinned and not `fromOnMark` → `other = from; offer = OTHER`. Then `chainOffer = offer; turns = 0; landed = true`. |
-| `useMark(here, onMark)` | `if (mark == null \|\| onMark) null else { other = here; offer = NONE; landed = false; mark }` |
-| `useOther(here, onMark)` | `val t = other ?: return null; other = if (onMark) null else here; offer = NONE; landed = false; t` |
-| `clear()` | Everything null or false. `offer = NONE`. |
-| `manualTurn(): Boolean` | `landed = false`. Then, if `offer != NONE && ++turns >= 2` → `offer = NONE`, return true (hide now). |
-| `hideChip()` (✕) | `offer = NONE` (the places stay: the strip still has them) |
-| `restorePinned(pos)` | If `pinned`, no-op. Else, if `mark != null`, `other = mark`. Then `mark = pos; pinned = true`. |
-| `reparsed(p)` | `other = null; offer = NONE; landed = false`. If `pinned && p != null` → `mark = p`, else `mark = null; pinned = false`. |
-
-★2 Only the **pinned** mark is persisted. Temporary marks are session-only, like today's chip.
-
-★5 **[Δ]** The chip's visibility is derived, not stored: `offer != NONE && !chromeVisible && !isOnCurrentPage(target)`.
-Today's chip survives a menu open and close (and even shows over the open menu after a seek). The earlier draft hid it
-for good when the menu opened, and never offered it after a seek made with the menu up. That was a regression.
+| `jumped(from, here): Boolean` | Push `from` on back (skipped when back's top is on this page), empty forward. If no chain is open, `chainBase` = back's top (the chain's origin). `landed = true; offer = true; turns = 0` (re-armed if ✕ had hidden it). True when a list changed (only then is the history stored). |
+| `goBack(at, here)` | T = back's newest place not on this page; `null` if none. The places above T are on this page (a pin, an origin): they go, and `at` is pushed on forward (skipped when forward's top is on this page), so this page is kept ahead. Pop T, `pinTop = false`, end the chain (`offer = false; landed = false`), return T. |
+| `chipBack(at, here)` | The chip: back to `chipPlace` as that many ‹ taps would: `at`, then the places above it (nearest last, those on this page left out) go on forward. `null` when back is empty. |
+| `goForward(at, here)` | T = forward's newest place not on this page; `null` if none. Drop T and the places above it, push `at` on back (skipped when back's top is on this page, e.g. a pin, which stays the pin), end the chain, return T. |
+| `pin(at, here)` | If `pinnedHere(here)`: pop back's top (고정 해제), `pinTop = false`. Else push `at` on back (an origin already on top here becomes the pin), `pinTop = true`, and drop forward's top places on this page. Forward is otherwise kept. End the chain. |
+| `pinnedHere(here)` | `pinTop` and back's top is on this page (the pin icon). |
+| `leftPlace(here)` / `rightPlace(here)` | back's / forward's newest place not on this page, or null. |
+| `chipPlace()` | While `offer`, back[`chainBase`] (the chain's first origin); otherwise back's top. |
+| `rowShown(here)` | `leftPlace != null \|\| rightPlace != null`. |
+| `clear()` | Both lists empty; `pinTop = false; offer = false; turns = 0; landed = false`. |
+| `manualTurn(): Boolean` | `landed = false`. Then, if `offer && ++turns >= 2` → `offer = false`, return true (hide now). |
+| `hideChip()` (✕) | `offer = false` (the places stay: the row still has them). |
+| `restore(storedBack, storedForward, storedPin)` | The stored lists, loaded after the first page. Places of this session stay on top: the stored back list goes under them (a stored top equal to the session's first place is kept once); the stored forward list is kept only while this session has no places at all (a jump would have cut it). `pinTop` takes `storedPin` when the stored top is back's top. |
+| `reparsed(map)` | Each place goes where `map(index, place)` puts it (index in back-then-forward order; null drops it), a place equal to the one before it is dropped; `pinTop` stays only while back's top was kept; `offer = false; turns = 0; landed = false`. |
+| `copyFrom(other)` | The whole state of `other` (ReturnNav undoes a use whose page could not be laid out). |
+| `chipVisible(offer, chromeVisible, targetOnScreen)` | ★5 `offer && !chromeVisible && !targetOnScreen` (derived, never stored). |
+| `label(page)` | "N쪽으로" (the row and the chip add the chevron). |
 
 ### 3.3 Persistence
 
-**`ReturnMarkCodec`** (pure, in `ReturnNav.kt`):
-- **Format:** `"m1|<section>|<offset>|<charFraction>|<textSignature or empty>"`.
-- **`decode`** is tolerant. It returns null for a bad prefix, bad numbers, NaN, or a negative section or offset, and
-  it clamps the fraction to 0..1.
-- **Placement when restoring:**
-  - TXT whose stored signature differs from `LayoutKeys.textSignature(...)` → `counts.locateFraction(fraction)`;
-  - otherwise `DocPosition(section.coerceIn, offset.coerceIn)`. EPUB always uses this, since its signature is null.
+**`ReturnHistoryCodec`** (pure, in `ReturnNav.kt`), in the existing column `book_prefs.return_mark` (no schema change):
+- **Format:** `"h1|<back>|<forward>|<textSignature or empty>"`, each list oldest first as `;`-joined places
+  `<section>,<offset>,<char fraction in millionths>`; back's top ends in `,p` when the pin saved it (`pinTop`).
+  Example: `h1|0,1000,250000;4,50,500000,p|1,200,125000|`.
+- **Size:** at most `BookPrefs.MAX_RETURN_MARK` (1000) chars. Two full lists of the longest places take about 850; the
+  encoder leaves the oldest places out (the longer list first) until the text fits. An empty history encodes as null
+  (the column is cleared).
+- **`decode`** is tolerant: null for a bad prefix or shape or no valid place; a malformed place (bad numbers, a
+  negative section or offset, a 4th field other than `p`) is skipped; fractions are clamped to 0..1; each list keeps
+  its newest 20; a `p` on any place but back's top is ignored.
+- **Migration:** an old single pin `"m1|<section>|<offset>|<charFraction>|<sig>"` (until 2026-10-05) decodes as a back
+  list of that one pinned place, with the old rules (null for bad numbers, NaN, negative values; fraction clamped).
+- **Placement when restoring** (each place): TXT whose stored signature differs from `LayoutKeys.textSignature(...)`,
+  and not the very start → `counts.locateFraction(fraction)`; otherwise `DocPosition(section, offset)` clamped. EPUB
+  always uses this, since its signature is null. Places found by fraction are stored again under this parse.
 
-**DATA, `data/BookPrefs.kt`:**
+**DATA, `data/BookPrefs.kt`** (unchanged API; the text is now the history):
 ```kotlin
-/** This book's pinned return point (ReturnMarkCodec text) or null. Blocking IO; null for a missing row. */
-fun returnMark(bookId: Long): String?
-/** Stores [value] (null clears). UPDATE, then INSERT when no row changed; the row's other columns are kept. */
-fun setReturnMark(bookId: Long, value: String?)
+fun returnMark(bookId: Long): String?          // ReturnHistoryCodec text or null
+fun setReturnMark(bookId: Long, value: String?) // null clears; longer than MAX_RETURN_MARK is not stored
 ```
-- **Backups:** `Backup` export and import carry it in the book's `book_prefs` entry as `"returnMark"`, keyed by path
-  like the other book_prefs fields. Old backups without it restore unchanged. The scroll spec's auto-backup inherits
-  it.
-- **Deletes:** `deleteBookRows` already deletes the row. `resetProgress` ("읽은 기록 초기화") also sets
-  `return_mark = NULL`.
+- **Backups:** carried as `"returnMark"` in the book's `book_prefs` entry, opaque text (an old backup's "m1" pin
+  restores and migrates on the next open).
+- **Deletes:** `deleteBookRows` deletes the row; `resetProgress` ("읽은 기록 초기화") sets `return_mark = NULL`.
 
 **When it is read and written:**
 - **Load:** `afterOpen()` (after the first page) → `ReaderIo.launch { BookPrefs.returnMark(id) }` → main thread →
-  `returnNav.restore(text)`. **[Δ]** Guard on the main thread first: `if (isDestroyed || bookRef?.id != id ||
-  session !== s) return`. Without it, a book closed or switched (next part, intent) during the read gets the
-  previous book's pin. `restore` is also a no-op after `reset()` until the next `afterOpen`.
-- **[Δ] Placement** reuses `TextPositions.remapFraction`'s rule (signature differs → fraction; the very start →
-  as is). It does not add a second heuristic.
-- **Save:** on pin, move, clear and reparse, through `ReturnHost.saveReturnMark(text)` → `ReaderIo.launch { BookPrefs.setReturnMark(id, text) }`.
+  `returnNav.restore(text)`, guarded by `isDestroyed || bookRef?.id != id || session == null` (a book switched meanwhile
+  never gets the previous one's places). A re-parse meanwhile still gets it: the places carry their parse's signature
+  and are found again by fraction. `restore` runs once per open and is a no-op after `reset()`. **A failed read is not
+  applied** (no `restore(null)`): the history then counts as not loaded and nothing is written this session, so a
+  database hiccup never overwrites the stored lists with this session's places alone.
+- **Save:** on every change of the lists (jump, use, pin, 지우기, re-parse) through `ReturnHost.saveReturnMark(text)` →
+  `ReturnWrites.launch { BookPrefs.setReturnMark(id, text) }`: one serial IO lane (`Dispatchers.IO.limitedParallelism(1)`,
+  process-wide), so quick "‹" "›" taps are stored in the order they were made (`ReaderIo` is a pool). **Before the load has been applied nothing is written**:
+  a change made meanwhile (e.g. the jump of an open-at-note) is written together with the stored history by
+  `restore`, so it never overwrites the stored lists with this session's places alone. 지우기 before the load gives
+  the stored history up (it is cleared, and the late load is ignored).
 
-### 3.4 `ReturnNav` (views and logic; fixed API)
+### 3.4 `ReturnNav` (views and logic)
 
 ```kotlin
 internal interface ReturnHost {                       // implemented by ReaderActivity (READER_A)
     val chromeVisible: Boolean
+    val navigating: Boolean                           // a jump is on its way (navJob active)
     fun currentPosition(): DocPosition                // paged: page start; scroll: top line
     fun isOnCurrentPage(pos: DocPosition): Boolean    // paged: on the page; scroll: in the visible range
     fun globalPageOf(pos: DocPosition): Int           // 1-based; estimate until counted (never "~")
-    /** Jump without creating a return point; the chrome stays as it is. Scroll mode: top-line placement. */
-    fun jumpToReturn(pos: DocPosition)
+    fun jumpToReturn(pos: DocPosition): Boolean       // no new place; true when the page is already shown
     fun charProgressOf(pos: DocPosition): Float       // counts.charProgress
+    fun clampPosition(pos: DocPosition): DocPosition
     fun locateFraction(f: Float): DocPosition         // counts.locateFraction
     fun textSignature(): String?                      // LayoutKeys.textSignature(...) for TXT, null for EPUB
-    fun saveReturnMark(text: String?)                 // IO write
+    fun saveReturnMark(text: String?)                 // IO write of ReturnHistoryCodec text
     fun onReturnChanged()                             // host: chrome.setPinned(...), updateChipPosition()
 }
 internal class ReturnNav(ctx: Context, private val host: ReturnHost) {
-    val dock: View            // the docked strip (ReaderChrome inserts it)
+    val dock: View            // the history row (ReaderChrome inserts it)
     val chip: View            // the floating chip (ReaderActivity adds it to root, BOTTOM|START)
-    val pinned: Boolean
-    fun markOnScreen(): Boolean                        // pinned mark is on the current page (pin icon state)
-    fun onJump(from: DocPosition)                      // every remembered jump
+    fun pinnedHere(): Boolean                          // the pin icon: back's top is the pin's and on this page
+    fun onJump(from: DocPosition)                      // every remembered jump, before it
     fun onManualTurn()
     fun onPinPressed()
-    fun onChromeShown()                                // [Δ] hides the chip VIEW (offer kept) + bind
-    fun onChromeHidden()                               // [Δ] shows the chip iff offer != NONE and its place is off screen
-    fun bind()                                         // chrome visible: bind dock labels (cached; 0 alloc if unchanged)
+    fun onJumpFailed()                                 // layoutFailed: a use made for this jump is undone
+    fun onSectionLaidOut(section: Int)                 // onSectionStored: its places note their exact page
+    fun onChromeShown()                                // hides the chip VIEW (offer kept) + binds the row
+    fun onChromeHidden()                               // shows the chip iff offered and its place is off screen
+    fun bind()                                         // cached; 0 alloc if unchanged
     fun restore(saved: String?)
-    fun markFraction(): Float                          // before a reparse, with the OLD counts (NaN = no pin)
-    fun reparsed(fraction: Float, exact: Boolean)      // after it; exact = EPUB with the same section count
+    fun fractions(): FloatArray                        // before a reparse, with the OLD counts (back then forward)
+    fun reparsed(fractions: FloatArray, exact: Boolean) // after it; exact = EPUB with the same section count
     fun reset()
 }
 ```
 
-**Dock**, a 44 dp `FrameLayout` plus a light hairline under it:
-- **Left** `TextView`:
-  - placement: `START|CENTER_VERTICAL`, height MATCH, `paddingStart 14dp` (so the chevron stroke lands on the 20 dp
-    keyline), `paddingEnd 12dp`;
-  - text: 15 sp regular, tnum; compound drawable `ic_chevron_left` 18 dp, tinted like the text, `drawablePadding 2dp`;
-  - text "N 페이지로"; `pressableBackground()`.
-  - **Disabled** while the mark's page is on screen. **[Δ]** The state changes glyph and text, not only colour: the
-    compound drawable becomes a 16 dp `ic_push_pin_fill` (the drawable, not an emoji), the text becomes "N 페이지"
-    (no "로": it is not a link), the colour is `Ink.GRAY` (#555, which survives every waveform), it is not
-    clickable, and the content description is "지금 보는 쪽이 고정한 쪽입니다". Grey `Ink.DISABLED` alone thresholds
-    to white under the Comet's fast modes, and would contradict §2.1's "icon swap only".
-- **Centre** "지우기": `CENTER`, `minWidth 72dp`, padding 16 dp on each side, 15 sp. It sits on the page label's axis.
-- **Right**: mirrored, with `ic_chevron_right` at the end. Visible iff `other != null && !isOnCurrentPage(other)`.
-- The dock is shown iff `mark != null || other != null`, with the chrome visible.
-- Label strings are rebuilt only when a page number changes (cached ints), so `bind()` on a page turn with the chrome
-  up allocates nothing.
-- **[Δ] Fit rule.** With 5-digit pages or a large font scale, three items overflow 360 dp. Measured example: "‹ 12345
-  페이지로" is about 137 dp, which is only 4 dp from "지우기". After a label change, `bind()` measures the two side
-  labels (`paint.measureText` on the cached Strings, no allocation). If `left + right + centre + 2·8 dp > rowW`, or
-  either side would cross the centre box, both sides switch to the **short form** "‹ 12345" / "23259 ›". Their content
-  descriptions keep the full "12345 페이지로". The check runs only when a label or `rowW` changes.
-- **[Δ] Lazy views.** `dock` starts as an empty `GONE` `FrameLayout`, and its three TextViews and hairline are
-  created on the first `bind()` with a non-empty state. `chip` likewise starts empty and is filled on its first
-  show. `buildViews` therefore adds two empty frames before the first page, instead of about ten views.
+**Dock = the history row** right above the bottom panel, on the page colour (`ChromePalette.page`; on e-ink with a
+1 px `divider` on top), 48 dp (`ChromeMath.HISTORY_ROW_DP`), **three equal columns** (`LinearLayout`, weights 1/1/1,
+each a `FrameLayout`) holding their labels at their own width and the full 48 dp height (`WRAP_CONTENT × MATCH_PARENT`),
+so the touch target and the pressed rect hug the words:
+- **Left** = `leftPlace`: `START`, padding 20 / 4 dp, 16 dp `ic_chevron_left` at the start (centred 28 dp in, on the
+  icon column), text "N쪽으로", content description "N쪽으로". Tap → `goBack`.
+- **[2026-10-05, review] Vertical:** every label pads its top by 10 dp (`ChromeMath.HISTORY_TEXT_TOP_DP`, bottom 0) and
+  centres its text and chevron in the rest: their centre 29 dp under the row's top, 19 dp (57 px on the S25) above the
+  panel, the glyphs ≈ 9 dp clear of the 4 dp shadow, as ReadEra's (18.5–18.8 dp and ≈ 8.3 dp in the user's S25 shots;
+  centred in the box ours sat 24 dp above). The box, its touch target and the bar's height keep their 48 dp; the
+  pressed rect starts 10 dp under the box's top (a layer inset of `chromePressed`), so it stays centred on the words.
+- **A tap while a jump is on its way** (`host.navigating`) is ignored, on both sides and the chip: the row still
+  describes the page on screen, and a second "‹" would take a second place before the first one is reached. A use
+  whose page shows later keeps the history from before it; `onJumpFailed()` (called by `layoutFailed`) puts it back,
+  and the next page shown with no jump on its way drops it.
+- **A remembered jump with the menu up** stores its origin but leaves the row and the pin to the new page's
+  `bindChrome` (bound before the jump, the row would change over the old page: two e-ink updates for one far seek).
+  A jump never changes the pin's state.
+- **Centre** "지우기": `CENTER`, `minWidth 72dp`, padding 16 dp on each side; never a third of the row. Tap → clear.
+- **Right** = `rightPlace`: `END`, padding 4 / 20 dp, "M쪽으로" with 16 dp `ic_chevron_right` at the end. Tap →
+  `goForward`.
+- A side without a place is **`INVISIBLE`, not `GONE`**, so 지우기 and the other side never move. The row shows iff a
+  side shows (`rowShown`), with the chrome visible. There is no grey or non-clickable state any more (the "📌 N쪽" label,
+  `histOff` and its description are gone): the row only ever offers places to go to.
+- 14 sp regular, tabular digits, `hist` text and chevrons; pressed rect on phones only.
+- **Fit rule:** `ChromeMath.stripShort(left, right, rowW)`: a side label wider than its third (text + paddings +
+  glyph, 0 when hidden) → both sides short, "‹ 12345" / "23259 ›". Content descriptions keep "12345쪽으로". The check
+  runs only when a label or the row width changes.
+- **Labels** are rebuilt only when a page number changes (cached ints), so `bind()` on a page turn with the chrome up
+  allocates nothing. Before a place enters the history its page is asked while it is on screen (`notePage`), restored
+  places are asked once when the history loads, and every place is asked again whenever its section is laid out
+  (`onSectionLaidOut`, from `BookSession.Listener.onSectionStored`), so `ReturnPageMemo` keeps its exact page after its
+  section leaves the layout cache. The memo holds `2 × MAX + 2` places (both full lists and the page being left; a
+  linear scan, no allocation), so a place several taps deep never falls back to the char estimate.
+- **Lazy views:** `dock` and `chip` start as empty `GONE` frames; their contents are created on first use.
 
-**Chip:**
-- `borderBox()` containing `[label 44 dp tall: chevron + "N 페이지로", 15 sp, padding (12, 0, 14, 0) dp]`, a 1 px
-  vertical hairline, and `[✕ 44×44 dp, content description "닫기"]`.
-- MARK shows "‹ N 페이지로". OTHER shows "N 페이지로 ›", with the chevron at the end.
-- ✕ **only hides** it. 지우기 clears.
-- **Position** (READER_A `updateChipPosition`, hidden-chrome branch only):
-  `bottomMargin = insets[3] + dp(PROGRESS_LANE_DP) + dp(4)`, so it clears the progress line; above extras bars as
-  today. `leftMargin = insets[0] + dp(8)`.
-
-**Wording:** `ReaderFormat.returnChip` ("← 돌아가기 (p. N)") is deleted by READER_A. ReturnNav owns the strings "N
-페이지로" and "지우기".
+**Chip:** a box on the bars' surface (1 px `edge` on e-ink or `track` on a phone) with `[label 48 dp tall: 18 dp
+chevron + "N쪽으로", 15 sp, padding (12, 0, 14, 0) dp]`, a 1 px vertical line and `[✕ 48×48 dp, "닫기"]`. It offers
+`chipPlace` ("‹ N쪽으로"): the last jump's origin, or after several jumps in a row their first origin (★3); a tap =
+`chipBack`. ✕ **only hides** it; 지우기 clears. **Position** (READER_A
+`updateChipPosition`, hidden-chrome branch): `bottomMargin = insets[3] + dp(PROGRESS_LANE_DP) + dp(4)`,
+`leftMargin = insets[0] + dp(8)`.
 
 ### 3.5 READER_A wiring (`ReaderActivity`)
 
-1. Replace `returnStack`, `MAX_RETURN_STACK`, `chip`, `chipLabel`, `turnsSinceJump`, `pushReturn`, `showReturnChip`,
-   `useReturnChip` and `dismissReturnChip` with `private lateinit var returnNav: ReturnNav`. In `buildViews`, create
-   `light = LightController(lightHost)` and `returnNav = ReturnNav(this, returnHost)` before
-   `ReaderChrome(this, chromeActions, returnNav.dock, light)`, **[Δ]** then `light.attach(chrome)`. Add
-   `returnNav.chip` to `root`.
-   - Implement `ReturnHost` and `LightHost` as **private inner objects** (`private val returnHost = object : ReturnHost { … }`),
-     not on the activity class. Their members (`chromeVisible`, `app`, `activity`, …) would otherwise clash with the
-     activity's own fields and with `ReaderHost`.
-2. `pushReturn(pos)` call sites (`goTo`, `goToPage`, `goToProgress`, `followLink`, seek release) → `returnNav.onJump(pos)`.
-   Keep their guards.
+1. `returnNav = ReturnNav(this, returnHost)` in `buildViews` before `ReaderChrome(this, chromeActions, returnNav.dock,
+   light)`; `returnNav.chip` added to `root`. `ReturnHost` is a **private object** (`returnHost`).
+2. Remembered jumps (`goTo(remember)`, `goToPage(remember)`, `goToProgress`, links, the open-at-note's
+   `if (!isOnCurrentPage(saved)) onJump(saved)`) → `returnNav.onJump(currentPosition())` before the jump, with their
+   "not the page already shown" guards.
 3. `onManualTurn()` → `returnNav.onManualTurn()`.
 4. `chromeActions.onPinHere()` → `returnNav.onPinPressed()`.
-5. `ReturnHost` members:
-   - `jumpToReturn(p)` = `jumpTo(p.section, p.offset, -1)`. The scroll spec's `jumpTo` branch handles scroll mode.
-   - `saveReturnMark(t)` = `ReaderIo.launch { BookPrefs.setReturnMark(id, t) }`.
-   - `onReturnChanged()` = `if (chromeVisible) bindChrome(); updateChipPosition()`.
-6. `bindChrome()` adds `returnNav.bind()` and `chrome.setPinned(returnNav.pinned, returnNav.markOnScreen())`.
-7. `sessionListener.onCountsChanged(complete = true)` → `if (chromeVisible) returnNav.bind()`. The labels become exact.
-8. `reopenDocument`: `val f = returnNav.markFraction()` before switching sessions (old counts), then
-   `returnNav.reparsed(f, exact = epub && sameSectionCount)`. This replaces `dismissReturnChip()`.
+5. `ReturnHost`: `navigating` = `navJob?.isActive == true`; `jumpToReturn(p)` = `jumpTo(p.section, p.offset, -1)`;
+   `saveReturnMark(t)` = `ReturnWrites.launch { BookPrefs.setReturnMark(id, t) }`; `onReturnChanged()` =
+   `if (chromeVisible) bindChrome(); updateChipPosition()`.
+6. `bindChrome()`: `returnNav.bind()` and `chrome.setPinned(returnNav.pinnedHere())` (`ReaderChrome.setPinned(on)`:
+   filled + "고정 해제" / outline + "이 페이지 고정").
+7. Every page shown and the exact counts: `if (chromeVisible) bindChrome() else returnNav.bind()`.
+8. `reopenDocument`: `val returnF = returnNav.fractions()` before switching sessions (old counts), then
+   `returnNav.reparsed(returnF, exact = epub && sameSectionCount)`.
 9. `closeCurrentBook`: `returnNav.reset()`.
-10. `afterOpen`: the persisted-pin load (§3.3).
+10. `afterOpen`: the history load (§3.3); a failed read posts nothing.
+11. `layoutFailed`: `returnNav.onJumpFailed()` before the old page's bind; `sessionListener.onSectionStored`:
+    `returnNav.onSectionLaidOut(section)`.
+
+**Until 2026-10-05** (replaced above, kept for the record): `ReturnPoints` held a pinned or temporary `mark`, an
+`other` place and `offer: Chip { NONE, MARK, OTHER }`; the left item was the mark (grey "📌 N쪽" while on it), the
+right the other place; ★1 a temporary origin became the other place on pin, ★2 only the pinned mark was stored
+(`"m1|…"`), ★4 a jump from the mark kept the other place. Decoded today as a one-place back list.
 
 ---
 
@@ -1107,7 +1206,7 @@ internal object StatusText {
 - **Highlights:** allocate the `ArrayList` **lazily**, only when a highlight overlaps the page; otherwise `emptyList()`.
 - **Result:** `val changed = status.update(settings, inputs, trackPx)`, then
   `PageDecor(hl, bookmarked, status.decor, status.decor.version)`.
-  `trackPx = viewW − 2·round(12dp) − 2·round(rCap + rDot)` (§5.4).
+  `trackPx = viewW − 2·round(12dp) − 2·round(rCap + rDot)` (§5.4; **[2026-10-05]** `viewW − 2·round(7dp) − dot`, below).
 - **`sameDecor(a, b)`:** today's highlight and bookmark comparison, plus `a.statusVersion == b.statusVersion`.
 - **Episodes:** `scheduleEpisodes()` when `settings.shows(StatusItem.EPISODE)`, in `afterOpen`, `reopenDocument` and
   `episodeLabel`.
@@ -1170,6 +1269,13 @@ internal fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Floa
   `ellipsizedHeader`. So `TextUtils.ellipsize` runs only when the title or its width changes (about once per chapter).
 - **Worked example:** 40 dp side margins → `w = 280dp`, gap 11 dp. Left `123 / 3614` (55 dp), centre = chapter title,
   right `14:05` (28 dp). The title gets `280 − 2·(55 + 11) = 148 dp`.
+
+> **[2026-10-05, user] ReadEra's 탐색줄 replaces the table below** ("대놓고 빡!! 하고 보이는 게 아니라 있었구나 하면서
+> 볼 정도로 사진을 최대한 카피해"): a `max(1, round(0.67dp))` line (S25 2 px, Comet 1 px) between two end dots and the
+> position dot, all one size (`ProgressMath.dotD`: S25 14 px, Comet 9 px), outer edges 7 dp from the view's sides,
+> centred 8 dp above its bottom (S25 line rows 2315–2316, dots 2309–2322; Comet 1423 and 1419–1427), in faint greys of
+> the page (`PagePalette.progressLine` / `progressDot`: #D1D1D1 / #B4B4B4 on white, #1F1F1F / #323232 on black, whole
+> e-ink levels on e-ink), never the status colour. The lane and the bands keep their heights. PLAN note at the top.
 
 **`drawProgress`** (`ProgressMath` pure; px at density 2 in brackets). Black on white only (inverted: white on
 black). Order: track, caps, dot.
@@ -1409,10 +1515,11 @@ Dependencies across owners in phase 1 are only phase-0 stubs:
 | contract | `ui/kit/KitResourcesTest` (+) | `keepAll` inserts U+2060 only between Hangul syllables; ASCII and mixed text unchanged; the same instance is returned when there is no Hangul pair |
 | READER_UI | `reader/StatusTextTest` (new) | each formatter equals its `ReaderFormat` twin over ranges: page 1..99999 × totals, percent 0..100, all 1440 minutes × 12/24 h, chapterLeft −1..999, episode both modes, durations 0..6000 min; the 48-char buffer is never exceeded |
 | READER_UI | `reader/StatusModelTest` (new) | only shown items are formatted; `update` returns false for identical inputs and true for a changed minute, battery, page or dot px; dot < 1 px → false; `chapterStartsHere` blanks CHAPTER only; **[Δ]** `lane` follows `progressBar` even when `bar = −1`; `sample(CHAPTER)` ignores `chapterStartsHere`; **zero allocation**: 10 000 `update` calls allocate 0 bytes after warm-up (extract `TypesetterPerfTest`'s `getThreadAllocatedBytes` helper into `test/.../AllocCounter.kt`) |
-| READER_UI | `reader/ReturnPointsTest` (new) | every §3.2 transition, incl. ★1 pin-with-temporary-mark keeps it as `other`; toggle `useMark`/`useOther`; `manualTurn` hides the chip after 2 turns and keeps the state; `restorePinned` demotes a temporary mark; `reparsed`. **[Δ]** ★3 three jumps with no manual turn in between keep the first origin, and one manual turn starts a new chain; ✕ then another jump re-arms `chainOffer`; ★4 pinned, jump from the mark keeps `other`; ★5 `offer` survives a chrome show/hide (a pure `chipVisible(state, chromeVisible, targetOnScreen)`); pin and clear reset `landed` |
-| READER_UI | `reader/ReturnMarkCodecTest` (new) | round trip; malformed, NaN or negative → null; fraction clamped; empty signature = EPUB |
+| READER_UI | `reader/ReturnHistoryTest` **[2026-10-05]** (was `ReturnPointsTest`) | every §3.2 call; the user's two ReadEra sequences exactly (1 → 1749 → 150 with **no page turned**; back → on 1749 left 1, right 150; back → on 1 no left, right 1749); every remembered jump keeps its origin (seek, seek; TOC, link); forward then back; a new jump after going back cuts forward; ★3 the chip offers a chain's first origin and `chipBack` goes there as several ‹ would, a manual turn starts a new chain; both caps (a chain longer than the list); one entry per page (push skipped when the top is here); **pinning never hides the way back** (screenshot 1's state + pin → the row unchanged, the pin filled; reopened on a pinned page; two places on one page; paged back onto an origin); the filled pin only for a pin (`pinTop`; an origin becomes the pin on a tap); pinning forward's top; pin / unpin and the pin keeping forward; `copyFrom` (undo); `restore` under this session's places with the stored pin; `reparsed` maps, drops and dedupes, keeps a moved pin; the chip: 2 turns, ✕, using the history, 지우기; ★5 `chipVisible`; the row's sides and `rowShown` in every state; `label`. `ReturnPageMemoTest`: every place of a full history keeps its page; `ReturnHistoryCodecTest`: the pin's `,p` mark |
+| READER_UI | `reader/ReturnHistoryCodecTest` **[2026-10-05]** (was `ReturnMarkCodecTest`) | round trip of both lists with the signature (bars inside it too); one side, empty signature = EPUB; empty → null; an old "m1" pin → a one-place back list (its old rules: malformed, NaN or negative → null, fraction clamped); a malformed place skipped; fractions clamped; two full lists fit `BookPrefs.MAX_RETURN_MARK`; an overlong text leaves the oldest places out; decode keeps the newest 20 |
 | READER_UI | `reader/LightCurveTest` (new) | brightness.md §8: monotonic; `level` in 1..255; `level(out(pos(fraction(v)))) == v` for v in 1..255; `isExternal` table; **[Δ]** `stillOurs(current, last)` (equal, ±2, ±last/32 → true; the user's 120 vs our 30 → false); `LightProbe.KEY_RE` matches `ColdValue`, `screen_brightness_warm`, `LastWarmLight`, `screen_cool_brightness` and not `font_scale`; the pure `nextVerdict(ask, yes)` covers all 5 edges |
 | READER_UI | `reader/ChromeMathTest` (new) | `labelMaxWidth(rowW = 720 px, density 2) = 288 px`; the label centre equals the row centre for any label width ≤ max; **[Δ]** `stripShort(left, centre, right, rowW, gap)`: false for "‹ 10 페이지로" at 720 px, true for "‹ 12345 페이지로" + "23259 페이지로 ›" at 1.3× font scale; `bookmarkFits(rowW)` flips at 352 dp |
+| READER_UI **[2026-10-05]** | `render/ChromePaletteTest` (new), `reader/ChromeMathTest` (+), `reader/ReaderFormatTest` (+) | six shared sets, `of(eink = null)` = the e-ink set; `page` = the page background, accent = the status colour; 흰 바탕 on e-ink = the old `Ink` values; every e-ink set has no shadow, pressed, active or motion and opaque colours; dark e-ink sets = `PagePalette.grey` of the old greys; phone 흑백 반전: no shadow, a #333333 edge; contrast floors (text ≥ 7, text2 ≥ 4.5, history ≥ 4.5, accent ≥ 3) and a phone surface within 1.3 of its page; on a phone the floating boxes' `track` border ≥ 1.6 on the page, `active` ≥ 1.4 apart from `pressed` with the accent ≥ 3 on it. `stripShort(left, right, rowW)` (a side over its third), `HISTORY_ROW_DP = 48`, `animates(motion, scale)`, `SHOW_MS` / `HIDE_MS` in 150..200; `pageLabelCut`. **[2026-10-05, later / review]** ReadEra's bottom panel (label 25, seek 61, 85 dp of rows), the two rows' touch overlap = the space between their glyphs, `bottomGap` (S25 full screen 101 dp, upper split window 85, lower window and Comet keep their gap, a window of unknown position keeps 16 dp), the history text 19 dp above the panel (`HISTORY_TEXT_TOP_DP`), the title's 9 dp lift (`TITLE_LIFT_DP`: glyphs clear of the buttons' pressed circle); the brightness row's token = the page background in every look, its icons, slider and option text on the page (the views: CI 13t / 13u, checklist 11f-14 to 11f-18) |
 | READER_A | `ReaderFormatTest`, `ReaderReviewFixesTest`, `ReaderR2FeaturesTest` (edit) | drop `returnChip`, `footerLeft/Right`; `previewLabel` → "1234쪽 · …" |
 | READER_B | `reader/LayoutKeysTest` (+) | no bands when all NONE; header band iff `hasHeader`; item swap (PAGE→CLOCK, CHAPTER→BOOK_TITLE) is **not** a layout change; NONE→PAGE is; `progressBar` toggle with mb 16 dp gives the same geometry and no layout change; with `pageMargins = false`: box −8 dp and a layout change; `statusFontSizeSp` change with no bands: no layout change; the §5.1 table at density 2 |
 | RENDER | `render/StatusMathTest` (new) | centre exactly centred with fixed sides; elastic centre = `w − 2(side + gap)`; fixed items never shrink; two elastic sides split; an elastic slot below `min(natural, 3em)` hidden; empty-centre cases; overflow of two fixed slots hides the left |
@@ -1434,19 +1541,25 @@ New helpers:
   when the sizes differ. Row ranges must stay inside the PageView: the system bars (status-bar clock) change
   between shots.
 
-Content descriptions used below are fixed by this spec: "밝기 옵션", "이 페이지 고정", "고정 해제", "지우기", "N 페이지로",
+Content descriptions used below are fixed by this spec: "밝기 옵션", "이 페이지 고정", "고정 해제", "지우기", "N쪽으로",
 "아래 가운데: 없음", "페이지 이동".
 
 | Shot | Steps (after today's 10–12) | What it must show |
 |---|---|---|
-| `10_txt_page1` | as today (defaults) | **No footer text.** The progress line spans x 24..696 px at y = 1428, with a 1 px track, dots at both ends and the position dot touching the start cap. The header shows the chapter title unless the page begins that chapter. |
+| `10_txt_page1` | as today (defaults) | **No footer text.** The progress line spans x 24..696 px at y = 1428, with a 1 px track, dots at both ends and the position dot touching the start cap. **[2026-10-05]** ReadEra's 탐색줄 (§5.4 note): a 1 px line on row 1423 between 9 px end dots at x 14–22 and 697–705 (rows 1419–1427), in #D1D1D1 / #B4B4B4; on page 1 the position dot is the left end dot (not drawn twice). The header shows the chapter title unless the page begins that chapter. |
 | `13_txt_chrome` | as today; also `rawshot 13_txt_chrome` | Top: back, then 🔖 🔊 🔍 ☰ ⚙ ⋮. The title is one line starting at x = 40 px. The brightness row is visible, **Ⓐ has no grey square**, and ⌄ sits at the right. Bottom: "3 / 167" **centred on x = 360 ± 2 px**, not underlined, bold. Only ⟳ and [pin icon] (outline) on the right. The seek row has ⏮ and ⏭. No strip. |
-| `13b_pin` | `tap_label "이 페이지 고정"`; shot; `rawshot 13b_pin` | The pin is **filled**. The strip reads **[Δ]** "(pin icon) 3 페이지" in grey (no chevron, no "로") · "지우기" above the label row. `raw_equal 13_txt_chrome 13b_pin 360 1100` → **EQUAL** (the page did not move or relayout; **[Δ]** rows start at 360 so the top bar's edge, about 324 px with a 24 dp inset, is never included). |
+| `13b_pin` | `tap_label "이 페이지 고정"`; shot; `rawshot 13b_pin` | **[2026-10-05]** The pin is **filled** ("고정 해제") and there is **no history row**: the pinned page is the one on screen, and the row only offers places to go to (never a grey "(pin) 3쪽"). `raw_equal 13_txt_chrome 13b_pin 360 1100` → **EQUAL** (the page did not move or relayout; **[Δ]** rows start at 360 so the top bar's edge, about 324 px with a 24 dp inset, is never included). |
 | `13c_pin_close` | `adb shell input tap 360 700`; shot; `rawshot 13c` | The chrome is **closed** and **no page turn** happened: `raw_equal` against a `rawshot 12b` taken right after `12_txt_tap_right` → EQUAL over **[Δ]** the PageView rows (`dumpsys` bounds, or 80..1440 when the status bar shows). No chip (pinned marks never float; pinning is not a jump). |
-| `13d_return` | volume-down ×5; tap 360 720; shot `13d_strip`; `tap_label "3 페이지로" contains`; shot `13d_return` | `13d_strip`: label "8 / 167"; strip "‹ 3 페이지로" (black) · "지우기". `13d_return`: label "3 / 167"; strip **[Δ]** "(pin icon) 3 페이지" (grey) · "지우기" · "8 페이지로 ›". |
+| `13d_return`, `13d_forward` | volume-down ×5; tap 360 720; shot `13d_strip`; `tap_label "3쪽으로"`; shot `13d_return`; `tap_label "8쪽으로"`; shot `13d_forward` | **[2026-10-05]** `13d_strip`: label "8 / 167"; row "‹ 3쪽으로" · "지우기", no right item. `13d_return`: label "3 / 167"; no left item (nothing before 3), "지우기", "8쪽으로 ›"; the pin an outline. `13d_forward`: label "8 / 167", "‹ 3쪽으로" again, no right item. |
 | `13e_brightness_opts` | `tap_label "밝기 옵션"`; shot | The brightness row is **still visible**, the icon is now ⌃, and the panel lists "스와이프로 밝기 조절" (switch, off with a filled knob) and "기기 밝기 직접 조절". No question row (the emulator is not e-ink). |
-| `13f_clear` | `tap_label "지우기"`; shot (no `back`: the chrome stays open for today's `14_reading_settings` step) | The strip is gone and the pin is an outline |
-| `13g_seek_chip` **[Δ]** | after `13f` (menu open, no pin, page 3): drag the seek bar thumb to 70 % with `input swipe`, release; drag again to 60 %, release; tap 360 700 (closes the menu); shot. Then volume-down ×2, shot `13h_chip_gone`; tap 360 720 (reopens the menu for `14_reading_settings`) | `13g`: the chip "‹ 3 페이지로 \| ✕" floats bottom-left above the progress line. It offers the **first** origin of both seeks (★3) and appears even though both seeks were made with the menu open (★5). `13h`: the chip is gone after 2 manual turns. |
+| `13f_clear` | **[2026-10-05]** after `13i` (on q): `tap_label "지우기"`; shot; then the bars close for `rawshot 10a_pre` and open again for `14_reading_settings` | The row is gone and the pin is an outline |
+| `13g_seek_chip` **[Δ]** | after `13e` (menu open, on 8, back [3]): drag the seek bar thumb to 70 % with `input swipe`, release (the page m, read from the label); drag again to 60 %, release; tap 360 700 (closes the menu); shot. Then volume-down ×2, shot `13h_chip_gone` | `13g`: the chip "‹ 8쪽으로 \| ✕" floats bottom-left above the progress line, not "m쪽으로". It offers the **first** origin of both seeks (★3, the chip only) and appears even though both seeks were made with the menu open (★5). `13h`: the chip is gone after 2 manual turns. |
+| `13i_row`, `13i_both`, `13i_pin`, `13i_back`, `13i_first`, `13i_ahead` **[2026-10-05]** (the user's two ReadEra shots: at 1 a seek to 1749, from there a seek to 150 with no page turned, ‹, ‹) | on q (the second seek's landing + 2 turns; back [3, 8, m]): open the menu; "m쪽으로"; shot; "이 페이지 고정"; shot; "8쪽으로"; shot; "3쪽으로"; shot; "8쪽으로", "m쪽으로", "q쪽으로"; shot | `13i_row`: "‹ m쪽으로" only (the second seek's origin is a place). `13i_both` (on m): "‹ 8쪽으로" · 지우기 · "q쪽으로 ›" (shot 1). `13i_pin`: the pin filled ("고정 해제") and the row **unchanged** ("8쪽으로", "q쪽으로": the pin never hides the way back). `13i_back` (on 8): "‹ 3쪽으로" · 지우기 · "m쪽으로 ›". `13i_first` (on 3): 지우기 · "8쪽으로 ›" only, the nearest place ahead (shot 2). `13i_ahead`: forward three times, on q with "‹ m쪽으로" only. |
+| `13d_left_cols`, `13d_cols`, `13i_both_cols`, `13i_pin_cols`, `13i_first_cols` **[2026-10-05]** | in those steps' dumps (`history_cols n left right`, "" = that side empty) | "지우기" centred at x 358..362 in every state (left only, right only, both); a shown left label ends at x ≤ 240, a shown right one starts at x ≥ 480; an empty side is not in the dump (INVISIBLE) |
+| `13u_<tag>_history`, `13u_<tag>_empty` **[2026-10-05]** (`history_row`, 흰 바탕 then 마루뷰어) | 지우기 if shown; pin the page P (`13u_pin`: the pin filled, no row); volume-down ×2 (`13u_one`: only "‹ P쪽으로"); "P쪽으로"; shot; 지우기; shot | On P: no left item, "P+2쪽으로 ›" in its third (`13u_cols`, `13u_no_left`), 지우기 at the same x as with the left label alone (`13u_still`); the row ends on the panel's top, the page label's centre 50 px (25 dp) below it (±1, `13u_on_panel`; **[2026-10-05, later]** was "the label row starts there, 0..2 px"); its background at (8, row centre) is the page colour; (8, row end − 2) is ≥ 12 levels darker (the panel's shadow over the row's foot); after 지우기 no row and the label row at the same y. Ends on P with an empty history. |
+| `13t_<tag>_open` (+ rawshots closed / open / closed2) **[2026-10-05]** (`chrome_look`: 흰 바탕 #FFFFFF/#F5F5F5 shadow, 마루뷰어 #323232/#3C3C3C shadow, 흑백 반전 #000000/#1A1A1A edge #333333; the look set on 설정 → 읽기 설정 between them) | bars closed, open, closed again | The page at (8, 700); the top bar's surface right of ←; the bottom panel's at the label row's centre; ~~the row under the brightness bar ≥ 12 levels darker than the page (shadow) or the edge colour (±2 levels)~~ **[2026-10-05, later]** the brightness row's background at (8, its centre) is exactly the page's pixel at (8, 700) (`13t_bright`); the title block above it is the surface (`13t_title`, (8, row top − 2)); the top bar's edge on the row's first row (8, row top): ≥ 12 levels darker than the page (shadow) or the edge colour (±2, `13t_edge`); right under the row (8, row bottom) and 6 px lower exactly the page pixel (`13t_under`: nothing under it); the bottom panel's edge right above it (8, label centre − 51) (`13t_panel_edge`); the seek track's centre 72 ± 1 px under the label's and at least 48 + 32 px above the screen's bottom (`13t_rows`: ReadEra's offsets, the 16 dp minimum in a full-screen window); closed vs closed2 EQUAL below the header band; no RELAYOUT between the marks. Then 흰 바탕 and 흑백 반전 off again, `10a_pre` retaken. |
+| `13w_<tag>_dot`, `_line`, `_above`, `_below` **[2026-10-05]** (`progress_look`: 흰 바탕 #D1D1D1 / #B4B4B4, 마루뷰어 #4B4B4B / #5A5A5A, 흑백 반전 #1F1F1F / #323232; `bot` = the PageView's last row from `pv_rows`) | none: reads 13t's `13t_<tag>_closed` raw | The left end dot's centre (18, bot − 17) in the dot colour; the line colour at x 40 or x 680 on row bot − 17 (the position dot covers at most one); the page colour right above (18, bot − 22) and below (18, bot − 12) the end dot. All ±2 levels. The line before (status colour on row bot − 25, end caps at x 24 and 696) fails the first two. |
+| `13v_*` **[2026-10-05]** (`motion_check`) | references at animator scale 0; `settings put global animator_duration_scale 1`: show, hide; scale 0: show, hide | At 1: RAPerf "chrome show fade" (`13v_fade`), the bars end on the same pixels as the instant ones (`13v_top`, `13v_bottom`: **[2026-10-05, later]** from the panel's top, the label's centre − 50, less its 8 px edge band), they are gone a second after hiding and the page is EQUAL (`13v_hidden`, `13v_page`). At 0: "chrome show instant" (`13v_instant`). The scale is left at 0. |
 | `14_reading_settings` | as today | The popup is **horizontally centred** (side gaps 16 ± 1 px each), its top 16 px below the status inset, rows 88 px tall, 정렬 and 줄바꿈 on **one row**, no scrollbar, light row lines, black group lines |
 | `14b_status_slots` | in the popup: `tap_label "더보기" contains`, swipe up inside the popup; shot | "상태 표시": 위 [없음(dashed)][챕터 제목][없음(dashed)] / 아래 all dashed; 진행 막대 switch on |
 | `14c_slot_list` | `tap_label "아래 가운데: 없음"`; shot; `tap_label "쪽 번호"` (the list closes); `back` once (closes the popup; a second back would leave the reader) | The list shows 12 items, with live notes on the right ("3 / 167", "1%", "2:39" …) and "없음" checked |
@@ -1491,14 +1604,16 @@ the text scrolls.
 - **D2, chrome look:** open a book, tap the centre, photograph the bars.
   - The label is centred and crisp.
   - No grey squares.
-  - The pin works: tap it, turn 5 pages, tap "‹ N 페이지로", and the page never flips on its own.
+  - The pin works: tap it, turn 5 pages, tap "‹ N쪽으로", and the page never flips on its own (2026-10-05: on N the
+    row reads 지우기 · "N+5쪽으로 ›", no left item).
   - **[Δ] Ask the user:** "고정 버튼을 누른 뒤 메뉴를 닫았을 때, '‹ N 페이지로' 줄이 책 화면 위에 계속 떠 있어야 하나요,
     아니면 메뉴를 열었을 때만 보이면 되나요?" (R13).
-  - **[Δ]** Repeat the photo with the Comet's per-app refresh mode set to its fastest mode: the pinned-page item
-    still reads as "(pin) N 페이지", and the empty status slots still show "없음".
+  - **[Δ]** Repeat the photo with the Comet's per-app refresh mode set to its fastest mode: the row's labels and
+    chevrons still read, and the empty status slots still show "없음".
   - The progress line is visible at the bottom.
 - **D3, Korean line breaks:** settings summaries and the brightness option subtitle break only between words.
-- **D4, return pin persistence:** pin, close the book, reopen, open the menu. The strip still shows "‹ N 페이지로".
+- **D4, return history persistence:** pin, turn a page, close the book, reopen, open the menu. The row still shows
+  "‹ N쪽으로" (2026-10-05: both lists are kept).
 - **D5 [Δ], brightness put-back:** with the device path on, set the light in the reader, then
   `adb shell am force-stop com.ggumtak.readeraplus` (a stand-in for a crash). Change the light in the system panel,
   then open the library. The panel's value stays: `restoreIfStale` does not put the old original back over it.

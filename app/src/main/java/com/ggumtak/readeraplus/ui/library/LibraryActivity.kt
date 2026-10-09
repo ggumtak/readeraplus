@@ -17,6 +17,7 @@ import android.provider.DocumentsContract
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -37,21 +38,33 @@ import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
+import com.ggumtak.readeraplus.data.AutoBackup
 import com.ggumtak.readeraplus.data.Book
+import com.ggumtak.readeraplus.data.BookCopies
 import com.ggumtak.readeraplus.data.FileScanner
+import com.ggumtak.readeraplus.data.InstallState
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.LibraryQuery
+import com.ggumtak.readeraplus.data.Notes
+import com.ggumtak.readeraplus.data.NotesTab
 import com.ggumtak.readeraplus.data.ReaderPresence
 import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.data.ShelfGroup
+import com.ggumtak.readeraplus.reader.DeviceLight
 import com.ggumtak.readeraplus.reader.ReaderActivity
+import com.ggumtak.readeraplus.reader.ReaderIo
 import com.ggumtak.readeraplus.reader.ResumeState
+import com.ggumtak.readeraplus.reader.extras.Josa
+import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.settings.LibraryListMode
 import com.ggumtak.readeraplus.settings.LibrarySort
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.InkListView
 import com.ggumtak.readeraplus.ui.kit.InkGridView
+import com.ggumtak.readeraplus.ui.kit.InkPagerBar
+import com.ggumtak.readeraplus.ui.kit.ListPager
+import com.ggumtak.readeraplus.ui.kit.ListPaging
 import com.ggumtak.readeraplus.ui.kit.MenuItem
 import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.chooser
@@ -60,6 +73,7 @@ import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.iconButton
+import com.ggumtak.readeraplus.ui.kit.InkEditText
 import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
@@ -68,11 +82,13 @@ import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 import com.ggumtak.readeraplus.ui.settings.ErrorLines
+import com.ggumtak.readeraplus.ui.notes.NotesActivity
 import com.ggumtak.readeraplus.ui.settings.SettingsActivity
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,9 +97,12 @@ import android.provider.Settings as SystemSettings
 
 /**
  * Library (launcher) screen, ReadEra-style in black & white: toolbar (drawer / shelf title / view toggle / search /
- * overflow), a drawer overlay with every shelf, book cards (목록), compact rows (간단히) or covers (표지), grouped
- * shelves, search-as-you-type, sort, book menu actions, multi-select with batch actions (T1-13), collections, trash,
- * storage permission flow, background scanning with a status row, SAF open/import and open-last-on-start.
+ * overflow with the library's own work), a drawer overlay for moving between shelves, 독서 노트 · 단어장 and 설정, four
+ * views (자세히 cards, 간단히 rows, 큰 표지 and 작은 표지 in one GridView), scrolling (the default, every device) or
+ * paged with 목록 넘기기 = 쪽 단위 (ListPager + pager bar, no fast scroller), grouped shelves, search-as-you-type, sort,
+ * book menu actions, multi-select with batch actions (T1-13), collections, trash, storage permission flow, background
+ * scanning with a status row, SAF open/import, open-last-on-start, the idle auto backup and the fresh-install restore
+ * offer.
  *
  * Every database call runs on [Dispatchers.IO]; the main thread only binds views. No animations anywhere.
  */
@@ -108,8 +127,15 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         /** The periodic rescan starts only after this long without a touch or key in the library. */
         private const val AUTO_SCAN_IDLE_MS = 3000L
         private const val STATUS_HEIGHT_DP = 36
+        /** The strip with a two-line text (the one-time auto-backup line). */
+        private const val STATUS_TALL_DP = 56
+        /** The idle auto backup waits this long without a touch or key (scroll SPEC §3.2 trigger 1). */
+        private const val BACKUP_IDLE_MS = 10_000L
+        /** Raw pref (device-local: "backupauto" is transient): the one-time auto-backup status line was shown. */
+        private const val PREF_BACKUP_NOTICE = "backupAuto.noticeShown"
         /** Longest the launch splash is held while looking up the book to reopen (a stuck database shows the library). */
         private const val OPEN_LAST_MAX_WAIT_MS = 2000L
+        private const val TAG = "Library"
     }
 
     internal val scope = MainScope()
@@ -141,7 +167,11 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private var counts: Map<Shelf, Int>? = null
     /** Reload when the window regains focus (after dialogs owned by other modules that may edit books). */
     internal var refreshOnFocus = false
+    /** Books may come back retitled (책 정보 edited here or in the reader): the next [showBooks] compares titles. */
+    internal var checkTitles = false
     private var localStatus: String? = null
+    /** The empty list shows the no-access message and buttons: the permission panel above it hides (no duplicates). */
+    private var noAccessShown = false
     /** Writes in flight on [writeDispatcher]; the list is reloaded from the database only once they are all stored. */
     private var pendingWrites = 0
     /** A reload is owed once [pendingWrites] drops to 0. */
@@ -152,6 +182,35 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private val selection = BookSelection()
     /** Rows of the book list on screen (whichever view shows them); empty while a group list shows. */
     private var shownRows: List<BookRow> = emptyList()
+
+    // ---- paging, device class, notes counts
+    /** E-ink screen (stamped device class): card buttons without a pressed state. Read once at creation. */
+    private var eink = false
+    /** The lists page (ListPager) instead of scrolling: 목록 넘기기 = 쪽 단위 (`ListPaging.paged`). */
+    private var paged = false
+    private lateinit var pagerBar: InkPagerBar
+    private lateinit var listPager: ListPager
+    private var gridPager: ListPager? = null
+    /** Columns of [gridPager] (a mode switch with other columns makes a new one). */
+    private var gridPagerCols = 0
+    /** The first list was drawn: the after-first-frame work ran (brightness repair, device probe). */
+    private var firstListDone = false
+    /** 독서 노트 / 단어장 counts and the [Library.notesGen] they were read at. */
+    private var notesCounts: IntArray? = null
+    private var notesCountsGen = -1L
+
+    // ---- auto backup and the restore offer (scroll SPEC §3.2, §3.4)
+    /** The restore offer is open: the scan of this visit waits for its answer. */
+    private var scanHeld = false
+    private var restorePrompt: AutoRestorePrompt? = null
+    /** An idle auto backup is due this visit and waits for [BACKUP_IDLE_MS] of idleness. */
+    private var backupPending = false
+    /** Bumped by every touch or key: the running backup's busy() sees the user come back. */
+    @Volatile private var interactions = 0
+    @Volatile private var resumedForBackup = false
+    /** The one-time "자동 백업을 저장했습니다 · …" line, shown on the status strip for this visit. */
+    private var backupNotice: String? = null
+    private val backupRunnable = Runnable { runIdleBackup() }
 
     // ---- start-up (open the last book on start)
     /** The library views exist ([ensureUi]). Not before the open-last decision, nor while the reader opened by it is up. */
@@ -187,8 +246,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private lateinit var statusRow: LinearLayout
     private lateinit var statusText: TextView
     private lateinit var permPanel: LinearLayout
-    private lateinit var listView: ListView
-    private lateinit var gridView: GridView
+    private lateinit var listView: InkListView
+    private lateinit var gridView: InkGridView
     private lateinit var emptyScroll: ScrollView
     private lateinit var emptyText: TextView
     private lateinit var emptyButtons: LinearLayout
@@ -196,6 +255,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private var scrim: View? = null
     private var drawer: LinearLayout? = null
     private val drawerItems = HashMap<Shelf, DrawerItem>()
+    /** The drawer's 독서 노트 and 단어장 rows (counts from Notes.drawerCounts). */
+    private var notesItems: Array<DrawerItem>? = null
 
     private lateinit var bookAdapter: BookListAdapter
     private lateinit var compactAdapter: CompactListAdapter
@@ -204,7 +265,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private class DrawerItem(val row: LinearLayout, val label: TextView, val count: TextView)
 
-    /** "N권 선택" toolbar: title, [더보기] (one book), [전체], [닫기], then the batch actions. */
+    /** "N권 선택" toolbar: title, [더보기] (one book), [모두 선택], [닫기], then the batch actions. */
     private class SelectionBar(
         val root: LinearLayout,
         val title: TextView,
@@ -221,7 +282,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         // Re-check when it fires: a scan started meanwhile (e.g. right after a permission grant) may have
         // finished already, and scanning twice in a row costs seconds of CPU and disk on the Comet.
         val last = Settings.raw().getLong(LibraryJobs.PREF_LAST_SCAN, 0L)
-        if (hasAccess && !ReaderPresence.inFront && !LibraryJobs.scanning &&
+        if (hasAccess && !scanHeld && !ReaderPresence.inFront && !LibraryJobs.scanning &&
             LibraryText.rescanDue(last, System.currentTimeMillis())
         ) {
             LibraryJobs.startScan(this, announce = false, periodic = true)
@@ -235,7 +296,10 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         // API 31+: drop the platform splash at once instead of its fade-out (a run of e-ink frames). The theme makes
         // it a plain white window with no icon (values-v31).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) splashScreen.setOnExitAnimationListener { it.remove() }
+        // First (C35): decides the restore offer from whether the prefs were empty before anything writes them.
+        InstallState.ensure(this)
         val app = Settings.app
+        eink = DeviceClass.cached(this) == true
         listMode = app.libraryListMode
         sort = app.librarySort
         val savedShelf = savedInstanceState?.getString(STATE_SHELF) ?: Settings.raw().getString(PREF_SHELF, null)
@@ -246,6 +310,22 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         }
         hasAccess = hasStorageAccess()
         val i = intent
+        // An outside launch (an e-reader's task manager or launcher) that cleared the task above the library has just
+        // finished the reader the user was reading: open that book again instead of showing the library.
+        logStart("create", i)
+        val interrupted = if (savedInstanceState == null) ResumeState.takeInterrupted() else -1L
+        if (interrupted > 0) {
+            Log.i(TAG, "reopen the interrupted reader: book $interrupted")
+            startOpenLast(resumeId = interrupted)
+            return
+        }
+        // A launch that only put a new library on top of the live reader (a task manager's MAIN intent without the
+        // launcher category, or the app's launch intent for a task a file manager's book started): show the reader.
+        if (savedInstanceState == null && !isTaskRoot && i?.action == Intent.ACTION_MAIN && ResumeState.readerLive()) {
+            Log.i(TAG, "a MAIN launch over the open reader: back to the reader")
+            finish()
+            return
+        }
         val first = ResumeState.activitiesCreated == 1
         val pending = if (first) ResumeState.pending() else null
         when (LibraryText.startMode(app.openLastOnStart, savedInstanceState != null, i?.action, i?.flags ?: 0,
@@ -253,7 +333,11 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         ) {
             LibraryText.StartMode.RESUME -> startOpenLast(resumeId = pending!!.bookId)
             LibraryText.StartMode.OPEN_LAST -> startOpenLast()
-            LibraryText.StartMode.LIBRARY -> ensureUi()
+            LibraryText.StartMode.LIBRARY -> {
+                // The reader that launch finished may report it only after this start (its destroy comes later).
+                if (savedInstanceState == null) ResumeState.awaitDrop { id -> reopenInterrupted(id) }
+                ensureUi()
+            }
         }
     }
 
@@ -271,6 +355,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             Settings.raw().edit().putBoolean(PREF_LEGACY_ASKED, true).apply()
             requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_LEGACY_PERM)
         }
+        // Once per start: copy temp files a killed process left in the books folder.
+        val app = applicationContext
+        scope.launch(Dispatchers.IO) { BookCopies.sweepTemps(LibraryImport.booksDir(app)) }
     }
 
     private fun releaseDrawHold() {
@@ -288,37 +375,58 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     override fun onRestart() {
         super.onRestart()
         // Back from the reader / settings: they can add books to collections, so the card icons must be
-        // recomputed (the onResume reload picks this up).
+        // recomputed (the onResume reload picks this up), and edit a title drawn on a generated cover.
         collectionMembers = null
+        checkTitles = true
     }
 
     override fun onResume() {
         super.onResume()
         resumed = true
+        resumedForBackup = true
         if (decidingOpenLast) return // onLastBookLoaded opens the reader or shows the library
         ensureUi() // back from the reader opened at start
+        releaseDrawHold() // a reopen from onNewIntent held an already built library
         refreshVisible()
+        showLastCrash()
     }
 
     /** Builds the library (if needed) and runs the per-visit refresh that onResume skipped while deciding. */
     private fun showLibrary() {
         ensureUi()
         refreshVisible()
+        showLastCrash()
     }
 
-    /** Per-visit work: permission state, scan scheduling, status strip, counts and the list. */
+    /** An earlier run crashed: its stack trace once, to copy and send (no logcat on a phone). */
+    private fun showLastCrash() {
+        val text = com.ggumtak.readeraplus.CrashLog.take(this) ?: return
+        crashDialog(text)
+    }
+
+    /**
+     * Per-visit work: permission state, paging, the restore offer (which holds the scan), scan scheduling, the idle
+     * auto-backup wait, status strip, counts and the list.
+     */
     private fun refreshVisible() {
         val app = Settings.app
         listMode = app.libraryListMode
         sort = app.librarySort
         showModeButton() // a restored backup may have changed the view
+        applyPaging(ListPaging.paged(app.listPaging))
         val access = hasStorageAccess()
         val newlyGranted = access && !hasAccess
         hasAccess = access
         updatePermissionPanel()
         val lastScan = Settings.raw().getLong(LibraryJobs.PREF_LAST_SCAN, 0L)
         cancelAutoScan()
-        if (access && newlyGranted) {
+        // The restore offer first (C35): its scan waits for the answer, the newly granted one included. A restore
+        // started by an earlier library (rotation, Back) holds it too and is reported here, not offered again.
+        val offer = access && (InstallState.offerPending(this) || AutoRestorePrompt.busy)
+        if (offer) {
+            scanHeld = true
+            (restorePrompt ?: AutoRestorePrompt(this) { releaseHeldScan() }.also { restorePrompt = it }).start()
+        } else if (access && newlyGranted) {
             LibraryJobs.startScan(this, announce = true)
         } else if (access && LibraryText.rescanDue(lastScan, System.currentTimeMillis())) {
             // Deferred until the library is idle, so a book opened right away (or open-last-on-start) doesn't
@@ -326,9 +434,53 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             autoScanPending = true
             restartAutoScanWait()
         }
+        // Then the idle auto backup (at most daily; never while a book opens or a scan runs).
+        backupPending = app.autoBackup && runCatching {
+            AutoBackup.isDue(System.currentTimeMillis(), Settings.raw().getLong(AutoBackup.PREF_CHECKED_AT, 0L))
+        }.getOrDefault(false)
+        restartAutoScanWait()
+        backupNotice = pendingBackupNotice()
         updateStatus()
         invalidateCounts()
         reload()
+    }
+
+    /** The offer is over without a restore: the scan it held runs now (announced, as a first scan is). */
+    private fun releaseHeldScan() {
+        if (!scanHeld) return
+        scanHeld = false
+        if (hasAccess && !isFinishing) LibraryJobs.startScan(this, announce = true)
+    }
+
+    /** Status strip text owned by this screen ("여는 중…", "복원하는 중…"); null clears it. */
+    internal fun setLocalStatus(text: String?) {
+        localStatus = text
+        if (uiBuilt) updateStatus()
+    }
+
+    // ============================================================================================ auto backup
+
+    /**
+     * Trigger 1 of the auto backup (scroll SPEC §3.2): after [BACKUP_IDLE_MS] in front without a touch or key, run it
+     * off main. Its busy() reports a touch or key since the start, the screen being left, the reader in front or a scan,
+     * and the run then stops (BUSY leaves `checkedAt` as it was: the next visit retries).
+     */
+    private fun runIdleBackup() {
+        backupPending = false
+        if (!resumed || ReaderPresence.inFront || LibraryJobs.scanning || scanHeld) return
+        val startedAt = interactions
+        // AutoBackup's own background thread runs it (runNow, single-flight with the reader's trigger 2); a first
+        // write is announced by the next refreshVisible ([pendingBackupNotice]).
+        AutoBackup.schedule(applicationContext, 0) {
+            interactions != startedAt || !resumedForBackup || ReaderPresence.inFront || LibraryJobs.scanning
+        }
+    }
+
+    /** The one-time status line after this install's first auto backup (from any trigger), or null. */
+    private fun pendingBackupNotice(): String? {
+        val raw = Settings.raw()
+        if (raw.getBoolean(PREF_BACKUP_NOTICE, false) || AutoBackup.lastWrittenAt(this) <= 0L) return null
+        return LibraryText.AUTO_BACKUP_NOTICE
     }
 
     override fun onStop() {
@@ -337,6 +489,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     override fun onDestroy() {
+        restorePrompt?.dismiss()
         scope.cancel()
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
@@ -345,6 +498,33 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // As in onCreate: a launch with CLEAR_TOP | SINGLE_TOP from outside finished the reader above this library.
+        logStart("new intent", intent)
+        val interrupted = ResumeState.takeInterrupted()
+        if (interrupted > 0) {
+            // As at creation: the library is held from drawing while the book reopens (released in onResume after).
+            Log.i(TAG, "reopen the interrupted reader: book $interrupted")
+            startOpenLast(resumeId = interrupted)
+        } else {
+            ResumeState.awaitDrop { id -> reopenInterrupted(id) }
+        }
+    }
+
+    /** How the library was started (device diagnosis: which intent a task manager or launcher really sends). */
+    private fun logStart(what: String, i: Intent?) {
+        Log.i(TAG, "$what: action=${i?.action} categories=${i?.categories} flags=0x${Integer.toHexString(i?.flags ?: 0)} " +
+            "root=$isTaskRoot readerLive=${ResumeState.readerLive()}")
+    }
+
+    /** The reader finished by an outside launch reported only after this library came up: reopen its book. */
+    private fun reopenInterrupted(bookId: Long) {
+        if (isFinishing || isDestroyed) return
+        Log.i(TAG, "reopen the interrupted reader (late): book $bookId")
+        try {
+            ReaderActivity.open(this, bookId)
+        } catch (t: Throwable) {
+            Log.w(TAG, "reopen failed", t)
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -359,39 +539,53 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         // A dialog or menu in front is not idle: the wait for the periodic scan starts over when it closes.
         restartAutoScanWait()
         if (hasFocus && refreshOnFocus && uiBuilt) {
+            checkTitles = true
             invalidateCounts()
             reload()
         }
     }
 
     override fun onPause() {
+        ResumeState.stopWaiting()
         resumed = false
+        resumedForBackup = false
         refreshOnFocus = false
         cancelAutoScan()
+        // Leaving the screen cancels the idle backup wait (the next visit checks again); the line was shown once.
+        backupPending = false
+        handler.removeCallbacks(backupRunnable)
+        // No view change here (a book may be opening): the next refreshVisible repaints the strip without it.
+        backupNotice = null
         super.onPause()
     }
 
     /** Touch down or any key (Activity hook): the library is in use, so a pending periodic scan waits longer. */
     override fun onUserInteraction() {
         super.onUserInteraction()
+        interactions++
         restartAutoScanWait()
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         // Idle time counts from the end of a drag, not from its start (onUserInteraction only sees the down).
-        if (autoScanPending && ev.actionMasked == MotionEvent.ACTION_UP) restartAutoScanWait()
+        if ((autoScanPending || backupPending) && ev.actionMasked == MotionEvent.ACTION_UP) restartAutoScanWait()
         return super.dispatchTouchEvent(ev)
     }
 
     /**
-     * (Re)starts the idle wait of a pending periodic scan; no-op when none is pending. Without the window focus
-     * (a dialog or menu is up, or focus has not arrived after onResume yet) it only drops the wait: the focus
-     * change starts it.
+     * (Re)starts the idle waits of a pending periodic scan and a pending auto backup; no-op when none is pending.
+     * Without the window focus (a dialog or menu is up, or focus has not arrived after onResume yet) it only drops the
+     * waits: the focus change starts them.
      */
     private fun restartAutoScanWait() {
-        if (!autoScanPending) return
-        handler.removeCallbacks(autoScanRunnable)
-        if (hasWindowFocus()) handler.postDelayed(autoScanRunnable, AUTO_SCAN_IDLE_MS)
+        if (autoScanPending) {
+            handler.removeCallbacks(autoScanRunnable)
+            if (hasWindowFocus()) handler.postDelayed(autoScanRunnable, AUTO_SCAN_IDLE_MS)
+        }
+        if (backupPending) {
+            handler.removeCallbacks(backupRunnable)
+            if (hasWindowFocus()) handler.postDelayed(backupRunnable, BACKUP_IDLE_MS)
+        }
     }
 
     private fun cancelAutoScan() {
@@ -434,6 +628,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             // While typing a search, only volume keys page (learned keys could be ordinary text keys).
             if (dir != 0 && (!searchEdit.isFocused || isVolume)) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) scrollPage(dir)
+                interactions++
                 restartAutoScanWait() // consumed here, so Activity.onUserInteraction never sees it
                 return true
             }
@@ -456,10 +651,12 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         groupAdapter = GroupAdapter(this, ::enterGroup, ::onGroupLongPress)
         gridAdapter = BookGridAdapter(this, actions)
 
-        // Library subclasses: the always-visible fast scroller takes only the right edge, not the ⋮ next to it.
+        // Library subclasses: the always-visible fast scroller takes only the right edge, not the ⋮ next to it. In
+        // paged mode (applyPaging) they have no fast scroller and turn a drag into one page.
         listView = InkListView(this).apply {
             clipToPadding = false
-            setPadding(0, dp(4), 0, dp(8))
+            // paddingEnd 12 dp (polish 14): the scroller's strip, so no row pixel is clickable at x ≥ W − 12 dp.
+            setPadding(0, dp(4), dp(12), dp(8))
             isFastScrollEnabled = true
             // Always shown: the auto-hiding fast scroller fades in/out on every scroll (e-ink redraws).
             isFastScrollAlwaysVisible = true
@@ -469,17 +666,13 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         }
         content.addView(listView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
 
-        val widthPx = resources.displayMetrics.widthPixels
-        val cols = LibraryText.gridColumns(widthPx, resources.displayMetrics.density)
-        val pad = dp(8)
-        val spacing = dp(6)
-        gridAdapter.cellWidth = (widthPx - pad - dp(12) - (cols - 1) * spacing) / cols
+        // One GridView serves 큰 표지 and 작은 표지 (configureGrid sets the columns and cells per mode).
         gridView = InkGridView(this).apply {
-            numColumns = cols
+            numColumns = LibraryGridMath.columns(LibraryListMode.GRID, resources.displayMetrics.widthPixels / resources.displayMetrics.density)
             stretchMode = GridView.STRETCH_COLUMN_WIDTH
-            horizontalSpacing = spacing
-            verticalSpacing = dp(10)
-            setPadding(pad, pad, dp(12), pad)
+            horizontalSpacing = dp(LibraryGridMath.H_SPACING_DP)
+            verticalSpacing = dp(LibraryGridMath.V_SPACING_DP)
+            setPadding(dp(LibraryGridMath.PAD_DP), dp(LibraryGridMath.PAD_DP), dp(LibraryGridMath.PAD_END_DP), dp(LibraryGridMath.PAD_DP))
             scrollBarStyle = View.SCROLLBARS_OUTSIDE_OVERLAY
             clipToPadding = false
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -490,6 +683,11 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             isFastScrollAlwaysVisible = true
             visibility = View.GONE
             adapter = gridAdapter
+            // Paged grids fit whole rows to the height; a new height (rotation, window size) refits them.
+            addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+                // Refit now and drop the frame laid out with the old cells: one draw, not two.
+                if (bottom - top != oldBottom - oldTop && fitGrid()) skipOneDraw()
+            }
         }
         content.addView(gridView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
 
@@ -517,6 +715,11 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         content.addView(buildStatusRow(), FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
 
         main.addView(content, lp(MATCH_PARENT, 0, 1f))
+        // The pager bar under the content frame, shown only when paged (the status strip overlays the list above it).
+        pagerBar = InkPagerBar(this).apply { visibility = View.GONE }
+        main.addView(pagerBar)
+        listPager = ListPager(listView, pagerBar).apply { onPaged = { first, last -> prefetchAfter(listView, first, last) } }
+        listView.pager = listPager
         root.addView(main, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
     }
 
@@ -550,12 +753,12 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         row.addView(titleView, lp(0, WRAP_CONTENT, 1f))
         extraBtn = iconButton(R.drawable.ic_add, "새 컬렉션") { onExtraAction() }.apply { visibility = View.GONE }
         row.addView(extraBtn)
-        // 목록 → 간단히 → 표지 in one tap each (no chooser dialog to open and close on e-ink).
+        // 자세히 → 간단히 → 큰 표지 → 작은 표지 in one tap each (no chooser dialog to open and close on e-ink).
         viewBtn = iconButton(modeIcon(listMode), modeDescription(listMode)) { cycleListMode() }
         viewBtnMode = listMode
         row.addView(viewBtn)
         row.addView(iconButton(R.drawable.ic_search, "검색") { toggleSearch() })
-        row.addView(iconButton(R.drawable.ic_more_vert, "메뉴") { showOverflow(it) })
+        row.addView(iconButton(R.drawable.ic_more_vert, "더보기") { showOverflow(it) })
         bar.addView(row, lp())
         bar.addView(hairline())
         return bar
@@ -565,8 +768,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         searchRow = vertical { visibility = View.GONE }
         val row = horizontal { setPadding(dp(12), 0, dp(4), 0); minimumHeight = dp(52) }
         row.addView(icon(R.drawable.ic_search, 22, Ink.GRAY))
-        searchEdit = EditText(this).apply {
-            hint = "제목, 작가, 파일 이름"
+        searchEdit = InkEditText(this).apply {
+            hint = "제목 · 작가 · 파일 이름 검색"
             setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT
             imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI
@@ -579,16 +782,23 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
                 override fun afterTextChanged(s: Editable?) {
-                    handler.removeCallbacks(searchRunnable)
-                    handler.postDelayed(searchRunnable, SEARCH_DEBOUNCE_MS)
+                    // The activity's handler (inside apply, a bare `handler` is the view's, which closeSearch and
+                    // onDestroy never cancel and which is null while the field is detached).
+                    this@LibraryActivity.handler.removeCallbacks(searchRunnable)
+                    this@LibraryActivity.handler.postDelayed(searchRunnable, SEARCH_DEBOUNCE_MS)
                     restartAutoScanWait() // soft-keyboard typing reaches no activity input hook
                 }
             })
-            setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                    handler.removeCallbacks(searchRunnable)
-                    applySearch(text.toString())
-                    hideKeyboard()
+            // Search, Done or an Enter key (down and up both consumed: an unconsumed Enter on a single-line field makes
+            // TextView move the focus down, which can throw when nothing below takes it).
+            setOnEditorActionListener { _, actionId, ev ->
+                val enter = ev != null && ev.keyCode == KeyEvent.KEYCODE_ENTER
+                if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE || enter) {
+                    if (ev == null || ev.action == KeyEvent.ACTION_DOWN) {
+                        this@LibraryActivity.handler.removeCallbacks(searchRunnable)
+                        applySearch(text.toString())
+                        hideKeyboard()
+                    }
                     true
                 } else {
                     false
@@ -612,21 +822,34 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             isClickable = true // taps on the strip must not reach the card below it
         }
         statusRow.addView(hairline())
-        statusText = label("", 14f, maxLines = 1).apply {
+        statusText = label("", 14f, maxLines = 2).apply {
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), 0, dp(16), 0)
+            minHeight = dp(STATUS_HEIGHT_DP)
+            maxHeight = dp(STATUS_TALL_DP)
+            setPadding(dp(16), dp(4), dp(16), dp(4))
         }
-        statusRow.addView(statusText, lp(MATCH_PARENT, dp(STATUS_HEIGHT_DP)))
+        statusRow.addView(statusText, lp(MATCH_PARENT, WRAP_CONTENT))
+        // A tap on the one-time backup line dismisses it.
+        statusRow.setOnClickListener {
+            if (backupNotice != null) {
+                backupNotice = null
+                updateStatus()
+            }
+        }
         return statusRow
     }
 
     /** Shows/hides the bottom status strip and reserves list space under it so the last card stays reachable. */
-    private fun setStatusVisible(visible: Boolean) {
-        if ((statusRow.visibility == View.VISIBLE) == visible) return
-        statusRow.visibility = if (visible) View.VISIBLE else View.GONE
-        val extra = if (visible) dp(STATUS_HEIGHT_DP) + 1 else 0
+    private fun setStatusVisible(visible: Boolean, tall: Boolean = false) {
+        // In both modes: a paged list must not count a row under the strip as seen (the pager and the grid fit use
+        // the padding).
+        val extra = if (!visible) 0 else dp(if (tall) STATUS_TALL_DP else STATUS_HEIGHT_DP) + 1
+        val v = if (visible) View.VISIBLE else View.GONE
+        if (statusRow.visibility != v) statusRow.visibility = v
+        if (listView.paddingBottom == dp(8) + extra) return
         listView.setPadding(listView.paddingLeft, listView.paddingTop, listView.paddingRight, dp(8) + extra)
         gridView.setPadding(gridView.paddingLeft, gridView.paddingTop, gridView.paddingRight, dp(8) + extra)
+        fitGrid()
     }
 
     private fun buildPermissionPanel(): View {
@@ -637,12 +860,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         }
         permPanel.addView(label("모든 파일 접근 권한이 필요합니다", 17f, bold = true), lp())
         permPanel.addView(
-            label(
-                "기기에 있는 EPUB · TXT · PDF 파일을 찾아 서재에 보여 주려면 ‘모든 파일 접근’을 허용하세요. " +
-                    "허용하고 돌아오면 자동으로 스캔합니다. 설정 화면이 열리지 않으면 ‘폴더 추가’로 책 폴더를 고르세요.",
-                14f,
-                color = Ink.GRAY,
-            ).apply { setPadding(0, dp(6), 0, dp(10)); setLineSpacing(0f, 1.2f) },
+            label("허용하면 기기에 있는 TXT·EPUB·PDF 책을 찾아 서재에 넣습니다.", 15f)
+                .apply { setPadding(0, dp(6), 0, dp(10)); setLineSpacing(0f, 1.2f) },
             lp(),
         )
         val buttons = horizontal()
@@ -652,6 +871,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             })
         }
         add("권한 허용") { requestStorageAccess() }
+        // "스캔 폴더 추가" (its name in ⋮) would wrap in a third of the panel.
         add("폴더 추가") { pickTree() }
         add("닫기") {
             Settings.raw().edit().putBoolean(PREF_PERM_PANEL_HIDDEN, true).apply()
@@ -678,30 +898,36 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         col.addView(header, lp())
         col.addView(hairline())
         col.addView(View(this), lp(MATCH_PARENT, dp(4)))
-        Shelf.entries.forEach { s ->
-            val item = drawerRow(shelfIcon(s), s.label) { selectShelf(s) }
-            drawerItems[s] = item
-            col.addView(item.row, lp())
+        // Navigation only, in groups parted by a line (NOTES_SPEC §10.1): the reading shelves, 독서 노트 · 단어장, the
+        // grouped shelves, the trash, then 설정 · 읽기 기록. The library's own work (scan, files, Wi-Fi) is in ⋮.
+        fun divider() {
+            col.addView(View(this), lp(MATCH_PARENT, dp(4)))
+            col.addView(hairline())
+            col.addView(View(this), lp(MATCH_PARENT, dp(4)))
         }
-        col.addView(View(this), lp(MATCH_PARENT, dp(4)))
-        col.addView(hairline())
-        col.addView(View(this), lp(MATCH_PARENT, dp(4)))
+        LibraryText.DRAWER_SHELVES.forEachIndexed { g, shelves ->
+            if (g > 0) divider()
+            for (s in shelves) {
+                val item = drawerRow(shelfIcon(s), s.label) { selectShelf(s) }
+                drawerItems[s] = item
+                col.addView(item.row, lp())
+            }
+            if (g == 0) {
+                // Their counts come with the shelf counts.
+                divider()
+                val notes = drawerRow(R.drawable.ic_format_quote, "독서 노트") { closeDrawer(); NotesActivity.open(this) }
+                val words = drawerRow(R.drawable.ic_translate, "단어장") { closeDrawer(); NotesActivity.open(this, NotesTab.WORDS) }
+                notesItems = arrayOf(notes, words)
+                col.addView(notes.row, lp())
+                col.addView(words.row, lp())
+            }
+        }
+        divider()
         col.addView(drawerRow(R.drawable.ic_settings, "설정") { closeDrawer(); SettingsActivity.open(this) }.row, lp())
         // ic_history, not the spec's ic_schedule: that clock is already 읽을 책's icon a few rows up.
         col.addView(drawerRow(R.drawable.ic_history, "읽기 기록") {
             closeDrawer()
             SettingsActivity.open(this, SettingsActivity.PAGE_STATS)
-        }.row, lp())
-        col.addView(drawerRow(R.drawable.ic_file_open, "파일 열기") { closeDrawer(); openFilePicker() }.row, lp())
-        // Books received there are in the database when this screen resumes: onResume reloads the list and counts.
-        col.addView(drawerRow(R.drawable.ic_download, "Wi-Fi로 책 받기") {
-            closeDrawer()
-            SettingsActivity.open(this, SettingsActivity.PAGE_WIFI)
-        }.row, lp())
-        col.addView(drawerRow(R.drawable.ic_refresh, "도서 스캔") { closeDrawer(); manualScan() }.row, lp())
-        col.addView(drawerRow(R.drawable.ic_info, "정보") {
-            closeDrawer()
-            SettingsActivity.open(this, SettingsActivity.PAGE_ABOUT)
         }.row, lp())
         col.addView(View(this), lp(MATCH_PARENT, dp(12)))
         val scroll = ScrollView(this).apply {
@@ -716,7 +942,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private fun drawerRow(iconRes: Int, text: String, onClick: () -> Unit): DrawerItem {
         val row = horizontal {
-            minimumHeight = dp(52)
+            minimumHeight = dp(48)
             setPadding(dp(16), 0, dp(16), 0)
             background = pressableBackground()
             setOnClickListener { onClick() }
@@ -919,7 +1145,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                     runCatching {
                         val books = Library.books(LibraryQuery(s, g, q), so)
                         val members = known ?: collectionMemberIds()
-                        members to books.map { BookRow.of(it, it.id in members) }
+                        val now = System.currentTimeMillis()
+                        members to books.map { BookRow.of(it, it.id in members, now) }
                     }
                 }
                 handler.removeCallbacks(loadingRunnable)
@@ -955,24 +1182,42 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private fun sameRows(a: List<BookRow>, b: List<BookRow>): Boolean {
         if (a.size != b.size) return false
         for (i in a.indices) {
-            if (a[i].book != b[i].book || a[i].inCollection != b[i].inCollection) return false
+            if (a[i].book != b[i].book || a[i].inCollection != b[i].inCollection || a[i].meta != b[i].meta) return false
         }
         return true
     }
 
-    /** The adapter of the list view for the current mode (목록 cards or 간단히 rows). */
+    /** The adapter of the list view for the current mode (자세히 cards or 간단히 rows). */
     private fun listAdapterForMode(): BookAdapter =
         if (listMode == LibraryListMode.COMPACT) compactAdapter else bookAdapter
 
-    private fun showBooks(rows: List<BookRow>, scrollTop: Boolean) {
+    /** The adapter showing books in the current mode. */
+    private fun adapterForMode(): BookAdapter = if (LibraryGridMath.isGrid(listMode)) gridAdapter else listAdapterForMode()
+
+    /**
+     * Shows [rows] in the current mode. [keepFirst] ≥ 0: the book at that index becomes the first one shown (a view
+     * switch keeps the first visible book; no query).
+     */
+    private fun showBooks(rows: List<BookRow>, scrollTop: Boolean, keepFirst: Int = -1) {
+        if (checkTitles) {
+            checkTitles = false
+            forgetRetitledCovers(shownRows, rows)
+        }
         shownRows = rows
         // Books that left the list (moved to another shelf, trashed, filtered out) are no longer checked.
         if (selection.active && selection.retain(rows.mapTo(HashSet(rows.size)) { it.book.id })) updateSelectionBar()
-        if (listMode == LibraryListMode.GRID) {
+        if (LibraryGridMath.isGrid(listMode)) {
             listView.visibility = View.GONE
+            configureGrid()
             gridView.visibility = View.VISIBLE
             if (!sameRows(gridAdapter.rows, rows)) gridAdapter.submit(rows)
-            if (scrollTop) gridView.setSelection(0)
+            gridPager?.bindBar()
+            // An empty list takes no selection (AbsListView asks a stable-id adapter for row 0's id).
+            when {
+                rows.isEmpty() -> {}
+                scrollTop -> gridView.setSelection(0)
+                keepFirst >= 0 -> gridView.setSelection(pageStart(keepFirst, gridPager))
+            }
         } else {
             gridView.visibility = View.GONE
             listView.visibility = View.VISIBLE
@@ -983,9 +1228,26 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             } else if (!sameRows(adapter.rows, rows)) {
                 adapter.submit(rows)
             }
-            if (scrollTop) listView.setSelection(0)
+            listPager.bindBar()
+            when {
+                rows.isEmpty() -> {}
+                scrollTop -> listView.setSelection(0)
+                keepFirst >= 0 -> listView.setSelection(keepFirst.coerceIn(0, rows.size - 1))
+            }
         }
-        if (rows.isEmpty()) showEmptyState() else emptyScroll.visibility = View.GONE
+        if (rows.isEmpty()) showEmptyState() else hideEmptyState()
+        afterFirstList()
+    }
+
+    /** A generated cover shows the title and author: a book edited in 책 정보 drops its old bitmap from memory. */
+    private fun forgetRetitledCovers(old: List<BookRow>, new: List<BookRow>) {
+        if (old.isEmpty()) return
+        val before = HashMap<Long, Book>(old.size * 2)
+        for (r in old) before[r.book.id] = r.book
+        for (r in new) {
+            val b = before[r.book.id] ?: continue
+            if (b.title != r.book.title || b.author != r.book.author) CoverLoader.forget(r.book.id)
+        }
     }
 
     private fun showGroups(groups: List<ShelfGroup>, scrollTop: Boolean) {
@@ -995,14 +1257,139 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         listView.visibility = View.VISIBLE
         if (listView.adapter !== groupAdapter) listView.adapter = groupAdapter
         if (groupAdapter.shelf != shelf || groupAdapter.groups != groups) groupAdapter.submit(shelf, groups)
+        listPager.bindBar()
         val restore = groupScroll
         if (restore != null) {
             groupScroll = null
-            listView.setSelectionFromTop(restore[0], restore[1])
-        } else if (scrollTop) {
+            if (groups.isNotEmpty()) listView.setSelectionFromTop(restore[0].coerceIn(0, groups.size - 1), restore[1])
+        } else if (scrollTop && groups.isNotEmpty()) {
             listView.setSelection(0)
         }
-        if (groups.isEmpty()) showEmptyState() else emptyScroll.visibility = View.GONE
+        if (groups.isEmpty()) showEmptyState() else hideEmptyState()
+        afterFirstList()
+    }
+
+    /** The first row of the page holding [index] (fixed-row pages); [index] itself otherwise. */
+    private fun pageStart(index: Int, pager: ListPager?): Int {
+        val n = if (paged) pager?.rowsPerPage ?: 0 else 0
+        val i = index.coerceAtLeast(0)
+        return if (n > 0) i - i % n else i
+    }
+
+    // ============================================================================================ paging and views
+
+    /**
+     * Paged (목록 넘기기 = 쪽 단위) or scrolling lists (자동 and 스크롤, every device: since 2026-10-04 an e-ink library
+     * also follows the finger and flings), decided per visit. Paged: no fast scroller (C2), a drag is one page, the pager
+     * bar shows.
+     */
+    private fun applyPaging(on: Boolean) {
+        if (on == paged) return
+        paged = on
+        listView.paged = on
+        gridView.paged = on
+        pagerBar.visibility = if (on) View.VISIBLE else View.GONE
+        // 간단히 rows are 80 / 88 dp, the grid's cells fitted or natural: rebind what is on screen.
+        configureGrid()
+        compactAdapter.notifyDataSetChanged()
+    }
+
+    /** Columns, cell recipe and pager of the one GridView for the current grid mode; no-op in the list modes. */
+    private fun configureGrid() {
+        if (!LibraryGridMath.isGrid(listMode)) return
+        val dm = resources.displayMetrics
+        val cols = LibraryGridMath.columns(listMode, dm.widthPixels / dm.density)
+        var changed = gridView.numColumns != cols
+        if (changed) gridView.numColumns = cols
+        if (gridAdapter.mode != listMode) {
+            gridAdapter.mode = listMode
+            gridAdapter.cellHeight = 0
+            changed = true
+        }
+        if (gridPager == null || gridPagerCols != cols) {
+            gridPager = ListPager(gridView, pagerBar, cols).apply { onPaged = { first, last -> prefetchAfter(gridView, first, last) } }
+            gridPagerCols = cols
+            gridView.pager = gridPager
+        }
+        // Recycled active cells would be reused unmeasured: a new recipe or height rebinds them (no query).
+        if (fitGrid(notify = false) || changed) {
+            if (gridAdapter.count > 0) gridAdapter.notifyDataSetChanged()
+        }
+    }
+
+    /**
+     * Cell height of the grid: paged → whole rows fitted to the height ([LibraryGridMath.fitRows]) and the pager's fixed
+     * page (rows × columns); scrolling → the natural height. Rebinds only when rows exist and the height changed.
+     */
+    private fun fitGrid(notify: Boolean = true): Boolean {
+        if (!uiBuilt || !LibraryGridMath.isGrid(listMode)) return false
+        val natural = dp(LibraryGridMath.cell(listMode).heightDp)
+        var cellH = natural
+        var perPage = 0
+        // Before its first layout (it was GONE) the grid will have its frame's height: fit now, not after a draw.
+        val height = if (gridView.height > 0) gridView.height else (gridView.parent as? View)?.height ?: 0
+        val inner = height - gridView.paddingTop - gridView.paddingBottom
+        if (paged && inner > 0) {
+            val (rows, h) = LibraryGridMath.fitRows(inner, natural, gridView.verticalSpacing)
+            cellH = h
+            perPage = rows * gridView.numColumns.coerceAtLeast(1)
+        }
+        gridPager?.rowsPerPage = perPage
+        if (gridAdapter.cellHeight == cellH) return false
+        gridAdapter.cellHeight = cellH
+        if (notify && gridAdapter.count > 0) gridAdapter.notifyDataSetChanged()
+        return true
+    }
+
+    /** Cancels the next draw once (its layout is stale); the traversal is rescheduled with the new layout. */
+    private fun skipOneDraw() {
+        val observer = root.viewTreeObserver
+        observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (observer.isAlive) observer.removeOnPreDrawListener(this)
+                return false
+            }
+        })
+    }
+
+    /**
+     * Paged lists: after a page shows, decode the next page's covers into memory ([CoverLoader.prefetch]) so the next
+     * page is one e-ink update. Runs on every layout of [v]; already cached covers cost a map lookup each.
+     */
+    private fun prefetchAfter(v: AbsListView, first: Int, last: Int) {
+        if (!paged || v.visibility != View.VISIBLE || v.adapter !is BookAdapter) return
+        val rows = shownRows
+        val n = (last - first + 1).coerceAtLeast(1)
+        if (last + 1 >= rows.size) return
+        prefetchBooks.clear()
+        val end = (last + 1 + n).coerceAtMost(rows.size)
+        for (i in last + 1 until end) prefetchBooks.add(rows[i].book)
+        CoverLoader.prefetch(this, prefetchBooks, 0, prefetchBooks.size, canonCoverW(), canonCoverH())
+    }
+    private val prefetchBooks = ArrayList<Book>(16)
+
+    /**
+     * After the first list is drawn (C35): the brightness repair of a crashed reader (IO), then the device-class
+     * probe (N §10.5). Never on the cold start's critical path, and not on RESUME / OPEN_LAST (no list is drawn).
+     */
+    private fun afterFirstList() {
+        if (firstListDone) return
+        firstListDone = true
+        val observer = root.viewTreeObserver
+        observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (observer.isAlive) observer.removeOnPreDrawListener(this)
+                // Posted from the pre-draw: runs after this frame is drawn.
+                root.post {
+                    val app = applicationContext
+                    ReaderIo.launch {
+                        DeviceLight.restoreIfStale(app)
+                        if (DeviceClass.cached(app) == null) DeviceClass.probeAsync(app) { }
+                    }
+                }
+                return true
+            }
+        })
     }
 
     private fun showEmptyState() {
@@ -1011,17 +1398,19 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val msg: String
         val storageShelf = shelf == Shelf.ALL || shelf == Shelf.READING_NOW || shelf == Shelf.DOWNLOADS ||
             shelf == Shelf.FOLDERS || shelf == Shelf.FORMATS
-        if (!hasAccess && noSearch && storageShelf && group == null) {
-            msg = "책을 찾으려면 ‘모든 파일 접근’ 권한이 필요합니다.\n권한을 허용하거나 ‘파일 열기’로 책을 직접 추가하세요."
+        val noAccess = !hasAccess && noSearch && storageShelf && group == null
+        if (noAccess) {
+            msg = "책을 찾으려면 ‘모든 파일 접근’을 허용하세요."
             buttons += "권한 허용" to { requestStorageAccess() }
-            buttons += "폴더 추가" to { pickTree() }
+            buttons += "스캔 폴더 추가" to { pickTree() }
             buttons += "파일 열기" to { openFilePicker() }
         } else {
             msg = LibraryText.emptyMessage(shelf, query, group != null, flagButtons = listMode == LibraryListMode.LIST)
             if (noSearch && group == null) {
                 when (shelf) {
-                    Shelf.ALL, Shelf.READING_NOW, Shelf.DOWNLOADS, Shelf.FOLDERS, Shelf.FORMATS -> {
-                        buttons += "도서 스캔" to { manualScan() }
+                    // 읽고 있는 책 fills by opening a book: no scan or file buttons there.
+                    Shelf.ALL, Shelf.DOWNLOADS, Shelf.FOLDERS, Shelf.FORMATS -> {
+                        buttons += "지금 스캔" to { manualScan() }
                         buttons += "파일 열기" to { openFilePicker() }
                     }
                     Shelf.COLLECTIONS -> buttons += "새 컬렉션" to { newCollection(null) }
@@ -1029,7 +1418,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 }
             }
         }
+        // The no-access message has the panel's buttons: the panel hides meanwhile (same pass, one redraw).
+        setNoAccessShown(noAccess)
         showMessage(msg, buttons)
+    }
+
+    private fun hideEmptyState() {
+        emptyScroll.visibility = View.GONE
+        setNoAccessShown(false)
     }
 
     private fun showMessage(msg: CharSequence, buttons: List<Pair<String, () -> Unit>>) {
@@ -1044,21 +1440,38 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     private fun showError(t: Throwable) {
-        val msg = ErrorLines.reason(t)?.let { "서재를 불러오지 못했습니다.\n$it" } ?: "서재를 불러오지 못했습니다."
+        val msg = ErrorLines.reason(t)?.let { "서재를 불러오지 못했습니다\n$it" } ?: "서재를 불러오지 못했습니다"
         showMessage(ErrorLines.withGrayDetail(msg, t), listOf("다시 시도" to { reload() }))
     }
 
+    /**
+     * Drawer counts, on IO, only while the drawer opens: the shelves (dropped by any change) and 독서 노트 / 단어장 (kept
+     * while [Library.notesGen] is unchanged), in one job.
+     */
     private fun ensureCounts() {
-        counts?.let { showCounts(it); return }
+        val gen = Library.notesGen
+        val known = counts
+        val notes = notesCounts?.takeIf { notesCountsGen == gen }
+        known?.let { showCounts(it) }
+        notes?.let { showNotesCounts(it) }
+        if (known != null && notes != null) return
         if (countsJob?.isActive == true) return
         countsJob = scope.launch {
-            val c = withContext(Dispatchers.IO) {
-                runCatching { Library.shelfCounts() }.getOrNull()
+            val r = withContext(Dispatchers.IO) {
+                val c = known ?: runCatching { Library.shelfCounts() }.getOrNull()
+                val n = notes ?: runCatching { Notes.drawerCounts() }.getOrNull()
+                c to n
             }
-            if (c != null) {
-                counts = c
-                showCounts(c)
-            }
+            r.first?.let { counts = it; showCounts(it) }
+            r.second?.let { notesCounts = it; notesCountsGen = gen; showNotesCounts(it) }
+        }
+    }
+
+    private fun showNotesCounts(c: IntArray) {
+        notesItems?.forEachIndexed { i, item ->
+            val n = c.getOrElse(i) { 0 }
+            val text = if (n > 0) n.toString() else ""
+            if (item.count.text.toString() != text) item.count.text = text
         }
     }
 
@@ -1073,12 +1486,15 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     // ============================================================================================ status & jobs
 
     private fun updateStatus() {
-        val text = listOfNotNull(localStatus, LibraryJobs.status()).joinToString("  ·  ").ifEmpty { null }
+        val text = listOfNotNull(localStatus, LibraryJobs.status()).joinToString(" · ").ifEmpty { null } ?: backupNotice
         if (text == null) {
             setStatusVisible(false)
         } else {
             if (statusText.text.toString() != text) statusText.text = text
-            setStatusVisible(true)
+            val notice = text == backupNotice
+            setStatusVisible(true, tall = notice)
+            // Marked shown only once it really is on screen (a scan's text may take the strip first).
+            if (notice) Settings.raw().edit().putBoolean(PREF_BACKUP_NOTICE, true).apply()
         }
     }
 
@@ -1118,7 +1534,15 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private fun updatePermissionPanel() {
         val hidden = Settings.raw().getBoolean(PREF_PERM_PANEL_HIDDEN, false)
-        permPanel.visibility = if (!hasAccess && !hidden) View.VISIBLE else View.GONE
+        val v = if (!hasAccess && !hidden && !noAccessShown) View.VISIBLE else View.GONE
+        if (permPanel.visibility != v) permPanel.visibility = v
+    }
+
+    /** The empty list says "책을 찾으려면 ‘모든 파일 접근’을 허용하세요" with the panel's buttons: the panel hides. */
+    private fun setNoAccessShown(shown: Boolean) {
+        if (noAccessShown == shown) return
+        noAccessShown = shown
+        updatePermissionPanel()
     }
 
     internal fun requestStorageAccess() {
@@ -1126,7 +1550,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             val specific = Intent(SystemSettings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
             if (tryStartForResult(specific, REQ_ALL_FILES)) return
             if (tryStartForResult(Intent(SystemSettings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION), REQ_ALL_FILES)) {
-                toast("목록에서 ‘${getString(R.string.app_name)}’을 찾아 허용하세요")
+                val name = getString(R.string.app_name)
+                toast("목록에서 ‘$name’${Josa.eulReul(name)} 찾아 허용하세요")
                 return
             }
             showNoPermissionScreen()
@@ -1137,7 +1562,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 // "다시 묻지 않음": requestPermissions would be denied silently — open the app's settings page.
                 val details = Intent(SystemSettings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
                 if (tryStartForResult(details, REQ_ALL_FILES)) {
-                    toast("권한 → 저장공간을 허용하세요")
+                    toast("‘권한’에서 ‘저장공간’을 허용하세요")
                     return
                 }
             }
@@ -1161,6 +1586,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         @Suppress("DEPRECATION")
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_LEGACY_PERM && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            // A fresh install's restore offer holds the first scan: refreshVisible (onResume) asks first.
+            if (InstallState.offerPending(this)) return
             hasAccess = true
             if (uiBuilt) updatePermissionPanel()
             LibraryJobs.startScan(this, announce = true)
@@ -1209,20 +1636,18 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val app = applicationContext
         if (uris.size == 1) {
             val uri = uris[0]
-            localStatus = "여는 중…"
-            updateStatus()
+            setLocalStatus("여는 중…")
             scope.launch {
                 val result = withContext(Dispatchers.IO) { runCatching { LibraryImport.importDocument(app, uri) } }
-                localStatus = null
-                updateStatus()
+                setLocalStatus(null)
                 result.onSuccess { book ->
                     if (book == null) {
-                        toast("지원하지 않는 파일입니다 (EPUB · TXT · PDF만 열 수 있습니다)")
+                        toast("TXT·EPUB·PDF 파일만 열 수 있습니다")
                     } else {
                         changed()
                         ReaderActivity.open(this@LibraryActivity, book)
                     }
-                }.onFailure { toast(ErrorLines.line("파일을 열 수 없습니다", it)) }
+                }.onFailure { toast(ErrorLines.line("파일을 열지 못했습니다", it)) }
             }
             return
         }
@@ -1261,13 +1686,10 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 }
                 val app = Settings.app
                 val merged = LibraryText.addScanFolder(app.scanFolders, path, roots)
-                if (merged != null) {
-                    Settings.saveApp(app.copy(scanFolders = merged))
-                    toast("스캔 폴더에 추가했습니다: $path")
-                } else {
-                    toast("이미 스캔 범위에 포함된 폴더입니다")
-                }
-                if (!LibraryJobs.startScan(this@LibraryActivity, announce = true)) toast("이미 스캔 중입니다")
+                if (merged != null) Settings.saveApp(app.copy(scanFolders = merged))
+                // One toast: a scan already running is said there (the new folder joins the next scan).
+                val started = LibraryJobs.startScan(this@LibraryActivity, announce = true)
+                toast(LibraryText.scanFolderMessage(path, added = merged != null, scanning = !started))
             }
             return
         }
@@ -1279,7 +1701,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         else "이 폴더는 파일 경로로 읽을 수 없는 저장소입니다."
         confirmDialog(
             title = "폴더에서 가져오기",
-            message = "$why\n폴더 안의 EPUB · TXT · PDF 파일을 앱 저장소로 복사해서 서재에 추가할까요?",
+            message = "$why\n폴더 안의 TXT·EPUB·PDF 파일을 앱 저장소로 복사할까요?",
             ok = "복사",
         ) { startTreeImport(uri) }
     }
@@ -1295,16 +1717,24 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     // ============================================================================================ overflow
 
+    /**
+     * ⋮: the library's own work (the drawer only moves between shelves), in groups parted by a black rule: this list
+     * (정렬 · 보기 · 새 컬렉션 / 휴지통 비우기) | one book in (파일 열기 · Wi-Fi로 책 받기) | the scan (지금 스캔 · 스캔
+     * 폴더 추가) | 설정.
+     */
     private fun showOverflow(anchor: View) {
         val items = ArrayList<MenuItem>()
         items += MenuItem("정렬: ${sort.label}", R.drawable.ic_sort) { chooseSort() }
         items += MenuItem("보기: ${listMode.label}", modeIcon(listMode)) { chooseMode() }
         if (shelf == Shelf.COLLECTIONS && group == null) items += MenuItem("새 컬렉션", R.drawable.ic_add) { newCollection(null) }
         if (shelf == Shelf.TRASH) items += MenuItem("휴지통 비우기", R.drawable.ic_delete_forever) { confirmEmptyTrash() }
-        items += MenuItem("도서 스캔", R.drawable.ic_refresh) { manualScan() }
-        items += MenuItem("파일 열기", R.drawable.ic_file_open) { openFilePicker() }
-        items += MenuItem("폴더 추가", R.drawable.ic_create_new_folder) { pickTree() }
-        items += MenuItem("설정", R.drawable.ic_settings) { SettingsActivity.open(this) }
+        items += MenuItem("파일 열기", R.drawable.ic_file_open, groupStart = true) { openFilePicker() }
+        // Books received there are in the database when this screen resumes: onResume reloads the list and counts.
+        items += MenuItem("Wi-Fi로 책 받기", R.drawable.ic_download) { SettingsActivity.open(this, SettingsActivity.PAGE_WIFI) }
+        // "지금 스캔", as the row of 설정 → 책 스캔 that does the same.
+        items += MenuItem("지금 스캔", R.drawable.ic_refresh, groupStart = true) { manualScan() }
+        items += MenuItem("스캔 폴더 추가", R.drawable.ic_create_new_folder) { pickTree() }
+        items += MenuItem("설정", R.drawable.ic_settings, groupStart = true) { SettingsActivity.open(this) }
         popupMenu(anchor, items, 260)
     }
 
@@ -1321,18 +1751,26 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private fun chooseMode() {
         val options = LibraryListMode.entries
-        chooser("보기", options.map { it.label }, listMode.ordinal) { i -> setListMode(options[i]) }
+        chooser("보기", options.map { LibraryText.modeChoice(it) }, listMode.ordinal) { i -> setListMode(options[i]) }
     }
 
-    /** The toolbar toggle: 목록 → 간단히 → 표지 → 목록. */
+    /** The toolbar toggle: 자세히 → 간단히 → 큰 표지 → 작은 표지 → 자세히. */
     private fun cycleListMode() = setListMode(LibraryText.nextListMode(listMode))
 
+    /**
+     * A view switch re-binds the rows already loaded (0 queries, 0 cover generations: one canonical cover size) and
+     * keeps the first visible book first; the pref is saved.
+     */
     private fun setListMode(m: LibraryListMode) {
         if (m == listMode) return
+        val shownView: AbsListView = if (gridView.visibility == View.VISIBLE) gridView else listView
+        val first = if (shownView.adapter is BookAdapter && shownView.visibility == View.VISIBLE) shownView.firstVisiblePosition else -1
         listMode = m
         Settings.saveApp(Settings.app.copy(libraryListMode = m))
         showModeButton()
-        reload(scrollTop = true)
+        // A group list has no books to show differently; before the first load the load shows the new mode.
+        if (!loadedOnce || listView.adapter === groupAdapter && listView.visibility == View.VISIBLE) return
+        showBooks(shownRows, scrollTop = false, keepFirst = first)
     }
 
     private fun showModeButton() {
@@ -1344,19 +1782,25 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     private fun modeIcon(m: LibraryListMode): Int = when (m) {
-        LibraryListMode.LIST -> R.drawable.ic_view_list
-        LibraryListMode.COMPACT -> R.drawable.ic_format_list_bulleted
+        LibraryListMode.LIST -> R.drawable.ic_article
+        LibraryListMode.COMPACT -> R.drawable.ic_view_list
         LibraryListMode.GRID -> R.drawable.ic_grid_view
-            LibraryListMode.COVERS -> R.drawable.ic_grid_view
+        LibraryListMode.COVERS -> R.drawable.ic_apps
     }
 
-    /** The toggle shows the current view; its long-press label says so and what a tap does. */
-    private fun modeDescription(m: LibraryListMode): String = "보기: ${m.label} (눌러서 바꾸기)"
+    /** The toggle shows the current view, and so does its label ("보기: 큰 표지"); a tap moves to the next one. */
+    private fun modeDescription(m: LibraryListMode): String = "보기: ${m.label}"
 
     private fun scrollPage(dir: Int) {
         val v: AbsListView = if (gridView.visibility == View.VISIBLE) gridView else listView
         if (v.visibility != View.VISIBLE || v.childCount == 0) return
+        if (paged) {
+            (if (v === gridView) gridPager else listPager)?.page(dir)
+            return
+        }
         val h = v.height - v.paddingTop - v.paddingBottom
+        // A running fling stops first, so the key moves exactly one screen from where the list is.
+        v.smoothScrollBy(0, 0)
         v.scrollListBy(dir * (h - dp(24)).coerceAtLeast(dp(48)))
     }
 
@@ -1411,6 +1855,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     /** Card callbacks (kept off the public activity API). */
     private val actions = object : BookActions {
         override val selection: BookSelection get() = this@LibraryActivity.selection
+        override val eink: Boolean get() = this@LibraryActivity.eink
+        override val paged: Boolean get() = this@LibraryActivity.paged
         override fun tap(row: BookRow, anchor: View) = onBookTap(row, anchor)
         override fun longPress(row: BookRow, anchor: View) = onBookLongPress(row, anchor)
         override fun showBookMenu(row: BookRow, anchor: View) = bookMenu(row, anchor)
@@ -1440,7 +1886,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     internal fun openBook(book: Book) {
         if (book.trashed) {
-            toast("휴지통에 있는 책입니다. 먼저 복원하세요.")
+            toast("휴지통에 있는 책입니다 · 먼저 복원하세요")
             return
         }
         ReaderActivity.open(this, book)
@@ -1476,9 +1922,12 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             reloadAfterWrites = true
         }
         pendingWrites++
-        scope.launch {
+        // The row on screen already shows the change: the write runs even when the activity goes away meanwhile
+        // (rotation, Back right after a tap). UNDISPATCHED queues it now, in tap order; NonCancellable keeps a
+        // destroyed scope from dropping it. Only the follow-up below (toast, done, reload) is skipped then.
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             val r = try {
-                withContext(writeDispatcher) { runCatching(write) }
+                withContext(NonCancellable + writeDispatcher) { runCatching(write) }
             } finally {
                 pendingWrites--
             }
@@ -1505,7 +1954,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val i = shownRows.indexOfFirst { it.book.id == row.book.id }
         if (i < 0) return
         shownRows = shownRows.toMutableList().also { it[i] = row }
-        val adapter = if (listMode == LibraryListMode.GRID) gridAdapter else listAdapterForMode()
+        val adapter = adapterForMode()
         if (adapter.rows.getOrNull(i)?.book?.id == row.book.id) adapter.submit(shownRows)
     }
 
@@ -1550,18 +1999,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         if (bar.title.text.toString() != title) bar.title.text = title
         val single = if (n == 1) View.VISIBLE else View.GONE
         if (bar.more.visibility != single) bar.more.visibility = single
+        // Black either way (no grey-only state): with nothing checked the title asks for a book and taps do nothing.
         val enabled = n > 0
-        bar.actions.forEach { cell ->
-            if (cell.isEnabled != enabled) {
-                cell.isEnabled = enabled
-                cell.alpha = if (enabled) 1f else 0.4f
-            }
-        }
+        bar.actions.forEach { cell -> if (cell.isEnabled != enabled) cell.isEnabled = enabled }
     }
 
     /**
-     * The selection toolbar, in place of the normal one: "N권 선택" [⋮ 더보기] [전체] [닫기] over the batch actions
-     * [컬렉션에 추가] [다 읽음으로] [읽을 책으로] [휴지통]. Built once, on the first long-press.
+     * The selection toolbar, in place of the normal one: "N권 선택" [⋮ 더보기] [모두 선택] [닫기] over the batch actions
+     * [컬렉션] [다 읽음] [읽을 책] [휴지통]. Built once, on the first long-press.
      */
     private fun buildSelectionBar(): SelectionBar {
         val bar = vertical { setBackgroundColor(Ink.WHITE); visibility = View.GONE }
@@ -1574,16 +2019,16 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         lateinit var more: ImageButton
         more = iconButton(R.drawable.ic_more_vert, "더보기") { showSelectedBookMenu(more) }.apply { visibility = View.GONE }
         top.addView(more)
-        top.addView(flatButton("전체") { selectAllShown() })
+        top.addView(flatButton("모두 선택") { selectAllShown() })
         top.addView(flatButton("닫기") { endSelection() })
         bar.addView(top, lp())
 
         val actionsRow = horizontal { setPadding(dp(4), 0, dp(4), dp(4)) }
         val cells = listOf(
-            actionCell(R.drawable.ic_library_books, "컬렉션에 추가") { batchAddToCollection() },
-            actionCell(R.drawable.ic_done_all, "다 읽음으로") { batchShelf(Shelf.HAVE_READ) },
-            actionCell(R.drawable.ic_schedule, "읽을 책으로") { batchShelf(Shelf.TO_READ) },
-            actionCell(R.drawable.ic_delete, "휴지통") { batchTrash() },
+            actionCell(R.drawable.ic_library_books, "컬렉션", "컬렉션에 추가") { batchAddToCollection() },
+            actionCell(R.drawable.ic_done_all, "다 읽음", "다 읽은 책에 추가") { batchShelf(Shelf.HAVE_READ) },
+            actionCell(R.drawable.ic_schedule, "읽을 책", "읽을 책에 추가") { batchShelf(Shelf.TO_READ) },
+            actionCell(R.drawable.ic_delete, "휴지통", "휴지통으로 옮기기") { batchTrash() },
         )
         cells.forEach { actionsRow.addView(it, lp(0, dp(64), 1f)) }
         bar.addView(actionsRow, lp())
@@ -1603,21 +2048,20 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         setOnClickListener { onClick() }
     }
 
-    /** A batch action: icon over a one-line label, the whole cell pressable. */
-    private fun actionCell(iconRes: Int, text: String, onClick: () -> Unit): View = vertical {
+    /** A batch action: icon over a short one-line label ([description] says what it does), the whole cell pressable. */
+    private fun actionCell(iconRes: Int, text: String, description: String, onClick: () -> Unit): View = vertical {
         gravity = Gravity.CENTER
         background = pressableBackground()
-        contentDescription = text
+        contentDescription = description
         addView(icon(iconRes, 24))
         addView(label(text, 13f, maxLines = 1).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, 0)
-            setAutoSizeTextTypeUniformWithConfiguration(9, 13, 1, TypedValue.COMPLEX_UNIT_SP)
         }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         setOnClickListener { if (selection.size > 0) onClick() }
     }
 
-    /** [전체]: checks every listed book (all of them, not only the ones on screen), or unchecks them all. */
+    /** [모두 선택]: checks every listed book (all of them, not only the ones on screen), or unchecks them all. */
     private fun selectAllShown() {
         if (selection.toggleAll(shownRows.map { it.book.id })) {
             updateSelectionBar()
@@ -1635,7 +2079,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         bookMenu(row, anchor, flags = true) { endSelection() }
     }
 
-    /** [다 읽음으로] / [읽을 책으로]: one transaction for all checked books (the same rules as the card flags). */
+    /** [다 읽음] / [읽을 책]: one transaction for all checked books (the same rules as the card flags). */
     private fun batchShelf(target: Shelf) {
         val ids = selection.snapshot()
         endSelection()
@@ -1651,14 +2095,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         val run = {
             endSelection()
             invalidateCounts()
-            queueWrite("휴지통으로 이동하지 못했습니다", done = { toast(LibraryText.trashedMessage(ids.size)) }) {
+            queueWrite("휴지통으로 옮기지 못했습니다", done = { toast(LibraryText.trashedMessage(ids.size)) }) {
                 Library.trash(ids)
             }
         }
-        if (ids.size == 1) run() else confirmDialog("휴지통으로 이동", LibraryText.trashQuestion(ids.size), "이동") { run() }
+        if (ids.size == 1) run() else confirmDialog("휴지통으로 옮기기", LibraryText.trashQuestion(ids.size), "옮기기") { run() }
     }
 
-    /** [컬렉션에 추가]: pick a collection (or make one); the checked books are added in one transaction. */
+    /** [컬렉션]: pick a collection (or make one); the checked books are added in one transaction. */
     private fun batchAddToCollection() {
         val ids = selection.snapshot()
         pickCollection { c ->

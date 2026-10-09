@@ -317,6 +317,34 @@ ${if (withNamed) "<item id=\"i2\" href=\"MyCover.PNG\" media-type=\"image/png\"/
     }
 
     @Test
+    fun unreadableSectionThrowsInsteadOfBecomingAnEmptyCachedPage() {
+        val f = epub2()
+        val doc = EpubDocuments.open(f, ParseOptions())
+        val good = doc.loadSection(0)
+        assertTrue(good.length > 0)
+        doc.close() // empties the section cache; later reads reopen the file
+        val aside = File(f.parentFile, "aside.epub")
+        assertTrue(f.renameTo(aside))
+        try {
+            // the file is unreadable now: the section throws (BookSession shows its error page and marks it failed)
+            // rather than returning SectionContent.EMPTY, and a link into it still resolves to the section start
+            try {
+                doc.loadSection(0)
+                fail("expected the unreadable section to throw")
+            } catch (_: java.io.IOException) {
+            } catch (_: DocumentException) {
+            }
+            assertNotNull(doc.resolveLink(0, "ch2.xhtml#top"))
+        } finally {
+            assertTrue(aside.renameTo(f))
+        }
+        // the failure was not cached: once the file is back the section loads with its real content
+        val again = doc.loadSection(0)
+        assertEquals(good.text, again.text)
+        assertSame(again, doc.loadSection(0))
+    }
+
+    @Test
     fun sectionCacheReturnsSameInstanceAndSurvivesClose() {
         val f = epub2()
         val doc = EpubDocuments.open(f, ParseOptions())
@@ -377,6 +405,22 @@ ${if (withNamed) "<item id=\"i2\" href=\"MyCover.PNG\" media-type=\"image/png\"/
             assertEquals(Align.DEFAULT, lead.style.align)
             assertTrue(lead.style.indent)
         }
+    }
+
+    @Test
+    fun ignoreBookSizesOptionReachesConverter() {
+        val css = "<style>p.s { font-size: 0.8em } h1 { font-size: 2em }</style>"
+        val opf = """<package><metadata><dc:title>크기</dc:title></metadata>
+<manifest><item id="x" href="x.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="x"/></spine></package>"""
+        val f = writeEpub(listOf(text("OEBPS/book.opf", opf),
+            text("OEBPS/x.xhtml", xhtml("x", "<h1>제목</h1><p class=\"s\">내용</p>", css))))
+        fun scales(o: ParseOptions): Pair<Float, Float> = EpubDocuments.open(f, o).use { doc ->
+            val c = doc.loadSection(0)
+            c.styleAt(c.text.indexOf("제목")).sizeScale to c.styleAt(c.text.indexOf("내용")).sizeScale
+        }
+        assertEquals(2f to 1f, scales(ParseOptions(epubIgnoreBookSizes = true)))
+        assertEquals(2f to 0.8f, scales(ParseOptions(epubIgnoreBookSizes = false)))
+        assertEquals(2f to 1f, scales(ParseOptions())) // on by default
     }
 
     @Test

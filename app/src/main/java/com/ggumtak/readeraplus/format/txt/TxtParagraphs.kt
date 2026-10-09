@@ -225,11 +225,17 @@ internal object TxtParagraphs {
         return total
     }
 
-    private val HEADING_STYLE = BlockStyle(
+    /**
+     * A chapter heading (화) always opens a page (user, 2026-10-06: "화는 항상 이렇게 맨 위에 올라오도록"), also where short
+     * chapters share one section; the first page of a section never gets an extra blank one.
+     */
+    internal val HEADING_STYLE = BlockStyle(
         headingLevel = 2, align = Align.CENTER, indent = false,
-        marginTopEm = 1.5f, marginBottomEm = 1f, keepWithNext = true,
+        marginTopEm = 1.5f, marginBottomEm = 1f, keepWithNext = true, pageBreakBefore = true,
     )
-    private val HEADING_RUN = RunStyle(bold = true, sizeScale = 1.2f)
+    /** A heading with 제목 강조 off: body text, but still at the top of its page. */
+    internal val PLAIN_HEADING_STYLE = BlockStyle(pageBreakBefore = true)
+    internal val HEADING_RUN = RunStyle(bold = true, sizeScale = 1.2f)
     private val SCENE_STYLE = BlockStyle(align = Align.CENTER, indent = false)
     private val CONT_STYLE = BlockStyle(indent = false, softBreak = true)
 
@@ -255,7 +261,7 @@ internal object TxtParagraphs {
             }
             val en = sb.length
             val style = when (k) {
-                ParaKind.HEADING -> if (emphasizeHeadings) HEADING_STYLE else BlockStyle.BODY
+                ParaKind.HEADING -> if (emphasizeHeadings) HEADING_STYLE else PLAIN_HEADING_STYLE
                 ParaKind.SCENE -> SCENE_STYLE
                 ParaKind.CONT -> CONT_STYLE
                 else -> BlockStyle.BODY

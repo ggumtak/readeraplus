@@ -108,6 +108,8 @@ data class ParseOptions(
     val txtEncoding: String = "",
     /** EPUB: keep publisher CSS hints (alignment, margins, font sizes of headings). */
     val epubPublisherStyles: Boolean = true,
+    /** EPUB: ignore the book's font-size declarations except on headings (body text is the reader's size). */
+    val epubIgnoreBookSizes: Boolean = true,
 ) {
     companion object {
         /** Remove blank lines only when the file alternates text/blank lines; runs of 2+ become scene breaks. */

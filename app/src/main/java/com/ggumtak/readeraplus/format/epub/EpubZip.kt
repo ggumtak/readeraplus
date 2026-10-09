@@ -45,32 +45,44 @@ internal class EpubZip private constructor(
 
     /**
      * Bytes of entry [name] (canonical, or any spelling [find] resolves), or null when missing, larger than
-     * [maxBytes] or unreadable (corrupt data).
+     * [maxBytes] or unreadable (corrupt data, closed or vanished file). For optional resources (images, CSS,
+     * covers); a document's own text uses [readOrThrow], so its failure is not mistaken for an empty document.
      */
-    fun read(name: String, maxBytes: Int = MAX_ENTRY_BYTES): ByteArray? {
-        val key = if (entries.containsKey(name)) name else find(EpubPaths.normalize(name)) ?: return null
-        val entry = entries[key] ?: return null
-        if (entry.size > maxBytes) return null
+    fun read(name: String, maxBytes: Int = MAX_ENTRY_BYTES): ByteArray? = try {
+        readOrThrow(name, maxBytes)
+    } catch (_: DocumentException) {
+        null
+    } catch (_: IOException) {
+        null
+    }
+
+    /**
+     * Bytes of entry [name] like [read], but a failure is reported: a [DocumentException] (user-facing reason) for
+     * a missing entry or one larger than [maxBytes]; the [IOException] itself for corrupt data or an unreadable
+     * file (a closed zip is reopened for the read first).
+     */
+    fun readOrThrow(name: String, maxBytes: Int = MAX_ENTRY_BYTES): ByteArray {
+        val key = if (entries.containsKey(name)) name else find(EpubPaths.normalize(name)) ?: throw missing()
+        val entry = entries[key] ?: throw missing()
+        if (entry.size > maxBytes) throw tooBig()
         val rl = lock.readLock()
         rl.lock()
         try {
             val z = zip
-            if (z != null) return readEntry(z, entry, maxBytes)
-        } catch (_: IOException) {
-            return null
-        } catch (_: IllegalStateException) {
-            return null
+            if (z != null) return readEntry(z, entry, maxBytes) ?: throw tooBig()
+        } catch (e: IllegalStateException) {
+            throw IOException("zip closed", e)
         } finally {
             rl.unlock()
         }
         // closed: temporary reopen
-        return try {
+        try {
             openZip(file).use { t ->
-                val e = t.getEntry(entry.name) ?: return null
-                readEntry(t, e, maxBytes)
+                val e = t.getEntry(entry.name) ?: throw missing()
+                return readEntry(t, e, maxBytes) ?: throw tooBig()
             }
-        } catch (_: Exception) {
-            null
+        } catch (e: RuntimeException) { // e.g. a malformed zip on this runtime: unreadable, like an IOException
+            throw IOException("zip unreadable", e)
         }
     }
 
@@ -128,9 +140,9 @@ internal class EpubZip private constructor(
             val z = try {
                 openZip(file)
             } catch (e: IOException) {
-                throw DocumentException("EPUB 파일을 열 수 없습니다: ${file.name}", e)
+                throw DocumentException("파일을 읽지 못했습니다", e)
             } catch (e: SecurityException) {
-                throw DocumentException("EPUB 파일을 읽을 권한이 없습니다: ${file.name}", e)
+                throw DocumentException("파일 접근 권한이 없습니다", e)
             }
             try {
                 val map = HashMap<String, ZipEntry>()
@@ -148,7 +160,7 @@ internal class EpubZip private constructor(
                     z.close()
                 } catch (_: IOException) {
                 }
-                throw DocumentException("손상된 EPUB 파일입니다: ${file.name}", e)
+                throw DocumentException("EPUB 파일이 손상되었습니다", e)
             }
         }
 
@@ -181,6 +193,10 @@ internal class EpubZip private constructor(
             }
             throw first
         }
+
+        private fun missing() = DocumentException("책 안의 파일을 찾지 못했습니다")
+
+        private fun tooBig() = DocumentException("책 안의 파일이 너무 큽니다")
 
         private fun readEntry(z: ZipFile, e: ZipEntry, maxBytes: Int): ByteArray? {
             z.getInputStream(e).use { ins -> return readFully(ins, e.size, maxBytes) }

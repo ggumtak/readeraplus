@@ -170,6 +170,26 @@ class ReaderBuild9FixesTest {
         assertEquals(TurnWalk(2, 3, 0, true), TurnMath.walk(2, 3, 1, 3, p))
     }
 
+    /**
+     * The picture burst (ReaderActivity.pictureBurst): turns queued while a page was on its way land inside that page's
+     * section, or report leaving it (another section in the result), whatever the neighbours' page counts are.
+     */
+    @Test
+    fun walkInSectionKnowsOnlyThatSection() {
+        // section 1 of 3, 6 pages: inside, either way
+        assertEquals(TurnWalk(1, 4, 0, false), TurnMath.walkInSection(1, 1, 3, 3, 6))
+        assertEquals(TurnWalk(1, 0, 0, false), TurnMath.walkInSection(1, 3, -3, 3, 6))
+        assertEquals(TurnWalk(1, 5, 0, false), TurnMath.walkInSection(1, 0, 5, 3, 6))
+        // past its last / first page: the next section's first page / the previous one's last, the rest kept
+        assertEquals(TurnWalk(2, 0, 1, false), TurnMath.walkInSection(1, 3, 4, 3, 6))
+        assertEquals(TurnWalk(0, TurnMath.LAST_PAGE, -1, false), TurnMath.walkInSection(1, 1, -3, 3, 6))
+        // the book's last / first section: the edge page, reported as the edge
+        assertEquals(TurnWalk(2, 5, 0, true), TurnMath.walkInSection(2, 3, 9, 3, 6))
+        assertEquals(TurnWalk(0, 0, 0, true), TurnMath.walkInSection(0, 2, -4, 3, 6))
+        // no net turn: the same page (nothing to wait for)
+        assertEquals(TurnWalk(1, 2, 0, false), TurnMath.walkInSection(1, 2, 0, 3, 6))
+    }
+
     @Test
     fun tapDedupDropsOnlyDuplicateReports() {
         val d = TapDedup()
@@ -201,7 +221,9 @@ class ReaderBuild9FixesTest {
     fun einkModeChoices() {
         val values = SettingsFormat.EINK_MODES.map { it.second }
         assertEquals(listOf(EINK_MODE_SYSTEM, EINK_MODE_HD, EINK_MODE_REGAL, EINK_MODE_FAST, EINK_MODE_NORMAL), values)
-        assertEquals("기기 설정 따름 (권장·기본)", SettingsFormat.einkMode(EINK_MODE_SYSTEM))
+        // The chooser marks the default; the row's value does not.
+        assertEquals("기기 설정 따름 (기본)", SettingsFormat.EINK_MODES[0].first)
+        assertEquals("기기 설정 따름", SettingsFormat.einkMode(EINK_MODE_SYSTEM))
         assertEquals("잔상 적게 (REGAL)", SettingsFormat.einkMode(EINK_MODE_REGAL))
         assertEquals(SettingsFormat.einkMode(EINK_MODE_SYSTEM), SettingsFormat.einkMode(12345))
     }

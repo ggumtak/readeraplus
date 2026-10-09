@@ -3,6 +3,11 @@ name: Build APK
 on:
   push:
   workflow_dispatch:
+    inputs:
+      screens:
+        description: "Also run the emulator screenshots (about 50 minutes of Actions time)"
+        type: boolean
+        default: false
   # Keeps the cached signing key alive: GitHub evicts cache entries not used for 7 days, and a new key would
   # make the next APK refuse to install over the old one (settings lost on reinstall).
   schedule:
@@ -24,6 +29,8 @@ jobs:
     env:
       # versionCode = run number: every build is a newer version of the same app.
       BUILD_NUMBER: ${{ github.run_number }}
+      # Google Drive copy of the APK: on only when the GDRIVE_UPLOAD_URL secret exists (see the upload step).
+      GDRIVE_ON: ${{ secrets.GDRIVE_UPLOAD_URL != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -129,32 +136,30 @@ jobs:
             --title "ReaderaPlus build ${GITHUB_RUN_NUMBER}" \
             --notes "Automatic build from ${GITHUB_REF_NAME} @ ${GITHUB_SHA} · signing certificate SHA-256 ${{ steps.cert.outputs.sha }}"
 
-      # Optional: the APK also goes to Google Drive (see docs/DRIVE_UPLOAD.md). Needs the repository secret
-      # RCLONE_CONFIG_B64 (an rclone config with a Google Drive remote, base64); without it this step does nothing.
-      # Never fails the build: a Drive problem only shows as a warning here.
+      # A copy of the APK in the user's Google Drive (easy to install on the e-reader from the Drive app), set up from
+      # a phone alone: a small Google Apps Script web app in the user's own Google account receives the APK and
+      # keeps only the newest ReaderaPlus-<build>.apk in its folder (tools/gdrive/upload.gs, steps in its header).
+      # Secrets: GDRIVE_UPLOAD_URL (the web app URL) and GDRIVE_UPLOAD_KEY (the same password as in the script).
+      # A Drive failure never fails the build.
       - name: Upload APK to Google Drive
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: env.GDRIVE_ON == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         continue-on-error: true
         env:
-          RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG_B64 }}
-          DRIVE_DEST: ${{ vars.DRIVE_DEST }}
-          DRIVE_KEEP: ${{ vars.DRIVE_KEEP }}
+          GDRIVE_UPLOAD_URL: ${{ secrets.GDRIVE_UPLOAD_URL }}
+          GDRIVE_UPLOAD_KEY: ${{ secrets.GDRIVE_UPLOAD_KEY }}
         run: |
-          if [ -z "$RCLONE_CONFIG_B64" ]; then
-            echo "RCLONE_CONFIG_B64 is not set: skipping the Google Drive upload."
-            exit 0
-          fi
-          dest="${DRIVE_DEST:-gdrive:ReaderaPlus}"
-          keep="${DRIVE_KEEP:-5}"
-          sudo apt-get install -y -qq rclone > /dev/null
-          mkdir -p ~/.config/rclone
-          echo "$RCLONE_CONFIG_B64" | base64 -d > ~/.config/rclone/rclone.conf
-          rclone copy dist/ "$dest" --include "ReaderaPlus-*.apk" -v
-          # Only the newest builds stay (each APK is ~11 MB).
-          rclone lsf "$dest" --include "ReaderaPlus-*.apk" | sort -V | head -n "-$keep" | while read -r old; do
-            rclone deletefile "$dest/$old" -v || true
-          done
-          echo "::notice::Uploaded ReaderaPlus-${GITHUB_RUN_NUMBER}.apk to $dest"
+          apk="ReaderaPlus-${GITHUB_RUN_NUMBER}.apk"
+          python3 - "$apk" > "$RUNNER_TEMP/upload.json" <<'PY'
+          import base64, json, os, sys
+          name = sys.argv[1]
+          data = base64.b64encode(open("dist/" + name, "rb").read()).decode()
+          print(json.dumps({"key": os.environ.get("GDRIVE_UPLOAD_KEY", ""), "name": name, "data": data}))
+          PY
+          # POST without -X: Apps Script answers with a redirect that curl must follow as a GET.
+          answer="$(curl -sS -L --max-time 300 -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/upload.json" "$GDRIVE_UPLOAD_URL")"
+          rm -f "$RUNNER_TEMP/upload.json"
+          echo "Google Drive: $answer"
+          case "$answer" in ok*) ;; *) exit 1 ;; esac
 
   # Scheduled only: touches the cached signing key so it is never evicted between builds.
   keep-signing-key:
@@ -198,13 +203,14 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash tools/ci/pdf_check.sh
 
-  # On-demand emulator run (workflow_dispatch, or a commit message containing "[screens]"): drives the app with
-  # adb and publishes screenshots + logs to the "ci-screens" prerelease for review.
+  # On-demand emulator run (a manual run with "screens" ticked, or a commit message containing "[screens]"): drives
+  # the app with adb and publishes screenshots + logs to the "ci-screens" prerelease for review. Off by default: one
+  # run costs about 50 minutes of the account's Actions time, a build about 8.
   screenshots:
     needs: build
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[screens]')
+    if: (github.event_name == 'workflow_dispatch' && inputs.screens) || contains(github.event.head_commit.message, '[screens]')
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -228,6 +234,46 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash tools/ci/screenshots.sh
+
+      # The release below is private to the repository; the artifact and the log lines let a reviewer without a
+      # browser session read the crash buffer, the CHECK lines and the UI dumps of failed steps.
+      - name: Upload shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReaderaPlus-shots
+          path: |
+            shots/*.txt
+            shots/*.xml
+            shots/*.png
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Print CI findings
+        if: always()
+        run: |
+          [ -d shots ] || exit 0
+          echo "::group::crash buffer"; cat shots/crash.txt 2>/dev/null || true; echo "::endgroup::"
+          echo "::group::CHECK lines"; grep -h "CHECK" shots/steps.txt 2>/dev/null || true; echo "::endgroup::"
+          echo "::group::failed-step UI dumps (text / content-desc)"
+          for f in shots/ui_fail_*.xml; do
+            [ -f "$f" ] || continue
+            echo "-- $f"
+            python3 - "$f" <<'PY' || true
+          import re, sys
+          x = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+          for m in re.finditer(r'<node [^>]*>', x):
+              n = m.group(0)
+              t = re.search(r' text="([^"]*)"', n); d = re.search(r'content-desc="([^"]*)"', n)
+              c = re.search(r' class="([^"]*)"', n); b = re.search(r'bounds="([^"]*)"', n)
+              if (t and t.group(1)) or (d and d.group(1)):
+                  print((c.group(1).split(".")[-1] if c else "?"), b.group(1) if b else "", repr(t.group(1) if t else ""), repr(d.group(1) if d else ""))
+          PY
+          done
+          echo "::endgroup::"
+          echo "::group::reader log (ReaderaPlus / RAPerf / AndroidRuntime)"
+          grep -E "ReaderaPlus|AndroidRuntime|FATAL|RAPerf (show|afterOpen)" shots/logcat.txt 2>/dev/null | tail -400 || true
+          echo "::endgroup::"
 
       - name: Publish screenshots
         if: always()

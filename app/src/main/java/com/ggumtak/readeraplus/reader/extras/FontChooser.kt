@@ -15,6 +15,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
+import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.FontInfo
 import com.ggumtak.readeraplus.render.FontManager
@@ -44,7 +45,8 @@ import kotlinx.coroutines.withContext
  * drop-down list under the row ([CompactList]); without an anchor, a dialog with a sample line per font.
  */
 internal object FontChooser {
-    private const val SAMPLE = "가나다 한글 Aa 123"
+    /** The sample line under each font's name, here and on 글꼴 관리 (every Hangul shape class, Latin, digits). */
+    const val SAMPLE = "다람쥐 헌 쳇바퀴에 타고파 Aa 123"
     @Volatile private var loading = false
 
     /**
@@ -95,16 +97,24 @@ internal object FontChooser {
     ) {
         val rows = ArrayList<ListEntry>(entries.size + 2)
         for ((font, tf) in entries) {
-            val note = when (font.source) {
-                FontSource.BUNDLED -> null
-                FontSource.USER -> "사용자"
-                FontSource.SYSTEM -> "시스템"
-            }
+            val note = sourceNote(font.source)
             rows += ListEntry(font.name, checked = font.id == currentId, typeface = tf, note = note) { onPick(font.id) }
         }
         rows += ListEntry("글꼴 추가…", action = true) { FontImportFragment.start(activity, onPick) }
-        rows += ListEntry("글꼴 관리", action = true) { SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS) }
+        rows += ListEntry("글꼴 관리", action = true) { openFonts(activity) }
         CompactList.show(activity, anchor, rows, widthPx, rightInsetPx)
+    }
+
+    /**
+     * 글꼴 관리: our own settings page, through the reader when it is one (its device light treats it as ours, U §4.2);
+     * inside 설정 (읽기 설정 → 글꼴) a page pushed on the same stack, which keeps the reader's book ([OpenBook]).
+     */
+    private fun openFonts(activity: Activity) {
+        when (activity) {
+            is ReaderActivity -> activity.openAppSettings(SettingsActivity.PAGE_FONTS)
+            is SettingsActivity -> activity.push(SettingsActivity.PAGE_FONTS)
+            else -> SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS)
+        }
     }
 
     private fun showDialog(activity: Activity, entries: List<Pair<FontInfo, Typeface?>>, currentId: String, onPick: (String) -> Unit) {
@@ -123,11 +133,7 @@ internal object FontChooser {
                 name.typeface = tf ?: Typeface.DEFAULT
                 sample.text = SAMPLE
                 sample.typeface = tf ?: Typeface.DEFAULT
-                src.text = when (font.source) {
-                    FontSource.BUNDLED -> "기본"
-                    FontSource.USER -> "사용자"
-                    FontSource.SYSTEM -> "시스템"
-                }
+                src.text = sourceNote(font.source).orEmpty()
                 val selected = font.id == currentId
                 check.setImageResource(if (selected) R.drawable.ic_radio_button_checked else R.drawable.ic_radio_button_unchecked)
                 name.paint.isFakeBoldText = selected
@@ -141,7 +147,7 @@ internal object FontChooser {
                 onPick(entries[which].first.id)
             }
             .setNeutralButton("글꼴 추가…") { _, _ -> FontImportFragment.start(activity, onPick) }
-            .setPositiveButton("글꼴 관리") { _, _ -> SettingsActivity.open(activity, SettingsActivity.PAGE_FONTS) }
+            .setPositiveButton("글꼴 관리") { _, _ -> openFonts(activity) }
             .setNegativeButton("닫기", null)
             .showNoAnim()
         PanelRegistry.dialog(activity, dialog)
@@ -156,6 +162,13 @@ internal object FontChooser {
         }
     }
 
+    /** Where a font comes from, beside its name: the bundled ones need no note. */
+    private fun sourceNote(source: FontSource): String? = when (source) {
+        FontSource.BUNDLED -> null
+        FontSource.USER -> "내 글꼴"
+        FontSource.SYSTEM -> "시스템"
+    }
+
     private fun buildRow(activity: Activity): LinearLayout = activity.horizontal {
         background = pressableBackground()
         minimumHeight = activity.dp(52)
@@ -163,9 +176,9 @@ internal object FontChooser {
         val texts = activity.vertical()
         val top = activity.horizontal()
         top.addView(activity.label("", 17f, maxLines = 1).apply { tag = "name" }, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        top.addView(activity.label("", 12f, color = Ink.GRAY).apply { tag = "src"; setPadding(activity.dp(8), 0, 0, 0) })
+        top.addView(activity.label("", 14f, color = Ink.GRAY).apply { tag = "src"; setPadding(activity.dp(8), 0, 0, 0) })
         texts.addView(top, lp())
-        texts.addView(activity.label("", 14f, color = Ink.GRAY, maxLines = 1).apply { tag = "sample"; setPadding(0, activity.dp(3), 0, 0) })
+        texts.addView(activity.label("", 15f, maxLines = 1).apply { tag = "sample"; setPadding(0, activity.dp(3), 0, 0) })
         addView(texts, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addView(activity.icon(R.drawable.ic_radio_button_unchecked, 22).apply {
             tag = "check"
@@ -181,7 +194,7 @@ internal object FontChooser {
             scope.cancel()
             if (activity.isDestroyed) return@launch
             result.onSuccess { info ->
-                activity.toast("'${info.name}' 글꼴을 추가했습니다")
+                activity.toast("‘${info.name}’ 글꼴을 추가했습니다")
                 if (onPick != null) {
                     onPick(info.id)
                 } else {
@@ -219,7 +232,7 @@ class FontImportFragment : Fragment() {
                 startActivityForResult(intent, REQ)
             } catch (_: Exception) {
                 pending = null
-                activity?.toast("파일 선택기를 열 수 없습니다")
+                activity?.toast("파일 선택 화면을 열 수 없습니다")
                 finish()
             }
         }
@@ -257,7 +270,7 @@ class FontImportFragment : Fragment() {
             runCatching { fm.beginTransaction().add(FontImportFragment(), TAG).commitAllowingStateLoss() }
                 .onFailure {
                     pending = null
-                    activity.toast("파일 선택기를 열 수 없습니다")
+                    activity.toast("파일 선택 화면을 열 수 없습니다")
                 }
         }
     }

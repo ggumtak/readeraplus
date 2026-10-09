@@ -25,6 +25,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 TAG=$( (IFS=_; echo "${OWN[*]:-all}") | tr '/.' '__')
+# Many --own paths make a name longer than the filesystem allows: keep a short readable prefix plus a hash.
+[ ${#TAG} -gt 120 ] && TAG="own_$(printf '%s' "$TAG" | md5sum | cut -c1-16)"
 OUT="${TC_OUT:-$ROOT/tools/out}/$TAG"
 rm -rf "$OUT" && mkdir -p "$OUT/gen" "$OUT/src"
 python3 "$ROOT/tools/gen_r.py" "$ROOT/app/src/main/res" com.ggumtak.readeraplus "$OUT/gen" >/dev/null

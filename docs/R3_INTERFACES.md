@@ -9,8 +9,26 @@ This is an intermediate contract commit: named stubs are replaced in W1, then W2
 - Pure Kotlin engine, platform Android View UI, no AndroidX or new library dependency.
 - Page commands replace the viewport immediately on every device and in every mode. No fade, slide, curl or
   `startScroll` interpolation for taps, page keys or auto paging. Live finger scrolling is a separate gesture.
-- `PageGeometry` is view minus margins only. Chrome, status, return chip and transient dialogs are overlays.
-- Default margins are 40 dp (`0` in controls). Marked deliberate 18/16 dp values stay unchanged.
+- `PageGeometry` is view minus the status bands and the margins (since 2026-10-05; before, minus margins only). Chrome,
+  return chip and transient dialogs are overlays; the status bands are not: each has its own place at its screen edge.
+- Default margins are 40 dp (`0` in controls). Marked deliberate 18/16 dp values stay unchanged. Since 2026-10-05 the
+  side margins' `0` is MaruViewer's 20 dp (`SideMargin.ZERO_DP`; untouched R3 40/40 and R2 18/18 become 20/20 once).
+  Since 2026-10-05 (user: "위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지") top/bottom count from the
+  status bands (`StatusBands`, whole dp from the settings only: header 25 dp at MaruViewer's 13 sp, progress line 18 dp
+  at the defaults), and their `0` is each side's default, 15 / 22 dp, so the default text box is where 40 dp from the
+  edge put it (Comet
+  80..1360). One stepper moves both by its step (`VerticalMargin.step`). Values saved from the edge (`r.marginBaseV` 40 or none) move once by their own bands; new saves write
+  `VerticalMargin.BANDS`. This replaces "the text box never makes room for the status bands" and the '가려짐' fit note.
+  The bands hug the screen edges (`StatusFit.headerBaseline` / `footerBaseline`), and in fullscreen a cutout-only top
+  inset goes into `LayoutKeys.geometry`'s `extraTop` instead of the page view's margin: left out like a system bar, the
+  header's band is reserved below it (paper only), the text box below that as the user's screenshot of the installed
+  build has it (S25: 207..2220, as before). Since the MaruViewer status line (2026-10-05) the header itself is drawn at
+  the very top inside that band (ink ≈ 15–49 px; `StatusFit.INK_TOP_DP`), spans the page view less its own side insets
+  (`StatusFit.sideInset`: 15 dp or the display's rounded corner, `InsetSplit.pageCorners`), and the bookmark ribbon is
+  ReadEra's from the view's top (`RibbonMath`: 42 × 62 px at x 987 on the S25, blue on phones). Prefs at the old 11 sp
+  default become 13 sp once with margins less the bands' growth (`MaruSize`; not while 여백 사용 is off, whose fixed
+  minimal margin could not give it back). Saved styles without `statusSizeV` keep their 11 sp-band margins and lose the
+  growth only when applied at 13 sp (`UserStyle.elevenSpBands`).
 - No probe, database write, counting, backfill, brightness-device initialization or auto-backup before the first page.
 - Main thread owns Views, `BookSession` state, scroll positions and decor. Its IO and layout work are dispatched.
 - Engine/math/migration/export helpers are pure; database APIs and `DeviceLight`/`LightProbe` IO are blocking off-main.
@@ -187,26 +205,28 @@ const val LIST_PAGING_SCROLL = 2
 
 ```kotlin
 object SideMargin
-const val ZERO_DP = 40
+const val ZERO_DP = 20                      // 2026-10-05: MaruViewer (was 40)
 const val LEGACY_DEFAULT_DP = 18
-const val UI_MIN = -40
-const val UI_MAX = 40
+const val R3_ZERO_DP = 40
+const val UI_MIN = -20
+const val UI_MAX = 60
 const val UI_STEP = 2
-const val KEY = "r.marginBase"
+const val KEY = "r.marginBase"              // value = the "0" the margins were saved with
+const val STYLE_KEY = "marginBase"
 fun toUi(actualDp: Int): Int = actualDp - ZERO_DP
 fun toDp(ui: Int): Int = (ui + ZERO_DP).coerceAtLeast(0)
 fun label(ui: Int): String = when
-fun isLegacyDefault(hasMarker: Boolean, left: Int, right: Int): Boolean =
+fun isLegacyDefault(base: Int?, left: Int, right: Int): Boolean =
 object VerticalMargin
-const val ZERO_DP = SideMargin.ZERO_DP
+const val ZERO_DP = 40
 const val LEGACY_DEFAULT_DP = 16
-const val UI_MIN = SideMargin.UI_MIN
-const val UI_MAX = SideMargin.UI_MAX
+const val UI_MIN = -40
+const val UI_MAX = 40
 const val UI_STEP = SideMargin.UI_STEP
 const val KEY = "r.marginBaseV"
 const val STYLE_KEY = "marginBaseV"
-fun toUi(actualDp: Int): Int = SideMargin.toUi(actualDp)
-fun toDp(ui: Int): Int = SideMargin.toDp(ui)
+fun toUi(actualDp: Int): Int = actualDp - ZERO_DP
+fun toDp(ui: Int): Int = (ui + ZERO_DP).coerceAtLeast(0)
 fun label(ui: Int): String = SideMargin.label(ui)
 fun isLegacyDefault(hasMarker: Boolean, top: Int, bottom: Int): Boolean =
 ```
@@ -737,29 +757,56 @@ fun packedEnd(packed: Long): Int = (packed and 0xFFFFFFFFL).toInt()
 ### `render/StatusFit.kt` — E2
 
 ```kotlin
+// 2026-10-05: the bands' own places (px of settings/StatusBands' whole dp); size(), lane(), fitsDp() and the
+// '가려짐' note are gone: no margin hides or shrinks a band any more.
 internal object StatusFit
-const val PAD_DP = 2f
-const val MIN_SP = 7f
-const val LANE_DP = ReaderSettings.PROGRESS_LANE_DP * 1f
-const val LANE_MIN_DP = 6f
-const val GLYPH_EM = 1.45f
-fun size(wantPx: Float, roomPx: Float, glyphPerPx: Float, padPx: Float, minPx: Float): Float
-fun lane(marginPx: Float, density: Float): Float =
-fun fitsDp(statusSp: Float, marginDp: Int, laneDp: Float): Boolean =
+const val PAD_DP = StatusBands.PAD_DP           // 2
+const val LANE_DP = StatusBands.LANE_DP         // ReaderSettings.PROGRESS_LANE_DP
+const val EDGE_DP = StatusBands.EDGE_DP         // 4
+fun edgePx(density: Float): Int
+fun laneTopPx(density: Float): Int              // the return chip sits above it (2026-10-05: lanePx and laneBottomPx
+                                                // went with ReadEra's 탐색줄, which ProgressMath places from the bottom)
+fun glyphPx(s: ReaderSettings, density: Float): Int
+fun headerBandPx(s: ReaderSettings, density: Float): Int
+fun footerBandPx(s: ReaderSettings, density: Float): Int
+const val INK_SAMPLE = "(가g0"                  // the renderer measures its ink once
+fun headerBaseline(cutoutTop: Float, contentTop: Float, ascentPx: Float, descentPx: Float, inkTopPx: Float,
+    inkBottomPx: Float, glyphPx: Float, density: Float): Float   // no cutout: glyph box EDGE below the top; below one:
+                                                                 // centred between it and the text box; ink kept inside
+fun footerBaseline(viewBottom: Float, lane: Boolean, descentPx: Float, inkTopPx: Float, inkBottomPx: Float,
+    glyphPx: Float, density: Float): Float
+fun fitTextPx(textPx: Float, inkPx: Float, glyphPx: Float): Float  // smaller once only when the ink is taller than the box
+
+// settings/Margins.kt
+object StatusBands { EDGE_DP = 4; PAD_DP = 2; LANE_DP = 12; GLYPH_EM = 1.45
+    fun statusSp(s): Float; fun glyphDp(s): Int; fun headerDp(s): Int; fun footerDp(s): Int }
+object VerticalMargin { EDGE_DP = 40; TOP_ZERO_DP = 18; BOTTOM_ZERO_DP = 22; MAX_DP = 80; UI_MIN = -22; UI_MAX = 62
+    KEY = "r.marginBaseV"; BANDS = 2; EDGE = 40
+    fun topDp(ui): Int; fun bottomDp(ui): Int; fun toUi(top, bottom): Int; fun countsFromEdge(base: Int?): Boolean
+    fun step(top, bottom, from, to): IntArray   // on the defaults' line follow it, else both sides by to − from
+    fun fromEdge(s, top = true, bottom = true): ReaderSettings }
 ```
 
 
 ### `render/ProgressMath.kt` — E2
 
 ```kotlin
+// 2026-10-05: ReadEra's 탐색줄 on the user's S25 screenshots (S25 / Comet px): a 2 / 1 px line between two end dots
+// and the position dot, all 14 / 9 px, outer edges 7 dp from the page view's sides, centred 8 dp above its bottom
+// (line rows 2315–2316 / 1423, dots 2309–2322 / 1419–1427); colours PagePalette.progressLine / progressDot
+// (inkProgressLine / inkProgressDot on e-ink). Replaces yc, rDot, rCap, x0, x1 and the lane-based track.
 internal object ProgressMath
-fun yc(viewH: Int, lane: Float): Int = viewH - Math.round(lane / 2f)
-fun rDot(lane: Float, density: Float): Float = minOf(Math.round(3f * density).toFloat(), (lane / 2f - 1f).coerceAtLeast(0f))
-fun rCap(lane: Float, density: Float): Float = minOf(Math.round(1.5f * density).toFloat(), rDot(lane, density) / 2f)
-fun x0(viewW: Int, density: Float): Int = minOf(Math.round(12f * density), viewW / 2)
-fun x1(viewW: Int, density: Float): Int = viewW - x0(viewW, density)
-fun trackPx(viewW: Int, lane: Float, density: Float): Int =
-fun dotX(f: Float, viewW: Int, lane: Float, density: Float): Float =
+const val LINE_DP = 2f / 3f; const val DOT_DP = 14f / 3f; const val SIDE_DP = 7; const val CENTRE_DP = 8
+fun lineH(density: Float): Int                              // max(1, round(LINE_DP · density))
+fun dotD(density: Float): Int                               // nearest DOT_DP · density with lineH's parity
+fun lineTop(viewH: Int, density: Float): Int                // viewH − round(CENTRE_DP · density + lineH / 2)
+fun dotTop(viewH: Int, density: Float): Int
+fun centreY(viewH: Int, density: Float): Float
+fun sidePx(density: Float): Int
+fun trackPx(viewW: Int, density: Float): Int                // viewW − 2 · sidePx − dotD (StatusModel's dot pixels)
+fun dotLeft(f: Float, viewW: Int, density: Float): Int      // sidePx + round(f · trackPx)
+fun dotX(f: Float, viewW: Int, density: Float): Float       // dotLeft + dotD / 2
+fun onEndDot(f: Float, viewW: Int, density: Float): Boolean // dotLeft on an end dot's: the position dot is not drawn
 ```
 
 
@@ -778,6 +825,26 @@ fun colorLine(style: Int): Int = if (of(style) == UNDERLINE) LINE_THICK else LIN
 fun inkGrey(style: Int): Int = grey[of(style)]
 fun inkLine(style: Int): Int = lines[of(style)]
 fun thumbGrey(style: Int): Int = inkGrey(style).let
+```
+
+
+### `render/ChromePalette.kt` — RU (2026-10-05)
+
+```kotlin
+internal class ChromePalette   // page, surface, text, text2, accent, divider, rule, edge, track, hist, histOff,
+                               // shadow, pressed, active: Int; motion, eink, dark: Boolean
+const val SHADOW_DP = 4
+val DEFAULT: ChromePalette     // the e-ink 흰 바탕 set = the chrome of before
+fun of(page: PagePalette, eink: Boolean?): ChromePalette   // six shared sets; eink null → the e-ink set
+```
+
+
+### `reader/ReaderWindow.kt`, `reader/ReaderFormat.kt`, `ui/kit/Toggle.kt` — additions (2026-10-05)
+
+```kotlin
+fun applyBarLook(activity: Activity, dark: Boolean)        // API 30+: transparent system bars, light icons on dark
+fun pageLabelCut(label: String): Int                        // index of " / " in a page label, -1 = none
+fun InkToggle.setColors(ink: Int, paper: Int, on: Int)      // defaults black, white, black
 ```
 
 
@@ -806,7 +873,12 @@ fun probeAsync(context: Context, onDone: (Boolean) -> Unit)
 ### `render/PageRenderer.kt` — E2
 
 ```kotlin
-class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, private val images: ImageCache?)
+class PageRenderer(
+    context: Context,
+    private val measurer: AndroidTextMeasurer,
+    private val images: ImageCache?,
+    epub: Boolean = false, // [2026-10-05] an EPUB page: the palette's EPUB text shadow (PagePalette.shadowDyDp(epub))
+)
 fun draw(
     canvas: Canvas,
     layout: SectionLayout,
@@ -834,12 +906,16 @@ const val NOTCH_FRACTION = 0.25f
 fun left(viewWidth: Int, density: Float): Float = viewWidth - (RIGHT_DP + WIDTH_DP) * density
 fun height(density: Float, contentTop: Float, contentRight: Float, viewWidth: Int): Float
 fun headerInset(density: Float, contentRight: Float, viewWidth: Int, ribbonH: Float, glyphTop: Float): Float
+    // 2026-10-05: kept free at the header's right end on every page (StatusMath.allocate reserveRight)
 internal object BatteryMath
-fun bodyWidth(ts: Float): Float = maxOf(6f, Math.round(0.9f * ts).toFloat())
-fun bodyHeight(ts: Float): Float = maxOf(5f, Math.round(0.5f * ts).toFloat())
-fun nubWidth(ts: Float): Float = maxOf(1f, Math.round(0.08f * ts).toFloat())
+fun bodyWidth(ts: Float, first: Boolean = false): Float     // first (icon before the clock, no number): 1.75 ts
+fun bodyHeight(ts: Float, first: Boolean = false): Float    // first: 0.6 ts
+fun nubWidth(ts: Float, first: Boolean = false): Float      // first: 0.1 ts
 fun nubHeight(ts: Float): Float = maxOf(1f, Math.round(0.25f * ts).toFloat())
+fun firstStroke(density: Float): Float = maxOf(1f, Math.round(0.6f * density).toFloat())
 fun gap(ts: Float): Float = 0.25f * ts
+fun iconWidth(ts: Float, first: Boolean = false): Float
+fun labelGap(ts: Float): Float = 0.5f * ts
 fun fillRight(inLeft: Float, inRight: Float, level: Int): Float
 internal object FooterFit
 internal class LatestTaskRunner(name: String)
@@ -873,6 +949,7 @@ data class PageGeometry(
     val contentTop: Int,
     val contentWidth: Int,
     val contentHeight: Int,
+    val cutoutTop: Int = 0,                 // 2026-10-05: extraTop (camera band); the header's band starts below it
     )
 object LayoutKeys
 const val VERSION = 3
@@ -880,8 +957,9 @@ const val ALGO_VERSION = 1
 const val GOLDEN_HASH = "071717a86d158ac8"
 const val GOLDEN_HASH_PARAGRAPH = "TBD"
 const val TINY_MARGIN_DP = 4
-fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float): PageGeometry
-fun px(dp: Int): Int = Math.round((if (s.pageMargins) dp else TINY_MARGIN_DP) * density)
+fun geometry(s: ReaderSettings, viewW: Int, viewH: Int, density: Float, extraTop: Int = 0): PageGeometry
+// 2026-10-05: top = extraTop + px(StatusBands.headerDp(s) + margin), bottom = px(StatusBands.footerDp(s) + margin)
+fun px(dp: Int): Int = Math.round(dp * density)
 fun config(s: ReaderSettings, g: PageGeometry, txt: Boolean = false): LayoutConfig = LayoutConfig(
     width = g.contentWidth,
     height = g.contentHeight,
@@ -896,8 +974,9 @@ fun config(s: ReaderSettings, g: PageGeometry, txt: Boolean = false): LayoutConf
     pageBreak = s.pageBreak,
     )
 fun charsPerPageHint(c: LayoutConfig, emPx: Float): Int
-fun layoutChanged(a: ReaderSettings, b: ReaderSettings): Boolean = layoutPart(a) != layoutPart(b)
+fun layoutChanged(a: ReaderSettings, b: ReaderSettings): Boolean = layoutPart(a) != layoutPart(b) || bandsChanged(a, b)
 fun layoutChanged(a: ReaderSettings, b: ReaderSettings, format: BookFormat): Boolean =
+fun bandsChanged(a: ReaderSettings, b: ReaderSettings): Boolean  // 2026-10-05: StatusBands heights, not the raw slots
 fun parseChanged(a: ReaderSettings, b: ReaderSettings, encoding: String): Boolean =
 fun parseChanged(a: ReaderSettings, b: ReaderSettings, format: BookFormat, encoding: String): Boolean =
 fun parseOptionsFor(s: ReaderSettings, format: BookFormat, encoding: String): ParseOptions =
@@ -1164,6 +1243,7 @@ fun restore(saved: String?)
 fun markFraction(): Float = Float.NaN
 fun reparsed(fraction: Float, exact: Boolean)
 fun reset()
+fun setLook(page: PagePalette, eink: Boolean?)    // 2026-10-05: the history row and the chip in the chrome's colours
 internal class ReturnPoints
 enum class Chip
 fun pin(here: DocPosition, onMark: Boolean)
@@ -1259,9 +1339,27 @@ fun report(ctx: Context): List<String> = emptyList()
 
 ```kotlin
 internal object ChromeMath
+const val HISTORY_ROW_DP = 48                     // 2026-10-05 (a 48 dp target like the bars' other controls)
+const val SHOW_MS = 180L; const val HIDE_MS = 150L; const val SLIDE_DP = 12
 fun labelMaxWidth(rowW: Int, density: Float): Int
-fun stripShort(left: Float, centre: Float, right: Float, rowW: Float, gap: Float): Boolean
+fun stripShort(left: Float, right: Float, rowW: Float): Boolean   // 2026-10-05: a side label wider than its third
 fun bookmarkFits(rowW: Int, density: Float): Boolean
+fun animates(motion: Boolean, durationScale: Float): Boolean      // motion && scale > 0
+```
+
+
+### `reader/ChromeBar.kt` — RU (2026-10-05)
+
+```kotlin
+internal class ChromeBar(ctx: Context, private val edgeAtTop: Boolean) : LinearLayout(ctx)
+var inert: Boolean                                // a new touch passes to the page while the bar fades out
+var panelFrom: Int                                // first child on the panel (the bottom bar's history row is 0,
+                                                  // its top margin −edgeArea: it starts over the edge padding)
+val edgeArea: Int                                 // 4 dp shadow band, 1 px line, or 0; the owner pads the bar by it
+fun setLook(look: ChromePalette): Boolean         // true when edgeArea changed
+internal fun Context.chromeIconBackground(look: ChromePalette, active: Boolean): Drawable?
+internal fun Context.chromePressed(look: ChromePalette, radiusDp: Float): Drawable?
+internal fun animatorScale(): Float               // getDurationScale() from API 33, else areAnimatorsEnabled() 1 / 0
 ```
 
 
@@ -1302,6 +1400,8 @@ fun setLightAsk(kind: Int)
 fun setLightDevice(on: Boolean, subtitle: String, enabled: Boolean)
 fun setBrightnessUnavailable(unavailable: Boolean)
 fun setLightPanelRow(visible: Boolean, subtitle: String)
+fun setLook(page: PagePalette, eink: Boolean?)    // 2026-10-05: stored while hidden, applied when the bars show
+val top: ChromeBar; val bottom: ChromeBar         // 2026-10-05: were LinearLayout (ChromeBar is one)
 ```
 
 
@@ -1580,3 +1680,10 @@ Saved Activity keys: `rp.book`, `rp.section`, `rp.offset`, `rp.at`; RC-A adds `r
 Reader lifecycle order is PLAN §1.6.2. Restored state wins over a note jump, then TXT fraction remap, then DB position.
 Normal/resume opens use an anchored generation. A note jump uses natural pagination and highlights only a matching
 anchor. Return-mark IO, device probe, note-place backfill and auto-backup remain after the first page.
+
+## RC-A integration additions (2026-10-04)
+
+- `NoteJumpHost.openNote(ReaderJump)` (main): the contents dialog uses the reader note-resolution/anchor-search path for a moved quote.
+- `PageThumbsHost.thumbnailsShown` (main, default true): false in scroll mode, hiding both the fourth tab and overflow entry.
+- `ReturnHost.clampPosition(DocPosition)` (main): clamps restored/reparsed pins against the current section count and cached character lengths, without IO.
+- `PageView.afterFirstFrame: Runnable?`: one-shot, posted after a successful body draw. ReaderActivity schedules afterOpen and deferred TXT-position persistence through it, guarded by session identity.

@@ -1,0 +1,43 @@
+{
+  "lane": "RU-L",
+  "files": [
+    "app/src/main/java/com/ggumtak/readeraplus/reader/LightController.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/LightCurve.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/DeviceLight.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/LightProbe.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/reader/LightPolicy.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/LightCurveTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/reader/LightPolicyTest.kt",
+    "docs/next/RU_L_STATUS.md",
+    "docs/next/lanes/RU-L.result.json"
+  ],
+  "summary": "Brightness logic per UI_SPEC §4.1-4.5 / brightness.md: pure LightCurve (p², levels, isExternal, stillOurs) and new pure LightPolicy (verdict reducer, ask policy, restore decision, auto-confirm, Korean row texts); DeviceLight on one serial HandlerThread with fixes 1-4, C35 keep-pending rule, reader_light prefs; LightProbe (keys, LM3630A nodes, xrz getters, diagnostics report); LightController lifecycle, verdict flow, dialogs A/B/C, WRITE_SETTINGS flow, restore-on-leave, sole writer of page.brightnessSwipe.",
+  "checks": "module typecheck OK; module unittest OK (16 tests); full typecheck OK; full unittest OK (1211 tests). Two independent reviews; all findings fixed.",
+  "contractRequests": [
+    "AndroidManifest.xml: WRITE_SETTINGS uses-permission (tools:ignore ProtectedPermissions) is required for the 시스템 설정 수정 page to list the app (brightness.md §10.1) - verify it landed in Phase 0.",
+    "If an Auto Backup rules file is ever added, exclude sharedpref/reader_light.xml (C11); the install stamp guards it meanwhile.",
+    "RU-C (ReaderChrome): setLightDevice must re-bind the toggle when the user's tap is refused (LightController calls bind() after a cancelled dialog A); onOpenPanel() means 'open the device light panel (ACTION_DISPLAY_SETTINGS)', not the options-panel toggle; the question row calls light.onAnswer(yes), the device switch light.onDeviceSwitch(on), the swipe row light.onSwipeSwitch(on)."
+  ],
+  "rcaNotes": [
+    "buildViews (main): light = LightController(lightHost); chrome = ReaderChrome(..., light); light.attach(chrome) right after construction.",
+    "onCreate (main, after buildViews): light.onCreate() - window attribute only, no IO.",
+    "afterOpen (main, after the first page): light.afterFirstPage() - launches its own IO; never awaited.",
+    "applyAppSettings (main): light.onAppSettingsApplied() first; delete ReaderWindow.applyBrightness(this, app.brightness) and page.brightnessSwipe = app.brightnessSwipe there (LightController is the only writer).",
+    "onResume: light.onResume(); onPause: light.onPause() last (after ResumeState.paused()); onDestroy: light.onDestroy(isFinishing).",
+    "Right before startActivity(SettingsActivity) from the reader menu: light.markOwnLaunch().",
+    "pageCallbacks.brightnessStart() -> light.currentPos(); pageCallbacks.onBrightness(v, done) -> light.onDrag(v, done) plus showBrightnessOverlay(v, done) (overlay stays in ReaderActivity).",
+    "bindChrome() -> light.bind() (replaces chrome.setBrightness(...systemBrightness...)).",
+    "Delete ReaderActivity.setBrightness, PREF_LAST_BRIGHTNESS (moved into LightController with the same key 'reader.lastBrightness') and PREF_BRIGHTNESS_COLLAPSED; add a.brightnessDevice to viewPart().",
+    "lightHost.saveApp must make host.app return the saved value immediately (Settings.saveApp updates the cache) - LightController reads host.app right after saving.",
+    "LIB: after the first list is drawn, ReaderIo.launch { DeviceLight.restoreIfStale(applicationContext) } (IO), then DeviceClass.probeAsync (C35)."
+  ],
+  "deviations": [
+    "ASK_DEVICE is asked after every finished drag while the device path is on and the verdict is UNKNOWN, and is not counted toward the 3-session limit (brightness.md §4.3); only ASK_WINDOW is capped (UI_SPEC §4.4).",
+    "An external change seen by the observer keeps pending and makes the user's level the one to put back (K_ORIG = their level) instead of clearing pending, so fix 2 (auto mode comes back) still holds.",
+    "A pending record whose install stamp differs (auto-backup restore) is re-captured on the first write instead of being trusted; a restore that fails with SecurityException keeps pending.",
+    "K_LAST is also persisted at the first write of each enable and after every non-drag apply (not only at drag end), so a crash before any drag still restores (fix 1 would otherwise skip it).",
+    "No restore on onPause during a configuration change (isChangingConfigurations), and no device write while paused (onResume re-applies).",
+    "Pure decisions live in a new reader/LightPolicy.kt (+ LightPolicyTest) as allowed by the lane."
+  ],
+  "complete": true
+}

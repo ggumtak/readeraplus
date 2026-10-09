@@ -2,7 +2,6 @@ package com.ggumtak.readeraplus.render
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
@@ -21,6 +20,9 @@ import com.ggumtak.readeraplus.engine.LineGeometry
 import com.ggumtak.readeraplus.engine.LineInfo
 import com.ggumtak.readeraplus.engine.RunStyle
 import com.ggumtak.readeraplus.engine.SectionLayout
+import com.ggumtak.readeraplus.settings.StatusBands
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -28,12 +30,16 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Draws a laid-out page. The page's content box is placed at (contentLeft, contentTop) in canvas coordinates.
- * Colours: black text on white, or white on black when settings.invert (pictures then drawn inverted too).
+ * Colours come from the settings' [PagePalette]: black text on white, white on black when settings.invert (pictures
+ * then drawn inverted too), or a theme's own (마루뷰어: light text with a short shadow on dark grey, flat gold status lines);
+ * the progress line in its own faint greys ([PagePalette.progressLine], whole e-ink levels on e-ink).
  *
  * Glyph positions come exclusively from [LineGeometry.charPositions]; text is drawn in segments split at
  * style changes and justification points, so selection/search/TTS geometry and drawing always agree.
  * Each line is copied once into a reusable char buffer and drawn with the char[] `drawTextRun`: the String
  * overload makes JNI copy (or pin) the whole section String for every segment.
+ * Body text is hinted, at a whole-px size, on whole pixels, as MaruViewer draws it ([CrispText]): the measurer's paints, a
+ * whole-px baseline per run and a whole-px shadow offset.
  * After the first draw, drawing allocates nothing (paints, rects, position and char arrays, paths are reused).
  * Pages next to the drawn one get their images decoded on a background thread (see [preload]).
  * Use from one thread (the UI thread for the page view).
@@ -42,33 +48,51 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
 
     private val settings = measurer.settings
     private val density = context.resources.displayMetrics.density.let { if (it > 0f) it else 1f }
-    private val invert = settings.invert
-    private val fg = if (invert) Color.WHITE else Color.BLACK
-    private val bg = if (invert) Color.BLACK else Color.WHITE
+    private val palette = PagePalette.of(settings)
+    private val fg = palette.text
+    private val bg = palette.background
+    /**
+     * Text shadow in px (radius 0 = none); the radius is Paint.setShadowLayer's, not the blur ([PagePalette.radiusForSigma]).
+     * The offset is whole px ([CrispText.shadowOffsetPx]), so every glyph's shadow lies the same distance from it.
+     */
+    private val shadowRadius = palette.shadowRadiusPx(density)
+    private val shadowDx = CrispText.shadowOffsetPx(palette.shadowDxDp, density)
+    private val shadowDy = CrispText.shadowOffsetPx(palette.shadowDyDp, density)
     private val onePx = 1f
     private val em = measurer.emPx
 
+    /**
+     * Both status lines in the phone's own UI font (Typeface.DEFAULT: Samsung's on the S25, as MaruViewer draws its status
+     * line), never the book's. Flat, never the body's text shadow: MaruViewer draws its status line without one (its glyph
+     * shapes, stroke weight and 13 sp ink match ours on the S25 screenshots, 2026-10-05; [PagePalette.MARU]).
+     */
     private val statusPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-        typeface = Typeface.SANS_SERIF
-        textSize = TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_SP,
-            settings.statusFontSizeSp.let { if (it.isFinite() && it > 0f) it.coerceIn(6f, 40f) else 11f },
-            context.resources.displayMetrics,
-        )
-        color = fg
+        typeface = Typeface.DEFAULT
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, StatusBands.statusSp(settings), context.resources.displayMetrics)
+        color = palette.status
         textLocale = Locale.KOREAN
         fontFeatureSettings = "tnum"
     }
     private val statusAscent: Float
     private val statusDescent: Float
+    /** Ink of the status text's tallest glyphs ([StatusFit.INK_SAMPLE]) around the baseline: top (negative) and bottom. */
+    private val statusInkTop: Float
+    private val statusInkBottom: Float
     /** Vertical middle of the status digits relative to the baseline (negative = above it): the battery icon's centre. */
     private val digitMiddle: Float
-    private val glyphPerPx: Float
-    private val minStatusPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, StatusFit.MIN_SP, context.resources.displayMetrics)
-    private val bandPaint = arrayOf(TextPaint(statusPaint), TextPaint(statusPaint))
-    private val bandRoom = FloatArray(2) { Float.NaN }
-    private val bandTextSize = FloatArray(2)
+    /** The bands' glyph box ([StatusBands.glyphDp]) in px. */
+    private val statusGlyphPx = StatusFit.glyphPx(settings, density).toFloat()
+    /** The progress line's height and its dots' radius ([ProgressMath]), in px. */
+    private val progressLineH = ProgressMath.lineH(density).toFloat()
+    private val progressDotR = ProgressMath.dotD(density) / 2f
+    /** E-ink (or not probed yet): greys only, no blue ribbon and no red battery. */
+    private val eink = DeviceClass.cached(context) != false
     private val bandCache = arrayOf(StatusDrawCache(), StatusDrawCache())
+    /** The header's side insets ([StatusFit.sideInset]) and the corners and glyph middle they were computed for. */
+    private var headerInsetLeft = 0f
+    private var headerInsetRight = 0f
+    private val insetsCorners = IntArray(6) { Int.MIN_VALUE }
+    private var insetsMiddle = Float.NaN
     private val slotGeometry = FloatArray(12)
     private val slotNatural = FloatArray(3)
     private val slotWidths = FloatArray(3)
@@ -77,6 +101,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val slotSource = arrayOfNulls<String>(6)
     private val slotAvail = FloatArray(6) { Float.NaN }
     private val slotSize = FloatArray(6) { Float.NaN }
+    private val slotKeepEnd = BooleanArray(6)
     private val quoteFill = Array(QuoteStyles.COUNT) { Paint().apply { style = Paint.Style.FILL } }
     private val quoteHasFill = BooleanArray(QuoteStyles.COUNT)
     private val quoteLine = IntArray(QuoteStyles.COUNT)
@@ -96,46 +121,92 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         style = Paint.Style.STROKE
         strokeWidth = onePx
     }
+    /** The status lines' battery icon, in the palette's status colour. */
+    private val statusLine = Paint().apply { style = Paint.Style.FILL }
+    /** The charging bolt: the page colour around it (so it reads over the bars) and its path, reused. */
+    private val boltHalo = Paint().apply { style = Paint.Style.FILL_AND_STROKE }
+    private val boltPath = Path()
+    private val statusOutline = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = onePx
+    }
+    /** MaruViewer's icon-first battery, drawn as filled rects: the status colour, slightly red at one bar on phones. */
+    private val batteryFirst = Paint().apply { style = Paint.Style.FILL }
+    /** ReadEra's 탐색줄: a faint line and three slightly darker dots (or lighter, on a dark page). */
+    private val progressLine = Paint().apply { style = Paint.Style.FILL }
+    private val progressDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     /** Pictures; in night mode through the shared inverting filter (T1-3f): no white box glaring on a black page. */
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG).apply {
-        if (invert) colorFilter = nightImageFilter
+        if (palette.invertImages) colorFilter = nightImageFilter
     }
     private val ribbonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    /** Background-coloured edge that keeps the ribbon apart from glyphs it touches (tiny margins, no header). */
+    /**
+     * E-ink only (its ribbon is the text colour): a background-coloured edge that keeps the ribbon apart from glyphs it
+     * touches (tiny margins, no header). A phone's blue ribbon stands apart from every page look's text as it is.
+     */
     private val ribbonHalo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 2f * onePx
         strokeJoin = Paint.Join.ROUND
     }
     private val rect = RectF()
-    private val ribbon = Path()
-    private var ribbonForWidth = -1
-    private var ribbonForHeight = -1f
+    /** The bookmark ribbon's path, per slot (0 = the view's right edge, 1 = a spread's left page) with what it was built for. */
+    private val ribbons = arrayOf(Path(), Path())
+    private val ribbonForWidth = intArrayOf(-1, -1)
+    private val ribbonForHeight = floatArrayOf(-1f, -1f)
 
     private var xs = FloatArray(256)
     private var lineChars = CharArray(0)
 
-    /** Page whose neighbours were last handed to the image prefetcher (identity + index). */
+    /**
+     * Page whose neighbours were last handed to the image prefetcher (identity + index), and the cache's
+     * [ImageCache.clears] then: a cache dropped since (memory pressure) has them prefetched again.
+     */
     private var prefetchedLayout: SectionLayout? = null
     private var prefetchedPage = -1
+    private var prefetchedClears = 0
     /** Failed image lines are remembered without constructing cache-key Strings on scroll frames. */
     private val failedImages = ConcurrentHashMap.newKeySet<LineInfo>()
+    /** The measurer's paints that carry the text shadow (set once per paint, see [shadow]). */
+    private val shadowed: MutableSet<TextPaint> = Collections.newSetFromMap(IdentityHashMap<TextPaint, Boolean>())
 
     init {
+        // Settings and density are fixed per renderer: the status size is fitted to the bands' glyph box once, here.
+        val ink = Rect()
+        statusPaint.getTextBounds(StatusFit.INK_SAMPLE, 0, StatusFit.INK_SAMPLE.length, ink)
+        if (ink.height() > 0) {
+            statusPaint.textSize = StatusFit.fitTextPx(statusPaint.textSize, ink.height().toFloat(), statusGlyphPx)
+            statusPaint.getTextBounds(StatusFit.INK_SAMPLE, 0, StatusFit.INK_SAMPLE.length, ink)
+        }
         val fm = statusPaint.fontMetrics
         statusAscent = -fm.ascent
         statusDescent = fm.descent
+        statusInkTop = if (ink.height() > 0) ink.top.toFloat() else fm.ascent
+        statusInkBottom = if (ink.height() > 0) ink.bottom.toFloat() else fm.descent
         val digit = Rect()
         statusPaint.getTextBounds("0", 0, 1, digit)
         digitMiddle = if (digit.height() > 0) (digit.top + digit.bottom) / 2f else -0.36f * statusPaint.textSize
-        glyphPerPx = (statusAscent + statusDescent) / statusPaint.textSize
         outline.color = fg
         line.color = fg
-        ribbonPaint.color = fg
+        // ReadEra's blue on phones; e-ink: the page's text colour, as before (RibbonMath.color).
+        ribbonPaint.color = RibbonMath.color(eink, fg)
         ribbonHalo.color = bg
+        statusLine.color = palette.status
+        boltHalo.color = palette.background
+        statusOutline.color = palette.status
+        batteryFirst.color = palette.status
+        // On e-ink, greys on the panel's own levels. Unknown (no probe yet) counts as e-ink, as for the chrome
+        // (ChromePalette.of): there the panel's levels keep the line from rounding into the page, while a phone that
+        // is not probed yet only shows the line a few greys off the screenshot's until the next renderer.
+        progressLine.color = if (eink) palette.inkProgressLine else palette.progressLine
+        progressDot.color = if (eink) palette.inkProgressDot else palette.progressDot
     }
 
-    /** Draws page [pageIndex] of [layout] (background, status lines, highlights, text, images, ribbon). */
+    /**
+     * Draws page [pageIndex] of [layout] (background, status lines, highlights, text, images, ribbon). With a [right]
+     * page (a landscape spread, [PageGeometry.columns] 2) both pages are painted in this one call, one frame: [layout]'s
+     * page at [contentLeft], [right]'s at its own x; the status bands and the progress line span the whole view.
+     */
     fun draw(
         canvas: Canvas,
         layout: SectionLayout,
@@ -145,32 +216,70 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         viewWidth: Int,
         viewHeight: Int,
         decor: PageDecor,
+        right: SpreadPage? = null,
     ) {
         canvas.drawColor(bg)
         val cw = layout.config.width.toFloat()
-        val ch = layout.config.height.toFloat()
+        if (right != null) {
+            drawSpread(canvas, layout, pageIndex, contentLeft, contentTop, cw, viewWidth, viewHeight, decor, right)
+            if (images != null) prefetchNeighbours(layout, pageIndex)
+            return
+        }
         val ribbonH = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + cw, viewWidth) else 0f
-        drawStatus(canvas, decor, contentLeft, contentTop, cw, ch, viewWidth, viewHeight, ribbonH)
+        drawStatus(canvas, decor, contentLeft, contentTop, cw, viewWidth, viewHeight, ribbonH)
         if (pageIndex in 0 until layout.pages.size) {
             val page = layout.pages[pageIndex]
             val lines = page.lines
             if (decor.highlights.isNotEmpty()) drawHighlights(canvas, layout, lines, decor.highlights, contentLeft, contentTop)
-            for (i in 0 until lines.size) drawLine(canvas, layout, lines[i], contentLeft, contentTop, cw)
+            for (i in 0 until lines.size) drawLine(canvas, layout, pageIndex, lines[i], contentLeft, contentTop, cw)
         }
         if (decor.bookmarked) drawRibbon(canvas, viewWidth, ribbonH)
         if (images != null) prefetchNeighbours(layout, pageIndex)
     }
 
     /**
-     * Decodes the images of [pageIndex] into the image cache (blocking). Call from a background thread before
-     * showing an illustrated page so [draw] never decodes on the UI thread.
+     * The two pages of a landscape spread. The header, the footer and the progress line are those of the whole view (the
+     * footer over both columns); each page keeps its own bookmark ribbon: the left page's at its column's right edge, the
+     * right page's at the view's, where the single page's hangs.
      */
-    fun preload(layout: SectionLayout, pageIndex: Int) {
+    private fun drawSpread(
+        canvas: Canvas, layout: SectionLayout, pageIndex: Int, contentLeft: Float, contentTop: Float, cw: Float,
+        viewWidth: Int, viewHeight: Int, decor: PageDecor, right: SpreadPage,
+    ) {
+        val span = right.left + cw - contentLeft
+        val rightRibbon = if (right.decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + span, viewWidth) else 0f
+        drawStatus(canvas, decor, contentLeft, contentTop, span, viewWidth, viewHeight, rightRibbon)
+        drawPageBody(canvas, layout, pageIndex, contentLeft, contentTop, cw, decor.highlights)
+        val rl = right.layout
+        if (rl != null) drawPageBody(canvas, rl, right.pageIndex, right.left, contentTop, rl.config.width.toFloat(), right.decor.highlights)
+        if (decor.bookmarked) {
+            val edge = right.boundary.toInt()
+            drawRibbon(canvas, edge, RibbonMath.height(density, contentTop, contentLeft + cw, edge), 1)
+        }
+        if (right.decor.bookmarked) drawRibbon(canvas, viewWidth, rightRibbon)
+    }
+
+    /** The highlights under the text and the text of page [pageIndex] with its box at ([left], [top]). */
+    private fun drawPageBody(canvas: Canvas, layout: SectionLayout, pageIndex: Int, left: Float, top: Float, cw: Float,
+                             highlights: List<Highlight>) {
+        if (pageIndex !in 0 until layout.pages.size) return
+        val lines = layout.pages[pageIndex].lines
+        if (highlights.isNotEmpty()) drawHighlights(canvas, layout, lines, highlights, left, top)
+        for (i in 0 until lines.size) drawLine(canvas, layout, pageIndex, lines[i], left, top, cw)
+    }
+
+    /**
+     * Decodes the images of [pageIndex] into the image cache (blocking). Call from a background thread before
+     * showing an illustrated page so [draw] finds them. The decoder takes them one at a time ([ImageCache.get]): a
+     * picture queued or running already (the neighbour prefetch) is waited for, not decoded twice. [visible]: the page
+     * about to be shown (false: a neighbour's prefetch, behind any visible page's pictures).
+     */
+    fun preload(layout: SectionLayout, pageIndex: Int, visible: Boolean = true) {
         val cache = images ?: return
         val page = layout.pages.getOrNull(pageIndex) ?: return
         for (ln in page.lines) {
             val img = ln.imageBlock ?: continue
-            if (cache.get(img.src, imgW(ln), imgH(ln)) == null && cache.isKnownFailure(img.src, imgW(ln), imgH(ln)))
+            if (cache.get(img.src, imgW(ln), imgH(ln), visible) == null && cache.isKnownFailure(img.src, imgW(ln), imgH(ln)))
                 failedImages.add(ln)
         }
     }
@@ -192,27 +301,32 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     /** Decodes the images of the previous/next page in the background so turning to them never decodes here. */
     private fun prefetchNeighbours(layout: SectionLayout, pageIndex: Int) {
         val cache = images ?: return
-        if (prefetchedLayout === layout && prefetchedPage == pageIndex) return
+        val clears = cache.clears
+        if (prefetchedLayout === layout && prefetchedPage == pageIndex && prefetchedClears == clears) return
         prefetchedLayout = layout
         prefetchedPage = pageIndex
+        prefetchedClears = clears
         val next = needsDecode(cache, layout, pageIndex + 1)
         val prev = needsDecode(cache, layout, pageIndex - 1)
         if (!next && !prev) return
         imagePrefetcher.submit {
-            if (next) preload(layout, pageIndex + 1)
-            if (prev) preload(layout, pageIndex - 1)
+            if (next) preload(layout, pageIndex + 1, visible = false)
+            if (prev) preload(layout, pageIndex - 1, visible = false)
         }
     }
 
     // ---------------------------------------------------------------------------------------------
     // Status lines
 
-    /** Fixed chrome occupies only existing margins; it never changes the text viewport. */
+    /**
+     * The page under scrolling text: paper and the status bands, in their own places above and below the text box (the
+     * geometry made room for them), so the scrolled text clipped to the box never runs under them.
+     */
     fun drawChrome(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float,
-                   contentHeight: Float, viewWidth: Int, viewHeight: Int) {
+                   viewWidth: Int, viewHeight: Int) {
         canvas.drawColor(bg)
         val h = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + contentWidth, viewWidth) else 0f
-        drawStatus(canvas, decor, contentLeft, contentTop, contentWidth, contentHeight, viewWidth, viewHeight, h)
+        drawStatus(canvas, decor, contentLeft, contentTop, contentWidth, viewWidth, viewHeight, h)
     }
 
     /** Scroll frames only peek at decoded images; a background batch fills missing ones. */
@@ -232,7 +346,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         for (i in first until end) {
             val ln = lines[i]
             if (ln.imageBlock != null) missing = drawImagePeek(canvas, ln, left, top) || missing
-            else drawLine(canvas, layout, ln, left, top, layout.config.width.toFloat())
+            else drawLine(canvas, layout, pageIndex, ln, left, top, layout.config.width.toFloat())
         }
         canvas.restoreToCount(save)
         return missing
@@ -249,11 +363,12 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     }
 
     fun drawOverlay(canvas: Canvas, decor: PageDecor, contentLeft: Float, contentTop: Float, contentWidth: Float, viewWidth: Int) {
-        if (decor.bookmarked) drawRibbon(canvas, viewWidth, RibbonMath.height(density, contentTop, contentLeft + contentWidth, viewWidth))
+        if (!decor.bookmarked) return
+        drawRibbon(canvas, viewWidth, RibbonMath.height(density, contentTop, contentLeft + contentWidth, viewWidth))
     }
 
     /** One latest-pending batch; copy callers' reusable slot arrays before submitting. */
-    fun prefetchPages(layouts: Array<SectionLayout?>, pages: IntArray, count: Int, done: Runnable?) {
+    fun prefetchPages(layouts: Array<SectionLayout?>, pages: IntArray, count: Int, done: Runnable?, visibleCount: Int = 0) {
         val cache = images ?: return
         val n = minOf(count, layouts.size, pages.size).coerceAtLeast(0)
         var any = false
@@ -269,46 +384,59 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             for (i in 0 until n) {
                 val l = ls[i] ?: continue
                 if (!needsDecode(cache, l, ps[i])) continue
-                preload(l, ps[i]); decoded = true
+                preload(l, ps[i], visible = i < visibleCount); decoded = true
             }
             if (decoded && done != null) main.post(done)
         }
     }
 
-    private fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Float, cw: Float, ch: Float,
+    /**
+     * The status bands in their own places at the screen's edges (StatusFit; the text box starts and ends a margin away
+     * from them), at the chosen size: the header at the top (over [StatusDecor.top], a display cutout's band, too: its
+     * own band stays reserved below it), the footer and the progress line above the bottom edge gap. The header spans
+     * the page view less its own side insets ([updateHeaderInsets]: the display's corners), MaruViewer's line; the footer
+     * shares the text box's column ([left] / [cw]; [top]: the text box's top).
+     */
+    private fun drawStatus(canvas: Canvas, decor: PageDecor, left: Float, top: Float, cw: Float,
                            viewWidth: Int, viewHeight: Int, ribbonH: Float) {
         val st = decor.status ?: return
-        val bottom = viewHeight - (top + ch)
-        val lane = if (st.lane) StatusFit.lane(bottom, density) else 0f
+        val ts = statusPaint.textSize
         if (!st.header.isEmpty) {
-            val ts = bandSize(0, top)
-            if (ts > 0f) {
-                val baseline = centredBaseline(0f, top, ts)
-                val inset = RibbonMath.headerInset(density, left + cw, viewWidth, ribbonH,
-                    baseline - statusAscent * ts / statusPaint.textSize)
-                drawBand(canvas, st, st.header, left + inset, maxOf(0f, cw - 2f * inset), baseline, 0, ts, inset)
-            }
+            val baseline = StatusFit.headerBaseline(st.top.toFloat(), statusAscent, statusInkTop, statusInkBottom,
+                statusGlyphPx, density)
+            updateHeaderInsets(st, baseline + (statusInkTop + statusInkBottom) / 2f)
+            val x = headerInsetLeft
+            val w = StatusFit.headerWidth(viewWidth, headerInsetLeft, headerInsetRight)
+            // The ribbon's place at the header's right end is kept on every page (bookmarked or not), so toggling the
+            // bookmark moves only the right slot, by that much, and never re-fits the slots (or the title). The ribbon
+            // may cover the header's band ("좀 가려도 되니까"), never its glyphs.
+            val reserve = RibbonMath.headerInset(density, x + w, viewWidth,
+                RibbonMath.height(density, top, left + cw, viewWidth), baseline + statusInkTop)
+            drawBand(canvas, st, st.header, x, w, baseline, 0, ts, reserve, if (ribbonH > 0f) reserve else 0f)
         }
-        if (!st.footer.isEmpty) {
-            val ts = bandSize(1, bottom - lane)
-            if (ts > 0f) drawBand(canvas, st, st.footer, left, cw,
-                centredBaseline(top + ch, viewHeight - lane, ts), 1, ts, 0f)
-        }
-        if (lane > 0f) drawProgress(canvas, st.progress, viewWidth, viewHeight, lane)
+        if (!st.footer.isEmpty) drawBand(canvas, st, st.footer, left, cw, StatusFit.footerBaseline(viewHeight.toFloat(),
+            st.lane, statusDescent, statusInkTop, statusInkBottom, statusGlyphPx, density), 1, ts, 0f, 0f)
+        if (st.lane) drawProgress(canvas, st.progress, viewWidth, viewHeight)
     }
 
-    private fun bandSize(band: Int, room: Float): Float {
-        if (bandRoom[band] != room) {
-            bandRoom[band] = room
-            val ts = StatusFit.size(statusPaint.textSize, room, glyphPerPx, StatusFit.PAD_DP * density, minStatusPx)
-            bandTextSize[band] = ts
-            if (ts > 0f) bandPaint[band].textSize = ts
-        }
-        return bandTextSize[band]
+    /**
+     * The header's side insets for the display's top corners in [st] and the glyphs' vertical [middle]; computed again
+     * only when those change (the window's insets, the renderer's font), never per frame.
+     */
+    private fun updateHeaderInsets(st: StatusDecor, middle: Float) {
+        val l = st.cornerLeft
+        val r = st.cornerRight
+        val k = insetsCorners
+        if (middle == insetsMiddle && k[0] == l.radius && k[1] == l.centreIn && k[2] == l.centreY &&
+            k[3] == r.radius && k[4] == r.centreIn && k[5] == r.centreY) return
+        k[0] = l.radius; k[1] = l.centreIn; k[2] = l.centreY; k[3] = r.radius; k[4] = r.centreIn; k[5] = r.centreY
+        insetsMiddle = middle
+        headerInsetLeft = sideInset(l, middle)
+        headerInsetRight = sideInset(r, middle)
     }
 
-    private fun centredBaseline(top: Float, bottom: Float, ts: Float): Float =
-        (top + bottom) / 2f + (statusAscent - statusDescent) * ts / statusPaint.textSize / 2f
+    private fun sideInset(c: StatusCorner, middle: Float): Float =
+        StatusFit.sideInset(c.radius.toFloat(), c.centreIn.toFloat(), c.centreY.toFloat(), middle, density)
 
     private fun slot(b: StatusBand, i: Int): StatusSlot = when (i) { 0 -> b.left; 1 -> b.center; else -> b.right }
 
@@ -317,30 +445,38 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val label = if (text != null) paint.measureText(text, 0, text.length)
             else if (s.length > 0) paint.measureText(s.chars, 0, s.length) else 0f
         slotLabelWidth[index] = label
-        val digits = if (s.battery >= 0) paint.measureText(s.batteryChars, 0, s.batteryLength) else 0f
-        return label + if (s.battery >= 0) BatteryMath.bodyWidth(paint.textSize) + BatteryMath.nubWidth(paint.textSize) +
-            BatteryMath.gap(paint.textSize) + digits + if (label > 0f) paint.textSize * 0.5f else 0f else 0f
+        if (s.battery < 0) return label
+        val ts = paint.textSize
+        val digits = if (s.batteryLength > 0) BatteryMath.gap(ts) + paint.measureText(s.batteryChars, 0, s.batteryLength) else 0f
+        val gap = if (label <= 0f) 0f else if (s.batteryFirst) BatteryMath.firstGap(ts) else BatteryMath.labelGap(ts)
+        return label + BatteryMath.iconWidth(ts, s.batteryFirst) + digits + gap
     }
 
+    /**
+     * [reserve]: px at the band's right end kept for the bookmark ribbon (StatusMath.allocate); [shift]: how far the
+     * right slot moves in on this page (the reserve on a bookmarked page, else 0). Only [reserve] re-fits the slots.
+     */
     private fun drawBand(canvas: Canvas, status: StatusDecor, band: StatusBand, x: Float, w: Float,
-                         baseline: Float, bi: Int, ts: Float, inset: Float) {
-        val paint = bandPaint[bi]
+                         baseline: Float, bi: Int, ts: Float, reserve: Float, shift: Float) {
+        val paint = statusPaint
         val start = bi * 3
-        if (bandCache[bi].changed(status, w, inset, ts)) {
+        if (bandCache[bi].changed(status, w, reserve, ts)) {
             for (i in 0..2) slotNatural[i] = natural(slot(band, i), paint, start + i)
             StatusMath.allocate(w, maxOf(ts, 8f * density), slotNatural[0], slotNatural[1], slotNatural[2],
-                band.left.text != null, band.center.text != null, band.right.text != null, 3f * ts, slotWidths)
+                band.left.text != null, band.center.text != null, band.right.text != null, 3f * ts, slotWidths, reserve)
             for (i in 0..2) {
                 val index = start + i
                 val width = slotWidths[i]
                 slotGeometry[index * 2] = when (i) { 0 -> 0f; 1 -> (w - width) / 2f; else -> w - width }
                 slotGeometry[index * 2 + 1] = width
-                val src = slot(band, i).text
-                if (slotSource[index] !== src || slotAvail[index] != width || slotSize[index] != ts) {
-                    slotSource[index] = src; slotAvail[index] = width; slotSize[index] = ts
+                val s = slot(band, i)
+                val src = s.text
+                if (slotSource[index] !== src || slotAvail[index] != width || slotSize[index] != ts || slotKeepEnd[index] != s.keepEnd) {
+                    slotSource[index] = src; slotAvail[index] = width; slotSize[index] = ts; slotKeepEnd[index] = s.keepEnd
                     slotText[index] = if (src == null || width <= 0f) null
                         else if (slotNatural[i] <= width) src
-                        else TextUtils.ellipsize(src, paint, width, TextUtils.TruncateAt.END)
+                        else TextUtils.ellipsize(src, paint, width,
+                            if (s.keepEnd) TextUtils.TruncateAt.START else TextUtils.TruncateAt.END)
                 }
             }
         }
@@ -348,46 +484,116 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             val index = start + i
             if (slotGeometry[index * 2 + 1] <= 0f) continue
             val s = slot(band, i)
-            val sx = x + slotGeometry[index * 2]
+            var sx = x + slotGeometry[index * 2] - if (i == 2) shift else 0f
+            if (s.battery >= 0 && s.batteryFirst) {
+                // MaruViewer's corner: the icon, then the time.
+                drawFirstBattery(canvas, s.battery, sx, baseline, ts, s.charging)
+                sx += BatteryMath.iconWidth(ts, true) + BatteryMath.firstGap(ts)
+            }
             val text = slotText[index]
             if (s.text != null && text != null) canvas.drawText(text, 0, text.length, sx, baseline, paint)
             else if (s.length > 0) canvas.drawText(s.chars, 0, s.length, sx, baseline, paint)
-            if (s.battery >= 0) drawBattery(canvas, s, sx + slotLabelWidth[index] +
-                if (slotLabelWidth[index] > 0f) ts * 0.5f else 0f, baseline, paint)
+            if (s.battery >= 0 && !s.batteryFirst) drawBattery(canvas, s, sx + slotLabelWidth[index] +
+                if (slotLabelWidth[index] > 0f) BatteryMath.labelGap(ts) else 0f, baseline, paint)
         }
     }
 
-    /** Fixed char buffers supply battery digits: no String conversion on a frame. */
+    /** Fixed char buffers supply the battery digits: no String conversion on a frame. */
     private fun drawBattery(canvas: Canvas, slot: StatusSlot, x: Float, baseline: Float, paint: TextPaint) {
         val ts = paint.textSize
+        val stroke = statusOutline
+        val sw = stroke.strokeWidth
         val bodyLeft = Math.round(x).toFloat()
         val bodyRight = bodyLeft + BatteryMath.bodyWidth(ts)
         val bodyH = BatteryMath.bodyHeight(ts)
         val bodyTop = Math.round(baseline + digitMiddle * ts / statusPaint.textSize - bodyH / 2f).toFloat()
         val bodyBottom = bodyTop + bodyH
-        rect.set(bodyLeft + 0.5f, bodyTop + 0.5f, bodyRight - 0.5f, bodyBottom - 0.5f)
-        canvas.drawRect(rect, outline)
+        rect.set(bodyLeft + sw / 2f, bodyTop + sw / 2f, bodyRight - sw / 2f, bodyBottom - sw / 2f)
+        canvas.drawRect(rect, stroke)
         val nubH = BatteryMath.nubHeight(ts)
         val nubTop = bodyTop + Math.round((bodyH - nubH) / 2f)
         val nubRight = bodyRight + BatteryMath.nubWidth(ts)
-        canvas.drawRect(bodyRight, nubTop, nubRight, nubTop + nubH, line)
-        canvas.drawText(slot.batteryChars, 0, slot.batteryLength, nubRight + BatteryMath.gap(ts), baseline, paint)
-        val inL = bodyLeft + 2f
-        val fillR = BatteryMath.fillRight(inL, bodyRight - 2f, slot.battery)
-        if (fillR > inL) canvas.drawRect(inL, bodyTop + 2f, fillR, bodyBottom - 2f, line)
+        canvas.drawRect(bodyRight, nubTop, nubRight, nubTop + nubH, statusLine)
+        if (slot.batteryLength > 0) canvas.drawText(slot.batteryChars, 0, slot.batteryLength, nubRight + BatteryMath.gap(ts), baseline, paint)
+        // One px of paper inside the outline, then the level.
+        val inset = sw + 1f
+        val inL = bodyLeft + inset
+        val fillR = BatteryMath.fillRight(inL, bodyRight - inset, slot.battery)
+        if (fillR > inL && bodyBottom - inset > bodyTop + inset) canvas.drawRect(inL, bodyTop + inset, fillR, bodyBottom - inset, statusLine)
+        if (slot.charging) drawBolt(canvas, (bodyLeft + bodyRight) / 2f, (bodyTop + bodyBottom) / 2f, bodyH - 2f * inset, sw, statusLine.color)
     }
 
-    private fun drawProgress(canvas: Canvas, fraction: Float, viewW: Int, viewH: Int, lane: Float) {
-        val y = ProgressMath.yc(viewH, lane).toFloat()
-        val x0 = ProgressMath.x0(viewW, density).toFloat()
-        val x1 = ProgressMath.x1(viewW, density).toFloat()
-        val r = ProgressMath.rCap(lane, density)
-        canvas.drawRect(x0, y, x1, y + 1f, line)
-        canvas.drawCircle(x0, y + 0.5f, r, ribbonPaint)
-        canvas.drawCircle(x1, y + 0.5f, r, ribbonPaint)
-        if (fraction >= 0f && fraction.isFinite())
-            canvas.drawCircle(ProgressMath.dotX(fraction, viewW, lane, density), y + 0.5f,
-                ProgressMath.rDot(lane, density), ribbonPaint)
+    /**
+     * MaruViewer's icon first (it stands for the number it does not show; [BatteryMath]): the nub on the left, the body's
+     * outline and its bars as whole-px rects, the bars from the far end, [level] in its 25 % steps. At one bar the whole
+     * icon turns slightly red on phones ([PagePalette.batteryLow]); e-ink keeps the status colour (greys only).
+     */
+    private fun drawFirstBattery(canvas: Canvas, level: Int, x: Float, baseline: Float, ts: Float, charging: Boolean = false) {
+        val p = batteryFirst
+        p.color = BatteryMath.firstColor(eink, level, palette.status, palette.batteryLow)
+        val s = BatteryMath.firstStroke(ts)
+        val bodyH = BatteryMath.bodyHeight(ts, true)
+        val nubH = BatteryMath.firstNubHeight(ts)
+        val left = Math.round(x).toFloat()
+        val bodyLeft = left + BatteryMath.nubWidth(ts, true)
+        val bodyRight = bodyLeft + BatteryMath.bodyWidth(ts, true)
+        val bodyTop = BatteryMath.firstTop(baseline, digitMiddle * ts / statusPaint.textSize, ts)
+        val bodyBottom = bodyTop + bodyH
+        val nubTop = bodyTop + (bodyH - nubH) / 2f
+        canvas.drawRect(left, nubTop, bodyLeft, nubTop + nubH, p)
+        canvas.drawRect(bodyLeft, bodyTop, bodyRight, bodyTop + s, p)
+        canvas.drawRect(bodyLeft, bodyBottom - s, bodyRight, bodyBottom, p)
+        canvas.drawRect(bodyLeft, bodyTop + s, bodyLeft + s, bodyBottom - s, p)
+        canvas.drawRect(bodyRight - s, bodyTop + s, bodyRight, bodyBottom - s, p)
+        val bar = BatteryMath.barWidth(ts)
+        for (k in 0 until BatteryMath.bars(level)) {
+            val r = BatteryMath.barRight(bodyRight, ts, k)
+            canvas.drawRect(r - bar, bodyTop + 2f * s, r, bodyBottom - 2f * s, p)
+        }
+        if (charging) drawBolt(canvas, (bodyLeft + bodyRight) / 2f, (bodyTop + bodyBottom) / 2f, bodyH - 2f * s, s, p.color)
+    }
+
+    /**
+     * The charging bolt centred at ([cx], [cy]), [h] high: the page colour around it, so it shows over the bars, then
+     * [color]. No allocation: one reused path.
+     */
+    private fun drawBolt(canvas: Canvas, cx: Float, cy: Float, h: Float, pad: Float, color: Int) {
+        if (h < 4f) return
+        val w = h * 0.62f
+        val l = cx - w / 2f
+        val t = cy - h / 2f
+        val path = boltPath
+        path.rewind()
+        path.moveTo(l + w * 0.68f, t)
+        path.lineTo(l + w * 0.05f, t + h * 0.56f)
+        path.lineTo(l + w * 0.46f, t + h * 0.56f)
+        path.lineTo(l + w * 0.30f, t + h)
+        path.lineTo(l + w * 0.95f, t + h * 0.40f)
+        path.lineTo(l + w * 0.54f, t + h * 0.40f)
+        path.close()
+        boltHalo.strokeWidth = maxOf(1f, pad)
+        canvas.drawPath(path, boltHalo)
+        val keep = statusLine.color
+        statusLine.color = color
+        canvas.drawPath(path, statusLine)
+        statusLine.color = keep
+    }
+
+    /**
+     * The progress line across the page view [viewW] × [viewH] ([ProgressMath]): the line from one end dot's centre to
+     * the other's, then the end dots and, at [fraction] (none while it is unknown, < 0), the position dot over it; not
+     * where it would land on an end dot ([ProgressMath.onEndDot]), whose rim would then be blended twice.
+     */
+    private fun drawProgress(canvas: Canvas, fraction: Float, viewW: Int, viewH: Int) {
+        val top = ProgressMath.lineTop(viewH, density).toFloat()
+        val y = ProgressMath.centreY(viewH, density)
+        val x0 = ProgressMath.dotX(0f, viewW, density)
+        val x1 = ProgressMath.dotX(1f, viewW, density)
+        canvas.drawRect(x0, top, x1, top + progressLineH, progressLine)
+        canvas.drawCircle(x0, y, progressDotR, progressDot)
+        canvas.drawCircle(x1, y, progressDotR, progressDot)
+        if (fraction >= 0f && fraction.isFinite() && !ProgressMath.onEndDot(fraction, viewW, density))
+            canvas.drawCircle(ProgressMath.dotX(fraction, viewW, density), y, progressDotR, progressDot)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -405,7 +611,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
                 if (value >= 0) quoteFill[s].color = grey(value)
                 quoteLine[s] = if (thumbnail) QuoteStyles.LINE_NONE else QuoteStyles.inkLine(s)
             } else {
-                val color = QuoteStyles.colorFill(s, invert)
+                val color = QuoteStyles.colorFill(s, palette.dark)
                 quoteHasFill[s] = color != 0
                 if (color != 0) quoteFill[s].color = color
                 quoteLine[s] = if (thumbnail) QuoteStyles.LINE_NONE else QuoteStyles.colorLine(s)
@@ -498,10 +704,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         }
     }
 
-    private fun grey(v: Int): Int {
-        val g = if (invert) 255 - v else v
-        return Color.rgb(g, g, g)
-    }
+    private fun grey(v: Int): Int = palette.grey(v)
 
     private fun fillRect(canvas: Canvas, l: Float, t: Float, r: Float, b: Float, color: Int) {
         fill.color = color
@@ -517,14 +720,16 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         return LineGeometry.charPositions(layout, ln, xs)
     }
 
-    private fun imgW(ln: LineInfo): Int = Math.round(ln.imageWidth).coerceAtLeast(1)
-    private fun imgH(ln: LineInfo): Int = Math.round(ln.imageHeight).coerceAtLeast(1)
+    private fun imgW(ln: LineInfo): Int = PageImages.width(ln)
+    private fun imgH(ln: LineInfo): Int = PageImages.height(ln)
 
-    private fun drawLine(canvas: Canvas, layout: SectionLayout, ln: LineInfo, left: Float, top: Float, cw: Float) {
+    private fun drawLine(canvas: Canvas, layout: SectionLayout, pageIndex: Int, ln: LineInfo, left: Float, top: Float, cw: Float) {
         val img = ln.imageBlock
         if (img != null) {
             rect.set(left + ln.x, top + ln.top, left + ln.x + ln.imageWidth, top + ln.top + ln.imageHeight)
-            val bmp = images?.get(img.src, imgW(ln), imgH(ln))
+            // Normally decoded already: the reader preloads the page it turns to. A miss reads nothing: the box stays
+            // and the picture is decoded in the background, then repaints its own box (ImageCache.getForDraw).
+            val bmp = images?.getForDraw(img.src, imgW(ln), imgH(ln), layout, pageIndex)
             if (bmp != null) {
                 canvas.drawBitmap(bmp, null, rect, bitmapPaint)
             } else {
@@ -583,12 +788,14 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     ) {
         val paint = measurer.paintFor(style)
         paint.color = fg
+        if (shadowRadius > 0f) shadow(paint)
         val shift = when {
             style.baselineShift > 0 -> -0.35f * em
             style.baselineShift < 0 -> 0.2f * em
             else -> 0f
         }
-        val y = baseY + shift
+        // On a whole pixel row (CrispText.baselineY): the shadow then lies the same distance below every line.
+        val y = CrispText.baselineY(baseY + shift)
         var p = a
         while (p < b) {
             val q = TextSegments.segmentEnd(text, adv, xs, lineStart, p, b)
@@ -616,79 +823,197 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         }
     }
 
+    /**
+     * Gives [paint] the palette's text shadow once: setShadowLayer is a JNI call that builds a new native blur every
+     * time. The measurer's paints belong to this renderer, so only a palette with a shadow ever sets one. Small
+     * thumbnails ([thumbnail]) go without it: under a pixel at their scale, it would only cost a blurred pass per glyph.
+     */
+    private fun shadow(paint: TextPaint) {
+        if (!thumbnail) {
+            if (shadowed.add(paint)) paint.setShadowLayer(shadowRadius, shadowDx, shadowDy, palette.shadowColor)
+        } else if (shadowed.remove(paint)) {
+            paint.clearShadowLayer()
+        }
+    }
+
     private fun underlineY(baseline: Float, size: Float): Float = Math.round(baseline + maxOf(onePx * 2f, size * 0.12f)).toFloat()
 
     // ---------------------------------------------------------------------------------------------
     // Bookmark ribbon
 
-    private fun drawRibbon(canvas: Canvas, viewWidth: Int, h: Float) {
-        if (ribbonForWidth != viewWidth || ribbonForHeight != h) {
+    /**
+     * ReadEra's ribbon ([RibbonMath]) [h] px tall from the page view's very top, over a display cutout's band too (the
+     * S25's camera band in fullscreen; the bookmark's tap corner covers it there: `TapZones.corner`).
+     */
+    private fun drawRibbon(canvas: Canvas, viewWidth: Int, h: Float, slot: Int = 0) {
+        val ribbon = ribbons[slot]
+        if (ribbonForWidth[slot] != viewWidth || ribbonForHeight[slot] != h) {
             val l = RibbonMath.left(viewWidth, density)
-            val r = l + RibbonMath.WIDTH_DP * density
-            val notch = h * RibbonMath.NOTCH_FRACTION
+            val r = RibbonMath.right(viewWidth, density)
             ribbon.reset()
             ribbon.moveTo(l, 0f)
             ribbon.lineTo(r, 0f)
             ribbon.lineTo(r, h)
-            ribbon.lineTo((l + r) / 2f, h - notch)
+            ribbon.lineTo((l + r) / 2f, h - RibbonMath.notch(h))
             ribbon.lineTo(l, h)
             ribbon.close()
-            ribbonForWidth = viewWidth
-            ribbonForHeight = h
+            ribbonForWidth[slot] = viewWidth
+            ribbonForHeight[slot] = h
         }
-        canvas.drawPath(ribbon, ribbonHalo)
+        if (RibbonMath.halo(eink)) canvas.drawPath(ribbon, ribbonHalo)
         canvas.drawPath(ribbon, ribbonPaint)
     }
 }
 
 /**
- * Bookmark ribbon geometry (px; pure, unit-tested). The ribbon hangs from the top edge, [RIGHT_DP] from the
- * view's right edge. It keeps its full height only where that stays above the text column; otherwise it shrinks
- * to the band above the text (never below [MIN_HEIGHT_DP]). A centred header that would run under it is
- * narrowed by [headerInset] on both sides.
+ * Bookmark ribbon geometry (px; pure, unit-tested), ReadEra's (user, 2026-10-05: "좀 가려도 되니까 책갈피 딱 붙여 readera처럼
+ * 오른쪽 위 파란색으로 사이즈도 더 작게해 지금보다"; measured on the S25 at 3 px per dp: 42 × 62 px from the screen's top,
+ * its right edge 51 px from the screen's, a V notch ≈ 12 px deep, solid #4286F5, no outline). It hangs from the page
+ * view's very top, over a display cutout's band too (the S25's punch hole is at the top centre, clear of it), its right
+ * edge [RIGHT_DP] from the view's, in whole px. It keeps its full height only where that stays above the text column;
+ * otherwise it shrinks to the paper above the text (never below [MIN_HEIGHT_DP]). A header that would run under it keeps
+ * [headerInset] free at its right end (StatusMath.allocate's reserve) on every page, so a bookmark moves only its right
+ * slot: the ribbon may cover the header's band, never its glyphs. The thumbnails' mark has its shape at [THUMB_WIDTH_DP].
  */
 internal object RibbonMath {
     const val WIDTH_DP = 14f
-    const val HEIGHT_DP = 24f
+    /** ReadEra's 62 px at 3 px per dp; 41 px on the Comet. */
+    const val HEIGHT_DP = 20.7f
     const val MIN_HEIGHT_DP = 12f
-    const val RIGHT_DP = 14f
+    /** ReadEra's 51 px at 3 px per dp; 34 px on the Comet. */
+    const val RIGHT_DP = 17f
     /** Clearance kept between the ribbon and text. */
     const val GAP_DP = 3f
-    const val NOTCH_FRACTION = 0.25f
+    /** The V notch cut up from the bottom's middle, a share of the height (ReadEra's ≈ 12 of 62 px). */
+    const val NOTCH_FRACTION = 0.2f
+    /** ReadEra's blue, on phones on every page look; e-ink panels draw the page's text colour ([color]). */
+    const val COLOR = 0xFF4286F5.toInt()
 
-    fun left(viewWidth: Int, density: Float): Float = viewWidth - (RIGHT_DP + WIDTH_DP) * density
+    /**
+     * The ribbon's colour: [COLOR] on phones, the page's [text] colour on e-ink (the blue would be a mid grey, ≈ #7E7E7E,
+     * which a binary fast update turns black or white by the panel's threshold, and only about 4:1 off the white page).
+     */
+    fun color(eink: Boolean, text: Int): Int = if (eink) text else COLOR
 
-    /** Ribbon height for a text column whose top is [contentTop] and right edge [contentRight]. */
+    /** Only e-ink's text-coloured ribbon gets the page-coloured edge that keeps it apart from glyphs it touches. */
+    fun halo(eink: Boolean): Boolean = eink
+    /** The thumbnails' mark: this wide, the ribbon's proportions otherwise (`ThumbGridView`). */
+    const val THUMB_WIDTH_DP = 8f
+
+    /** [dp] in whole px. */
+    fun px(dp: Float, density: Float): Float = Math.round(dp * density).toFloat()
+
+    fun left(viewWidth: Int, density: Float): Float = right(viewWidth, density) - px(WIDTH_DP, density)
+
+    fun right(viewWidth: Int, density: Float): Float = viewWidth - px(RIGHT_DP, density)
+
+    /** The notch's depth for a ribbon [h] px tall, in whole px. */
+    fun notch(h: Float): Float = Math.round(h * NOTCH_FRACTION).toFloat()
+
+    /** Ribbon height (whole px) for a text column whose top is [contentTop] and right edge [contentRight]. */
     fun height(density: Float, contentTop: Float, contentRight: Float, viewWidth: Int): Float {
-        val full = HEIGHT_DP * density
+        val full = px(HEIGHT_DP, density)
         if (contentRight <= left(viewWidth, density) - GAP_DP * density) return full
-        return (contentTop - GAP_DP * density).coerceIn(MIN_HEIGHT_DP * density, full)
+        return Math.floor((contentTop - GAP_DP * density).toDouble()).toFloat().coerceIn(px(MIN_HEIGHT_DP, density), full)
     }
 
     /**
-     * Width to take off each side of the header (centred on a column ending at [contentRight]) so its glyphs,
-     * whose top is at [glyphTop], stay clear of a ribbon of height [ribbonH]; 0 when they cannot meet.
+     * Width the header (on a band ending at [bandRight]) keeps free at its right end so its glyphs, whose top is at
+     * [glyphTop], stay clear of a ribbon of height [ribbonH]; 0 when they cannot meet.
      */
-    fun headerInset(density: Float, contentRight: Float, viewWidth: Int, ribbonH: Float, glyphTop: Float): Float {
+    fun headerInset(density: Float, bandRight: Float, viewWidth: Int, ribbonH: Float, glyphTop: Float): Float {
         if (!(ribbonH > 0f) || glyphTop >= ribbonH + GAP_DP * density) return 0f
-        return (contentRight - (left(viewWidth, density) - GAP_DP * density)).coerceAtLeast(0f)
+        return (bandRight - (left(viewWidth, density) - GAP_DP * density)).coerceAtLeast(0f)
     }
 }
 
 /**
- * Footer battery icon geometry in px from the status text size `ts` (pure, unit-tested): a 0.9 × 0.5 ts outline with a
- * 0.08 × 0.25 ts nub, 0.25 ts before the digits; sizes are whole px so the 1 px lines stay crisp on e-ink.
+ * Status battery icon geometry in px from the status text size `ts` (pure, unit-tested): a 0.9 × 0.5 ts outline with a
+ * 0.08 × 0.25 ts nub, 0.25 ts before the digits, 0.5 ts from the slot's text; sizes are whole px so the 1 px lines stay
+ * crisp on e-ink. The icon that comes first and has no number (`first`, MaruViewer's corner: `StatusItem.CLOCK_BATTERY`)
+ * is MaruViewer's, measured on the user's S25 screenshot (2026-10-05; 70 × 30 px beside 39 px text): the nub on the left
+ * (5 × 10 px), then a 65 × 30 px body drawn as a [firstStroke] outline (3 px) with as much paper inside it, and [BARS]
+ * bars (11 px wide, the same 3 px apart) that empty from the nub's side: [bars] of the level in 25 % steps
+ * (user: "배터리 100, 75, 50,25에 따라 배터리 아이콘이 바뀌어"). [firstGap] before the time.
  */
 internal object BatteryMath {
-    fun bodyWidth(ts: Float): Float = maxOf(6f, Math.round(0.9f * ts).toFloat())
+    /** MaruViewer's icon has four bars. */
+    const val BARS = 4
 
-    fun bodyHeight(ts: Float): Float = maxOf(5f, Math.round(0.5f * ts).toFloat())
+    fun bodyWidth(ts: Float, first: Boolean = false): Float =
+        if (first) 7f * firstStroke(ts) + BARS * barWidth(ts) else maxOf(6f, Math.round(0.9f * ts).toFloat())
 
-    fun nubWidth(ts: Float): Float = maxOf(1f, Math.round(0.08f * ts).toFloat())
+    fun bodyHeight(ts: Float, first: Boolean = false): Float =
+        if (first) maxOf(4f * firstStroke(ts) + 1f, Math.round(0.77f * ts).toFloat())
+        else maxOf(5f, Math.round(0.5f * ts).toFloat())
+
+    fun nubWidth(ts: Float, first: Boolean = false): Float =
+        maxOf(1f, Math.round((if (first) 0.128f else 0.08f) * ts).toFloat())
 
     fun nubHeight(ts: Float): Float = maxOf(1f, Math.round(0.25f * ts).toFloat())
 
+    /** The first icon's nub: a third of its body's height, as much body above it as below. */
+    fun firstNubHeight(ts: Float): Float {
+        val h = bodyHeight(ts, true)
+        return h - 2f * Math.round(h / 3f)
+    }
+
+    /** The first icon's outline, and the paper inside it and between its bars: ts / 13 in whole px (3 px at 39 px). */
+    fun firstStroke(ts: Float): Float = maxOf(1f, Math.round(ts / 13f).toFloat())
+
+    /** One of the first icon's bars: 11 px at 39 px. */
+    fun barWidth(ts: Float): Float = maxOf(1f, Math.round(0.282f * ts).toFloat())
+
+    /**
+     * Right edge of bar [k] (0 = the one farthest from the nub, the last to go) inside a first icon whose body ends at
+     * [bodyRight]: one stroke and one stroke of paper from the body's end, then a bar and a stroke of paper per bar.
+     */
+    fun barRight(bodyRight: Float, ts: Float, k: Int): Float =
+        bodyRight - 2f * firstStroke(ts) - k * (barWidth(ts) + firstStroke(ts))
+
+    /** Bars for [level] percent: 76–100 → 4, 51–75 → 3, 26–50 → 2, 0–25 → 1; 0 while it is unknown (< 0). */
+    fun bars(level: Int): Int = if (level < 0) 0 else ((level.coerceAtMost(100) + 24) / 25).coerceIn(1, BARS)
+
+    /**
+     * [level] in the first icon's steps (25, 50, 75, 100; −1 unknown): what its slot keeps, so a level that stays within
+     * a step changes nothing on the page (`StatusModel`).
+     */
+    fun stepLevel(level: Int): Int = if (level < 0) -1 else bars(level) * (100 / BARS)
+
+    /** One bar left (≤ 25 %): on phones the first icon turns slightly red (`PagePalette.batteryLow`). */
+    fun low(level: Int): Boolean = bars(level) == 1
+
+    /**
+     * The first icon's colour for [level]: [lowColor] at one bar on phones, else [statusColor]; e-ink panels keep the
+     * status colour (greys only: no red).
+     */
+    fun firstColor(eink: Boolean, level: Int, statusColor: Int, lowColor: Int): Int =
+        if (!eink && low(level)) lowColor else statusColor
+
+    /**
+     * How far the first icon's middle sits above the digits' middle, per px of text: MaruViewer's icon on the S25 (rows
+     * 15–44 beside digits on 16–45 and Hangul from 14) stands slightly high, its top level with the Hangul's.
+     */
+    const val FIRST_RAISE = 0.04f
+
+    /**
+     * The first icon's body top (whole px) on a line at [baseline] whose digits' middle is [digitMiddle] px from it
+     * (negative: above): [FIRST_RAISE] above the digits' middle. The S25 at 13 sp (39 px; the phone font's ink from row 15,
+     * digits −29 .. −0.6 px around the baseline): rows 15–44, MaruViewer's.
+     */
+    fun firstTop(baseline: Float, digitMiddle: Float, ts: Float): Float =
+        Math.round(baseline + digitMiddle - FIRST_RAISE * ts - bodyHeight(ts, true) / 2f).toFloat()
+
     fun gap(ts: Float): Float = 0.25f * ts
+
+    /** Body and nub: the icon's whole width. */
+    fun iconWidth(ts: Float, first: Boolean = false): Float = bodyWidth(ts, first) + nubWidth(ts, first)
+
+    /** Between the icon (with its number) and a slot's text, on either side of it. */
+    fun labelGap(ts: Float): Float = 0.5f * ts
+
+    /** Between the first icon and the time (MaruViewer's 17 px at 39 px). */
+    fun firstGap(ts: Float): Float = Math.round(0.44f * ts).toFloat()
 
     /**
      * Right edge of the level fill spanning [inLeft, inRight) for [level] percent: [inLeft] (no fill) at 0 or when there
@@ -718,7 +1043,7 @@ private val nightImageFilter: ColorMatrixColorFilter by lazy {
     )
 }
 
-/** Background decoder for the images of neighbouring pages (one low-priority thread, latest request only). */
+/** Background caller of [PageRenderer.preload] for neighbouring pages (one thread, latest request only). */
 private val imagePrefetcher = LatestTaskRunner("page-image-prefetch")
 
 /**
@@ -741,13 +1066,15 @@ internal class LatestTaskRunner(name: String) {
     }
 
     private fun drain() {
-        try {
-            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
-        } catch (t: Throwable) {
-            // not fatal (and unavailable in JVM tests)
-        }
         while (true) {
             val t = pending.getAndSet(null) ?: return
+            // Before each task: back to the background group (the decoding itself runs on ImageCache's worker, which
+            // follows the requests' priority; this thread scans pages and waits). A no-op syscall when unchanged.
+            try {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            } catch (e: Throwable) {
+                // not fatal (and unavailable in JVM tests)
+            }
             try {
                 t.run()
             } catch (e: Throwable) {

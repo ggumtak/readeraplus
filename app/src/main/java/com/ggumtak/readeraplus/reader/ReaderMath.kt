@@ -81,8 +81,9 @@ class EinkCadence(var every: Int = 0, var onChapter: Boolean = false) {
         const val IMAGE_COVERAGE = 0.075f
 
         /**
-         * The cadence for the page's colours (T1-3b): [night] (AppSettings.einkRefreshEveryNight) while [inverted],
-         * unless it is negative ("낮과 같게"), else [day] (AppSettings.einkRefreshEvery).
+         * The cadence for the page's colours (T1-3b): [night] (AppSettings.einkRefreshEveryNight) while [inverted]
+         * (a dark page: 흑백 반전 or the 마루뷰어 화면 색, `PagePalette.dark`), unless it is negative ("낮과 같게"), else
+         * [day] (AppSettings.einkRefreshEvery).
          */
         fun everyFor(day: Int, night: Int, inverted: Boolean): Int =
             if (inverted && night >= 0) night else day
@@ -228,6 +229,13 @@ object TurnMath {
         }
         return TurnWalk(sec, idx, 0, false)
     }
+
+    /**
+     * [walk] that knows only [section]'s own [pageCount] (every other section unknown): where a burst of [delta] turns
+     * from [pageIndex] lands while it stays inside [section] (another section in the result = it leaves it).
+     */
+    fun walkInSection(section: Int, pageIndex: Int, delta: Int, sectionCount: Int, pageCount: Int): TurnWalk =
+        walk(section, pageIndex, delta, sectionCount) { if (it == section) pageCount else -1 }
 }
 
 /**
@@ -346,6 +354,39 @@ object Gestures {
     fun inBrightnessStrip(x: Float, widthPx: Int): Boolean = widthPx > 0 && x < widthPx * 0.10f
 }
 
+/** The text a screen reader gets for one page of a section (pure; [PageView] asks only while a service is on). */
+internal object A11yText {
+    /** A page holds a few thousand chars at most; a longer range (a huge unbroken block) is cut here. */
+    const val MAX_CHARS = 8000
+    /** Said for a page that has a picture but no text. */
+    const val PICTURE = "그림"
+
+    /**
+     * [start, end) of [text] (clamped to it) without the marks the layout keeps in it (picture placeholder, soft
+     * hyphen, line / paragraph separators become line breaks), trimmed and cut at [MAX_CHARS]. A page that shows only
+     * pictures reads [PICTURE]; an empty range reads "".
+     */
+    fun page(text: String, start: Int, end: Int): String {
+        val a = start.coerceIn(0, text.length)
+        val b = end.coerceIn(a, text.length)
+        if (a == b) return ""
+        val sb = StringBuilder(minOf(b - a, MAX_CHARS))
+        var picture = false
+        var i = a
+        while (i < b && sb.length < MAX_CHARS) {
+            when (val c = text[i]) {
+                '\uFFFC' -> picture = true
+                '\u00AD' -> {}
+                '\u2028', '\u2029' -> sb.append('\n')
+                else -> sb.append(c)
+            }
+            i++
+        }
+        val out = sb.toString().trim()
+        return if (out.isEmpty() && picture) PICTURE else out
+    }
+}
+
 /**
  * Saved reading positions are (section, offset) in the coordinates of the parse that produced them. A TXT parse
  * depends on global options (chapter detection, blank lines, replace rules, ...) and the book's encoding, so the
@@ -384,4 +425,70 @@ object TextPositions {
         val p = if (libraryProgress.isNaN()) s.second else libraryProgress.coerceIn(0f, 1f)
         return if (Math.abs(p - s.second) <= MAX_DRIFT) s.second else p
     }
+}
+
+/** S §1.10 / §1.2: the reader's pure scroll-mode decisions (mode switch, placement, menu texts, gates; pure). */
+internal object ScrollWiring {
+    /** [flushTurns] applies at most this many queued screen steps at once (S §1.10). */
+    const val MAX_FLUSH_STEPS = 10
+
+    /**
+     * The line put at the top when paged mode switches to scroll: the anchor itself when it lies on the page shown
+     * (after a paged turn it is that page's start; after a relayout or an earlier switch the exact line being read),
+     * else the start of the page shown. So scroll → paged → scroll puts the same line back at the top.
+     */
+    fun switchOffset(anchorSection: Int, anchorOffset: Int, section: Int, pageStart: Int, pageEnd: Int, lastPage: Boolean): Int =
+        if (anchorSection == section && anchorOffset >= pageStart &&
+            (anchorOffset < pageEnd || (lastPage && anchorOffset == pageEnd) || pageStart == pageEnd && anchorOffset == pageStart)
+        ) anchorOffset else pageStart
+
+    /** True when [offset] starts a line of [l] (or lies before the first line of its page / at the end): TOP placement. */
+    fun isLineStart(l: com.ggumtak.readeraplus.engine.SectionLayout, offset: Int): Boolean {
+        if (offset <= 0 || offset >= l.content.length) return true
+        val p = l.pages.getOrNull(l.pageForOffset(offset)) ?: return true
+        val lines = p.lines
+        if (lines.isEmpty() || offset <= lines[0].start) return true
+        for (i in lines.indices) if (lines[i].start == offset) return true
+        return false
+    }
+
+    /** JUMP to a mid-line offset (a search hit, a sentence, a fragment) goes 25 % down; everything else to the top. */
+    fun contextPlacement(jump: Boolean, lineStart: Boolean): Boolean = jump && !lineStart
+
+    /**
+     * Only a forced "손을 떼면 이동" (STEP) moves a screen per release. AUTO follows the finger on every device, e-ink
+     * included (2026-10-04: scroll mode is read on a phone, and it should scroll like any list); [eink] no longer
+     * decides it.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun stepMotion(style: com.ggumtak.readeraplus.settings.ScrollStyle, eink: Boolean?): Boolean =
+        style == com.ggumtak.readeraplus.settings.ScrollStyle.STEP
+
+    /** Queued turns [n] (signed) become this many instant screen steps. */
+    fun flushSteps(n: Int): Int = minOf(Math.abs(n), MAX_FLUSH_STEPS)
+
+    /**
+     * Steps of a flush of [steps] still to apply when step [index] (0-based) returned NEED_SECTION: that step itself
+     * is not among them when it waits in the viewport for its section ([waiting]); a step dropped there is.
+     */
+    fun flushLeft(steps: Int, index: Int, waiting: Boolean): Int = (steps - index - if (waiting) 1 else 0).coerceAtLeast(0)
+
+    /** 다음 화 / 이전 화 without a TOC: a viewport not at its section's start counts as "inside" (C's fix). */
+    fun chapterPageIndex(virtualStart: Int, topPageIndex: Int): Int = if (virtualStart > 0) maxOf(1, topPageIndex) else 0
+
+    /** The ⋮ item that switches the mode: what choosing it does. */
+    fun modeItem(scroll: Boolean): String = if (scroll) "페이지로 보기" else "스크롤로 보기"
+
+    /** The ⋮ auto item: "자동 넘김" in paged mode, "자동 스크롤" in scroll mode. */
+    fun autoItem(scroll: Boolean, on: Boolean): String =
+        (if (scroll) "자동 스크롤" else "자동 넘김") + if (on) " 끄기" else " 켜기"
+
+    fun autoScrollOn(seconds: Int): String = "자동 스크롤 켜짐 · 한 화면에 ${seconds}초"
+
+    fun autoOff(scroll: Boolean): String = if (scroll) "자동 스크롤 꺼짐" else "자동 넘김 꺼짐"
+
+    /** A packed (section shl 32 | offset) position from ScrollReader. */
+    fun section(packed: Long): Int = (packed ushr 32).toInt()
+
+    fun offset(packed: Long): Int = (packed and 0xFFFFFFFFL).toInt()
 }

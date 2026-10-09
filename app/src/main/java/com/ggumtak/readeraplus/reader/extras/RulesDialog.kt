@@ -45,13 +45,13 @@ import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 
 /**
- * The replacement-rule manager "치환 규칙" (T1-10): a full-screen ink dialog listing the rules of [RuleList] (checkbox,
+ * The replacement-rule manager "바꾸기 규칙" (T1-10): a full-screen ink dialog listing the rules of [RuleList] (checkbox,
  * name, "찾을 내용 → 바꿀 내용", "(잘못된 규칙)" for an invalid regex); a tap edits a rule (이름 / 찾을 내용 / 바꿀 내용
- * "비우면 지웁니다", a "정규식" switch that is off by default, "시험해 보기"), a long press offers 위로 / 아래로 / 삭제,
- * and the bottom row has [+ 규칙 추가] [정리 규칙 팩…] [텍스트로 편집]. The cleanup packs are all off until added.
+ * "비우면 지웁니다", a "정규식" switch that is off by default, "시험해 보기"), a long press offers 위로 옮기기 / 아래로 옮기기 / 끄기 / 삭제,
+ * and the bottom row has [+ 규칙 추가] [추천 규칙…] [한꺼번에 편집]. The cleanup packs are all off until added.
  *
- * Owner: EXTRAS_TOOLS. Users: the reading-settings popup (this book's rules, through TxtOverrideHost) and SETTINGS'
- * "TXT 기본 정리 설정" page (the global rules). Main thread only.
+ * Owner: EXTRAS_TOOLS. Users: SETTINGS' "이 책의 TXT 정리" (this book's rules) and "TXT 기본 정리 설정" (the global
+ * rules) pages. Main thread only.
  */
 object RulesDialog {
     /**
@@ -99,7 +99,7 @@ private class RulesScreen(
 
         adapter = Adapter()
         val list = ctx.einkListView().apply { this.adapter = this@RulesScreen.adapter }
-        val empty = ctx.emptyMessage("규칙이 없습니다.\n[+ 규칙 추가]로 만들거나\n[정리 규칙 팩…]에서 고르세요.")
+        val empty = ctx.emptyMessage("규칙이 없습니다\n\n[+ 규칙 추가]나 [추천 규칙…]을 누르세요")
         val frame = FrameLayout(ctx)
         frame.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         frame.addView(empty, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
@@ -122,8 +122,8 @@ private class RulesScreen(
             background = ctx.compactRowBackground(pressable = false, topLine = true)
         }
         actions.addView(bottomButton("+ 규칙 추가") { edit(-1, null) }, lp(0, WRAP_CONTENT, 1f))
-        actions.addView(bottomButton("정리 규칙 팩…") { packs() }, lp(0, WRAP_CONTENT, 1f).apply { leftMargin = ctx.dp(6) })
-        actions.addView(bottomButton("텍스트로 편집") { editAsText() }, lp(0, WRAP_CONTENT, 1f).apply { leftMargin = ctx.dp(6) })
+        actions.addView(bottomButton("추천 규칙…") { packs() }, lp(0, WRAP_CONTENT, 1f).apply { leftMargin = ctx.dp(6) })
+        actions.addView(bottomButton("한꺼번에 편집") { editAsText() }, lp(0, WRAP_CONTENT, 1f).apply { leftMargin = ctx.dp(6) })
         root.addView(actions, lp())
 
         dialog = ctx.fullScreenDialog(root)
@@ -170,11 +170,11 @@ private class RulesScreen(
         val labels = ArrayList<String>(4)
         val acts = ArrayList<() -> Unit>(4)
         if (i > 0) {
-            labels += "위로"
+            labels += "위로 옮기기"
             acts += { move(i, i - 1) }
         }
         if (i < items.size - 1) {
-            labels += "아래로"
+            labels += "아래로 옮기기"
             acts += { move(i, i + 1) }
         }
         labels += if (r.enabled) "끄기" else "켜기"
@@ -199,7 +199,7 @@ private class RulesScreen(
 
     private fun delete(i: Int) {
         val r = items.getOrNull(i) ?: return
-        ctx.confirm("규칙 삭제", "‘${r.name.ifBlank { RuleText.find(r) }}’ 규칙을 지울까요?", "삭제") {
+        ctx.confirm("규칙 삭제", "‘${r.name.ifBlank { RuleText.find(r) }}’ 규칙을 삭제할까요?", "삭제") {
             if (items.getOrNull(i) !== r) return@confirm
             items.removeAt(i)
             commit()
@@ -312,7 +312,7 @@ private class RulesScreen(
         }
         PanelRegistry.dialog(
             ctx,
-            ctx.alert().setTitle("정리 규칙 팩")
+            ctx.alert().setTitle("추천 규칙")
                 .setItems(labels.toTypedArray()) { _, which ->
                     val p = packs[which]
                     when {
@@ -336,11 +336,11 @@ private class RulesScreen(
     /** The whole rule text in one field (power users; comments written here are kept while the list isn't edited). */
     private fun editAsText() {
         ctx.multilinePrompt(
-            "치환 규칙",
+            "바꾸기 규칙",
             text,
             "찾을 정규식 => 바꿀 내용",
             minLines = 6,
-            message = "한 줄에 규칙 하나: '찾을 정규식 => 바꿀 내용'. '## 이름'은 아래 규칙의 이름, '#- '로 시작하면 꺼진 규칙, 그 밖의 #은 주석입니다.",
+            message = "한 줄에 규칙 하나: ‘찾을 정규식 => 바꿀 내용’. ‘## 이름’은 아래 규칙의 이름, ‘#- ’로 시작하면 꺼진 규칙, 그 밖의 #은 주석입니다.",
         ) { t ->
             val bad = Fmt.invalidRuleCount(t)
             text = t.trimEnd()
@@ -353,7 +353,7 @@ private class RulesScreen(
     private fun bottomButton(label: String, onClick: (View) -> Unit): TextView = ctx.label(label, 14f, bold = true, maxLines = 1).apply {
         setAutoSizeTextTypeUniformWithConfiguration(9, 14, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         gravity = Gravity.CENTER
-        minHeight = ctx.dp(44)
+        minHeight = ctx.dp(48)
         setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
         background = android.graphics.drawable.LayerDrawable(
             arrayOf(pressableBackground(Ink.WHITE), ctx.borderBox(android.graphics.Color.TRANSPARENT, radiusDp = 3f)),

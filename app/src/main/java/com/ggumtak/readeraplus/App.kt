@@ -11,6 +11,7 @@ import com.ggumtak.readeraplus.settings.Settings
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        CrashLog.install(this)
         Settings.init(this)
         ResumeState.init(this)
         if (BuildConfig.DEBUG) com.ggumtak.readeraplus.data.DebugSeed.register(this)

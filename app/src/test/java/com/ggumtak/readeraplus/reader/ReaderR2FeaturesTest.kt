@@ -4,7 +4,6 @@ import com.ggumtak.readeraplus.data.Shelf
 import com.ggumtak.readeraplus.format.TocEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -59,19 +58,6 @@ class ReaderR2FeaturesTest {
     }
 
     @Test
-    fun footerLeftJoinsTheItemsInOrder() {
-        assertEquals(
-            "12 / 3259  ·  123/540화  ·  챕터 5쪽 남음  ·  이 화 3분",
-            ReaderFormat.footerLeft("12 / 3259", "123/540화", 5, "이 화 3분"),
-        )
-        assertEquals("12 / 3259  ·  책 7시간 20분", ReaderFormat.footerLeft("12 / 3259", null, null, "책 7시간 20분"))
-        assertEquals("87/612", ReaderFormat.footerLeft(null, "87/612", null, null))
-        assertNull(ReaderFormat.footerLeft(null, null, null, null))
-        // The two-item form reads the same as before.
-        assertEquals(ReaderFormat.footerLeft("1 / 9", 2), ReaderFormat.footerLeft("1 / 9", null, 2, null))
-    }
-
-    @Test
     fun episodeLabels() {
         assertEquals("123/540화", ReaderFormat.episodeLabel(true, 123, 540, 130, 560))
         // Numbers not parsed: the entry's place in the TOC.
@@ -83,8 +69,8 @@ class ReaderR2FeaturesTest {
 
     @Test
     fun timeLeft() {
-        assertEquals("이 화 3분", ReaderFormat.timeLeft(false, 3))
-        assertEquals("이 화 1분 미만", ReaderFormat.timeLeft(false, 0))
+        assertEquals("챕터 3분", ReaderFormat.timeLeft(false, 3))
+        assertEquals("챕터 1분 미만", ReaderFormat.timeLeft(false, 0))
         assertEquals("책 7시간 20분", ReaderFormat.timeLeft(true, 440))
         assertEquals("책 104시간", ReaderFormat.timeLeft(true, 104 * 60 + 5))
         assertEquals(0, ReaderFormat.minutesFor(599, 600))
@@ -98,8 +84,7 @@ class ReaderR2FeaturesTest {
     fun endPanelTexts() {
         assertEquals("읽은 시간 4시간 12분", ReaderFormat.readTime(4 * 3600 + 12 * 60 + 30))
         assertEquals("읽은 시간 1분 미만", ReaderFormat.readTime(20))
-        assertEquals("완독 처리됨", EndPanel.finishedLabel(true))
-        assertEquals("완독으로 표시", EndPanel.finishedLabel(false))
+        assertEquals("다 읽은 책으로 표시", EndPanel.FINISHED_LABEL)
     }
 
     @Test

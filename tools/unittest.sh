@@ -25,6 +25,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 TAG=test_$( (IFS=_; echo "${OWN[*]:-all}") | tr '/.' '__')
+# Many --own paths make a name longer than the filesystem allows: keep a short readable prefix plus a hash.
+[ ${#TAG} -gt 120 ] && TAG="test_own_$(printf '%s' "$TAG" | md5sum | cut -c1-16)"
 OUT="${TC_OUT:-$ROOT/tools/out}/$TAG"
 rm -rf "$OUT" && mkdir -p "$OUT/gen" "$OUT/src" "$OUT/test"
 python3 "$ROOT/tools/gen_r.py" "$ROOT/app/src/main/res" com.ggumtak.readeraplus "$OUT/gen" >/dev/null
@@ -44,6 +46,9 @@ else
   done
 fi
 CP="$TC/android-all-15.jar:$TC/kotlinx-coroutines-core-jvm-1.9.0.jar:$TC/junit-4.13.2.jar:$TC/hamcrest-core-1.3.jar"
+# Gradle puts Maven org.json (testImplementation, declared first) ahead of android-all; mirror that when it is installed,
+# so a test that leans on the Android JSONObject's insertion order fails here as it does in CI.
+[ -f "$TC/json-20240303.jar" ] && CP="$TC/json-20240303.jar:$CP"
 status=0
 "$TC/kotlinc/bin/kotlinc" -nowarn -jvm-target 17 -Xjdk-release=17 -no-reflect -cp "$CP" -d "$OUT/classes" \
   "$OUT/src" "$OUT/test" "$OUT/gen" > "$OUT/compile.log" 2>&1 || status=$?

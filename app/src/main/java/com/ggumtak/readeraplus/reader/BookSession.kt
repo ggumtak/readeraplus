@@ -1,6 +1,9 @@
 package com.ggumtak.readeraplus.reader
 
+import android.content.ComponentCallbacks2
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
@@ -26,6 +29,7 @@ import com.ggumtak.readeraplus.render.FontCatalog
 import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.render.FontSource
 import com.ggumtak.readeraplus.render.ImageCache
+import com.ggumtak.readeraplus.render.PagePalette
 import com.ggumtak.readeraplus.render.PageRenderer
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import kotlinx.coroutines.CancellationException
@@ -39,6 +43,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
@@ -63,6 +68,11 @@ class BookSession(
     val book: Book,
     val document: BookDocument,
     initialSettings: ReaderSettings,
+    /**
+     * Whether the book is read paged right now (false = the scroll mode, which keeps one column however wide the view):
+     * asked whenever a generation is made, with the view's size, for the landscape spread ([LayoutKeys.columnsFor]).
+     */
+    private val paged: () -> Boolean = { true },
 ) {
     /** Main-thread callbacks. */
     interface Listener {
@@ -71,6 +81,13 @@ class BookSession(
 
         /** [layout] of [section] was just laid out and cached for the current generation (e.g. a prefetch). */
         fun onSectionStored(section: Int, layout: SectionLayout) {}
+
+        /**
+         * A picture the page drew as an empty box ([ImageCache.getForDraw]) is decoded now and cached: the page of
+         * [layout] that asked for it ([pageIndex]) paints its box again if it is still the one shown. Never called
+         * once the session is closed.
+         */
+        fun onImageReady(layout: SectionLayout, pageIndex: Int, src: String, w: Int, h: Int) {}
     }
 
     /** Immutable parameters of one layout generation (any layout-affecting change creates a new one). */
@@ -104,6 +121,13 @@ class BookSession(
         @JvmField var waiters = 0
         /** Set on the layout thread when the work begins (from then on it runs to completion). */
         @Volatile @JvmField var started = false
+        /**
+         * RAPerf DEBUG ([traceLayout]): the finished layout's loadSection and Typesetter.layout time (ns, -1 = not
+         * timed) and its chars, set on the layout thread and read on the main thread after it.
+         */
+        @JvmField var loadNs = -1L
+        @JvmField var typesetNs = -1L
+        @JvmField var chars = 0
     }
 
     var listener: Listener? = null
@@ -114,7 +138,17 @@ class BookSession(
     val sectionCount: Int = document.sections.size
     val counts = PageCounts(IntArray(sectionCount) { document.sections[it].approxChars })
     val chapters = ChapterIndex(document.toc, sectionCount)
-    val images = ImageCache(document)
+    private val uiHandler = Handler(Looper.getMainLooper())
+
+    /** RAPerf DEBUG also logs every draw that finds a picture missing ("draw miss N: …", 0 expected on turns). */
+    val images = ImageCache(document).apply {
+        if (ReaderPerf.turns) drawTraceTag = ReaderPerf.TAG
+        // The decoder's thread to the main thread; a book closed meanwhile hears nothing.
+        listener = ImageCache.Listener { layout, page, src, w, h ->
+            val l = layout as? SectionLayout
+            if (l != null) uiHandler.post { if (!closed) this@BookSession.listener?.onImageReady(l, page, src, w, h) }
+        }
+    }
 
     var generation: Generation? = null
         private set
@@ -131,6 +165,8 @@ class BookSession(
     @Volatile private var liveGenId = 0
     private var viewW = 0
     private var viewH = 0
+    /** The cutout band at the page view's top ([LayoutKeys.geometry]'s extraTop). */
+    private var viewCutoutTop = 0
     /** Uptime when the current generation was created (partial counts are saved only for settled layouts). */
     private var generationBornAt = 0L
 
@@ -185,35 +221,73 @@ class BookSession(
     // Main thread: renderer for drawing (same metrics as the layout measurer of the current settings).
     private var renderer: PageRenderer? = null
     private var rendererSettings: ReaderSettings? = null
+    /** Main thread: a layout of this session was logged already ([traceLayout], RAPerf DEBUG). */
+    private var layoutTraced = false
 
     val isClosed: Boolean get() = closed
 
-    /** Sets the page view size. Returns true when the geometry changed (a new generation was created). */
-    fun setViewport(width: Int, height: Int, anchor: AnchorSpec? = null): Boolean {
+    /**
+     * Sets the page view size and the display cutout band at its top ([cutoutTop], see [LayoutKeys.geometry]). Returns
+     * true when the geometry changed (a new generation was created).
+     */
+    fun setViewport(width: Int, height: Int, cutoutTop: Int, anchor: AnchorSpec? = null): Boolean {
         if (width <= 0 || height <= 0) return false
-        if (width == viewW && height == viewH && generation != null) return false
+        if (width == viewW && height == viewH && cutoutTop == viewCutoutTop && generation != null) return false
         viewW = width
         viewH = height
+        viewCutoutTop = cutoutTop
         rebuild(anchor)
         return true
     }
 
-    /** Applies new settings: RELAYOUT when layout-affecting fields changed, REPAINT for colours/footer only. */
+    /**
+     * Applies new settings: RELAYOUT when layout-affecting fields changed (a status band that comes, goes or changes
+     * height too: [LayoutKeys.layoutChanged]), REPAINT for colours / which item a status slot shows, NONE when
+     * the page looks the same (also a 화면 색 that 흑백 반전 hides: [PagePalette.drawSame]).
+     */
     fun updateSettings(new: ReaderSettings, anchor: AnchorSpec? = null): Change {
         if (new == settings) return Change.NONE
         // Only what can change this book's pages counts: the other format's options and weight steps that keep the
         // same font file (only the synthetic stroke changes) are a repaint.
         val relayout = LayoutKeys.layoutChanged(forLayout(settings), forLayout(new), document.format)
+        val same = PagePalette.drawSame(settings, new)
         settings = new
-        if (!relayout) return Change.REPAINT
+        // 가로 화면 한 쪽 ↔ 두 쪽 changes the column width, not a layout field: only where the view is landscape and paged.
+        val spreadChanged = !relayout && columnsChanged()
+        if (!relayout && !spreadChanged) return if (same) Change.NONE else Change.REPAINT
         rebuild(anchor)
         return Change.RELAYOUT
+    }
+
+    /** The geometry the settings, the view and the read mode make now. */
+    private fun geometryNow(): PageGeometry {
+        val dm = context.resources.displayMetrics
+        val cols = LayoutKeys.columnsFor(settings.landscapePages, viewW, viewH, paged())
+        return LayoutKeys.geometry(settings, viewW, viewH, dm.density, viewCutoutTop, cols)
+    }
+
+    /** True when the current generation's page columns are not the ones the view and settings make now. */
+    private fun columnsChanged(): Boolean {
+        val g = generation ?: return false
+        if (closed || viewW <= 0 || viewH <= 0) return false
+        return geometryNow().columns != g.geometry.columns
+    }
+
+    /**
+     * The read mode changed (scroll ↔ paged) while the view is landscape with two pages: a new generation at the other
+     * column width, keeping [anchor]. False (nothing done) when the columns stay as they are, so the other cases switch
+     * mode without laying anything out.
+     */
+    fun modeChanged(anchor: AnchorSpec? = null): Boolean {
+        if (!columnsChanged()) return false
+        rebuild(anchor)
+        return true
     }
 
     private fun rebuild(anchor: AnchorSpec?) {
         if (closed || viewW <= 0 || viewH <= 0) return
         val dm = context.resources.displayMetrics
-        val g = LayoutKeys.geometry(settings, viewW, viewH, dm.density)
+        val g = geometryNow()
         genCounter++
         liveGenId = genCounter
         generationBornAt = SystemClock.uptimeMillis()
@@ -231,6 +305,7 @@ class BookSession(
     }
 
     private fun invalidateJobs() {
+        cacheRead.complete(Unit)
         genJob.cancel()
         genJob = SupervisorJob(scope.coroutineContext[Job])
         countJob = null
@@ -329,7 +404,7 @@ class BookSession(
             try {
                 result = withContext(layoutDispatcher) {
                     p.started = true
-                    layoutOnThread(gen, section)
+                    layoutOnThread(gen, section, p)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -339,7 +414,11 @@ class BookSession(
                 if (pending[section] === p) pending.remove(section)
                 val ok = result != null && gen === generation && !closed
                 if (ok) store(section, result!!)
+                // RAPerf DEBUG: labelled by whether anything waits for it now, not by who asked first.
+                val waited = p.waiters > 0
                 p.deferred.complete(if (ok) result else null)
+                val done = result
+                if (done != null && p.typesetNs >= 0L) traceLayout(gen.id, section, !waited, p, done.pageCount)
             }
         }
         return p
@@ -368,6 +447,7 @@ class BookSession(
             lru.remove(victim)
             cache.remove(victim)
         }
+        val wasComplete = counts.isComplete
         counts.set(section, layout.pageCount, layout.content.length)
         if (generation?.anchor?.section == section) anchorShifted = layout.anchorShifted
         resolveAnchors(section, layout.content.anchors)
@@ -378,20 +458,26 @@ class BookSession(
                 Log.w(TAG, "stored listener failed", t)
             }
         }
+        // A layout (the page shown, a prefetch) can count the last section itself: the page numbers replace
+        // 쪽수 계산 중 then too, not only when the background counter finishes.
+        if (!wasComplete && counts.isComplete) notifyCounts(true)
     }
 
     // ------------------------------------------------------------------ worker-thread code
 
-    private fun layoutOnThread(gen: Generation, section: Int): SectionLayout {
+    /** [p] gets the timings of [traceLayout] when RAPerf DEBUG is on. */
+    private fun layoutOnThread(gen: Generation, section: Int, p: Pending): SectionLayout {
         if (layoutGenId != gen.id || layoutMeasurer == null) {
             layoutMeasurer = AndroidTextMeasurer(context, gen.settings) { images.size(it) }
             layoutGenId = gen.id
         }
         val m = StaleCheck(layoutMeasurer!!, gen.id)
         m.check()
+        val t0 = if (ReaderPerf.turns) System.nanoTime() else 0L
         val loaded = loadContent(section)
+        val t1 = if (t0 != 0L) System.nanoTime() else 0L
         val content = loaded.content
-        return try {
+        val layout = try {
             Typesetter(m, gen.config).layout(content, if (loaded.failed) -1 else gen.anchorFor(section, content))
         } catch (e: CancellationException) {
             throw e
@@ -400,6 +486,24 @@ class BookSession(
             failedSections.add(section)
             Typesetter(m, gen.config).layout(errorContent(t))
         }
+        if (t0 != 0L) {
+            p.loadNs = t1 - t0
+            p.typesetNs = System.nanoTime() - t1
+            p.chars = content.length
+        }
+        return layout
+    }
+
+    /**
+     * RAPerf DEBUG: one line per finished layout, timed by [layoutOnThread] into [p]; the session's first is the
+     * open's ("open layout …"). [prefetch]: nothing waited for it. Main thread, after its waiters were released.
+     */
+    private fun traceLayout(gen: Int, section: Int, prefetch: Boolean, p: Pending, pages: Int) {
+        val open = !layoutTraced
+        layoutTraced = true
+        val line = PerfLines.layoutLine(StringBuilder(112), open, section, gen, p.loadNs, p.chars, p.typesetNs, pages,
+            prefetch)
+        Log.d(ReaderPerf.TAG, line.toString())
     }
 
     /**
@@ -483,18 +587,48 @@ class BookSession(
     fun startCounting(countDelayMs: Long = 0) {
         if (closed) return
         countJob?.cancel()
+        countFailed = false
+        cacheRead.complete(Unit)
         val gen = generation ?: return
+        val read = CompletableDeferred<Unit>()
+        cacheRead = read
         countJob = scope.launch(genJob) {
             try {
-                countAll(gen, countDelayMs)
+                countAll(gen, countDelayMs, read)
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                // Counting is an optimisation: never let it take the reader down (totals stay estimated).
+                // Counting is an optimisation: never let it take the reader down (the page numbers read 쪽수 확인 불가).
                 Log.w(TAG, "page counting failed", t)
+                if (gen === generation && !closed) {
+                    countFailed = true
+                    notifyCounts(false)
+                }
+            } finally {
+                read.complete(Unit)
             }
         }
     }
+
+    /** Completed once [startCounting]'s cached counts are read (or there are none, or counting ended). */
+    private var cacheRead = CompletableDeferred(Unit)
+
+    /**
+     * Waits up to [maxMs] for this layout's cached page counts (the key and one database read), so a book counted
+     * before shows its page numbers on the first page instead of 쪽수 계산 중 (main thread; reading is never held
+     * longer than [maxMs]).
+     */
+    suspend fun awaitCachedCounts(maxMs: Long) {
+        val d = cacheRead
+        if (!d.isCompleted) withTimeoutOrNull(maxMs) { d.await() }
+    }
+
+    /**
+     * True when the last [startCounting] stopped on an error before the counts were complete (main thread): the
+     * reader shows "쪽수 확인 불가" instead of page numbers; a new layout (another [startCounting]) clears it.
+     */
+    var countFailed = false
+        private set
 
     /**
      * A2: the cache may hold a partial array (-1 = not counted yet), so counting resumes where the last session
@@ -502,7 +636,7 @@ class BookSession(
      * The counts are saved every [SAVE_EVERY] counted sections, when complete, and on [close] (partial arrays only
      * for a settled layout, see [saveCounts]).
      */
-    private suspend fun countAll(gen: Generation, countDelayMs: Long) {
+    private suspend fun countAll(gen: Generation, countDelayMs: Long, read: CompletableDeferred<Unit>) {
         val started = if (ReaderPerf.turns) SystemClock.uptimeMillis() else 0L
         var counted = 0
         var cached = 0
@@ -525,7 +659,15 @@ class BookSession(
         if (gen !== generation) return
         if (saved != null && saved.size == sectionCount && saved.all { it >= 1 || it == -1 }) {
             anchorCached = gen.anchor?.let { saved[it.section] } ?: -1
-            counts.setKnown(saved)
+            // The cache holds the anchor section's un-anchored count; this layout's is anchored and may differ by a
+            // page. Leave it to the anchored layout or count (never a total that changes after it was shown as final).
+            val a = gen.anchor?.section ?: -1
+            val load = if (a in 0 until sectionCount && !counts.isKnown(a) && saved[a] >= 1) {
+                saved.copyOf().also { it[a] = -1 }
+            } else {
+                saved
+            }
+            counts.setKnown(load)
             savedKnown = PageCounts.countedIn(saved)
             cached = savedKnown
             if (counts.isComplete) {
@@ -537,6 +679,7 @@ class BookSession(
                 }
             } else if (savedKnown > 0) notifyCounts(false)
         }
+        read.complete(Unit)
         // The one extra un-anchored count also waits: it never competes with the first page.
         if (countDelayMs > 0) delay(countDelayMs)
         if (gen !== generation || closed) return
@@ -641,6 +784,9 @@ class BookSession(
                         val file = File(f.path)
                         append(':').append(file.length()).append(':').append(file.lastModified())
                     }
+                    // Blank glyphs left to the system font measure differently: which files load repaired, and
+                    // the rules' version ("" for a font without blank glyphs: its counts of before stay valid).
+                    append(FontManager.layoutTag(f.id))
                 }
             }
         } catch (t: Throwable) {
@@ -730,7 +876,7 @@ class BookSession(
 
     /**
      * Characters from (section, offset) to where the next TOC entry starts, or to the end of the book after the last
-     * one (T1-7 "이 화 3분"). The chapter around the position is looked up once ([ChapterIndex] scans the TOC) and
+     * one (T1-7 "챕터 3분"). The chapter around the position is looked up once ([ChapterIndex] scans the TOC) and
      * reused while later queries stay inside it, so a page turn within a chapter costs O(1); anchors resolved by a
      * layout or the counter invalidate it. Main thread.
      */
@@ -747,8 +893,16 @@ class BookSession(
         return counts.charsBetween(section, offset, (to ushr 32).toInt(), (to and 0xFFFFFFFFL).toInt())
     }
 
-    /** Drops decoded images (memory pressure). */
-    fun trimMemory() {
+    /**
+     * Drops decoded images when onTrimMemory([level]) means memory is really short ([dropsImagesOnTrim]); the renderer
+     * then prefetches the neighbours of the page it draws next again ([ImageCache.clears]).
+     */
+    fun trimMemory(level: Int) {
+        if (dropsImagesOnTrim(level)) dropImages()
+    }
+
+    /** Drops the decoded pictures (and their bytes); the next page drawn prefetches its neighbours again. */
+    fun dropImages() {
         try {
             images.clear()
         } catch (t: Throwable) {
@@ -774,6 +928,8 @@ class BookSession(
         episodesOnce.complete(null)
         val doc = document
         val imgs = images
+        // Queued decodes are dropped and nothing is cached or announced from now on; the one running is awaited below.
+        imgs.dispose()
         val counter = countExec
         try {
             layoutExec.execute {
@@ -782,10 +938,7 @@ class BookSession(
                     counter.awaitTermination(5, TimeUnit.SECONDS)
                 } catch (_: InterruptedException) {
                 }
-                try {
-                    imgs.clear()
-                } catch (_: Throwable) {
-                }
+                imgs.awaitIdle(IMAGE_IDLE_MS)
                 try {
                     doc.close()
                 } catch (t: Throwable) {
@@ -804,6 +957,8 @@ class BookSession(
     companion object {
         private const val TAG = "BookSession"
         const val MAX_CACHED = 4
+        /** How long the document's close waits for the picture decode running when the book closes. */
+        private const val IMAGE_IDLE_MS = 3000L
         /** How often a foreground layout is retried while the generation keeps changing underneath. */
         private const val MAX_ATTEMPTS = 8
         /** Partial page counts are saved after this many sections counted in the background (A2). */
@@ -826,6 +981,31 @@ class BookSession(
 
 /** Oldest cache entry outside the whole visible range, or null when every cached section is on screen. */
 internal fun pickVictim(lru: List<Int>, from: Int, to: Int): Int? = lru.firstOrNull { it < from || it > to }
+
+/**
+ * Whether onTrimMemory([level]) drops the decoded pictures. UI_HIDDEN and BACKGROUND keep them (they arrive each time
+ * the reader goes behind another app, and dropping them there made the first page drawn on coming back decode in
+ * onDraw; the cache is bounded anyway, 24 + 8 MB), as does MODERATE (only half-way down the cached-app list). Dropped
+ * on RUNNING_LOW / RUNNING_CRITICAL (short of memory while reading) and COMPLETE (next in line to be killed: a kill
+ * costs a whole reopen, a dropped cache one decode per picture page). Android 14+ sends only UI_HIDDEN and BACKGROUND.
+ */
+@Suppress("DEPRECATION")
+internal fun dropsImagesOnTrim(level: Int): Boolean =
+    level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+        level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+        level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE
+
+/**
+ * Whether onTrimMemory([level]) drops the decoded pictures [IMAGE_DROP_DELAY_MS] later, unless the reader comes back
+ * first: BACKGROUND and MODERATE (the reader went behind other apps; levels [dropsImagesOnTrim] drops at once are not
+ * delayed). On Android 14+ this is the only release the cache gets while the book stays open, as RUNNING_LOW,
+ * RUNNING_CRITICAL and COMPLETE are no longer sent there.
+ */
+internal fun dropsImagesLater(level: Int): Boolean =
+    level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND && !dropsImagesOnTrim(level)
+
+/** How long decoded pictures outlive the reader going behind other apps ([dropsImagesLater]). */
+internal const val IMAGE_DROP_DELAY_MS = 5 * 60_000L
 
 /** Lazy chapter/spine maps. Invalid split metadata never invents boundaries or sampleable sections. */
 internal object UnitStarts {

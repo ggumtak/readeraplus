@@ -26,10 +26,12 @@ class ExtrasMessagesTest {
     @Test
     fun searchStatusTexts() {
         assertEquals("검색 중 0%", SearchText.status(0, 120, 0, complete = false, capped = false, max = 1000))
-        assertEquals("검색 중 34%  ·  8개", SearchText.status(41, 120, 8, complete = false, capped = false, max = 1000))
+        assertEquals("검색 중 34% · 8개", SearchText.status(41, 120, 8, complete = false, capped = false, max = 1000))
         assertEquals("57개 결과", SearchText.status(120, 120, 57, complete = true, capped = false, max = 1000))
         assertEquals("결과 없음", SearchText.status(120, 120, 0, complete = true, capped = false, max = 1000))
-        assertEquals("1000개 결과 (최대 1000개까지 표시)", SearchText.status(80, 120, 1000, complete = true, capped = true, max = 1000))
+        assertEquals("1000개 이상 (앞 1000개만 표시)", SearchText.status(80, 120, 1000, complete = true, capped = true, max = 1000))
+        assertEquals("‘등불’이 들어간 곳이 없습니다", SearchText.noHits("등불"))
+        assertEquals("‘바다’가 들어간 곳이 없습니다", SearchText.noHits("바다"))
     }
 
     @Test

@@ -430,6 +430,50 @@ class XhtmlConverterTest {
         assertEquals(0.95f, styleOf(c, "작은").sizeScale, 0.001f)
     }
 
+    private val bookSizes = "<style>body { font-size: 0.8em } div { font-size: 1.3em } p.s { font-size: 0.93em } " +
+        "span.b { font-size: 140% } h1 { font-size: 1.5em } h2 span { font-size: 0.5em }</style>"
+
+    @Test
+    fun ignoreBookSizesKeepsBodyTextAtTheReadersSize() {
+        val body = "<div><p>본문</p><p class=\"s\">작은</p><p><span class=\"b\">큰 글씨</span> 끝</p></div>"
+        val on = convert(html(body, bookSizes), ignoreBookSizes = true)
+        assertEquals(RunStyle.PLAIN, styleOf(on, "본문"))
+        assertEquals(RunStyle.PLAIN, styleOf(on, "작은"))
+        assertEquals(RunStyle.PLAIN, styleOf(on, "큰 글씨"))
+        // Off: the book's scales apply as before (div 1.3, then p.s 0.93 / span 140% on top, quantized).
+        val off = convert(html(body, bookSizes))
+        assertEquals(1.3f, styleOf(off, "본문").sizeScale, 0.001f)
+        assertEquals(1.2f, styleOf(off, "작은").sizeScale, 0.001f)
+        assertEquals(1.8f, styleOf(off, "큰 글씨").sizeScale, 0.001f)
+    }
+
+    @Test
+    fun ignoreBookSizesKeepsHeadingsOnTheirOwnScale() {
+        val body = "<div><h1>제목</h1><h2>둘째 <span>안쪽</span></h2><h3>셋</h3><p>본문</p></div>"
+        val on = convert(html(body, bookSizes), ignoreBookSizes = true)
+        // h1's 1.5em counts relative to the reader's size, not on top of div's ignored 1.3 and body's 0.8.
+        assertEquals(1.5f, styleOf(on, "제목").sizeScale, 0.001f)
+        // A span inside a heading inherits the heading's scale; its own declaration is ignored.
+        assertEquals(1.35f, styleOf(on, "둘째").sizeScale, 0.001f)
+        assertEquals(1.35f, styleOf(on, "안쪽").sizeScale, 0.001f)
+        // A heading without a declaration of its own keeps the built-in scale.
+        assertEquals(1.2f, styleOf(on, "셋").sizeScale, 0.001f)
+        assertEquals(RunStyle.PLAIN, styleOf(on, "본문"))
+        // Off: h1 compounds with the div's scale (the span's 0.5 counts too, clamped to 0.7: 1.75 × 0.7).
+        val off = convert(html(body, bookSizes))
+        assertEquals(1.95f, styleOf(off, "제목").sizeScale, 0.001f)
+        assertEquals(1.25f, styleOf(off, "안쪽").sizeScale, 0.001f)
+    }
+
+    @Test
+    fun ignoreBookSizesKeepsBuiltInSmallSubSup() {
+        val c = convert(html("<p>a<sup>위</sup>b<sub>아래</sub><small>작게</small><big>크게</big></p>", bookSizes), ignoreBookSizes = true)
+        assertEquals(0.75f, styleOf(c, "위").sizeScale, 0.001f)
+        assertEquals(0.75f, styleOf(c, "아래").sizeScale, 0.001f)
+        assertEquals(0.85f, styleOf(c, "작게").sizeScale, 0.001f)
+        assertEquals(1.2f, styleOf(c, "크게").sizeScale, 0.001f)
+    }
+
     @Test
     fun cellSeparatorNotDuplicatedWithSpaces() {
         val c = convert("<table><tr> <td> a </td> <td> b </td> </tr></table>")

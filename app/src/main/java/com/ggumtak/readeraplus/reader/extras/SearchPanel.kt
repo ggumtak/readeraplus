@@ -26,6 +26,7 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.KeyMap
+import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
@@ -39,6 +40,7 @@ import com.ggumtak.readeraplus.ui.kit.frameLp
 import com.ggumtak.readeraplus.ui.kit.fullScreenDialog
 import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
+import com.ggumtak.readeraplus.ui.kit.InkEditText
 import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.inkPagerKeys
 import com.ggumtak.readeraplus.ui.kit.inkPaging
@@ -67,9 +69,7 @@ internal object SearchPanel {
     /** Results and status reach the screen at most this often while scanning (each refresh is an e-ink update). */
     const val FLUSH_MS = 500L
 
-    class Hit(val section: Int, val start: Int, val end: Int, val snippet: CharSequence) {
-        var page: String? = null
-    }
+    class Hit(val section: Int, val start: Int, val end: Int, val snippet: CharSequence)
 
     class State(val bookId: Long, doc: BookDocument, val query: String) {
         val docRef = WeakReference(doc)
@@ -125,9 +125,14 @@ internal object SearchPanel {
         return sp
     }
 
-    fun pageOf(host: ReaderHost, h: Hit): String =
-        h.page ?: PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(h.section, h.start)) }.getOrNull())
-            .also { h.page = it }
+    /**
+     * A hit's page, read from the current layout every time (the results outlive a relayout, e.g. a font size change;
+     * [ReaderHost.pageLabel] is a lookup in the counts); empty while the pages are counted, so it never shows an estimate.
+     */
+    fun pageOf(host: ReaderHost, h: Hit): String {
+        if (runCatching { host.pagesPending() }.getOrNull() != null) return ""
+        return PageLabel.pageOnly(runCatching { host.pageLabel(DocPosition(h.section, h.start)) }.getOrNull())
+    }
 
     // ------------------------------------------------------------------ highlight / navigation
 
@@ -178,12 +183,16 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
     private lateinit var status: TextView
     private lateinit var empty: TextView
     private val adapter = ResultAdapter()
+    /** The pages are counted (or counting failed): the rows' page numbers are read again, the list stays where it is. */
+    private val countsListener: () -> Unit = {
+        if (::dialog.isInitialized && dialog.isShowing && adapter.count > 0) adapter.notifyDataSetChanged()
+    }
 
     fun show() {
         val root = ctx.vertical { setBackgroundColor(Ink.WHITE) }
         val bar = ctx.horizontal { minimumHeight = ctx.dp(56); setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
         bar.addView(ctx.flatIcon(R.drawable.ic_arrow_back, "뒤로") { dialog.dismiss() })
-        edit = EditText(ctx).apply {
+        edit = InkEditText(ctx).apply {
             hint = "책에서 검색"
             setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT
@@ -194,11 +203,11 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
             background = null
             setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
             inkCursor(singleLine = true)
+            // Enter's down starts the search and its up is consumed too (an unconsumed Enter moves the focus down).
             setOnEditorActionListener { _, actionId, ev ->
-                if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE ||
-                    (ev != null && ev.keyCode == KeyEvent.KEYCODE_ENTER && ev.action == KeyEvent.ACTION_DOWN)
-                ) {
-                    startSearch(text.toString())
+                val enter = ev != null && ev.keyCode == KeyEvent.KEYCODE_ENTER
+                if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE || enter) {
+                    if (ev == null || ev.action == KeyEvent.ACTION_DOWN) startSearch(text.toString())
                     true
                 } else {
                     false
@@ -208,6 +217,11 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         bar.addView(edit, lp(0, WRAP_CONTENT, 1f))
         bar.addView(ctx.flatIcon(R.drawable.ic_search, "검색") { startSearch(edit.text.toString()) })
         bar.addView(ctx.flatIcon(R.drawable.ic_close, "지우기") {
+            // Nothing typed and nothing found: × closes search, as it looks like it should.
+            if (edit.text.isNullOrEmpty() && state == null) {
+                dialog.dismiss()
+                return@flatIcon
+            }
             job?.cancel()
             edit.setText("")
             state = null
@@ -243,6 +257,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
 
         dialog = ctx.fullScreenDialog(root)
         dialog.setOnDismissListener {
+            host.removeCountsListener(countsListener)
             job?.cancel()
             scope.cancel()
             state?.let { SearchPanel.remember(it) }
@@ -278,6 +293,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
             }
         }
         PanelRegistry.dialog(ctx, dialog)
+        host.addCountsListener(countsListener)
     }
 
     private fun startSearch(raw: String) {
@@ -287,7 +303,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         val doc = host.document
         if (doc == null || doc !== doc0) {
             // No document, or another one than this dialog was opened for (the book changed underneath).
-            status.text = "책을 여는 중입니다. 잠시 후 다시 검색하세요."
+            status.text = "책을 여는 중입니다 · 잠시 뒤 다시 검색하세요"
             return
         }
         job?.cancel()
@@ -370,7 +386,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
         val st = state
         empty.visibility = when {
             st == null -> View.VISIBLE.also { empty.text = "찾을 단어나 문장을 입력하세요" }
-            st.complete && st.hits.isEmpty() -> View.VISIBLE.also { empty.text = "'${st.query}'을(를) 찾을 수 없습니다" }
+            st.complete && st.hits.isEmpty() -> View.VISIBLE.also { empty.text = SearchText.noHits(st.query) }
             else -> View.GONE
         }
     }
@@ -403,7 +419,8 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
             background = pressableBackground()
             val r = ctx.horizontal { setPadding(ctx.dp(16), ctx.dp(12), ctx.dp(12), ctx.dp(12)) }
             r.addView(ctx.label("", 16f, maxLines = 3).apply { tag = "snippet"; setLineSpacing(0f, 1.2f) }, lp(0, WRAP_CONTENT, 1f))
-            r.addView(ctx.label("", 17f).apply { tag = "page"; gravity = Gravity.END; minWidth = ctx.dp(56) })
+            // As the 목차's page column: the hit's text is what the eye looks for.
+            r.addView(ctx.label("", 15f, color = Ink.GRAY).apply { tag = "page"; gravity = Gravity.END; minWidth = ctx.dp(44) })
             addView(r, lp())
             addView(ctx.hairline())
         }
@@ -414,12 +431,47 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
 internal object SearchNavBar {
     /** Weak: the bar belongs to the reader window; a static strong reference would leak the activity. */
     private var barRef: WeakReference<View>? = null
+    /** What the bar shows, to relabel it when the page numbers change (all weak, like [barRef]). */
+    private var hostRef: WeakReference<ReaderHost>? = null
+    private var stateRef: WeakReference<SearchPanel.State>? = null
+    private var labelRef: WeakReference<TextView>? = null
+    private var shownIndex = 0
+    /** The page text the label shows for [shownIndex] (kept while the pages are counted again, see [PageLabel.retain]). */
+    private var shownPage = ""
+    /** While the bar is shown: the pages are counted, so its page number is read again. */
+    private val countsListener: () -> Unit = { refresh() }
+
+    /**
+     * The label of hit [index]: its place among the hits and its page. While the pages are being counted (a relayout
+     * made the old numbers stale) the page the label showed stays until the exact one is known: no blank flicker, and
+     * the exact page replaces it in one update.
+     */
+    private fun labelText(host: ReaderHost, state: SearchPanel.State, index: Int): String {
+        val more = if (state.complete) "" else "+"
+        val counting = runCatching { host.pagesPending() }.getOrNull() == ReaderFormat.PAGES_COUNTING
+        val page = PageLabel.retain(SearchPanel.pageOf(host, state.hits[index]), shownPage, counting)
+        shownPage = page
+        return PageLabel.withPage("${index + 1} / ${state.hits.size}$more", page)
+    }
+
+    /** Reads the bar's page number again (the pages were counted, or the layout changed); no-op without a bar. */
+    fun refresh() {
+        val host = hostRef?.get()
+        val state = stateRef?.get()
+        val label = labelRef?.get()
+        if (host == null || state == null || label == null || label.parent == null) return
+        if (shownIndex !in state.hits.indices) return
+        val text = labelText(host, state, shownIndex)
+        if (label.text.toString() != text) label.text = text
+    }
 
     fun show(host: ReaderHost, state: SearchPanel.State, index: Int) {
         val parent = Overlay.parentOf(host) ?: return
         val ctx = host.activity
         remove()
         if (index !in state.hits.indices) return
+        shownIndex = index
+        shownPage = ""
         val row = Overlay.bar(ctx)
         row.addView(ctx.flatIcon(R.drawable.ic_close, "검색 닫기") {
             SearchPanel.clearHighlight(host)
@@ -427,8 +479,8 @@ internal object SearchNavBar {
         })
         val texts = ctx.vertical { gravity = Gravity.CENTER_VERTICAL }
         texts.addView(ctx.label("‘${state.query}’", 15f, bold = true, maxLines = 1))
-        val more = if (state.complete) "" else "+"
-        texts.addView(ctx.label("${index + 1} / ${state.hits.size}$more  ·  ${SearchPanel.pageOf(host, state.hits[index])}쪽", 13f, color = Ink.GRAY))
+        val label = ctx.label(labelText(host, state, index), 14f, color = Ink.GRAY)
+        texts.addView(label)
         row.addView(texts, lp(0, WRAP_CONTENT, 1f).apply { leftMargin = ctx.dp(4) })
         row.addView(ctx.flatIcon(R.drawable.ic_view_list, "검색 결과 목록") {
             remove()
@@ -436,13 +488,17 @@ internal object SearchNavBar {
         })
         row.addView(ctx.flatIcon(R.drawable.ic_chevron_left, "이전 결과") {
             if (index > 0) SearchPanel.jumpTo(host, state, index - 1, remember = false)
-        }.apply { alpha = if (index > 0) 1f else 0.3f })
+        }.apply { visibility = if (index > 0) View.VISIBLE else View.INVISIBLE })
         row.addView(ctx.flatIcon(R.drawable.ic_chevron_right, "다음 결과") {
             if (index < state.hits.size - 1) SearchPanel.jumpTo(host, state, index + 1, remember = false)
-        }.apply { alpha = if (index < state.hits.size - 1) 1f else 0.3f })
+        }.apply { visibility = if (index < state.hits.size - 1) View.VISIBLE else View.INVISIBLE })
         row.setPadding(row.paddingLeft, row.paddingTop, row.paddingRight, Overlay.bottomInset(host.pageView))
         parent.addView(row, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
         barRef = WeakReference(row)
+        hostRef = WeakReference(host)
+        stateRef = WeakReference(state)
+        labelRef = WeakReference(label)
+        host.addCountsListener(countsListener)
     }
 
     fun isShown(): Boolean = barRef?.get()?.parent != null
@@ -454,7 +510,12 @@ internal object SearchNavBar {
     }
 
     fun remove() {
+        hostRef?.get()?.removeCountsListener(countsListener)
         barRef?.get()?.let { (it.parent as? ViewGroup)?.removeView(it) }
         barRef = null
+        hostRef = null
+        stateRef = null
+        labelRef = null
+        shownPage = ""
     }
 }

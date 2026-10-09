@@ -484,7 +484,7 @@ class PdfActivity : Activity() {
         pageView.setPage(p.index, p.w, p.h, p.bitmap, fromEnd)
         updateNeighbors()
         showPageMarks()
-        if (book != null) ResumeState.opened(book!!.id)
+        if (book != null) ResumeState.opened(book!!.id, this)
         scheduleDetail()
     }
 
@@ -1226,7 +1226,9 @@ class PdfActivity : Activity() {
         if (page < 0) return
         val progress = PdfMath.progress(page, pageCount)
         val id = b.id
-        ReaderIo.launch { Library.savePosition(id, page, 0, progress) }
+        // Stamped here: the IO pool may run two saves out of order, and the later `at` wins.
+        val at = System.currentTimeMillis()
+        ReaderIo.launch { Library.savePosition(id, page, 0, progress, at) }
     }
 
     private fun trackPage() {

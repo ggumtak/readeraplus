@@ -194,15 +194,29 @@ class LibrarySqlTest {
     }
 
     @Test
+    fun updatePositionIsNewerWinsAndBindOrderMatchesTheCallers() {
+        val sql = LibrarySql.UPDATE_POSITION
+        // One UPDATE; the guard is in its WHERE, after the id, so the binds run
+        // pos_section, pos_offset, progress, last_read_at, id, read time, read time + 10 minutes (Library.savePosition,
+        // Backup restore): a stored stamp more than 10 minutes ahead (a clock set back) never blocks a save.
+        assertTrue(sql.startsWith("UPDATE books SET pos_section = ?, pos_offset = ?, progress = ?, last_read_at = ? "))
+        assertTrue(sql, sql.endsWith("WHERE id = ? AND (last_read_at <= ? OR last_read_at > ?)"))
+        assertEquals(4, placeholders(sql.substringBefore(" WHERE ")))
+        assertEquals(3, placeholders(sql.substringAfter(" WHERE ")))
+        assertEquals(600_000L, LibrarySql.FUTURE_STAMP_MS)
+        assertTrue(sql.indexOf("id = ?") < sql.indexOf("last_read_at <= ?"))
+    }
+
+    @Test
     fun statementsHaveExpectedPlaceholderCounts() {
         assertEquals(12, placeholders(LibrarySql.INSERT_BOOK))
         assertEquals(6, placeholders(LibrarySql.UPDATE_BOOK_FILE))
         assertEquals(6, placeholders(LibrarySql.UPDATE_BOOK_META))
         assertEquals(5, placeholders(LibrarySql.UPDATE_BOOK_META_USER))
-        assertEquals(5, placeholders(LibrarySql.UPDATE_POSITION))
+        assertEquals(7, placeholders(LibrarySql.UPDATE_POSITION))
         assertEquals(9, placeholders(LibrarySql.RESTORE_FLAGS))
-        assertEquals(6, placeholders(LibrarySql.INSERT_BOOKMARK))
-        assertEquals(7, placeholders(LibrarySql.INSERT_QUOTE))
+        assertEquals(9, placeholders(LibrarySql.INSERT_BOOKMARK))
+        assertEquals(11, placeholders(LibrarySql.INSERT_QUOTE))
         assertEquals(4, placeholders(LibrarySql.REPLACE_PAGE_COUNTS))
         assertEquals(2, placeholders(LibrarySql.PRUNE_PAGE_COUNTS))
         assertTrue(LibrarySql.PRUNE_PAGE_COUNTS.contains("LIMIT ${LibrarySql.MAX_PAGE_COUNT_KEYS}"))
@@ -220,5 +234,11 @@ class LibrarySqlTest {
         LibrarySql.INSERT_BOOK, LibrarySql.UPDATE_BOOK_FILE, LibrarySql.UPDATE_BOOK_META, LibrarySql.RESTORE_FLAGS,
         LibrarySql.SELECT_COLLECTIONS, LibrarySql.PRUNE_PAGE_COUNTS, LibrarySql.REPLACE_PAGE_COUNTS,
         LibrarySql.INSERT_MEMBERSHIP, LibrarySql.INSERT_IGNORED,
+        // v3 (N §5.2)
+        LibrarySql.INSERT_QUOTE, LibrarySql.INSERT_BOOKMARK, LibrarySql.UPDATE_QUOTE_STYLE, LibrarySql.UPDATE_QUOTE_PLACE,
+        LibrarySql.UPDATE_BOOKMARK_PLACE, LibrarySql.SET_MISSING, LibrarySql.CLEAR_MISSING, LibrarySql.UNTRASH,
+        LibrarySql.SET_REVIEW, LibrarySql.CLEAR_REVIEW, LibrarySql.RESTORE_REVIEW, LibrarySql.SELECT_IDS_WITH_NOTES,
+        LibrarySql.SELECT_MOVE_CANDIDATES, LibrarySql.SELECT_RETURN_MARK, LibrarySql.SET_PREFS_RETURN,
+        LibrarySql.INSERT_PREFS_RETURN, LibrarySql.CLEAR_RETURN_MARK, LibrarySql.PRUNE_BOOK_PREFS,
     )
 }

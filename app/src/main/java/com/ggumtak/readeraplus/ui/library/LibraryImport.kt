@@ -6,6 +6,7 @@ import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import com.ggumtak.readeraplus.data.Book
+import com.ggumtak.readeraplus.data.BookCopies
 import com.ggumtak.readeraplus.data.Library
 import java.io.File
 import java.io.FileOutputStream
@@ -14,7 +15,7 @@ import java.io.FileOutputStream
  * Bringing documents picked through the Storage Access Framework into the library (blocking; IO thread).
  * A document that is readable in place (all-files access, or a `primary:` path we can read) is added by
  * path — no copy; otherwise it is copied into the app's `books` folder under its display name (an existing
- * copy with the same size is reused).
+ * copy with identical content is reused).
  */
 internal object LibraryImport {
     private const val MIN_TXT_BYTES = 1024L
@@ -92,14 +93,8 @@ internal object LibraryImport {
         val mime = knownMime ?: try { context.contentResolver.getType(uri) } catch (t: Throwable) { null }
         val fileName = LibraryText.importFileName(ns.name, mime) ?: return null
         val dir = booksDir(context)
-        val existing = File(dir, fileName)
-        val target = when {
-            !existing.exists() -> existing
-            ns.size >= 0 && existing.length() == ns.size -> return Library.addOrUpdateFile(existing)
-            else -> File(dir, LibraryText.uniqueName(fileName) { File(dir, it).exists() })
-        }
-        val part = File(dir, target.name + ".part")
-        try {
+        val part = File(dir, "${BookCopies.IMPORT_PREFIX}${System.nanoTime()}${BookCopies.PART_SUFFIX}")
+        val target = try {
             val input = context.contentResolver.openInputStream(uri) ?: return null
             input.use { ins ->
                 FileOutputStream(part).use { out ->
@@ -111,10 +106,8 @@ internal object LibraryImport {
                     }
                 }
             }
-            if (!part.renameTo(target)) {
-                part.copyTo(target, overwrite = true)
-                part.delete()
-            }
+            // An identical earlier copy is reused; a same-named different book (even of equal size) gets a new name.
+            BookCopies.settle(part, dir, fileName)
         } catch (t: Throwable) {
             part.delete()
             throw t

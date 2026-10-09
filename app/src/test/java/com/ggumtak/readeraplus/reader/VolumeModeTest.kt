@@ -48,7 +48,7 @@ class VolumeModeTest {
         val a = KeyAssign.bind(AppSettings(), KeyEvent.KEYCODE_VOLUME_DOWN, TapAction.MENU)
         assertTrue(KeyMap.volumeBound(a))
         assertEquals(TapAction.MENU, KeyMap.action(KeyEvent.KEYCODE_VOLUME_DOWN, false, a))
-        assertEquals("키 지정에서 볼륨 키 동작을 정했습니다", SettingsFormat.volumeSummary(a))
+        assertEquals("키 지정에서 정함", SettingsFormat.volumeValue(a))
         val folded = KeyAssign.bind(a, KeyEvent.KEYCODE_VOLUME_DOWN, TapAction.NEXT)
         assertFalse(KeyMap.volumeBound(folded))
         assertEquals(TapAction.NEXT, KeyMap.action(KeyEvent.KEYCODE_VOLUME_DOWN, false, folded))
@@ -67,12 +67,23 @@ class VolumeModeTest {
     }
 
     @Test fun summariesAndTheKeyTesterDescribeTheLiveMapping() {
-        assertEquals("볼륨 아래 = 다음, 볼륨 위 = 이전", SettingsFormat.volumeSummary(AppSettings()))
-        assertEquals("볼륨 위 = 다음, 볼륨 아래 = 이전", SettingsFormat.volumeSummary(AppSettings(invertVolumeKeys = true)))
-        assertEquals("끄면 볼륨 키는 소리 크기를 조절합니다", SettingsFormat.volumeSummary(AppSettings(volumeKeysTurn = false)))
+        // Plain sentences, no "=" (2026-10-04).
+        assertEquals("아래 키로 다음 페이지", SettingsFormat.volumeValue(AppSettings()))
+        assertEquals("위 키로 다음 페이지", SettingsFormat.volumeValue(AppSettings(invertVolumeKeys = true)))
+        assertEquals("넘기지 않음", SettingsFormat.volumeValue(AppSettings(volumeKeysTurn = false)))
+        // One "볼륨 키" chooser for the direction and off, the default first; each entry sets its mode.
+        assertEquals(
+            listOf("아래 키로 다음 페이지 (기본)", "위 키로 다음 페이지", "넘기지 않음 (소리 크기 조절)"),
+            SettingsFormat.VOLUME_CHOICES.map { it.first },
+        )
+        assertEquals(KeyMap.volumeMode(AppSettings()), SettingsFormat.VOLUME_CHOICES[0].second)
+        for ((_, mode) in SettingsFormat.VOLUME_CHOICES) {
+            assertEquals(mode, KeyMap.volumeMode(KeyMap.withVolumeMode(AppSettings(), mode)))
+        }
         val bound = AppSettings(keyBindings = mapOf(KeyEvent.KEYCODE_VOLUME_DOWN to TapAction.PREV))
         assertEquals(KeyNames.Effect.PREV, KeyNames.readerEffect(KeyEvent.KEYCODE_VOLUME_DOWN, false, bound))
         assertEquals("이전 페이지", KeyNames.readerEffectLabel(KeyEvent.KEYCODE_VOLUME_DOWN, false, bound))
-        assertEquals("볼륨 위 → 다음 페이지 (볼륨 아래는 이전 페이지)", KeyActions.labelFor(KeyEvent.KEYCODE_VOLUME_UP, TapAction.NEXT))
+        // The chooser's title names the key; the entry says what the other volume key does.
+        assertEquals("다음 페이지 (볼륨 아래는 이전 페이지)", KeyActions.labelFor(KeyEvent.KEYCODE_VOLUME_UP, TapAction.NEXT))
     }
 }

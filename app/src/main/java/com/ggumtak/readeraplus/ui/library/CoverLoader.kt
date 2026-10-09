@@ -86,11 +86,35 @@ internal object CoverLoader {
         if (submit) executor.execute { load(app, book, key, w, h) }
     }
 
-    private fun load(app: Context, book: Book, key: String, w: Int, h: Int) {
-        // Skip work nobody is waiting for any more (the row scrolled away and was rebound).
+    /**
+     * Paged lists (NOTES_SPEC §10.3): decodes the covers of `books[from until to]` into the memory cache with no view
+     * waiting, so the next page binds every cover from memory (one e-ink update per page). Keys already cached,
+     * failed or pending are skipped. Prefetches queue behind the covers the screen is waiting for. Main thread only.
+     */
+    fun prefetch(context: Context, books: List<Book>, from: Int, to: Int, w: Int, h: Int) {
+        if (w <= 0 || h <= 0) return
+        val end = to.coerceAtMost(books.size)
+        if (from >= end) return
+        val app = context.applicationContext
+        for (i in from.coerceAtLeast(0) until end) {
+            val book = books[i]
+            val key = keyFor(book, w, h)
+            if (key in failed || cache.get(key) != null) continue
+            val queued = synchronized(lock) {
+                if (pending.containsKey(key)) false else { pending[key] = ArrayList(1); true }
+            }
+            if (!queued) continue
+            // Behind the on-screen requests (the queue takes from its head), on a started worker.
+            executor.prestartAllCoreThreads()
+            (executor.queue as LinkedBlockingDeque<Runnable>).offerLast(Runnable { load(app, book, key, w, h, prefetched = true) })
+        }
+    }
+
+    private fun load(app: Context, book: Book, key: String, w: Int, h: Int, prefetched: Boolean = false) {
+        // Skip work nobody is waiting for any more (the row scrolled away and was rebound); a prefetch always runs.
         val wanted = synchronized(lock) {
             val waiters = pending[key]
-            val any = waiters?.any { it.get()?.tag == key } == true
+            val any = prefetched && waiters != null || waiters?.any { it.get()?.tag == key } == true
             if (!any) pending.remove(key)
             any
         }
@@ -125,6 +149,7 @@ internal object CoverLoader {
 
     /** LIFO work queue: ThreadPoolExecutor enqueues with offer() and takes from the head. */
     private class LifoQueue : LinkedBlockingDeque<Runnable>() {
+        // offerLast stays the plain deque's: prefetch() queues behind the on-screen requests with it.
         override fun offer(e: Runnable): Boolean = offerFirst(e)
     }
 }

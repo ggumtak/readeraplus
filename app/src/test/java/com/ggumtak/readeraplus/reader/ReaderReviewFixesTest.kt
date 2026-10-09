@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.reader
 
 import com.ggumtak.readeraplus.format.BookFormat
+import com.ggumtak.readeraplus.settings.PageTheme
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,7 +22,7 @@ class ReaderReviewFixesTest {
 
     @Test
     fun txtOptionNeverReparsesOrRelayoutsAnEpub() {
-        val t = s.copy(txtBlankLines = 3, txtStripIndent = false, txtReplaceRules = "광고 => ", txtDetectChapters = false)
+        val t = s.copy(txtBlankLines = 3, txtStripIndent = false, txtReplaceRules = "광고 => ")
         assertFalse(LayoutKeys.parseChanged(s, t, BookFormat.EPUB, ""))
         assertFalse(LayoutKeys.layoutChanged(s, t, BookFormat.EPUB))
         assertTrue(LayoutKeys.parseChanged(s, t, BookFormat.TXT, ""))
@@ -40,6 +41,22 @@ class ReaderReviewFixesTest {
     }
 
     @Test
+    fun ignoreBookSizesReparsesAndRelayoutsAnEpubOnly() {
+        val t = s.copy(epubIgnoreBookSizes = !s.epubIgnoreBookSizes)
+        assertTrue(LayoutKeys.parseChanged(s, t, BookFormat.EPUB, ""))
+        assertTrue(LayoutKeys.layoutChanged(s, t, BookFormat.EPUB))
+        assertNotEquals(LayoutKeys.parseOptionsFor(s, BookFormat.EPUB, ""), LayoutKeys.parseOptionsFor(t, BookFormat.EPUB, ""))
+        assertFalse(LayoutKeys.parseChanged(s, t, BookFormat.TXT, ""))
+        assertFalse(LayoutKeys.layoutChanged(s, t, BookFormat.TXT))
+        assertEquals(s.epubIgnoreBookSizes, s.parseOptions().epubIgnoreBookSizes)
+        // The page-count / layout key follows the option for an EPUB, never for a TXT.
+        fun key(x: ReaderSettings, f: BookFormat) = LayoutKeys.keyFor(x, f, "", g, density, font, 1)
+        assertNotEquals(key(s, BookFormat.EPUB), key(t, BookFormat.EPUB))
+        assertEquals(key(s, BookFormat.TXT), key(t, BookFormat.TXT))
+        assertEquals(LayoutKeys.textSignature(s, BookFormat.TXT, ""), LayoutKeys.textSignature(t, BookFormat.TXT, ""))
+    }
+
+    @Test
     fun encodingOnlyMattersForTxt() {
         assertEquals(LayoutKeys.parseOptionsFor(s, BookFormat.EPUB, "MS949"), LayoutKeys.parseOptionsFor(s, BookFormat.EPUB, ""))
         assertNotEquals(LayoutKeys.parseOptionsFor(s, BookFormat.TXT, "MS949"), LayoutKeys.parseOptionsFor(s, BookFormat.TXT, ""))
@@ -48,7 +65,7 @@ class ReaderReviewFixesTest {
     @Test
     fun pageCountKeyIgnoresTheOtherFormatsOptions() {
         fun key(t: ReaderSettings, f: BookFormat, enc: String = "") = LayoutKeys.keyFor(t, f, enc, g, density, font, 1)
-        val txtChange = s.copy(txtBlankLines = 3, txtReplaceRules = "a => b", txtEmphasizeHeadings = false)
+        val txtChange = s.copy(txtBlankLines = 3, txtReplaceRules = "a => b", txtJoinWrappedLines = 0)
         val pubChange = s.copy(epubPublisherStyles = !s.epubPublisherStyles)
         // A TXT option keeps every EPUB's counts; publisher styles keep every TXT's counts.
         assertEquals(key(s, BookFormat.EPUB), key(txtChange, BookFormat.EPUB))
@@ -59,6 +76,7 @@ class ReaderReviewFixesTest {
         assertNotEquals(key(s, BookFormat.TXT), key(s, BookFormat.TXT, "MS949"))
         // Colours / footer items never count.
         assertEquals(key(s, BookFormat.TXT), key(s.copy(invert = true), BookFormat.TXT))
+        assertEquals(key(s, BookFormat.EPUB), key(s.copy(pageTheme = PageTheme.MARU), BookFormat.EPUB))
         assertTrue(LayoutKeys.VERSION >= 2)
     }
 
@@ -152,35 +170,6 @@ class ReaderReviewFixesTest {
         assertNull(TextPositions.remapFraction(stored, "new", 0, 0, 0f))
         // Progress changed elsewhere since (restore): the library's value wins.
         assertEquals(0.2f, TextPositions.remapFraction(stored, "new", 12, 40, 0.2f)!!, 1e-6f)
-    }
-
-    // ---------------------------------------------------------------- copy target (content:// imports)
-
-    @Test
-    fun copyNeverOverwritesAnotherBookWhenTheSizeIsUnknown() {
-        val files = mapOf("novel.txt" to 5000L)
-        val (name, reuse) = UriPaths.copyTarget("novel.txt", -1L) { files[it] }
-        assertEquals("novel (2).txt", name)
-        assertFalse(reuse)
-        assertEquals("novel (2).txt" to false, UriPaths.copyTarget("novel.txt", 0L) { files[it] })
-    }
-
-    @Test
-    fun copyReusesOnlyAMatchingSize() {
-        val files = mapOf("a.epub" to 10L, "a (2).epub" to 20L, "a (3).epub" to -1L)
-        assertEquals("a (2).epub" to true, UriPaths.copyTarget("a.epub", 20L) { files[it] })
-        assertEquals("a (4).epub" to false, UriPaths.copyTarget("a.epub", 30L) { files[it] })
-        assertEquals("b.txt" to false, UriPaths.copyTarget("b.txt", 30L) { files[it] })
-    }
-
-    @Test
-    fun copyPastTheReuseSlotsStillPicksAFreeName() {
-        val taken = (1..60).associate { UriPaths.numberedName("x.txt", it) to it.toLong() }
-        // All 50 reuse slots hold other sizes: a fresh name, never slot 1.
-        assertEquals("x (61).txt" to false, UriPaths.copyTarget("x.txt", 999L, maxReuse = 50) { taken[it] })
-        // Slot 55 matches but lies past the reuse range: still a fresh name.
-        assertEquals("x (61).txt" to false, UriPaths.copyTarget("x.txt", 55L, maxReuse = 50) { taken[it] })
-        assertEquals("x (7).txt" to true, UriPaths.copyTarget("x.txt", 7L, maxReuse = 50) { taken[it] })
     }
 
     // ---------------------------------------------------------------- learned page keys

@@ -15,13 +15,16 @@ import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.format.SectionInfo
 import com.ggumtak.readeraplus.format.TocEntry
 import java.io.File
+import java.io.IOException
 
 /**
  * An opened EPUB: one section per spine item, except that oversized items (whole-book files from TXT→EPUB
  * converters) are split into several sections (see [EpubSplit]). Opening parses container.xml, the OPF and the
  * TOC (nav / NCX), and scans the text of items above [EpubSplit.SCAN_MIN_BYTES] to fix their part count;
  * content documents are converted on demand (last [CACHE_SIZE] sections kept, plus the last [ITEM_CACHE_SIZE]
- * converted split items so their parts are cut without converting again) and the cover loads on request.
+ * converted split items so their parts are cut without converting again) and the cover loads on request. A poor
+ * TOC (under 2 entries, or entries only at item starts) is completed with the chapters the TXT rules detect in the
+ * scanned text ([EpubHeadings]).
  * Thread-safe: sections may be loaded concurrently (the same spine item is converted once).
  */
 internal class EpubBook private constructor(
@@ -36,7 +39,7 @@ internal class EpubBook private constructor(
 
     /** Spine items that can be displayed (XHTML or image), in reading order. */
     private val spine: List<ManifestItem> = selectSpine(zip, pkg).also {
-        if (it.isEmpty()) throw DocumentException("표시할 내용이 없는 EPUB입니다: ${file.name}")
+        if (it.isEmpty()) throw DocumentException("내용이 없는 책입니다")
     }
 
     /** Canonical zip path → first spine index. */
@@ -44,8 +47,11 @@ internal class EpubBook private constructor(
         for ((i, it) in spine.withIndex()) m.putIfAbsent(it.path, i)
     }
 
-    /** TOC targets as (spine item, fragment), parsed while opening (off the main thread). */
-    private val tocRefs: List<TocRef> = try {
+    /**
+     * TOC targets as (spine item, fragment), parsed while opening (off the main thread); [planSections] adds the
+     * detected chapter headings when the book's own TOC is poor.
+     */
+    private var tocRefs: List<TocRef> = try {
         buildToc()
     } catch (_: Exception) {
         emptyList()
@@ -62,8 +68,22 @@ internal class EpubBook private constructor(
     /** Estimated chars per spine item. */
     private val itemChars = IntArray(spine.size)
 
+    /**
+     * Detected chapter headings per spine item (null: none; [EpubHeadings]). They never take part in the section
+     * split: the cuts are those of the book without them. They are marked in the item after it is cut.
+     */
+    private val itemHeads = arrayOfNulls<Array<EpubHeadings.Head>>(spine.size)
+
+    /** A fresh plan, staged once the headings' sections are known ([tocEntries]); null: nothing to stage. */
+    private var stagedKey: String? = null
+    private var stagedPlan: EpubPlanCache.Plan? = null
+
     /** The plan came from [EpubPlanCache] (no item was scanned while opening; tests / diagnostics). */
     internal var planFromCache = false
+        private set
+
+    /** Items above [EpubSplit.SCAN_MIN_BYTES] whose text this open scanned (0: none that big, or a cached plan). */
+    internal var scannedItems = 0
         private set
 
     init {
@@ -87,9 +107,6 @@ internal class EpubBook private constructor(
         SectionInfo(null, maxOf(1, itemChars[item] / parts[item]))
     }
 
-    /** Parsed while opening (off the main thread): readers touch it right after open, on the UI thread. */
-    override val toc: List<TocEntry> = tocEntries()
-
     private val cache: LinkedHashMap<Int, SectionContent> = object : LinkedHashMap<Int, SectionContent>(8, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, SectionContent>?): Boolean =
             size > CACHE_SIZE
@@ -106,7 +123,8 @@ internal class EpubBook private constructor(
     private val itemLocks = Array(spine.size) { Any() }
     private val cssCache = HashMap<String, List<CssSheet>>()
 
-    private class TocRef(val title: String, val level: Int, val item: Int, val frag: String?)
+    /** [head]: index of the detected heading in [itemHeads] of [item] (-1: a TOC entry of the book). */
+    private class TocRef(val title: String, val level: Int, val item: Int, val frag: String?, val head: Int = -1)
 
     private class SplitItem(val content: SectionContent, val cuts: EpubSplit.Cuts)
 
@@ -135,10 +153,13 @@ internal class EpubBook private constructor(
     // ================================================================ section map
 
     /**
-     * Fixes the part count of every spine item. Only items above [EpubSplit.SCAN_MIN_BYTES] are read (whole
-     * documents that big are rare outside converter output); their text scan also places the TOC anchors. The
-     * result for those items is cached per file ([EpubPlanCache], A12-1): looked up only when such an item exists,
-     * and a fresh plan is staged for writing after the first page, never written here.
+     * Fixes the part count of every spine item. Items above [EpubSplit.SCAN_MIN_BYTES] are read (whole documents
+     * that big are rare outside converter output); their text scan also places the TOC anchors. When the TOC is poor
+     * ([detectWanted]) the same scan collects block texts, also of smaller items, and the TXT chapter rules look for
+     * headings in them ([EpubHeadings]): each becomes a synthetic TOC entry. They do not move the split: part counts
+     * and cuts (hence every saved position) are exactly those of the book without detection. The result for the scanned items is cached per file ([EpubPlanCache], A12-1):
+     * looked up only when an item that big (or a good deal of smaller text) was scanned, and a fresh plan is staged
+     * for writing after the first page, never written here.
      */
     private fun planSections() {
         var wanted: Array<HashSet<String>?>? = null
@@ -148,8 +169,13 @@ internal class EpubBook private constructor(
             val w = wanted ?: arrayOfNulls<HashSet<String>>(spine.size).also { wanted = it }
             (w[r.item] ?: HashSet<String>().also { w[r.item] = it }).add(f)
         }
-        var big = IntArray(0)
+        val detect = detectWanted()
+        // With a title entry or one entry per file, a smaller item can still hold many chapters: from this size on.
+        val detectMin = if (tocRefs.size < 2) 1L else DETECT_ITEM_MIN_BYTES
+        var scan = IntArray(0)
+        var nScan = 0
         var nBig = 0
+        var smallBytes = 0L
         for ((i, item) in spine.withIndex()) {
             if (item.isImage) {
                 itemChars[i] = IMAGE_APPROX_CHARS
@@ -157,46 +183,93 @@ internal class EpubBook private constructor(
             }
             val sz = zip.size(item.path)
             itemChars[i] = if (sz < 0) UNKNOWN_APPROX_CHARS else maxOf(1L, sz / 3).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            if (sz <= EpubSplit.SCAN_MIN_BYTES) continue
-            if (nBig == big.size) big = big.copyOf(maxOf(4, nBig * 2))
-            big[nBig++] = i
+            if (sz > EpubSplit.SCAN_MIN_BYTES) {
+                nBig++
+            } else {
+                if (!detect || !item.isHtml || sz < detectMin || smallBytes + sz > DETECT_SMALL_BUDGET) continue
+                smallBytes += sz
+            }
+            if (nScan == scan.size) scan = scan.copyOf(maxOf(4, nScan * 2))
+            scan[nScan++] = i
         }
-        if (nBig == 0) return
-        val key = if (EpubPlanCache.dir() != null) EpubPlanCache.key(file) else null
-        val anchors = if (key != null) EpubPlanCache.anchorHash(big, nBig, wanted) else 0L
-        if (key != null) EpubPlanCache.load(key)?.let { if (usePlan(it, big, nBig, anchors)) return }
+        if (nScan == 0) return
+        val useCache = nBig > 0 || smallBytes > EpubSplit.SCAN_MIN_BYTES
+        val key = if (useCache && EpubPlanCache.dir() != null) EpubPlanCache.key(file, if (detect) detectSignature() else "") else null
+        val anchors = if (key != null) EpubPlanCache.anchorHash(scan, nScan, wanted) else 0L
+        if (key != null) {
+            EpubPlanCache.load(key)?.let {
+                if (usePlan(it, scan, nScan, anchors)) {
+                    addHeadings()
+                    return
+                }
+            }
+        }
 
-        val chars = IntArray(nBig)
-        val frags = arrayOfNulls<Map<String, Int>>(nBig)
+        scannedItems = nBig
+        val chars = IntArray(nScan)
+        val scans = arrayOfNulls<EpubSplit.Scan>(nScan)
         var complete = true
-        for (k in 0 until nBig) {
-            val i = big[k]
-            val scan = scanItem(spine[i].path, wanted?.get(i) ?: emptySet<String>())
-            if (scan == null) {
+        for (k in 0 until nScan) {
+            val i = scan[k]
+            val r = scanItem(spine[i].path, wanted?.get(i) ?: emptySet<String>(), if (detect) EpubSplit.Lines() else null)
+            if (r == null) {
                 complete = false // maybe out of memory this time: not cached, the next open scans again
                 continue
             }
-            chars[k] = scan.chars
-            val n = EpubSplit.partsFor(scan.chars)
+            scans[k] = r
+            chars[k] = r.chars
+        }
+        if (detect) {
+            val found = EpubHeadings.detect(Array(nScan) { scans[it]?.lines }, chars, options.txtChapterRegex)
+            val allStart = tocRefs.all { it.frag.isNullOrEmpty() }
+            if (EpubHeadings.replacesToc(tocRefs.size, allStart, found.total)) {
+                // The headings stay out of the split: part count and cuts are those of a book without them.
+                for (k in 0 until nScan) found.heads[k]?.let { itemHeads[scan[k]] = it }
+            }
+        }
+        val frags = arrayOfNulls<Map<String, Int>>(nScan)
+        for (k in 0 until nScan) {
+            val r = scans[k] ?: continue
+            val i = scan[k]
+            // an item that was scanned for its headings only is no split candidate: it stays one section
+            if (zip.size(spine[i].path) <= EpubSplit.SCAN_MIN_BYTES) continue
+            val n = EpubSplit.partsFor(r.chars)
             if (n <= 1) continue
             parts[i] = n
-            itemChars[i] = scan.chars
-            fragParts[i] = EpubSplit.assign(scan, n).also { frags[k] = it }
+            itemChars[i] = r.chars
+            fragParts[i] = EpubSplit.assign(r, n).also { frags[k] = it }
         }
         if (complete && key != null) {
-            val items = big.copyOf(nBig)
-            EpubPlanCache.stage(key, EpubPlanCache.Plan(spine.size, anchors, items, IntArray(nBig) { parts[items[it]] }, chars, frags))
+            val items = scan.copyOf(nScan)
+            stagedKey = key
+            stagedPlan = EpubPlanCache.Plan(
+                spine.size, anchors, items, IntArray(nScan) { parts[items[it]] }, chars, frags, Array(nScan) { itemHeads[items[it]] },
+            )
         }
+        addHeadings()
     }
 
-    /** Applies a cached [plan] when it covers exactly the [n] scannable items [big]; false leaves everything as is. */
-    private fun usePlan(plan: EpubPlanCache.Plan, big: IntArray, n: Int, anchors: Long): Boolean {
+    /**
+     * Chapter headings are looked for: the reader detects chapters (EPUB too) and the book's TOC may be poor: fewer
+     * than 2 entries, or only entries at the start of a spine item (a title entry, one entry per file). A TOC with an
+     * anchor inside an item is the book's own; the headings found are weighed against it afterwards
+     * ([EpubHeadings.replacesToc]).
+     */
+    private fun detectWanted(): Boolean =
+        options.txtDetectChapters && (tocRefs.size < 2 || tocRefs.all { it.frag.isNullOrEmpty() })
+
+    /** The options that decide which headings are found: part of the plan's key. */
+    private fun detectSignature(): String = options.txtChapterRegex.length.toString() + ":" + options.txtChapterRegex
+
+    /** Applies a cached [plan] when it covers exactly the [n] scanned items [items]; false leaves everything as is. */
+    private fun usePlan(plan: EpubPlanCache.Plan, items: IntArray, n: Int, anchors: Long): Boolean {
         if (plan.spineSize != spine.size || plan.anchors != anchors || plan.items.size != n) return false
-        for (k in 0 until n) if (plan.items[k] != big[k]) return false
+        for (k in 0 until n) if (plan.items[k] != items[k]) return false
         for (k in 0 until n) {
+            val i = items[k]
+            plan.heads.getOrNull(k)?.let { itemHeads[i] = it }
             val p = plan.parts[k]
             if (p <= 1) continue
-            val i = big[k]
             parts[i] = p
             itemChars[i] = plan.chars[k]
             fragParts[i] = HashMap(plan.frags[k] ?: emptyMap())
@@ -205,8 +278,32 @@ internal class EpubBook private constructor(
         return true
     }
 
-    private fun scanItem(path: String, wanted: Set<String>): EpubSplit.Scan? = try {
-        zip.read(path)?.let { EpubSplit.scan(EpubText.decode(it), wanted) }
+    /**
+     * Adds a TOC entry for every detected heading, after the book's own entries of its item (a title entry stays
+     * first); the entries of later items follow their headings. Every heading carries its synthetic anchor.
+     */
+    private fun addHeadings() {
+        var any = false
+        for (h in itemHeads) if (h != null) any = true
+        if (!any) return
+        val out = ArrayList<TocRef>(tocRefs.size + 64)
+        var next = 0 // first spine item whose headings are not yet in [out]
+        fun headingsBefore(item: Int) {
+            while (next < item) {
+                itemHeads[next]?.let { h -> for (j in h.indices) out.add(TocRef(h[j].title, 1, next, EpubHeadings.id(j), j)) }
+                next++
+            }
+        }
+        for (r in tocRefs) {
+            headingsBefore(r.item)
+            out.add(r)
+        }
+        headingsBefore(spine.size)
+        tocRefs = out
+    }
+
+    private fun scanItem(path: String, wanted: Set<String>, lines: EpubSplit.Lines?): EpubSplit.Scan? = try {
+        zip.read(path)?.let { EpubSplit.scan(EpubText.decode(it), wanted, lines) }
     } catch (_: RuntimeException) {
         null
     } catch (_: StackOverflowError) {
@@ -218,12 +315,18 @@ internal class EpubBook private constructor(
     /**
      * TOC entries with their sections. In a split item an anchored entry takes the part the scan put its anchor
      * in; an anchor the scan did not find stays with the entry before it (its part is recorded as well, so the
-     * part's content can still resolve it should the converter find it).
+     * part's content can still resolve it should the converter find it). A detected heading has the exact place the
+     * cut gave it ([placeHeadings]).
      */
     private fun tocEntries(): List<TocEntry> {
         val out = ArrayList<TocEntry>(tocRefs.size)
         val lastPart = IntArray(spine.size)
         for (r in tocRefs) {
+            if (r.head >= 0) {
+                val h = placeHeadings(r.item)[r.head]
+                out.add(TocEntry(r.title, r.level, firstSection[r.item] + h.part.coerceIn(0, parts[r.item] - 1), h.offset, r.frag))
+                continue
+            }
             var part = 0
             val m = fragParts[r.item]
             val f = r.frag
@@ -233,7 +336,51 @@ internal class EpubBook private constructor(
             }
             out.add(TocEntry(r.title, r.level, firstSection[r.item] + part, 0, f))
         }
+        val key = stagedKey
+        val plan = stagedPlan
+        if (key != null && plan != null) EpubPlanCache.stage(key, plan) // with the headings' places
+        stagedKey = null
+        stagedPlan = null
         return out
+    }
+
+    /**
+     * The detected headings of [item] with their place in the sections ([EpubHeadings.Head.part] / `offset`). A cached
+     * plan has them; else a split item is converted and cut now (the cut it would get anyway for its first page, kept
+     * in the item cache) and each heading is looked up in it. The headings take no part in the cut, so a heading may
+     * sit at either side of a cut: it belongs to the part that holds its anchor. A heading its block was not found
+     * for stays where the heading before it is. An item of one section needs no conversion: its headings are in
+     * section 0 and their offsets come with the anchors, as a book's own anchored entries do.
+     */
+    private fun placeHeadings(item: Int): Array<EpubHeadings.Head> {
+        val heads = itemHeads[item]!!
+        if (heads.all { it.part >= 0 }) return heads
+        if (parts[item] == 1) {
+            for (h in heads) {
+                h.part = 0
+                h.offset = 0
+            }
+            return heads
+        }
+        val split = try {
+            splitItem(item)
+        } catch (_: DocumentException) {
+            null
+        } catch (_: IOException) {
+            null
+        }
+        var part = 0
+        var offset = 0
+        for ((j, h) in heads.withIndex()) {
+            val at = split?.content?.anchors?.get(EpubHeadings.id(j))
+            if (at != null) {
+                part = split.cuts.locate(at)
+                offset = split.cuts.local(part, at)
+            }
+            h.part = part
+            h.offset = offset
+        }
+        return heads
     }
 
     // ================================================================ sections
@@ -245,7 +392,7 @@ internal class EpubBook private constructor(
         if (parts[item] == 1) {
             synchronized(itemLocks[item]) {
                 synchronized(cache) { cache[index]?.let { return it } }
-                val content = convert(item)
+                val content = withHeadings(item, convert(item))
                 synchronized(cache) {
                     cache[index] = content
                     anchorCache[item] = content.anchors
@@ -284,8 +431,10 @@ internal class EpubBook private constructor(
         synchronized(cache) { itemCache[item]?.let { return it } }
         synchronized(itemLocks[item]) {
             synchronized(cache) { itemCache[item]?.let { return it } }
-            val whole = convert(item)
-            val cuts = cutItem(item, whole)
+            val plain = convert(item)
+            // cut first: the headings' look (heading style, page break) must not move a cut
+            val cuts = cutItem(item, plain)
+            val whole = withHeadings(item, plain)
             val s = SplitItem(whole, cuts)
             synchronized(cache) {
                 itemCache[item] = s
@@ -293,6 +442,16 @@ internal class EpubBook private constructor(
                 cutCache[item] = cuts
             }
             return s
+        }
+    }
+
+    /** [content] of [item] with its detected headings marked (the text and so every offset stay the same). */
+    private fun withHeadings(item: Int, content: SectionContent): SectionContent {
+        val heads = itemHeads[item] ?: return content
+        return try {
+            EpubHeadings.apply(content, heads, options.txtEmphasizeHeadings)
+        } catch (_: RuntimeException) {
+            content
         }
     }
 
@@ -321,7 +480,13 @@ internal class EpubBook private constructor(
      */
     private fun anchorsOf(item: Int): Map<String, Int> {
         synchronized(cache) { anchorCache[item]?.let { return it } }
-        return if (parts[item] == 1) loadSection(firstSection[item]).anchors else splitItem(item).content.anchors
+        return try {
+            if (parts[item] == 1) loadSection(firstSection[item]).anchors else splitItem(item).content.anchors
+        } catch (_: DocumentException) { // unreadable item (nothing cached): the link / TOC entry lands at its start
+            emptyMap()
+        } catch (_: IOException) {
+            emptyMap()
+        }
     }
 
     /** Section position of item-wide offset [off] in spine item [item]. */
@@ -336,6 +501,12 @@ internal class EpubBook private constructor(
     @Volatile internal var conversions = 0
         private set
 
+    /**
+     * Parsed while opening (off the main thread): readers touch it right after open, on the UI thread. Declared after
+     * everything a conversion uses: placing the detected headings converts and cuts their (split) item once.
+     */
+    override val toc: List<TocEntry> = tocEntries()
+
     private fun convert(index: Int): SectionContent {
         conversions++ // only under itemLocks[index]; an approximate count across items is fine
         val item = spine[index]
@@ -343,8 +514,10 @@ internal class EpubBook private constructor(
             return SectionContent(OBJECT_CHAR.toString(), listOf(ImageBlock(0, item.path)))
         }
         return try {
-            val bytes = zip.read(item.path) ?: return SectionContent.EMPTY
-            XhtmlConverter(options.epubPublisherStyles, resources).convert(EpubText.decode(bytes), item.path)
+            // The section's own file must be readable: a failure throws (DocumentException / IOException, which no
+            // caller caches) instead of becoming an empty page that the caches and the page counter would keep.
+            val bytes = zip.readOrThrow(item.path)
+            XhtmlConverter(options.epubPublisherStyles, resources, options.epubIgnoreBookSizes).convert(EpubText.decode(bytes), item.path)
         } catch (_: RuntimeException) {
             errorSection()
         } catch (_: StackOverflowError) {
@@ -355,7 +528,7 @@ internal class EpubBook private constructor(
     }
 
     private fun errorSection(): SectionContent {
-        val msg = "(이 부분을 표시할 수 없습니다)"
+        val msg = "(이 부분을 표시하지 못했습니다)"
         return SectionContent(msg, listOf(ParagraphBlock(0, msg.length, BlockStyle(align = Align.CENTER, indent = false))))
     }
 
@@ -506,6 +679,10 @@ internal class EpubBook private constructor(
         private const val IMAGE_APPROX_CHARS = 500
         private const val UNKNOWN_APPROX_CHARS = 2000
         private const val MAX_CSS_BYTES = 4 * 1024 * 1024
+        /** With a TOC of entries at item starts only, items from this size on are searched for chapter headings. */
+        private const val DETECT_ITEM_MIN_BYTES = 48 * 1024L
+        /** Most bytes of items below [EpubSplit.SCAN_MIN_BYTES] read for chapter detection in one open. */
+        private const val DETECT_SMALL_BUDGET = 8L * 1024 * 1024
         private const val TITLE_PEEK_BYTES = 8 * 1024
         private const val TITLE_SCAN_BYTES = 24 * 1024
 
@@ -576,10 +753,10 @@ internal class EpubBook private constructor(
                 throw e
             } catch (e: Exception) {
                 zip.close()
-                throw DocumentException("EPUB을 해석할 수 없습니다: ${file.name}", e)
+                throw DocumentException(EpubDocuments.MALFORMED, e)
             } catch (e: StackOverflowError) {
                 zip.close()
-                throw DocumentException("EPUB을 해석할 수 없습니다: ${file.name}", e)
+                throw DocumentException(EpubDocuments.MALFORMED, e)
             }
         }
     }

@@ -66,7 +66,7 @@ class KeyNamesTest {
         var a = AppSettings(prevPageKeys = setOf(131))
         assertEquals("이전 페이지", KeyNames.readerEffectLabel(131, false, a))
         a = KeyAssign.bind(a, 131, TapAction.NEXT_CHAPTER)
-        assertEquals("다음 화", KeyNames.readerEffectLabel(131, false, a))
+        assertEquals("다음 챕터", KeyNames.readerEffectLabel(131, false, a))
         // A volume key bound to NONE goes to the system even with volume paging on.
         a = KeyAssign.bind(a, KeyNames.VOLUME_DOWN, TapAction.NONE)
         assertEquals("시스템에 맡김", KeyNames.readerEffectLabel(KeyNames.VOLUME_DOWN, false, a))
@@ -130,12 +130,18 @@ class KeyNamesTest {
         assertEquals(KeyActions.CHOICES.size, KeyActions.CHOICES.toSet().size)
         assertEquals(
             listOf(
-                "다음 페이지", "이전 페이지", "다음 화", "이전 화", "목차", "메뉴", "북마크", "화면 새로고침", "흑백 반전",
-                "TTS 읽기", "자동 넘김", "페이지 이동", "없음(시스템에 맡김)",
+                "다음 페이지", "이전 페이지", "다음 챕터", "이전 챕터", "목차", "메뉴", "북마크", "화면 새로고침", "흑백 반전",
+                "듣기", "자동 넘김", "페이지 이동", "없음 (시스템에 맡김)",
             ),
             KeyActions.CHOICES.map { KeyActions.label(it) },
         )
-        // Actions outside the chooser (restored from a backup) keep their tap-zone label.
+        // Actions outside the chooser (restored from a backup) keep their tap-zone label; the tap zones, the key
+        // chooser and the preview name the chapters the same way.
         assertEquals(TapAction.SEARCH.label, KeyActions.label(TapAction.SEARCH))
+        assertEquals(TapAction.NEXT_CHAPTER.label, KeyActions.label(TapAction.NEXT_CHAPTER))
+        // The key list shows a key's name without its code; a toast keeps the code.
+        assertEquals("볼륨 아래", KeyNames.name(KeyNames.VOLUME_DOWN))
+        assertEquals("키 코드 290", KeyNames.name(290))
+        assertEquals("볼륨 아래 (25)", KeyNames.label(KeyNames.VOLUME_DOWN))
     }
 }

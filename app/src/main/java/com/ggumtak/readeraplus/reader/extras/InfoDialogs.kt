@@ -98,7 +98,7 @@ internal object InfoDialogs {
         val box = activity.vertical { setPadding(activity.dp(24), activity.dp(8), activity.dp(24), activity.dp(8)) }
         fun field(key: String, value: String?) {
             if (value.isNullOrBlank()) return
-            val keyLabel = activity.label(key, 13f, bold = true, color = Ink.GRAY).apply { setPadding(0, activity.dp(10), 0, activity.dp(2)) }
+            val keyLabel = activity.label(key, 14f, bold = true, color = Ink.GRAY).apply { setPadding(0, activity.dp(10), 0, activity.dp(2)) }
             box.addView(keyLabel)
             val restoreKey = Runnable { keyLabel.text = key }
             // Not selectable text: a full-width selectable label started a selection from a long press on blank paper.
@@ -116,6 +116,7 @@ internal object InfoDialogs {
                 }
             }, lp(WRAP_CONTENT, WRAP_CONTENT))
         }
+        // Reading first (where am I, how long), then what the user wrote, then the file.
         field("제목", book.title)
         field("작가", book.author.ifBlank { meta?.authors?.joinToString(", ") ?: "" }.ifBlank { "알 수 없음" })
         val series = book.series ?: meta?.series
@@ -123,39 +124,32 @@ internal object InfoDialogs {
             val idx = book.seriesIndex ?: meta?.seriesIndex
             field("시리즈", if (idx != null) "$series #${Fmt.number(idx)}" else series)
         }
-        field("형식", book.format.label)
-        field("크기", Fmt.fileSize(book.sizeBytes))
-        field("경로", book.path)
-        if (book.format == BookFormat.TXT) {
-            val detected = meta?.encoding
-            field("인코딩", when {
-                book.encoding.isNotBlank() -> "${book.encoding} (직접 지정)"
-                detected != null -> "$detected (자동 감지)"
-                else -> "자동 감지"
-            })
-        }
-        field("언어", book.language ?: meta?.language)
-        field("출판사", meta?.publisher)
-        field("추가한 날짜", Fmt.dateTime(book.addedAt))
-        field("마지막으로 읽은 날짜", if (book.lastReadAt > 0) Fmt.dateTime(book.lastReadAt) else "읽지 않음")
         field("진행률", Fmt.percent(book.progress))
+        // The reader showing this book knows the reading speed and the position (T1-7).
+        val insights = if (document == null) null else (activity as? BookInsightsHost)
+            ?.takeIf { runCatching { (activity as ReaderHost).book.id == book.id }.getOrDefault(false) }
+        if (insights != null) {
+            val bookMin = runCatching { insights.minutesLeft(true) }.getOrNull()
+            val episodeMin = runCatching { insights.minutesLeft(false) }.getOrNull()
+            field("남은 시간", InfoText.timeLeft(bookMin, episodeMin))
+        }
         field("읽은 시간", if (book.readingSeconds > 0) ReaderFormat.durationOfSeconds(book.readingSeconds) else "없음")
         if (document != null) {
-            field("목차 항목 수", "${document.toc.size}개")
             var chars = 0L
             for (s in document.sections) chars += s.approxChars.coerceAtLeast(0)
-            // The reader showing this book knows the reading speed and the position (T1-7).
-            val insights = (activity as? BookInsightsHost)
-                ?.takeIf { runCatching { (activity as ReaderHost).book.id == book.id }.getOrDefault(false) }
             field("분량", InfoText.volume(chars, insights?.let { runCatching { it.charsPerMinute() }.getOrNull() }))
-            if (insights != null) {
-                val bookMin = runCatching { insights.minutesLeft(true) }.getOrNull()
-                val episodeMin = runCatching { insights.minutesLeft(false) }.getOrNull()
-                field("남은 시간", InfoText.timeLeft(bookMin, episodeMin))
-            }
+            field("목차", "${document.toc.size}개")
         }
+        field("최근 읽은 날", if (book.lastReadAt > 0) Fmt.dateTime(book.lastReadAt) else "읽지 않음")
+        field("추가한 날", Fmt.dateTime(book.addedAt))
         if (book.review.isNotBlank()) field("내 리뷰", book.review)
         meta?.description?.let { d -> field("설명", Fmt.plainText(d)) }
+        field("형식", book.format.label)
+        field("크기", Fmt.fileSize(book.sizeBytes))
+        if (book.format == BookFormat.TXT) field("인코딩", InfoText.encoding(book.encoding, meta?.encoding))
+        field("언어", InfoText.language(book.language ?: meta?.language))
+        field("출판사", meta?.publisher)
+        field("경로", book.path)
 
         PanelRegistry.dialog(activity, activity.alert().setTitle("책 정보")
             .setView(activity.einkScroll(box))
@@ -236,26 +230,38 @@ internal object InfoDialogs {
         private val chars = IntArray(doc.sections.size) { doc.sections[it].approxChars }
         private val here = host.currentPosition()
         private val jump = host as? PageJumpHost
-        private val parsed = PageLabel.parse(runCatching { host.pageLabel(here) }.getOrNull())
-        private val pagesKnown = runCatching { host.totalPagesKnown() }.getOrDefault(false) && parsed.total > 0
-        private val total = parsed.total
-        // The footer's own measure when the host has it (so "현재 N%" reads exactly like the footer); otherwise
-        // page-based once counts are complete (EPUB approxChars are only a size estimate), char-based before that.
-        private val fraction = jump?.let { j -> runCatching { j.progressFraction() }.getOrNull()?.takeIf { !it.isNaN() } }
-            ?: if (pagesKnown && parsed.page > 0) parsed.page.toFloat() / total else PageLabel.fractionOf(chars, here)
+        // Read again when the pages are counted meanwhile ([countsChanged]).
+        private var parsed = PageLabel.parse(runCatching { host.pageLabel(here) }.getOrNull())
+        private var pagesKnown = runCatching { host.totalPagesKnown() }.getOrDefault(false) && parsed.total > 0
+        private var total = parsed.total
+        private var fraction = fractionNow()
         private var mode = if (pagesKnown) MODE_PAGE else MODE_PERCENT
         private val pad = InkNumPad(ctx)
         private val segments = arrayOfNulls<TextView>(3)
+        private var infoLabel: TextView? = null
         private lateinit var dialog: AlertDialog
+        private val countsListener: () -> Unit = { countsChanged() }
+
+        // The footer's own measure when the host has it (so "현재 N%" reads exactly like the footer); otherwise
+        // page-based once counts are complete (EPUB approxChars are only a size estimate), char-based before that.
+        private fun fractionNow(): Float =
+            jump?.let { j -> runCatching { j.progressFraction() }.getOrNull()?.takeIf { !it.isNaN() } }
+                ?: if (pagesKnown && parsed.page > 0) parsed.page.toFloat() / total else PageLabel.fractionOf(chars, here)
+
+        private fun infoText(): String {
+            val pending = runCatching { host.pagesPending() }.getOrNull() ?: ReaderFormat.PAGES_COUNTING
+            return GoToText.info(parsed.page, total, fraction, pagesKnown, pending)
+        }
 
         fun show() {
             val box = ctx.vertical { setPadding(ctx.dp(20), ctx.dp(8), ctx.dp(20), 0) }
-            box.addView(ctx.label(GoToText.info(parsed.page, total, fraction, pagesKnown), 14f, color = Ink.GRAY).apply {
+            box.addView(ctx.label(infoText(), 14f, color = Ink.GRAY).apply {
                 setLineSpacing(0f, 1.2f)
                 setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
+                infoLabel = this
             }, lp())
             val row = ctx.horizontal { setPadding(0, ctx.dp(12), 0, ctx.dp(8)) }
-            listOf("페이지", "%", "화").forEachIndexed { k, name ->
+            listOf("쪽", "%", "화").forEachIndexed { k, name ->
                 val v = segment(ctx, name).apply { setOnClickListener { select(k) } }
                 segments[k] = v
                 row.addView(v, lp(0, WRAP_CONTENT, 1f).apply { if (k > 0) leftMargin = ctx.dp(8) })
@@ -264,14 +270,30 @@ internal object InfoDialogs {
             box.addView(pad, lp())
             pad.onEnter = { v -> enter(v) }
             render(resetPad = true)
+            // showNoAnim, like the TOC and search dialogs: in fullscreen the dialog asks for the reader's bar state
+            // (H4); a plain show() let the focused dialog bring the system bars up over the page.
             dialog = ctx.alert().setTitle("페이지 이동")
                 .setView(ctx.einkScroll(box))
                 .setNegativeButton("취소", null)
-                .create()
-            dialog.setOnKeyListener { _, keyCode, ev -> pad.handleKey(keyCode, ev) }
-            dialog.window?.setWindowAnimations(0)
-            dialog.show()
+                .setOnKeyListener { _, keyCode, ev -> pad.handleKey(keyCode, ev) }
+                .showNoAnim()
             PanelRegistry.dialog(ctx, dialog)
+            dialog.setOnDismissListener { host.removeCountsListener(countsListener) }
+            host.addCountsListener(countsListener)
+        }
+
+        /**
+         * The pages are counted (or counting failed) while the dialog is open: the info text and [쪽]'s availability are
+         * read again. The mode stays as the user has it (percent stays, though pages are known now).
+         */
+        private fun countsChanged() {
+            if (!dialog.isShowing || host.document !== doc) return
+            parsed = PageLabel.parse(runCatching { host.pageLabel(here) }.getOrNull())
+            pagesKnown = runCatching { host.totalPagesKnown() }.getOrDefault(false) && parsed.total > 0
+            total = parsed.total
+            fraction = fractionNow()
+            infoLabel?.let { l -> infoText().let { if (l.text.toString() != it) l.text = it } }
+            render(resetPad = false)
         }
 
         /** Episodes that arrived after the dialog showed: [화] becomes available. */
@@ -375,7 +397,7 @@ internal object InfoDialogs {
 
     private fun segment(ctx: Activity, text: String): TextView = ctx.label(text, 16f, bold = true).apply {
         gravity = Gravity.CENTER
-        minHeight = ctx.dp(44)
+        minHeight = ctx.dp(48)
     }
 
     private fun setSegment(v: TextView, selected: Boolean, enabled: Boolean) {
@@ -447,7 +469,7 @@ internal object InfoDialogs {
 /** Texts of 책 정보 (pure, unit-tested). */
 internal object InfoText {
     /**
-     * "약 312만 자 · 예상 약 104시간": the book's length ("약 9,600자" under 10,000, "약 1.6만 자" under 100,000) and,
+     * "약 312만 자 (약 104시간)": the book's length ("약 9,600자" under 10,000, "약 1.6만 자" under 100,000) and,
      * with a reading speed ([charsPerMinute], T1-7), the time to read it all. Null for an empty book.
      */
     fun volume(chars: Long, charsPerMinute: Int?): String? {
@@ -461,13 +483,27 @@ internal object InfoText {
             else -> "약 ${(chars + 5_000) / 10_000}만 자"
         }
         if (charsPerMinute == null || charsPerMinute <= 0) return size
-        return "$size · 예상 ${approx(ReaderFormat.minutesFor(chars, charsPerMinute))}"
+        return "$size (${approx(ReaderFormat.minutesFor(chars, charsPerMinute))})"
     }
 
-    /** "약 7시간 20분 (이 화 3분)" from the book's and the episode's minutes left; null when the book's is unknown. */
+    /** "CP949 (직접 지정)", "UTF-8 (자동 감지)" or "자동 감지": the short names the encoding chooser uses. */
+    fun encoding(chosen: String, detected: String?): String = when {
+        chosen.isNotBlank() -> "${ReadingSettingsPopup.encodingShort(chosen)} (직접 지정)"
+        !detected.isNullOrBlank() -> "${ReadingSettingsPopup.encodingShort(detected)} (자동 감지)"
+        else -> "자동 감지"
+    }
+
+    /** "한국어" for a language code ("ko", "ko-KR", "en_US"); the code itself when it names no language. */
+    fun language(code: String?): String? {
+        val c = code?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val name = runCatching { Locale.forLanguageTag(c.replace('_', '-')).getDisplayLanguage(Locale.KOREAN) }.getOrNull()
+        return if (name.isNullOrBlank()) c else name
+    }
+
+    /** "약 7시간 20분 (챕터 3분)" from the book's and the chapter's minutes left; null when the book's is unknown. */
     fun timeLeft(bookMinutes: Int?, episodeMinutes: Int?): String? {
         if (bookMinutes == null) return null
-        val episode = episodeMinutes?.let { " (이 화 ${ReaderFormat.duration(it)})" }.orEmpty()
+        val episode = episodeMinutes?.let { " (챕터 ${ReaderFormat.duration(it)})" }.orEmpty()
         return approx(bookMinutes) + episode
     }
 

@@ -18,8 +18,12 @@ object EpisodeNumbers {
         Pattern.compile("(?:제\\s*)?(?<!\\d)(\\d{1,5})\\s*(?:화|회|話)"),
         Pattern.compile("(?i)(?<![a-z])(?:ep|episode|chapter|ch|#)\\s*\\.?\\s*(\\d{1,5})(?!\\d)"),
         Pattern.compile("(?<!\\d)(\\d{1,5})\\s*(?:장|편|章)"),
-        Pattern.compile("^\\s*[\\[<(【〈《]?\\s*(\\d{1,5})(?!\\d)(?!\\s*(?:권|부|卷))"),
+        // A leading decorative symbol is skipped ("◈ 002. [STAGE 0] …", "◆ 3").
+        Pattern.compile("^\\s*(?:$DECOR\\s*)*[\\[<(【〈《]?\\s*(\\d{1,5})(?!\\d)(?!\\s*(?:권|부|卷))"),
     )
+
+    /** Geometric shapes, arrows, misc symbols and dingbats, plus ※ • · : decoration in front of a heading. */
+    private const val DECOR = "[\\u2190-\\u21FF\\u25A0-\\u25FF\\u2600-\\u27BF※•·]"
 
     private val SPECIAL = arrayOf("외전", "번외", "특별", "후기", "공지")
 
@@ -28,7 +32,7 @@ object EpisodeNumbers {
      * 1. `(?:제\s*)?(\d{1,5})\s*(?:화|회|話)`
      * 2. `(?i)(?:ep|episode|chapter|ch|#)\s*\.?\s*(\d{1,5})`
      * 3. `(\d{1,5})\s*(?:장|편|章)`
-     * 4. `^\s*[\[<(【〈《]?\s*(\d{1,5})(?!\d)`
+     * 4. `^\s*[\[<(【〈《]?\s*(\d{1,5})(?!\d)` (after any decorative symbols)
      * The number never starts or ends inside a longer one (rules 1–3), rule 2's keyword is not the tail of a word
      * ("deep 3"), and rule 4 skips volume / part numbers ("2권", "1부"). Patterns are compiled once; a title without
      * a digit costs one scan. Fast enough for 2,000 titles in ≈ 20 ms on the device. Any thread.
@@ -64,7 +68,7 @@ class Episodes private constructor(
     val parsedCount: Int
 
     /**
-     * Largest number, or -1 when none parsed ("540화" in "지금 123화 · 540화"). Special entries count only when every
+     * Largest number, or -1 when none parsed ("540화" in "123/540화"). Special entries count only when every
      * numbered entry is special ("2024년 공지" must not make a 540-episode book read "2024화").
      */
     val maxNumber: Int
@@ -164,7 +168,7 @@ class Episodes private constructor(
     /**
      * The episode the reader is in when TOC entry [index] is the current one: that entry's number when it has one
      * and is not special, else the nearest such number before it (a 작가의 말 after 123화 is still "123화"); -1 when
-     * there is none. Used for "지금 123화".
+     * there is none. Used for "123/540화".
      */
     internal fun numberAt(index: Int): Int {
         var i = index.coerceAtMost(numbers.size - 1)

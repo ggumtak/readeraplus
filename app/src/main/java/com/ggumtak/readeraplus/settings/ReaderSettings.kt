@@ -13,8 +13,8 @@ data class ReaderSettings(
     /** FontManager font id ("ridibatang", "nanummyeongjo", "user:<file name>", ...). */
     val fontId: String = "nanummyeongjo",
     val fontSizeSp: Float = 20f,
-    /** 100..900; 400 = regular. Static fonts get synthetic emboldening above 400; variable fonts use wght. */
-    val fontWeight: Int = 500,
+    /** 100..900; 400 = 기본 (the regular weight, the default). Static fonts get synthetic emboldening above 400; variable fonts use wght. */
+    val fontWeight: Int = 400,
     /** Line height, % of em (170 = 1.7 em). */
     val lineHeightPct: Int = 200,
     /** Space between paragraphs, % of em. */
@@ -26,27 +26,44 @@ data class ReaderSettings(
     val align: Align = Align.LEFT,
     /** CHAR = 글자 단위 like ReadEra (tight justified lines); WORD = 어절 단위 (keep-all). */
     val lineBreak: LineBreakMode = LineBreakMode.WORD,
-    val marginLeftDp: Int = 40,
-    val marginRightDp: Int = 40,
-    val marginTopDp: Int = 40,
-    val marginBottomDp: Int = 40,
+    /** MaruViewer's side margin ([SideMargin.ZERO_DP], 2026-10-05). */
+    val marginLeftDp: Int = SideMargin.ZERO_DP,
+    val marginRightDp: Int = SideMargin.ZERO_DP,
+    /**
+     * Paper between the header's band and the text, and between the text and the footer's band ([VerticalMargin], since
+     * 2026-10-05; 40 dp from the screen's edges at the default bands, as before).
+     */
+    val marginTopDp: Int = VerticalMargin.TOP_ZERO_DP,
+    val marginBottomDp: Int = VerticalMargin.BOTTOM_ZERO_DP,
     /** ReadEra's "페이지 여백" switch: false = use tiny margins. */
     val pageMargins: Boolean = true,
-    /** White-on-black (only other color scheme; default black on white). */
+    /** White on black (흑백 반전, 밤 모드). Wins over [pageTheme] while on. */
     val invert: Boolean = false,
-    /** Status line at the top: left / centre / right. All NONE = no header band. Default: chapter title centred. */
-    val headerLeft: StatusItem = StatusItem.NONE,
-    val headerCenter: StatusItem = StatusItem.CHAPTER,
-    val headerRight: StatusItem = StatusItem.NONE,
+    /** Page colours ("화면 색"; default black on white). Like [invert], a change repaints and never re-lays out. */
+    val pageTheme: PageTheme = PageTheme.PAPER,
+    /**
+     * Status line at the top: left / centre / right. All NONE = no header band. Default: MaruViewer's line (2026-10-05):
+     * battery and clock, the book title, the page ([MaruHeader] gives it to settings saved before).
+     */
+    val headerLeft: StatusItem = StatusItem.CLOCK_BATTERY,
+    val headerCenter: StatusItem = StatusItem.BOOK_TITLE,
+    val headerRight: StatusItem = StatusItem.PAGE,
     /** Status line at the bottom. All NONE = no footer band. That is the default (user request). */
     val footerLeft: StatusItem = StatusItem.NONE,
     val footerCenter: StatusItem = StatusItem.NONE,
     val footerRight: StatusItem = StatusItem.NONE,
-    /** ReadEra-style reading-progress line along the bottom edge, drawn in the bottom margin ("진행 막대"). */
+    /** ReadEra-style reading-progress line along the bottom edge, in its own band below the margin ("진행 막대"). */
     val progressBar: Boolean = true,
-    val statusFontSizeSp: Float = 11f,            // unchanged
+    /** MaruViewer's status size in the phone's UI font ([MaruSize], 2026-10-05; 11 sp before). */
+    val statusFontSizeSp: Float = StatusBands.DEFAULT_SP,
     val widowOrphanControl: Boolean = true,
     val pageBreak: PageBreakMode = PageBreakMode.LINE,
+    /**
+     * Pages across a landscape screen: 1 = one page over the whole width ("한 쪽", "온전히", the default), 2 = two pages side
+     * by side ("두 쪽", "반 페이지씩"). Only a paged view wider than tall counts ([columnsFor][com.ggumtak.readeraplus.reader.LayoutKeys.columnsFor]);
+     * portrait and the scroll mode ignore it.
+     */
+    val landscapePages: Int = 1,
     // --- parsing options (TXT / EPUB) ---
     val txtBlankLines: Int = ParseOptions.BLANK_AUTO,
     val txtStripIndent: Boolean = true,
@@ -56,6 +73,8 @@ data class ReaderSettings(
     val txtEmphasizeHeadings: Boolean = true,
     val txtReplaceRules: String = "",
     val epubPublisherStyles: Boolean = true,
+    /** EPUB: body text is exactly the reader's size (the book's own font-size declarations count for headings only). */
+    val epubIgnoreBookSizes: Boolean = true,
 ) {
     val hasHeader: Boolean get() = headerLeft != StatusItem.NONE || headerCenter != StatusItem.NONE || headerRight != StatusItem.NONE
     val hasFooterText: Boolean get() = footerLeft != StatusItem.NONE || footerCenter != StatusItem.NONE || footerRight != StatusItem.NONE
@@ -78,6 +97,7 @@ data class ReaderSettings(
         txtReplaceRules = txtReplaceRules,
         txtEncoding = txtEncoding,
         epubPublisherStyles = epubPublisherStyles,
+        epubIgnoreBookSizes = epubIgnoreBookSizes,
     )
 
     companion object {
@@ -85,36 +105,61 @@ data class ReaderSettings(
         const val MAX_FONT_SP = 60f
 
         const val PROGRESS_LANE_DP = 12
+
+        /** [landscapePages]: stored values other than 2 mean one page. */
+        fun cleanLandscapePages(n: Int): Int = if (n == 2) 2 else 1
     }
 }
 
 /**
- * One-tap typography presets (only typography fields change; margins, status bar and parse options stay).
- * The defaults of [ReaderSettings] are [MARU]. The enum names are stored nowhere but kept from the first release;
- * only the labels changed (R2: 웹소설 / 전자책 / 종이책, the same looks as before).
+ * One-tap presets: the typography and the page colours ([ReaderSettings.pageTheme]) change; font size, margins, the
+ * status bar, 흑백 반전 and parse options stay. The enum names are stored nowhere but kept from the first release; only
+ * the labels changed (R2: 웹소설 / 전자책 / 종이책).
+ *
+ * [MARU] (웹소설) is MaruViewer's page as measured on the user's screenshot (2026-10-04): 나눔명조 Regular, a 2 em
+ * line pitch, one empty line between paragraphs, ragged right, no indent, on the [PageTheme.MARU] colours. The
+ * defaults of [ReaderSettings] keep the earlier 웹소설 typography (a 1 em paragraph gap) on white, so they
+ * match no preset: the 스타일 row calls them "기본" (`StyleChoice.isDefault`).
  */
 enum class StylePreset(val label: String, val description: String) {
-    MARU("웹소설", "나눔명조 · 왼쪽 정렬 · 어절 줄바꿈 · 넓은 줄/문단 간격 · 들여쓰기 없음"),
-    RIDI("전자책", "리디바탕 · 양쪽 정렬 · 글자 줄바꿈 · 1em 들여쓰기"),
-    BOOK("종이책", "나눔명조 · 양쪽 정렬 · 글자 줄바꿈 · 문단 간격 없이 들여쓰기");
+    MARU("웹소설", "마루뷰어 화면 · 나눔명조"),
+    RIDI("전자책", "리디바탕 · 양쪽 정렬"),
+    BOOK("종이책", "나눔명조 · 들여쓰기");
 
     fun applyTo(s: ReaderSettings): ReaderSettings = when (this) {
         MARU -> s.copy(
-            fontId = "nanummyeongjo", fontWeight = 500, lineHeightPct = 200, paragraphSpacingPct = 100,
+            fontId = "nanummyeongjo", fontWeight = 400, lineHeightPct = 200, paragraphSpacingPct = 200,
             indentPct = 0, letterSpacingPm = 0, align = Align.LEFT, lineBreak = LineBreakMode.WORD,
+            pageTheme = PageTheme.MARU,
         )
         RIDI -> s.copy(
             fontId = "ridibatang", fontWeight = 400, lineHeightPct = 170, paragraphSpacingPct = 50,
             indentPct = 100, letterSpacingPm = 0, align = Align.JUSTIFY, lineBreak = LineBreakMode.CHAR,
+            pageTheme = PageTheme.PAPER,
         )
         BOOK -> s.copy(
             fontId = "nanummyeongjo", fontWeight = 450, lineHeightPct = 170, paragraphSpacingPct = 0,
             indentPct = 100, letterSpacingPm = 0, align = Align.JUSTIFY, lineBreak = LineBreakMode.CHAR,
+            pageTheme = PageTheme.PAPER,
         )
     }
 
-    /** True when [s] currently matches this preset's typography. */
+    /** True when [s] currently matches this preset's typography and page colours. */
     fun matches(s: ReaderSettings): Boolean = applyTo(s) == s
+}
+
+/**
+ * Page colours ("화면 색", [ReaderSettings.pageTheme]); what they paint is `render/PagePalette`. 흑백 반전
+ * ([ReaderSettings.invert]) wins while on. Stored by name ("r.pageTheme"; unknown or missing = [PAPER]): never rename
+ * an entry, only append.
+ */
+enum class PageTheme(val label: String) {
+    /** Black on white: the e-ink default. */
+    PAPER("흰 바탕"),
+    /** MaruViewer's web-novel page: light grey text with a short shadow on a dark grey page (웹소설, 2026-10-04). */
+    MARU("마루뷰어"),
+    /** MARU's text and status colours on a black page (user, 2026-10-05: ⚙ 배경 흰색 / 회색 / 검은색). */
+    BLACK("검은 바탕"),
 }
 
 enum class TapZoneMode {
@@ -135,7 +180,7 @@ enum class TapZoneMode {
  * entry; add new ones at the end.
  */
 enum class TapAction(val label: String) {
-    /** Tap zone: nothing. Key binding: the reader leaves the key to the system (volume, …): "없음(시스템에 맡김)". */
+    /** Tap zone: nothing. Key binding: the reader leaves the key to the system (volume, …): "없음 (시스템에 맡김)". */
     NONE("없음"),
     NEXT("다음 페이지"),
     PREV("이전 페이지"),
@@ -144,7 +189,7 @@ enum class TapAction(val label: String) {
     TOC("목차"),
     SEARCH("검색"),
     SETTINGS("읽기 설정"),
-    TTS("TTS 읽기"),
+    TTS("듣기"),
     NEXT_CHAPTER("다음 챕터"),
     PREV_CHAPTER("이전 챕터"),
     REFRESH("화면 새로고침"),
@@ -162,7 +207,7 @@ enum class TapAction(val label: String) {
  */
 enum class KeyHold(val label: String) {
     REPEAT("계속 넘기기"),
-    CHAPTER("다음·이전 화로"),
+    CHAPTER("다음·이전 챕터로"),
     TEN("10쪽씩"),
     SINGLE("한 쪽만"),
 }
@@ -223,7 +268,10 @@ data class AppSettings(
     val einkRefreshMethod: Int = EINK_REFRESH_AUTO,
     /** How long the black frame of [EINK_REFRESH_FLASH] (and of the fallback) stays up: 100 / 200 / 350 ms. */
     val einkFlashMs: Int = 100,
-    /** Refresh cadence while the page is inverted (밤 모드): -1 = same as [einkRefreshEvery], else every N turns. */
+    /**
+     * Refresh cadence while the page is dark (흑백 반전, or the 마루뷰어 화면 색: `PagePalette.dark`): -1 = same as
+     * [einkRefreshEvery], else every N turns.
+     */
     val einkRefreshEveryNight: Int = -1,
     /** Refresh on turns to / from pages with pictures (≥ 7.5% of the page). Off by default: app flashes are opt-in. */
     val einkFlashImages: Boolean = false,
@@ -232,7 +280,7 @@ data class AppSettings(
     val ttsRate: Float = 1f,
     val ttsPitch: Float = 1f,
     val ttsSleepMinutes: Int = 0,
-    /** TTS sleep timer by episodes: 0 = off, 1 = "이 화 끝까지", 2 = "2화 끝까지" (instead of [ttsSleepMinutes]). */
+    /** 멈춤 예약 by chapters: 0 = off, 1 = "이 챕터 끝까지", 2 = "다음 챕터 끝까지" (instead of [ttsSleepMinutes]). */
     val ttsSleepChapters: Int = 0,
     /** "읽는 문장 표시": underline the sentence being spoken (each sentence redraws the page: one e-ink update). */
     val ttsHighlight: Boolean = true,
@@ -256,7 +304,7 @@ data class AppSettings(
     val highlightLook: Int = HL_LOOK_AUTO,
     val listPaging: Int = LIST_PAGING_AUTO,
     val recordLookups: Boolean = true,
-    /** Slider position 0..1, or -1 = system; the device path applies LightCurve. */
+    /** Slider position 0..1, or -1 = system; both light paths output LightCurve.out of it ([BrightnessEncoding]). */
     val brightness: Float = -1f,
 )
 
@@ -272,40 +320,46 @@ const val EINK_REFRESH_GC16 = 1
 const val EINK_REFRESH_CLEAN = 2
 const val EINK_REFRESH_FLASH = 3
 
+/** The library's sort orders (stored by name); ADDED lists the newest first. */
 enum class LibrarySort(val label: String) {
     RECENT("최근 읽은 순"),
-    TITLE("제목"),
-    AUTHOR("작가"),
-    ADDED("추가한 날짜"),
-    SIZE("파일 크기"),
-    PROGRESS("진행률"),
+    TITLE("제목순"),
+    AUTHOR("작가순"),
+    ADDED("최근 추가순"),
+    SIZE("파일 크기순"),
+    PROGRESS("진행률순"),
 }
 
-/** Library views, in the order the toolbar toggle cycles through them (stored by name). */
-enum class LibraryListMode(val label: String) { LIST("전체"), COMPACT("요약"), GRID("썸네일"), COVERS("그리드") }
+/** Library views, in the order the toolbar toggle cycles through them (stored by name: the names never change). */
+enum class LibraryListMode(val label: String) { LIST("자세히"), COMPACT("간단히"), GRID("큰 표지"), COVERS("작은 표지") }
 
 /**
  * What one slot of the page's status lines shows. The header and the footer each have three slots
- * (left / centre / right). Stored by name ("r.footerLeft" = "CLOCK"): never rename an entry, only append.
+ * (left / centre / right). Stored by name ("r.footerLeft" = "CLOCK"): never rename or remove an entry.
  * The declaration order is the chooser order. [short] labels the popup's slot buttons (≤ 6 Hangul).
  * [example] is shown in choosers that have no live value.
  */
 enum class StatusItem(val label: String, val short: String, val example: String?) {
     NONE("없음", "없음", null),
     CHAPTER("챕터 제목", "챕터 제목", "제3화 비밀"),
-    BOOK_TITLE("책 제목", "책 제목", "책 제목"),
+    BOOK_TITLE("책 제목", "책 제목", null),
     PAGE("쪽 번호", "쪽 번호", "12 / 3259"),
+    CHAPTER_PAGES_LEFT("챕터 쪽 번호", "챕터 쪽", "2 / 32"),          // the name of its old meaning (pages left) stays
     PERCENT("진행률", "진행률", "34%"),
-    CHAPTER_PAGES_LEFT("챕터 남은 쪽", "남은 쪽", "챕터 5쪽 남음"),
     EPISODE("회차", "회차", "123/540화"),
-    TIME_LEFT_EPISODE("이 화 남은 시간", "화 남은 시간", "이 화 3분"),
+    TIME_LEFT_EPISODE("챕터 남은 시간", "챕터 시간", "챕터 3분"),
     TIME_LEFT_BOOK("책 남은 시간", "책 남은 시간", "책 7시간 20분"),
     CLOCK("시계", "시계", "14:05"),
+    // The page draws the battery icon, then the bare number: no "%" here either.
     BATTERY("배터리", "배터리", "80"),                       // [Δ] no "▭": U+25AD is missing from some firmware fonts
-    CLOCK_BATTERY("시계 · 배터리", "시계·배터리", "14:05 · 80");
+    // MaruViewer's corner: the battery icon (its fill is the level, no number), then the time. The name stays (stored).
+    CLOCK_BATTERY("배터리 아이콘 · 시계", "배터리·시계", "14:05");
 
     /** Titles are the only items shortened with "…" when their slot is narrow. Numbers never are. */
     val elastic: Boolean get() = this == CHAPTER || this == BOOK_TITLE
+
+    /** A shortened book title keeps its end, like MaruViewer's file name ("…능을 전혀 안숨김 1-246"); a chapter its start. */
+    val keepsEnd: Boolean get() = this == BOOK_TITLE
 }
 
 /** Reading modes; changing mode does not change pagination. */

@@ -115,19 +115,37 @@ class PageCountsTest {
     }
 
     @Test
-    fun pagesLeftInChapter() {
+    fun chapterStartPage() {
         val c = PageCounts(intArrayOf(100, 100, 100, 100))
         for (i in 0 until 4) c.set(i, 5, 100)
-        // same section: next chapter starts at the top of page 4, reader on page 1 → pages 2, 3 left
-        assertEquals(2, c.pagesLeftUntil(0, 1, 5, 0, 4, true))
-        // next chapter starts mid-page 4 → page 4 still holds this chapter's tail
-        assertEquals(3, c.pagesLeftUntil(0, 1, 5, 0, 4, false))
-        // next chapter starts on this page
-        assertEquals(0, c.pagesLeftUntil(0, 4, 5, 0, 4, false))
-        // next chapter = start of section 2: rest of section 0 (2 pages) + section 1 (5 pages)
-        assertEquals(7, c.pagesLeftUntil(0, 2, 5, 2, 0, true))
-        // next chapter = next section start while on the last page
-        assertEquals(0, c.pagesLeftUntil(0, 4, 5, 1, 0, true))
+        // An entry at the top of page index 3 of section 1 (global page 9): the chapter begins there.
+        assertEquals(9, c.chapterStart(1, 3, true))
+        // An entry mid-page: that page belongs to the chapter before, this one begins on the next page.
+        assertEquals(10, c.chapterStart(1, 3, false))
+        // Mid-page on a section's last page: the next section's first page.
+        assertEquals(11, c.chapterStart(1, 4, false))
+        assertEquals(1, c.chapterStart(0, 0, true))
+    }
+
+    @Test
+    fun chapterPageAroundAMidPageChapter() {
+        val c = PageCounts(intArrayOf(100, 100, 100))
+        for (i in 0 until 3) c.set(i, 5, 100)
+        val inp = StatusInputs()
+        // Front matter on pages 1–3 (the first entry starts mid-page 3, so page 3 is still front matter).
+        val first = c.chapterStart(0, 2, false)
+        assertEquals(4, first)
+        inp.setChapterPage(c.globalPage(0, 2), 1, first)
+        assertEquals("3 / 3", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
+        // The chapter: from page 4 up to the next entry at the top of section 2 (page 11): 7 pages.
+        val next = c.chapterStart(2, 0, true)
+        inp.setChapterPage(c.globalPage(0, 3), first, next)
+        assertEquals("1 / 7", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
+        inp.setChapterPage(c.globalPage(1, 4), first, next)
+        assertEquals("7 / 7", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
+        // The last chapter ends with the book.
+        inp.setChapterPage(c.globalPage(2, 1), next, c.total() + 1)
+        assertEquals("2 / 5", ReaderFormat.chapterPage(inp.chapterPage, inp.chapterPages))
     }
 
     @Test

@@ -18,13 +18,23 @@ import java.io.IOException
  * serialises writers; WAL lets readers run alongside), multi-statement changes run in transactions.
  */
 object Library {
+    /**
+     * In-memory change counter of everything the notes hub shows (N §5.1); every notes read cache is keyed by it.
+     * Bumped by [notesChanged] AFTER the write that changed it has committed, so a reader that sees the new value
+     * also sees the new rows (a cache filled from the old rows carries the old value and is dropped).
+     */
     @Volatile var notesGen: Long = 0; private set
-    fun updateQuoteStyle(id: Long, style: Int) {} // R3 stub (owner: DA-C)
-    fun setQuoteStyles(ids: Collection<Long>, style: Int) {} // R3 stub (owner: DA-C)
-    fun deleteQuotes(ids: Collection<Long>) { ids.forEach { deleteQuote(it) } } // R3 stub (owner: DA-C)
-    fun deleteBookmarks(ids: Collection<Long>) { ids.forEach { deleteBookmark(it) } } // R3 stub (owner: DA-C)
-    fun clearReviews(bookIds: Collection<Long>) { bookIds.forEach { setReview(it, "") } } // R3 stub (owner: DA-C)
-    fun fillNotePlaces(bookId: Long, quotes: Map<Long, NotePlace>, bookmarks: Map<Long, NotePlace>) {} // R3 stub (owner: DA-C)
+
+    private val genLock = Any()
+
+    /**
+     * Marks the hub's data changed ([notesGen]++). Call after the commit of a write the hub shows (quotes,
+     * bookmarks, reviews, lookups, book removal / trash / revive / titles / paths, backup import); never inside a
+     * transaction that may still roll back.
+     */
+    internal fun notesChanged() {
+        synchronized(genLock) { notesGen++ }
+    }
 
     private const val TAG = "Library"
 
@@ -150,8 +160,9 @@ object Library {
     fun addOrUpdateFile(file: File): Book? = addOrUpdate(file, explicit = true)
 
     /**
-     * [explicit] = the user asked for this file (open / import): clears a "removed from library" mark so the
-     * file becomes a normal library entry again.
+     * [explicit] = the user asked for this file (open / import / Wi-Fi upload): clears a "removed from library"
+     * mark and takes a row the user trashed out of the trash, so the file becomes a normal library entry again.
+     * A library scan never passes it (it doesn't come through here).
      */
     internal fun addOrUpdate(file: File, explicit: Boolean): Book? {
         val path = normalizePath(file.absolutePath)
@@ -162,21 +173,40 @@ object Library {
         val size = f.length()
         val mtime = f.lastModified()
         if (explicit) db.exec(LibrarySql.DELETE_IGNORED, path)
-        val existing = db.queryFirst(LibrarySql.SELECT_BOOK_BY_PATH, arrayOf(path), BookRows::book)
+        var existing = db.queryFirst(LibrarySql.SELECT_BOOK_BY_PATH, arrayOf(path), BookRows::book)
+        if (existing != null && existing.missingAt > 0) {
+            // The file of a book the scanner trashed as missing is back at its own path: out of the trash again.
+            if (db.exec(LibrarySql.CLEAR_MISSING, existing.id) > 0) {
+                notesChanged()
+                existing = existing.copy(trashed = false, missingAt = 0)
+            }
+        }
+        if (explicit && existing != null && existing.trashed) {
+            // Added again by the user (the same file reused, e.g. an identical upload): out of the trash.
+            db.exec(LibrarySql.UNTRASH, existing.id)
+            notesChanged()
+            existing = existing.copy(trashed = false, missingAt = 0)
+        }
         if (existing != null && existing.sizeBytes == size && existing.modifiedAt == mtime) return existing
         val info = FileInfo(path, f.name, format, size, mtime)
         if (existing == null) {
             // Moved with a file manager and opened before the next scan: keep the old entry's history (the scan
-            // would otherwise see the new path as known and drop the old entry with its bookmarks / quotes).
+            // would otherwise see the new path as known and drop the old entry with its bookmarks / quotes). A
+            // missing entry (trashed by the scanner) is matched too, and revived.
             val from = movedEntry(db, info)
             if (from != null) {
                 val meta = if (from.mtime == mtime) null else readMeta(f)
-                db.inTransaction { moveFile(this, from.id, info, meta) }
+                db.inTransaction {
+                    moveFile(this, from.id, info, meta)
+                    exec(LibrarySql.CLEAR_MISSING, from.id)
+                }
+                notesChanged()
                 db.queryFirst(LibrarySql.SELECT_BOOK_BY_PATH, arrayOf(path), BookRows::book)?.let { return it }
             }
         }
         val meta = readMeta(f)
         db.inTransaction { writeFile(this, info, meta, existing?.id) }
+        notesChanged()
         return db.queryFirst(LibrarySql.SELECT_BOOK_BY_PATH, arrayOf(path), BookRows::book)
     }
 
@@ -213,7 +243,8 @@ object Library {
 
     /**
      * Inserts [info] or refreshes the existing row (must run inside a transaction). Returns the book id, or -1.
-     * A changed file loses its cached page counts; user-edited metadata is kept.
+     * A changed file loses its cached page counts; user-edited metadata is kept. The caller runs [notesChanged]
+     * after the commit (a refreshed title shows in the notes hub).
      */
     internal fun writeFile(db: SQLiteDatabase, info: FileInfo, meta: MetaInfo, existingId: Long?): Long {
         var id = existingId ?: -1L
@@ -235,7 +266,8 @@ object Library {
 
     /**
      * Re-points entry [id] to a moved file (must run inside a transaction). [meta] null = same content
-     * (unchanged mtime): metadata and page counts stay; otherwise they are refreshed like a changed file.
+     * (unchanged mtime): metadata and page counts stay; otherwise they are refreshed like a changed file. The caller
+     * runs [notesChanged] after the commit (the hub's open check and the export read the path).
      */
     internal fun moveFile(db: SQLiteDatabase, id: Long, info: FileInfo, meta: MetaInfo?) {
         if (db.exec(LibrarySql.UPDATE_BOOK_PATH, info.path, id) == 0) return
@@ -246,11 +278,16 @@ object Library {
         }
     }
 
-    fun savePosition(bookId: Long, section: Int, offset: Int, progress: Float) {
+    /**
+     * Saves the place read at [at] (epoch millis, taken by the caller when it read the position, not when this runs).
+     * `last_read_at` becomes [at], and the write is skipped when the row already holds a later read time, so
+     * writes that reach the database out of order leave the newest position in place ([LibrarySql.UPDATE_POSITION]).
+     */
+    fun savePosition(bookId: Long, section: Int, offset: Int, progress: Float, at: Long) {
         val p = if (progress.isNaN()) 0f else progress.coerceIn(0f, 1f)
         db().exec(
             LibrarySql.UPDATE_POSITION,
-            section.coerceAtLeast(0), offset.coerceAtLeast(0), p, System.currentTimeMillis(), bookId,
+            section.coerceAtLeast(0), offset.coerceAtLeast(0), p, at, bookId, at, at + LibrarySql.FUTURE_STAMP_MS,
         )
     }
 
@@ -299,8 +336,13 @@ object Library {
         if (db.exec(LibrarySql.CLEAR_FINISHED_AT, bookId) > 0) db.exec(LibrarySql.PRUNE_BOOK_PREFS, bookId)
     }
 
+    /**
+     * [value] false (복원) also clears `missing_at`: a restored missing book is an ordinary one again. True (휴지통)
+     * clears it as well, so the scanner never takes a book the user trashed out of the trash.
+     */
     fun setTrashed(bookId: Long, value: Boolean) {
-        db().exec(LibrarySql.SET_TRASHED, value, bookId)
+        db().exec(if (value) LibrarySql.TRASH else LibrarySql.UNTRASH, bookId)
+        notesChanged()
     }
 
     // ---- batch changes (library multi-select, T1-13): one transaction each, so N books cost one commit ----
@@ -330,11 +372,22 @@ object Library {
     /** Moves every book of [ids] to the trash ([setTrashed] true). */
     fun trash(ids: Collection<Long>) {
         if (ids.isEmpty()) return
-        db().inTransaction { for (id in ids) exec(LibrarySql.SET_TRASHED, true, id) }
+        db().inTransaction { for (id in ids) exec(LibrarySql.TRASH, id) }
+        notesChanged()
     }
 
+    /** Stores the review with `review_at` = now (0 when blank: no review, nothing to date). */
     fun setReview(bookId: Long, text: String) {
-        db().exec(LibrarySql.SET_REVIEW, cap(text.trimEnd(), MAX_REVIEW), bookId)
+        val t = cap(text.trimEnd(), MAX_REVIEW)
+        db().exec(LibrarySql.SET_REVIEW, t, if (t.isEmpty()) 0L else System.currentTimeMillis(), bookId)
+        notesChanged()
+    }
+
+    /** 리뷰 지우기 for every book of [bookIds] (review = '', review_at = 0), one transaction. */
+    fun clearReviews(bookIds: Collection<Long>) {
+        if (bookIds.isEmpty()) return
+        db().inTransaction { for (id in bookIds) exec(LibrarySql.CLEAR_REVIEW, id) }
+        notesChanged()
     }
 
     /** Forced TXT encoding ("" = auto). Cached page counts of the old decoding are dropped. */
@@ -358,16 +411,20 @@ object Library {
         val s = series?.let { MetaInfo.clean(it, 500) }?.ifEmpty { null }
         val i = if (s == null) null else seriesIndex?.takeIf { it.isFinite() }
         db.exec(LibrarySql.UPDATE_BOOK_META_USER, t, a, s, i, bookId)
+        notesChanged()
     }
 
     /**
-     * Clears position/progress/flags and the finish time ("읽은 기록 초기화"). The reading log keeps its rows: the
-     * statistics show when the user read, and that reading did happen.
+     * Clears position/progress/flags, the finish time and the return history ("읽은 기록 초기화", U §3.3).
+     * The reading log keeps its rows: the statistics show when the user read, and that reading did happen. Touches
+     * no notes, so [notesGen] stays.
      */
     fun resetProgress(bookId: Long) {
         db().inTransaction {
             exec(LibrarySql.RESET_PROGRESS, bookId)
-            clearFinished(this, bookId)
+            exec(LibrarySql.CLEAR_FINISHED_AT, bookId)
+            exec(LibrarySql.CLEAR_RETURN_MARK, bookId)
+            exec(LibrarySql.PRUNE_BOOK_PREFS, bookId)
         }
     }
 
@@ -382,12 +439,20 @@ object Library {
             // A kept file must not come back with the next scan; a deleted one may be re-created later.
             if (deleteFile) exec(LibrarySql.DELETE_IGNORED, path) else insertRow(LibrarySql.INSERT_IGNORED, path, now)
         }
+        notesChanged()
         invalidateCover(bookId)
     }
 
-    fun emptyTrash(deleteFiles: Boolean) {
+    /**
+     * "휴지통 비우기" of the books [ids] that are still in the trash. The ids are the ones the question counted notes
+     * over: a book trashed since (a scan marking a vanished file) stays in the trash, so its notes are never deleted
+     * without the warning (NOTES_SPEC §10.1).
+     */
+    fun emptyTrash(ids: Collection<Long>, deleteFiles: Boolean) {
         val db = db()
+        val wanted = ids.toHashSet()
         val trashed = db.queryList(LibrarySql.SELECT_TRASHED_IDS, null) { it.getLong(0) to (it.getString(1) ?: "") }
+            .filter { it.first in wanted }
         if (trashed.isEmpty()) return
         val removed = ArrayList<Pair<Long, String>>(trashed.size)
         var failed = 0
@@ -409,13 +474,17 @@ object Library {
                 if (deleteFiles) exec(LibrarySql.DELETE_IGNORED, path) else insertRow(LibrarySql.INSERT_IGNORED, path, now)
             }
         }
+        if (removed.isNotEmpty()) notesChanged()
         for ((id, _) in removed) invalidateCover(id)
-        if (failed > 0) throw IOException("파일 ${failed}개를 삭제하지 못했습니다")
+        if (failed > 0) throw IOException("파일 ${failed}개가 지워지지 않습니다")
     }
 
     fun lastOpened(): Book? = db().queryFirst(LibrarySql.SELECT_LAST_OPENED, null, BookRows::book)
 
-    /** Deletes a book row and everything hanging off it (must run inside a transaction). */
+    /**
+     * Deletes a book row and everything hanging off it, its lookups included (must run inside a transaction). The
+     * caller runs [notesChanged] after the commit.
+     */
     internal fun deleteBookRows(db: SQLiteDatabase, bookId: Long) {
         db.exec(LibrarySql.DELETE_BOOKMARKS_OF_BOOK, bookId)
         db.exec(LibrarySql.DELETE_QUOTES_OF_BOOK, bookId)
@@ -430,7 +499,7 @@ object Library {
     private fun deleteFileOrThrow(path: String) {
         if (path.isEmpty()) return
         val f = File(path)
-        if (f.exists() && !f.delete() && f.exists()) throw IOException("파일을 삭제할 수 없습니다: ${f.name}")
+        if (f.exists() && !f.delete() && f.exists()) throw IOException("파일이 지워지지 않습니다")
     }
 
     internal fun invalidateCover(bookId: Long) {
@@ -450,25 +519,43 @@ object Library {
     fun bookmarks(bookId: Long): List<Bookmark> =
         db().queryList(LibrarySql.SELECT_BOOKMARKS, args(bookId), BookRows::bookmark)
 
+    /** [place] = where the bookmark sits (reader's NotePlaceHost); null stores "unknown" ('' / -1 / ''). */
     fun addBookmark(bookId: Long, section: Int, offset: Int, snippet: String, place: NotePlace? = null): Bookmark {
         val now = System.currentTimeMillis()
         val s = cap(snippet.trim(), MAX_SNIPPET)
         val sec = section.coerceAtLeast(0)
         val off = offset.coerceAtLeast(0)
-        val id = db().insertRow(LibrarySql.INSERT_BOOKMARK, bookId, sec, off, s, "", now)
-        return Bookmark(id = id, bookId = bookId, section = sec, offset = off, snippet = s, createdAt = now)
+        val p = NoteWrites.place(place)
+        val id = db().insertRow(LibrarySql.INSERT_BOOKMARK, bookId, sec, off, s, "", now, p.chapter, p.frac, p.sig)
+        if (id > 0) notesChanged()
+        return Bookmark(
+            id = id, bookId = bookId, section = sec, offset = off, snippet = s, createdAt = now,
+            chapter = p.chapter, frac = p.frac, sig = p.sig,
+        )
     }
 
     fun deleteBookmark(id: Long) {
-        db().exec(LibrarySql.DELETE_BOOKMARK, id)
+        if (db().exec(LibrarySql.DELETE_BOOKMARK, id) > 0) notesChanged()
+    }
+
+    /** Deletes every bookmark of [ids] in one transaction (hub multi-select). */
+    fun deleteBookmarks(ids: Collection<Long>) {
+        if (ids.isEmpty()) return
+        val n = db().inTransaction { ids.sumOf { exec(LibrarySql.DELETE_BOOKMARK, it) } }
+        if (n > 0) notesChanged()
     }
 
     fun updateBookmarkNote(id: Long, note: String) {
-        db().exec(LibrarySql.UPDATE_BOOKMARK_NOTE, cap(note.trim(), MAX_NOTE), id)
+        if (db().exec(LibrarySql.UPDATE_BOOKMARK_NOTE, cap(note.trim(), MAX_NOTE), id) > 0) notesChanged()
     }
 
     fun quotes(bookId: Long): List<Quote> = db().queryList(LibrarySql.SELECT_QUOTES, args(bookId), BookRows::quote)
 
+    /**
+     * [style] = QuoteStyles id (clamped to 0..[DataLimits.QUOTE_STYLE_MAX]); [place] = where the quote sits (null
+     * stores "unknown"). Throws when nothing was inserted (the insert returns an id <= 0, e.g. OR IGNORE), so a caller
+     * never mistakes the placeholder row for a saved quote.
+     */
     fun addQuote(bookId: Long, section: Int, start: Int, end: Int, text: String, note: String = "", style: Int = 0, place: NotePlace? = null): Quote {
         val now = System.currentTimeMillis()
         val s = minOf(start, end).coerceAtLeast(0)
@@ -476,16 +563,62 @@ object Library {
         val t = cap(text, MAX_QUOTE)
         val n = cap(note.trim(), MAX_NOTE)
         val sec = section.coerceAtLeast(0)
-        val id = db().insertRow(LibrarySql.INSERT_QUOTE, bookId, sec, s, e, t, n, now)
-        return Quote(id = id, bookId = bookId, section = sec, start = s, end = e, text = t, note = n, createdAt = now)
+        val st = NoteWrites.style(style)
+        val p = NoteWrites.place(place)
+        val id = db().insertRow(LibrarySql.INSERT_QUOTE, bookId, sec, s, e, t, n, now, st, p.chapter, p.frac, p.sig)
+        check(id > 0) { "quote not inserted" }
+        notesChanged()
+        return Quote(
+            id = id, bookId = bookId, section = sec, start = s, end = e, text = t, note = n, createdAt = now,
+            style = st, chapter = p.chapter, frac = p.frac, sig = p.sig,
+        )
     }
 
     fun deleteQuote(id: Long) {
-        db().exec(LibrarySql.DELETE_QUOTE, id)
+        if (db().exec(LibrarySql.DELETE_QUOTE, id) > 0) notesChanged()
+    }
+
+    /** Deletes every quote of [ids] in one transaction (hub multi-select). */
+    fun deleteQuotes(ids: Collection<Long>) {
+        if (ids.isEmpty()) return
+        val n = db().inTransaction { ids.sumOf { exec(LibrarySql.DELETE_QUOTE, it) } }
+        if (n > 0) notesChanged()
     }
 
     fun updateQuoteNote(id: Long, note: String) {
-        db().exec(LibrarySql.UPDATE_QUOTE_NOTE, cap(note.trim(), MAX_NOTE), id)
+        if (db().exec(LibrarySql.UPDATE_QUOTE_NOTE, cap(note.trim(), MAX_NOTE), id) > 0) notesChanged()
+    }
+
+    /** 색 바꾸기: [style] clamped to 0..[DataLimits.QUOTE_STYLE_MAX]. */
+    fun updateQuoteStyle(id: Long, style: Int) {
+        if (db().exec(LibrarySql.UPDATE_QUOTE_STYLE, NoteWrites.style(style), id) > 0) notesChanged()
+    }
+
+    /** Recolours every quote of [ids] in one transaction (hub batch 색 바꾸기). */
+    fun setQuoteStyles(ids: Collection<Long>, style: Int) {
+        if (ids.isEmpty()) return
+        val st = NoteWrites.style(style)
+        val n = db().inTransaction { ids.sumOf { exec(LibrarySql.UPDATE_QUOTE_STYLE, st, it) } }
+        if (n > 0) notesChanged()
+    }
+
+    /**
+     * Backfill of legacy notes' places, computed by the reader for book [bookId] (keys = note ids). Only rows whose
+     * place is still unknown (`frac < 0`) are touched, and their `sig` stays '' (it was not known at creation). An
+     * entry with an unknown place itself is skipped. One transaction. ([bookId] names the book the places were
+     * computed for; the note ids alone address the rows.)
+     */
+    fun fillNotePlaces(bookId: Long, quotes: Map<Long, NotePlace>, bookmarks: Map<Long, NotePlace>) {
+        val q = NoteWrites.backfill(quotes)
+        val b = NoteWrites.backfill(bookmarks)
+        if (q.isEmpty() && b.isEmpty()) return
+        val n = db().inTransaction {
+            var changed = 0
+            for ((id, p) in q) changed += exec(LibrarySql.UPDATE_QUOTE_PLACE, p.chapter, p.frac, id)
+            for ((id, p) in b) changed += exec(LibrarySql.UPDATE_BOOKMARK_PLACE, p.chapter, p.frac, id)
+            changed
+        }
+        if (n > 0) notesChanged()
     }
 
     // ---- collections ----

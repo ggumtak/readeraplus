@@ -16,8 +16,8 @@ class ErrorLinesTest {
         assertEquals("복원 실패: 리더플러스 백업 파일이 아닙니다", ErrorLines.line("복원 실패", e))
         assertNull(ErrorLines.detail(e))
         assertEquals("백업 실패: 파일을 열 수 없습니다", ErrorLines.line("백업 실패", IllegalStateException("파일을 열 수 없습니다")))
-        assertEquals("삭제하지 못했습니다: 파일 3개를 삭제하지 못했습니다",
-            ErrorLines.line("삭제하지 못했습니다", IOException("파일 3개를 삭제하지 못했습니다")))
+        assertEquals("비우지 못했습니다: 파일 3개가 지워지지 않습니다",
+            ErrorLines.line("비우지 못했습니다", IOException("파일 3개가 지워지지 않습니다")))
     }
 
     @Test

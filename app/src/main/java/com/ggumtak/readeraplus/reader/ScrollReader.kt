@@ -3,6 +3,7 @@ package com.ggumtak.readeraplus.reader
 import android.graphics.Canvas
 import android.os.SystemClock
 import android.view.ViewConfiguration
+import android.widget.OverScroller
 import com.ggumtak.readeraplus.engine.PageInfo
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.render.DeviceClass
@@ -11,11 +12,17 @@ import com.ggumtak.readeraplus.render.PageDecor
 import com.ggumtak.readeraplus.render.PageRenderer
 import com.ggumtak.readeraplus.settings.ScrollStyle
 import com.ggumtak.readeraplus.settings.Settings
+import kotlin.math.abs
 import kotlin.math.round
+import kotlin.math.roundToInt
 
 internal enum class Motion { STEP, SMOOTH }
 
-/** Created only for scroll mode. Page commands replace the viewport immediately on every device. */
+/**
+ * Created only for scroll mode. Page commands (taps, keys, jumps) replace the viewport immediately on every device. A
+ * SMOOTH drag follows the finger and a fast release keeps going with the platform's fling deceleration (like any
+ * Android list; the user asked for it on 2026-10-04), one settle at its end; a touch stops it where it is.
+ */
 internal class ScrollReader(private val view: PageView, private val host: Host) : PageView.ScrollInput, StripSource {
     interface Host {
         fun session(): BookSession?; fun renderer(): PageRenderer?; fun geometry(): PageGeometry?
@@ -41,8 +48,13 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     private var direction = 1
     private var top = -1L
     private var focus = -1
+    /** A finger is down in a drag (from the drag's start to its release / cancel), also in STEP where nothing moves. */
+    private var held = false
     private var virtual: VirtualPage? = null
     private var virtualDirty = true
+    /** Every section's virtual page on screen (the screen-reader tree); rebuilt when the window changed. */
+    private var virtuals: List<VirtualPage> = emptyList()
+    private var virtualsDirty = true
     private var window = ScrollWindow()
     private var spare = ScrollWindow()
     private val sections = IntArray(8) { -1 }
@@ -68,7 +80,9 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     private val imageLayouts = arrayOfNulls<SectionLayout>(ScrollMath.MAX_STRIPS * 3)
     private val imagePages = IntArray(imageLayouts.size)
     private var imageCount = 0
-    private val imageDone = Runnable { if (!frozen && !detached) view.invalidate() }
+    /** The last frame drew a placeholder for a visible image (S §1.8: only that is redrawn when a decode lands). */
+    private var lastMissing = false
+    private val imageDone = Runnable { if (!frozen && !detached && lastMissing) view.invalidate() }
     private val work = Runnable {
         workPosted = false
         if (!frozen && !detached) navigation.continueWork()
@@ -85,10 +99,20 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
             if (imagesDirty) { imagesDirty = false; requestImages() }
         }
     }
+    /**
+     * SMOOTH momentum after a fast release: the platform deceleration, fed to the navigation as drag frames. Made at
+     * the first fling (nothing new on the first-page path).
+     */
+    private val scroller by lazy(LazyThreadSafetyMode.NONE) { OverScroller(view.context) }
+    /** A fling is moving the text (the drag stays open in the navigation until it ends). */
+    var flinging = false
+        private set
+    private var flingY = 0
+    private val flingTick = Runnable { stepFling() }
     private val navigation: ScrollNavigation = ScrollNavigation(this, object : ScrollNavigation.Events {
         override fun changed() { rebuildWindow(); updateTop(); invalidate(false) }
         override fun settled(kind: SettleKind, distance: Float) {
-            focus = -1; virtual = null; virtualDirty = true
+            focus = -1; virtual = null; virtualDirty = true; virtualsDirty = true
             updateTop()
             host.onSettled(kind, distance)
             decor = host.decor()
@@ -104,8 +128,16 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     val pos: ScrollPos get() = navigation.pos
     override val sectionCount: Int get() = shownCount
     private val height: Float get() = navigation.height
-    private val clip: Float get() = if (currentMotion == Motion.STEP) minOf(height, window.wholeBottom) else height
+    /**
+     * The last move was a tap / key step or a jump (user, 2026-10-06: "탭을 눌렀을 때도 … 글씨가 잘리는 일은 없도록"):
+     * until the next drag the text ends at its last whole line, as in [Motion.STEP]; a drag shows the cut line again.
+     */
+    private var stepped = false
+    private val clip: Float get() =
+        if ((currentMotion == Motion.STEP || stepped) && window.wholeBottom > 0f) minOf(height, window.wholeBottom) else height
     override val live: Boolean get() = currentMotion == Motion.SMOOTH
+    /** On e-ink a drag starts only past the tap slop, so a slightly moving tap still turns the page. */
+    override val fineDrag: Boolean get() = live && !ink
 
     override fun layoutOf(section: Int): SectionLayout? {
         for (i in sections.indices) if (sections[i] == section) return layouts[i]
@@ -197,7 +229,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     }
     private fun invalidate(final: Boolean) {
         val now = SystemClock.uptimeMillis()
-        if (final || !ink || now - lastInvalidate >= 80L) { lastInvalidate = now; view.invalidate() }
+        if (final || !ink || now - lastInvalidate >= LIVE_INK_MS) { lastInvalidate = now; view.invalidate() }
     }
     fun showAt(section: Int, layout: SectionLayout, offset: Int, placement: Placement, kind: SettleKind): Long {
         stopMotion()
@@ -211,14 +243,23 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         for (i in sections.indices) { sections[i] = -1; layouts[i] = null }
         for (i in quoteSections.indices) clearQuotes(i)
         window.clear(); spare.clear(); remember(section, layout)
+        // A jump (TOC, search, TTS follow, a relayout) lands like a step: whole lines only, whatever came before.
+        stepped = true
         navigation.place(section, layout, offset, placement, kind)
         if (window.count == 0) rebuildWindow()
         return top
     }
     fun step(next: Boolean): Step {
         if (frozen || detached || session == null) return Step.EDGE
+        // A key or wheel step during a fling: the text stops where it is (one settle), then moves one screen from there.
+        if (flinging) stopMotion()
         direction = if (next) 1 else -1
-        return navigation.step(next)
+        // Only a step that moves clips: at the book's edge nothing redraws, so a later tick must not hide a line.
+        val was = stepped
+        stepped = true
+        val r = navigation.step(next)
+        if (r == Step.EDGE) stepped = was
+        return r
     }
     fun onSectionStored(section: Int, layout: SectionLayout) {
         if (frozen || detached || session?.generation !== generation) return
@@ -228,7 +269,18 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         if (deferredBlock == section) deferredBlock = -1
         if (navigation.pending) {
             if (!workPosted) { workPosted = true; view.post(work) }
-        } else { rebuildWindow(); virtualDirty = true; invalidate(true) }
+        } else {
+            // S §1.8: only a frame that changed (a visible or blocked section) redraws; an off-window neighbour
+            // prefetch (s ± 1 after the first page and after every settle) is not an e-ink update.
+            val v = frameVersion
+            rebuildWindow(); virtualDirty = true; virtualsDirty = true
+            if (frameVersion != v) {
+                invalidate(true)
+                // A section stored into the screen (or a new layout of one) changes the text a screen reader walks;
+                // while a finger moves the text, its settle tells.
+                if (!userMoving()) view.notifyPageChanged()
+            }
+        }
     }
     fun onGenerationChanged() {
         stopMotion(); frozen = true
@@ -264,6 +316,14 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         }
         return virtual
     }
+    /** All the virtual pages the screen shows ([virtualPage] gives the focused section's); stale while the text moves. */
+    fun virtualPages(): List<VirtualPage> {
+        if (userMoving()) return virtuals
+        if (virtualsDirty) {
+            virtuals = window.virtualPages(geometry?.contentTop?.toFloat() ?: 0f, clip); virtualsDirty = false
+        }
+        return virtuals
+    }
     fun focusAt(y: Float): Boolean {
         if (userMoving() || frozen) return false
         val ct = geometry?.contentTop?.toFloat() ?: return false
@@ -273,6 +333,18 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         return virtualPage() != null
     }
     fun clearFocus() { if (focus >= 0) { focus = -1; virtualDirty = true } }
+    /**
+     * S §1.10: TTS reads a line wholly on screen in [section] (e.g. below a seam): that section is the virtual page
+     * until the next settle. No redraw. False while the user moves, or when [section] is not on screen.
+     */
+    fun focusSection(section: Int): Boolean {
+        if (userMoving() || frozen) return false
+        var inWindow = false
+        for (i in 0 until window.count) if (window.sections[i] == section) inWindow = true
+        if (!inWindow) return false
+        if (focus != section) { focus = section; virtualDirty = true }
+        return true
+    }
     fun lineWhollyVisible(section: Int, offset: Int): Boolean =
         window.whollyVisible(section, offset, geometry?.contentTop?.toFloat() ?: 0f, clip)
     fun visibleRanges(visit: (section: Int, start: Int, end: Int) -> Unit) {
@@ -292,11 +364,13 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         }
         if (s >= 0) visit(s, start, end)
     }
-    fun userMoving(): Boolean = navigation.moving
+    /** A step waits for its section: further steps are the host's to queue (S §1.10 turn / flushTurns). */
+    val pending: Boolean get() = navigation.pending
+    fun userMoving(): Boolean = navigation.moving || held || flinging
     fun detach() {
         stopMotion(); detached = true
         view.removeCallbacks(afterDraw); afterPosted = false
-        window.clear(); spare.clear(); virtual = null
+        window.clear(); spare.clear(); virtual = null; virtuals = emptyList()
         layouts.fill(null); sections.fill(-1); imageLayouts.fill(null)
         for (i in quoteSections.indices) clearQuotes(i)
         session = null; generation = null; renderer = null; geometry = null
@@ -304,11 +378,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     }
     fun onDeviceClass() {
         ink = DeviceClass.cached(view.context) ?: true
-        motion = when (Settings.app.scrollStyle) {
-            ScrollStyle.STEP -> Motion.STEP
-            ScrollStyle.SMOOTH -> Motion.SMOOTH
-            ScrollStyle.AUTO -> if (ink) Motion.STEP else Motion.SMOOTH
-        }
+        motion = if (ScrollWiring.stepMotion(Settings.app.scrollStyle, ink)) Motion.STEP else Motion.SMOOTH
     }
     override fun onDown() {
         pendingMotion?.let {
@@ -317,27 +387,73 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
     }
     override fun isMoving(): Boolean = userMoving()
     override fun stopMotion(): Boolean {
+        held = false
         view.removeCallbacks(work); workPosted = false
-        return navigation.cancel()
+        val wasFlinging = flinging
+        stopFling()
+        return navigation.cancel() || wasFlinging
     }
+    override fun beginDrag() { held = true }
     override fun dragBy(dy: Float) {
-        if (!frozen && !detached && live) { direction = if (dy >= 0f) 1 else -1; navigation.drag(dy) }
+        if (!frozen && !detached && live) { stepped = false; direction = if (dy >= 0f) 1 else -1; navigation.drag(dy) }
     }
     override fun release(totalDy: Float, velocityY: Float) {
-        if (!frozen && !detached) navigation.release(totalDy, velocityY,
-            ViewConfiguration.get(view.context).scaledMinimumFlingVelocity.toFloat())
+        held = false
+        if (frozen || detached) return
+        val min = ViewConfiguration.get(view.context).scaledMinimumFlingVelocity.toFloat()
+        // E-ink: only a clear flick keeps going (a slow release just stops, without an extra 80 ms frame).
+        val flingMin = if (ink) min * INK_FLING_FACTOR else min
+        if (live && velocityY.isFinite() && abs(velocityY) >= flingMin) startFling(velocityY)
+        else navigation.release(totalDy, velocityY, min)
     }
-    override fun cancelDrag() { if (live) stopMotion() }
+    /** Momentum from [velocity] px/s (positive = forward); the drag stays open until [stepFling] ends it. */
+    private fun startFling(velocity: Float) {
+        stopFling()
+        scroller.fling(0, 0, 0, velocity.roundToInt(), 0, 0, Int.MIN_VALUE / 2, Int.MAX_VALUE / 2)
+        flingY = 0
+        flinging = true
+        postFling()
+    }
+    /** Phones: every display frame; e-ink: the live-frame pace of a drag ([LIVE_INK_MS]). */
+    private fun postFling() {
+        if (ink) view.postDelayed(flingTick, LIVE_INK_MS) else view.postOnAnimation(flingTick)
+    }
+    private fun stepFling() {
+        if (!flinging) return
+        if (frozen || detached) { stopFling(); return }
+        val running = scroller.computeScrollOffset()
+        val y = scroller.currY
+        val d = (y - flingY).toFloat()
+        flingY = y
+        if (d != 0f) {
+            direction = if (d >= 0f) 1 else -1
+            navigation.drag(d)
+            // The book's end, or a section still loading: the fling stops there (loading never resumes it).
+            if (navigation.lastMove == 0f && !navigation.pending) { endFling(); return }
+        }
+        if (running && !scroller.isFinished) postFling() else endFling()
+    }
+    private fun endFling() {
+        stopFling()
+        navigation.endFling()
+    }
+    private fun stopFling() {
+        if (!flinging) return
+        flinging = false
+        scroller.forceFinished(true)
+        view.removeCallbacks(flingTick)
+    }
+    override fun cancelDrag() { held = false; if (live) stopMotion() }
     override fun a11yStep(next: Boolean): Boolean {
         if (frozen || detached || session == null) return false
-        view.accessibilityStep(next); return true
+        return view.accessibilityStep(next)
     }
-    override fun computeScroll() { /* No animator, inertia or timed interpolation. */ }
-    override fun draw(canvas: Canvas, width: Int, height: Int) {
-        val r = renderer ?: return
-        val g = geometry ?: return
+    override fun computeScroll() { /* The fling runs on its own frame callbacks ([stepFling]). */ }
+    override fun draw(canvas: Canvas, width: Int, height: Int): Boolean {
+        val r = renderer ?: return false
+        val g = geometry ?: return false
         val cl = g.contentLeft.toFloat(); val ct = g.contentTop.toFloat(); val cw = g.contentWidth.toFloat()
-        r.drawChrome(canvas, decor, cl, ct, cw, this.height, width, height)
+        r.drawChrome(canvas, decor, cl, ct, cw, width, height)
         val bottom = ct + clip
         val save = canvas.save(); canvas.clipRect(0f, ct, width.toFloat(), bottom)
         var missing = false
@@ -346,6 +462,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
             missing = r.drawBody(canvas, l, window.pages[i], cl,
                 round(ct + window.tops[i] + window.gaps[i]), ct, bottom, window.quotes[i]) || missing
         }
+        lastMissing = missing
         canvas.restoreToCount(save)
         r.drawOverlay(canvas, decor, cl, ct, cw, width)
         if (!frozen && !detached) {
@@ -355,6 +472,7 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
                 afterPosted = true; view.post(afterDraw)
             }
         }
+        return true
     }
     private fun prefetchLayouts() {
         val s = session ?: return
@@ -374,13 +492,21 @@ internal class ScrollReader(private val view: PageView, private val host: Host) 
         val r = renderer ?: return
         imageCount = 0; requestedVersion = frameVersion
         for (i in 0 until window.count) window.layouts[i]?.let { addImage(it, window.pages[i]) }
+        val onScreen = imageCount
         for (side in 0..1) {
             imagePos.set(pos)
             ScrollMath.scrollBy(this, imagePos, if (side == 0) -height else height, height)
             ScrollMath.forEachVisible(this, imagePos, height) { _, l, p, _, _ -> addImage(l, p) }
         }
         // Once per visible-page change/settle, not once per missing-image frame. LatestTaskRunner batches it.
-        r.prefetchPages(imageLayouts, imagePages, imageCount, imageDone)
+        // The pages on screen decode before the ones a viewport away (ImageCache's single decoder takes them in that order).
+        r.prefetchPages(imageLayouts, imagePages, imageCount, imageDone, onScreen)
         imageLayouts.fill(null)
+    }
+    companion object {
+        /** E-ink live frames (a drag, a fling): at most one redraw per this many ms. */
+        const val LIVE_INK_MS = 80L
+        /** E-ink flings need this many times the platform's minimum fling velocity. */
+        const val INK_FLING_FACTOR = 4f
     }
 }

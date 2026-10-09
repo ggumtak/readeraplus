@@ -99,10 +99,10 @@ object KeyNames {
         put(283, "탐색 오른쪽")
     }
 
-    /** "볼륨 아래", or "키 코드 N" when unknown. */
+    /** "볼륨 아래", or "키 코드 290" when unknown: the key list's titles and the choosers. */
     fun name(code: Int): String = NAMES[code] ?: "키 코드 $code"
 
-    /** "볼륨 아래 (25)". */
+    /** "볼륨 아래 (25)": with the code, for a toast and the key test's last key. */
     fun label(code: Int): String = if (NAMES.containsKey(code)) "${NAMES[code]} ($code)" else "키 코드 $code"
 
     /** Why [code] can't be given an action ("키 지정"), or null when it can. */
@@ -123,8 +123,8 @@ object KeyNames {
     }
 
     /**
-     * What the reader does with a key, as the key test shows it: a key binding first ("다음 화", "시스템에 맡김"), then
-     * [readerEffect] (mirrors `reader.KeyMap.action`).
+     * What the reader does with a key, as the key test shows it: a key binding first ("다음 챕터", "시스템에 맡김"),
+     * then [readerEffect] (mirrors `reader.KeyMap.action`).
      */
     fun readerEffectLabel(code: Int, shift: Boolean, app: AppSettings): String {
         val bound = app.keyBindings[code] ?: return readerEffect(code, shift, app).label
@@ -144,8 +144,8 @@ object KeyNames {
 }
 
 /**
- * The actions a key can be given ("이 키로 할 동작", T1-4), in the chooser's order, with the key wording: episodes are
- * 화 and [TapAction.NONE] hands the key back to the system.
+ * The actions a key can be given ("이 키로 할 동작", T1-4), in the chooser's order, with the key wording: the tap
+ * zones' names (다음 챕터, 이전 챕터, the preview says the same), and [TapAction.NONE] hands the key back to the system.
  */
 object KeyActions {
     val CHOICES: List<TapAction> = listOf(
@@ -154,19 +154,17 @@ object KeyActions {
         TapAction.NONE,
     )
 
-    fun label(a: TapAction): String = when (a) {
-        TapAction.NEXT_CHAPTER -> "다음 화"
-        TapAction.PREV_CHAPTER -> "이전 화"
-        TapAction.NONE -> "없음(시스템에 맡김)"
-        else -> a.label
-    }
+    fun label(a: TapAction): String = if (a == TapAction.NONE) "없음 (시스템에 맡김)" else a.label
 
-    /** A page assignment on a volume key changes both directions, rather than learning just one key. */
+    /**
+     * The chooser's entry (its title names the key): a page assignment on a volume key changes both directions, rather
+     * than learning just one key, and says so: "다음 페이지 (볼륨 아래는 이전 페이지)".
+     */
     fun labelFor(code: Int, action: TapAction): String {
         if (!KeyMap.isVolumeKey(code) || (action != TapAction.NEXT && action != TapAction.PREV)) return label(action)
         val other = if (code == KeyNames.VOLUME_UP) KeyNames.VOLUME_DOWN else KeyNames.VOLUME_UP
         val opposite = if (action == TapAction.NEXT) TapAction.PREV else TapAction.NEXT
-        return "${KeyNames.name(code)} → ${label(action)} (${KeyNames.name(other)}는 ${label(opposite)})"
+        return "${label(action)} (${KeyNames.name(other)}는 ${label(opposite)})"
     }
 }
 

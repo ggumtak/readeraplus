@@ -93,8 +93,9 @@ class TtsService : Service() {
         runCatching {
             val nm = getSystemService(NotificationManager::class.java)
             nm?.createNotificationChannel(
-                NotificationChannel(CHANNEL, "TTS 읽기", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "화면이 꺼져도 TTS가 계속 읽는 동안 표시됩니다"
+                // The same channel id ("tts"): what the user set for it in the system stays.
+                NotificationChannel(CHANNEL, "듣기", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "화면을 꺼도 듣는 동안 표시합니다"
                     setShowBadge(false)
                     enableVibration(false)
                     setSound(null, null)
@@ -257,7 +258,7 @@ class TtsService : Service() {
         val content = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val b = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_headphones)
-            .setContentTitle(s.title.ifBlank { "TTS 읽기" })
+            .setContentTitle(s.title.ifBlank { "듣기" })
             .setContentText(s.chapter)
             .setContentIntent(content)
             .setDeleteIntent(action(ACTION_DISMISS, 5))
@@ -272,7 +273,7 @@ class TtsService : Service() {
                 else button(R.drawable.ic_play_arrow, "재생", ACTION_PLAY, 2),
             )
             .addAction(button(R.drawable.ic_skip_next, "다음 문장", ACTION_NEXT, 3))
-            .addAction(button(R.drawable.ic_close, "정지", ACTION_STOP, 4))
+            .addAction(button(R.drawable.ic_close, "듣기 끝내기", ACTION_STOP, 4))
         val style = Notification.MediaStyle().setShowActionsInCompactView(0, 1, 2)
         session?.let { style.setMediaSession(it.sessionToken) }
         b.setStyle(style)

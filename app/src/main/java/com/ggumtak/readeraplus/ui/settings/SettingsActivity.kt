@@ -7,8 +7,10 @@ import android.os.Bundle
 import android.view.KeyEvent
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.FrameLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
+import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.lp
@@ -27,7 +29,12 @@ class SettingsActivity : Activity() {
     companion object {
         /** [page]: null = main list, or one of PAGE_* to open a sub-page directly. */
         const val EXTRA_PAGE = "page"
+        /** "넘기기·터치·키": the read mode, tap zones, swipes, auto turn and the keys. */
         const val PAGE_PAGE_TURNING = "page_turning"
+        /** "화면·밝기": the status bar, the screen (전체 화면, 화면 방향, 인용문 색 표시) and the brightness. */
+        const val PAGE_SCREEN = "screen"
+        /** "e-ink 새로고침": refresh cadence, chapter / picture refreshes, the page mode and the 고급 group. */
+        const val PAGE_EINK = "eink"
         const val PAGE_FONTS = "fonts"
         const val PAGE_TTS = "tts"
         /** Scan folders / excluded folders / scan now. */
@@ -42,8 +49,15 @@ class SettingsActivity : Activity() {
         const val PAGE_WIFI = "wifi"
         /** "읽기 기록" (T1-6): reading statistics, heatmap, finished books. */
         const val PAGE_STATS = "stats"
-        /** "TXT 기본 정리 설정" (T1-9): the global TXT options every book without its own override uses. */
+        /** "TXT 정리 기본값" (T1-9): the global TXT options every book without its own override uses. */
         const val PAGE_TXT_DEFAULTS = "txt_defaults"
+        /**
+         * "읽기 설정": every reading setting (style, letters, paragraphs, page, file options); the quick options' "전체
+         * 읽기 설정" opens it.
+         */
+        const val PAGE_READING = "reading"
+        /** "이 책의 TXT 정리" (T1-9): the TXT options of the book the reader has open ([OpenBook]); else 읽기 설정. */
+        const val PAGE_BOOK_TXT = "book_txt"
 
         /**
          * Raw pref (Long, epoch millis) bumped by "캐시 비우기". Modules that cache derived data outside cacheDir
@@ -65,9 +79,11 @@ class SettingsActivity : Activity() {
 
         /**
          * Opens settings on [page] (null = the main list; an id this build doesn't know opens the main list too).
-         * Callable from any activity: the library drawer (PAGE_STATS, PAGE_WIFI, PAGE_ABOUT), the reader.
+         * Callable from any activity: the library drawer (PAGE_STATS, PAGE_WIFI, PAGE_ABOUT), the reader. [book] is
+         * the reader's open book ([OpenBook]; null from anywhere else).
          */
-        fun open(context: Context, page: String? = null) {
+        fun open(context: Context, page: String? = null, book: OpenBook.Info? = null) {
+            OpenBook.open(book)
             context.startActivity(
                 Intent(context, SettingsActivity::class.java)
                     .putExtra(EXTRA_PAGE, page)
@@ -104,14 +120,19 @@ class SettingsActivity : Activity() {
         root.addView(content, lp(MATCH_PARENT, 0, 1f))
         setContentView(root)
 
-        val ids = savedInstanceState?.getStringArrayList(STATE_STACK)?.takeIf { it.isNotEmpty() }
-            ?: listOf(intent?.getStringExtra(EXTRA_PAGE) ?: PAGE_MAIN)
+        val ids = (savedInstanceState?.getStringArrayList(STATE_STACK)?.takeIf { it.isNotEmpty() }
+            ?: listOf(intent?.getStringExtra(EXTRA_PAGE) ?: PAGE_MAIN))
+            // 이 책의 TXT 정리 needs the reader's book: restored without it (the process was killed), it is left out.
+            .filter { it != PAGE_BOOK_TXT || OpenBook.info?.format == BookFormat.TXT }
+            .ifEmpty { listOf(PAGE_READING) }
         for (id in ids) stack += createPage(id)
         showTop()
     }
 
     private fun createPage(id: String): SettingsPage = when (id) {
         PAGE_PAGE_TURNING -> PageTurningPage(this)
+        PAGE_SCREEN -> ScreenPage(this)
+        PAGE_EINK -> EinkPage(this)
         PAGE_FONTS -> FontsPage(this)
         PAGE_TTS -> TtsPage(this)
         PAGE_SCAN -> ScanPage(this)
@@ -121,8 +142,14 @@ class SettingsActivity : Activity() {
         PAGE_WIFI -> WifiTransferPage(this)
         PAGE_STATS -> StatsPage(this)
         PAGE_TXT_DEFAULTS -> TxtDefaultsPage(this)
+        PAGE_READING -> ReadingPage(this)
+        // Restored after the process was killed, or opened without a TXT book: the page it belongs to.
+        PAGE_BOOK_TXT -> if (OpenBook.info?.format == BookFormat.TXT) BookTxtPage(this) else ReadingPage(this)
         else -> MainPage(this)
     }
+
+    /** True when [page] is the bottom of the stack (opened directly, e.g. by the quick options' "전체 읽기 설정"). */
+    internal fun isRoot(page: SettingsPage): Boolean = stack.firstOrNull() === page
 
     /** Opens a sub-page on top of the current one. */
     internal fun push(id: String) {
@@ -142,10 +169,16 @@ class SettingsActivity : Activity() {
         showTop()
     }
 
-    /** Rebuilds the current page's view from scratch (after bulk changes such as a settings reset). */
+    /**
+     * Rebuilds the current page's view from scratch (after bulk changes such as a settings reset, or values changed on
+     * another page), at the same scroll position.
+     */
     internal fun rebuildTop() {
-        stack.lastOrNull()?.view = null
+        val page = stack.lastOrNull() ?: return
+        val y = (page.view as? ScrollView)?.scrollY ?: 0
+        page.view = null
         showTop()
+        (page.view as? ScrollView)?.let { sv -> if (y > 0) sv.post { sv.scrollTo(0, y) } }
     }
 
     private fun showTop() {

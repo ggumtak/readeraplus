@@ -32,6 +32,7 @@ class AndroidTextMeasurer(
     private val imageSizer: (String) -> IntSize?,
 ) : TextMeasurer {
 
+    /** The layout's em (line height, indents, spacing): unrounded; the paints draw at its whole-px floor ([createPaint]). */
     override val emPx: Float = emPxFor(context, settings.fontSizeSp)
 
     private val fontId = settings.fontId
@@ -99,11 +100,17 @@ class AndroidTextMeasurer(
         return p
     }
 
+    /**
+     * Hinted and on whole pixels ([CrispText.PAINT_FLAGS], MaruViewer's look since 2026-10-05; it was ANTI_ALIAS |
+     * SUBPIXEL | LINEAR, drawn unhinted), at a whole-px size ([CrispText.paintTextPx]: load-bearing, minikin lays out at
+     * `(int) textSize` but the glyphs are drawn at this size). Measuring uses this paint too, so the advances are the
+     * hinted whole-px ones that are drawn; that changed every layout once (`LayoutKeys.ALGO_VERSION` 2).
+     */
     private fun createPaint(style: RunStyle): TextPaint {
-        val p = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG)
+        val p = TextPaint(CrispText.PAINT_FLAGS)
         p.color = Color.BLACK
         p.textLocale = Locale.KOREAN
-        val size = emPx * sanitizeScale(style.sizeScale)
+        val size = CrispText.paintTextPx(emPx, style.sizeScale)
         p.textSize = size
         val weight = FontMath.runWeight(baseWeight, style.bold)
         var stroke = 0f
@@ -118,6 +125,7 @@ class AndroidTextMeasurer(
             }
         }
         p.typeface = tf
+        // Whole px per glyph on this non-linear paint (minikin rounds letterSpacing × size): see CrispText.PAINT_FLAGS.
         if (letterSpacingEm != 0f) p.letterSpacing = letterSpacingEm
         if (stroke > 0f) {
             p.style = Paint.Style.FILL_AND_STROKE
@@ -140,7 +148,5 @@ class AndroidTextMeasurer(
             val px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, context.resources.displayMetrics)
             return if (px > 0f && px.isFinite()) px else v
         }
-
-        fun sanitizeScale(s: Float): Float = if (s > 0f && s.isFinite()) s.coerceIn(0.3f, 4f) else 1f
     }
 }

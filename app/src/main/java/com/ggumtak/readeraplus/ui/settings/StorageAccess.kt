@@ -2,6 +2,8 @@ package com.ggumtak.readeraplus.ui.settings
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -10,6 +12,7 @@ import android.os.Build
 import android.os.Environment
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
+import com.ggumtak.readeraplus.ui.kit.toast
 import java.io.File
 import android.provider.Settings as SystemSettings
 
@@ -22,9 +25,7 @@ internal object StorageAccess {
             context.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
         }
 
-    fun summary(context: Context): String =
-        if (granted(context)) "허용됨 — 모든 폴더의 EPUB · TXT · PDF를 찾을 수 있습니다"
-        else "허용 안 됨 — 눌러서 허용하세요 (도서 스캔에 필요)"
+    fun summary(context: Context): String = if (granted(context)) "허용됨" else "허용 안 됨 · 눌러서 허용"
 
     /** Opens the system permission screen (API 30+) or asks for READ_EXTERNAL_STORAGE (API 26–29). */
     fun request(activity: Activity) {
@@ -48,16 +49,23 @@ internal object StorageAccess {
         showAdbHint(activity)
     }
 
+    /** No system screen for the grant (trimmed firmware): the library's way, or the adb command to copy. */
     fun showAdbHint(activity: Activity) {
+        val command = "adb shell appops set ${activity.packageName} MANAGE_EXTERNAL_STORAGE allow"
         activity.alert()
             .setTitle("권한 화면을 열 수 없습니다")
             .setMessage(
-                "이 기기에서는 '모든 파일 접근' 설정 화면을 열 수 없습니다.\n\n" +
-                    "PC에 연결해 다음 명령을 실행하세요:\n" +
-                    "adb shell appops set ${activity.packageName} MANAGE_EXTERNAL_STORAGE allow\n\n" +
-                    "또는 '파일 스캔'에서 폴더를 직접 추가하세요.",
+                "이 기기에서는 ‘모든 파일 접근’ 화면을 열 수 없습니다. 서재 ⋮ 메뉴의 ‘스캔 폴더 추가’로 책 폴더를 고르거나, " +
+                    "PC에 연결해 아래 명령을 실행하세요.\n\n$command",
             )
-            .setPositiveButton("확인", null)
+            .setNegativeButton("닫기", null)
+            .setPositiveButton("명령 복사") { _, _ ->
+                runCatching {
+                    val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("adb", command))
+                }
+                activity.toast("명령을 복사했습니다")
+            }
             .showNoAnim()
     }
 

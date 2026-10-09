@@ -41,6 +41,9 @@ internal class MarkupReader(private val s: String, start: Int = 0, end: Int = s.
     // Per attribute: nameStart, nameEnd, valueStart, valueEnd (valueStart = -1 when the attribute has no value).
     private var attrPos = IntArray(64)
     private var rawTextTag: String? = null
+    // Last "?>" search ([piClose]): started at piFrom, found at piAt (-1: none up to the end of the source).
+    private var piFrom = Int.MAX_VALUE
+    private var piAt = -1
 
     /** Source string (for consumers that decode text ranges themselves). */
     val source: String get() = s
@@ -83,7 +86,7 @@ internal class MarkupReader(private val s: String, start: Int = 0, end: Int = s.
                     }
                 }
                 n == '?' -> {
-                    val e = s.indexOf("?>", pos + 2)
+                    val e = piClose(pos + 2)
                     pos = if (e < 0 || e + 2 > limit) skipPast('>', pos + 2) else e + 2
                 }
                 isNameStart(n) -> return readStartTag()
@@ -246,6 +249,19 @@ internal class MarkupReader(private val s: String, start: Int = 0, end: Int = s.
             i++
         }
         return skipPast('>', from)
+    }
+
+    /**
+     * `s.indexOf("?>", from)`, reusing the last search: tokens only move forward, so a miss stays a miss and a hit
+     * at or after [from] is still the first. Word-made HTML repeats `<?xml:namespace … />` with no "?>" after it,
+     * and searching again for each one scanned to the end of the document every time (O(n²)).
+     */
+    private fun piClose(from: Int): Int {
+        if (from < piFrom || piAt in 0 until from) {
+            piFrom = from
+            piAt = s.indexOf("?>", from)
+        }
+        return piAt
     }
 
     private fun skipPast(ch: Char, from: Int): Int {
@@ -474,8 +490,7 @@ internal object Entities {
 
     /** Decodes references in s[start, end). Unknown references stay literal. */
     fun decode(s: String, start: Int, end: Int): String {
-        val amp = s.indexOf('&', start)
-        if (amp < 0 || amp >= end) return s.substring(start, end)
+        if (ampIn(s, start, end) < 0) return s.substring(start, end)
         val sb = StringBuilder(end - start)
         decodeInto(s, start, end, sb)
         return sb.toString()
@@ -484,8 +499,8 @@ internal object Entities {
     fun decodeInto(s: String, start: Int, end: Int, sb: StringBuilder) {
         var i = start
         while (i < end) {
-            val amp = s.indexOf('&', i)
-            if (amp < 0 || amp >= end) {
+            val amp = ampIn(s, i, end)
+            if (amp < 0) {
                 sb.append(s, i, end)
                 return
             }
@@ -499,6 +514,15 @@ internal object Entities {
                 i = (r and 0xFFFFFFFFL).toInt()
             }
         }
+    }
+
+    /**
+     * First '&' in s[from, end), or -1. Bounded on purpose: `s.indexOf('&', from)` runs on to the end of the whole
+     * document when the range has none, which made decoding every `class` of a big single-file XHTML O(n²).
+     */
+    private fun ampIn(s: String, from: Int, end: Int): Int {
+        for (k in from until end) if (s[k] == '&') return k
+        return -1
     }
 
     /** Decodes references and collapses whitespace runs (incl. NBSP) to single spaces, trimmed. */

@@ -8,6 +8,9 @@ import java.io.File
 
 /** EPUB entry points (see docs/ARCHITECTURE.md "format/epub"). Blocking: call off the main thread. */
 object EpubDocuments {
+    /** The reason for a zip that holds no readable EPUB (no package, or one the parser can't make sense of). */
+    internal const val MALFORMED = "EPUB 파일이 올바르지 않습니다"
+
     /**
      * Opens an EPUB: container, OPF and TOC, plus a text scan of any spine item large enough to be split into
      * several sections; content documents and the cover load lazily.
@@ -35,9 +38,9 @@ object EpubDocuments {
             } catch (e: DocumentException) {
                 throw e
             } catch (e: Exception) {
-                throw DocumentException("EPUB을 해석할 수 없습니다: ${file.name}", e)
+                throw DocumentException(MALFORMED, e)
             } catch (e: StackOverflowError) {
-                throw DocumentException("EPUB을 해석할 수 없습니다: ${file.name}", e)
+                throw DocumentException(MALFORMED, e)
             }
         }
     }
@@ -91,7 +94,7 @@ object EpubDocuments {
     /** Package synthesised from the zip listing when there is no OPF: every HTML entry in natural order. */
     internal fun fallbackPackage(zip: EpubZip): EpubPackage {
         val html = htmlEntries(zip)
-        if (html.isEmpty()) throw DocumentException("EPUB 패키지(OPF)를 찾을 수 없습니다")
+        if (html.isEmpty()) throw DocumentException(MALFORMED)
         val manifest = html.mapIndexed { i, p -> ManifestItem("item$i", p, "application/xhtml+xml", "") } +
             zip.names.filter { EpubPaths.isImagePath(it) }.sorted()
                 .mapIndexed { i, p -> ManifestItem("img$i", p, "", "") }
@@ -142,7 +145,7 @@ object EpubDocuments {
                         if (algorithm in FONT_OBFUSCATION) continue
                         val path = EpubPaths.resolve("", uri)
                         if (EpubPaths.isHtmlPath(path) || EpubPaths.extension(path) == "opf") {
-                            throw DocumentException("DRM으로 보호된 EPUB은 열 수 없습니다.")
+                            throw DocumentException("DRM으로 보호된 책입니다")
                         }
                     }
                 }

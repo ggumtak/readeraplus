@@ -1,0 +1,45 @@
+{
+  "lane": "DA-C",
+  "files": [
+    "app/src/main/java/com/ggumtak/readeraplus/data/Library.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/data/LibrarySql.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/data/BookRows.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/data/LibraryDb.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/data/FileScanner.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/data/MetaInfo.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/data/BookPrefs.kt",
+    "app/src/main/java/com/ggumtak/readeraplus/data/NoteWrites.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/data/LibrarySqlTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/data/ScanPlanTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/data/SqlDumpTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/data/LibraryNotesWritesTest.kt",
+    "app/src/test/java/com/ggumtak/readeraplus/data/BookPrefsReturnMarkTest.kt",
+    "tools/check_sql.py",
+    "docs/next/DA_C_STATUS.md",
+    "docs/next/lanes/DA-C.result.json"
+  ],
+  "summary": "N §5.1 notes writes with notesGen bumps after commit (internal Library.notesChanged), N §5.2 SQL/row mappings (11/9 placeholders, IFNULL defaults keep old 6/7-arg callers working, missing_at in book selects), N §5.5 scanner trash/revive/move with ScanPlanTest cases, C1 upgrade (CREATE_ALL, PRAGMA-guarded ALTERs, UPGRADE_SWEEP + quotes/bookmarks orphan sweep; constant statements), U §3.3 return mark storage (PRUNE keeps it, resetProgress clears it), tools/check_sql.py (v1→v3, v2→v3 timed, v3→v2 build→v3, plans, dump).",
+  "checks": "module: typecheck --own data OK, unittest --own data OK (197 tests); full: tools/typecheck.sh OK, tools/unittest.sh OK (1218 tests); python3 tools/check_sql.py all passed (v2→v3 10k quotes ≈ 7 ms), --dump with SqlDumpTest JSON: 2208 statements prepare. Two review rounds (spec, bugs) done and fixed.",
+  "contractRequests": [
+    "DA-B (Backup.kt restorePrefs): replace DELETE_BOOK_PREFS_OF_BOOK (when mergePrefs returns null) with SET_PREFS_ROW(null, 0, null, id) + PRUNE_BOOK_PREFS, else a restore deletes book_prefs.return_mark; read/write return_mark via SELECT_ALL_BOOK_PREFS column 4 and SET_PREFS_RETURN/INSERT_PREFS_RETURN.",
+    "DA-B: call Library.notesChanged() (internal, data module) after Backup.import's applyLibrary commits and after placeholder inserts; reviewAt is SELECT_ALL_BOOKS_FOR_BACKUP column BOOK_COLUMN_COUNT + 1, restore newer review with RESTORE_REVIEW; pass style/place args to INSERT_QUOTE (11) / INSERT_BOOKMARK (9); a placeholder book can be marked missing with SET_MISSING right after insert.",
+    "DA-N (Lookups.kt): call Library.notesChanged() after every lookups write commit (Library.notesGen has a frozen private set).",
+    "DA-N / lead: after NotesSql merges, SqlDumpTest should emit the hub's tab × order × filter statements under the 'notes' key (entries {sql,args,expect,forbid}); check_sql.py then asserts their plans."
+  ],
+  "rcaNotes": [
+    "BookPrefs.returnMark(bookId): IO thread (ReaderIo.launch) in afterOpen() after the first page, never before; result to main with the isDestroyed/book/session guard; null = none.",
+    "BookPrefs.setReturnMark(bookId, text|null): IO thread on pin, move, clear and reparse (ReturnHost.saveReturnMark).",
+    "Library.addQuote(..., style = QuoteStyles id, place = NotePlaceHost place) and Library.addBookmark(..., place): IO thread; place null stores unknown.",
+    "Library.fillNotePlaces(bookId, quotes, bookmarks): IO thread after the first page, with places computed for legacy notes (frac < 0) only; one transaction.",
+    "Library.updateQuoteStyle(id, style): IO thread on 색 바꾸기; Library.resetProgress also clears the return mark (reader should reset its ReturnNav after it)."
+  ],
+  "deviations": [
+    "SqlDumpTest: the data-core notes statements are dumped under 'core'; 'notes' (N §16 tab × order × filter) needs DA-N's NotesSql, which does not exist on this base.",
+    "check_sql.py asserts hub plan shapes on representative hand-written statements; the real NotesSql plans are asserted once the dump carries them (expect/forbid).",
+    "LibraryDb also sweeps orphan quotes/bookmarks (LibraryDb.NOTES_SWEEP) because the frozen LibrarySchema.UPGRADE_SWEEP lists lookups/book_prefs/reading_log instead (N §4.1 'as a defence').",
+    "Trashing (setTrashed(true), trash) also sets missing_at = 0 (new LibrarySql.TRASH) so a user-trashed book is never revived by the scanner.",
+    "Module-mode commands were run as --own data (the per-file list makes tools/out names exceed the filesystem limit); only lane files differ from base in data/.",
+    "Commit trailers use this session's own Claude-Session URL instead of the one in BRIEF.md."
+  ],
+  "complete": true
+}
