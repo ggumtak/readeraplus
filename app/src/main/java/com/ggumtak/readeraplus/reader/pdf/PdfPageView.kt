@@ -741,7 +741,8 @@ internal class PdfPageView(context: Context) : View(context) {
                     inkFillPaint.color = st.color
                     canvas.drawPath(path, inkFillPaint)
                 } else {
-                    canvas.drawPath(path, strokePaint(st.tool, st.color, st.width))
+                    // At least one screen pixel, as the live line is: lifting the pen never thins it.
+                    canvas.drawPath(path, strokePaint(st.tool, st.color, maxOf(st.width, 1f / s)))
                 }
             }
         }
