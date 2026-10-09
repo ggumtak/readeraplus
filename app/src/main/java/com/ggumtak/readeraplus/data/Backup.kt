@@ -428,7 +428,7 @@ object Backup {
 
     /**
      * Writes the PDF notes of restored books to the files the PDF viewer reads, under the book's id on this device
-     * (a new one for an added file or a placeholder). The device's own notes stay ([PdfNoteFiles.shouldRestore]);
+     * (a new one for an added file or a placeholder). The device's own notes stay, the backup's fill in ([PdfNoteFiles.merged]);
      * one failing book never stops the rest.
      */
     private fun restorePdfNotes(context: Context, notes: List<Pair<Long, String>>) {

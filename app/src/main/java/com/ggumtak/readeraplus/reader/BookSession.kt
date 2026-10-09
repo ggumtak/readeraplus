@@ -241,6 +241,14 @@ class BookSession(
     }
 
     /**
+     * A new generation at the same view and settings, laid out around [anchor]: a session not shown yet whose target
+     * moved while it was being laid out ([setViewport] keeps the generation when the size is the same).
+     */
+    fun reanchor(anchor: AnchorSpec) {
+        if (generation != null) rebuild(anchor)
+    }
+
+    /**
      * Applies new settings: RELAYOUT when layout-affecting fields changed (a status band that comes, goes or changes
      * height too: [LayoutKeys.layoutChanged]), REPAINT for colours / which item a status slot shows, NONE when
      * the page looks the same (also a 화면 색 that 흑백 반전 hides: [PagePalette.drawSame]).
@@ -263,7 +271,8 @@ class BookSession(
     private fun geometryNow(): PageGeometry {
         val dm = context.resources.displayMetrics
         val cols = LayoutKeys.columnsFor(settings.landscapePages, viewW, viewH, paged())
-        return LayoutKeys.geometry(settings, viewW, viewH, dm.density, viewCutoutTop, cols, AndroidTextMeasurer.emPxFor(context, settings.fontSizeSp))
+        return LayoutKeys.geometry(settings, viewW, viewH, dm.density, viewCutoutTop, cols, AndroidTextMeasurer.emPxFor(context, settings.fontSizeSp),
+            AndroidTextMeasurer.naturalLinePxFor(context, settings))
     }
 
     /** True when the current generation's page columns are not the ones the view and settings make now. */

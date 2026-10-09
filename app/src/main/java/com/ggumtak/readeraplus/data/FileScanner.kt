@@ -383,8 +383,9 @@ object FileScanner {
         }
         val plan = plan(
             known, walk.found, ignored, excluded, ::vanished,
-            userDataIds = { db.queryList(LibrarySql.SELECT_IDS_WITH_USER_DATA, null) { it.getLong(0) }.toHashSet() },
-            noteIds = { db.queryList(LibrarySql.SELECT_IDS_KEPT_WHEN_MISSING, null) { it.getLong(0) }.toHashSet() },
+            // A PDF's ink and bookmarks live in a file of their own (PdfNoteFiles): they count as notes too.
+            userDataIds = { db.queryList(LibrarySql.SELECT_IDS_WITH_USER_DATA, null) { it.getLong(0) }.toHashSet().also { it += PdfNoteFiles.ids(context) } },
+            noteIds = { db.queryList(LibrarySql.SELECT_IDS_KEPT_WHEN_MISSING, null) { it.getLong(0) }.toHashSet().also { it += PdfNoteFiles.ids(context) } },
         )
         val reviving = plan.revive.toHashSet()
 

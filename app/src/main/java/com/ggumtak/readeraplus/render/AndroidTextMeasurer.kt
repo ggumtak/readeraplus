@@ -148,5 +148,42 @@ class AndroidTextMeasurer(
             val px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, context.resources.displayMetrics)
             return if (px > 0f && px.isFinite()) px else v
         }
+
+        /**
+         * The body text's natural line height in px (ascent + descent of the body paint, as [metrics] answers it) when
+         * its typeface is built already, else 0: no IO, for the main thread ([LayoutKeys.geometry]). The engine's body
+         * line is the larger of this and lineHeight × em, so below about 130 % 줄 간격 this decides the line pitch.
+         * 0 for a user font too (looking one up may scan its folder). The last answer is kept (selection drags ask
+         * on every move).
+         */
+        fun naturalLinePxFor(context: Context, s: ReaderSettings): Float {
+            if (s.fontId.startsWith(FontFiles.USER_PREFIX)) return 0f
+            val size = CrispText.paintTextPx(emPxFor(context, s.fontSizeSp), 1f)
+            lastNatural?.let { if (it.fontId == s.fontId && it.weight == s.fontWeight && it.size == size) return it.px }
+            return try {
+                val base = FontMath.effectiveBase(s.fontWeight, FontManager.minWeight(s.fontId))
+                val tf = FontManager.cachedTypeface(s.fontId, FontMath.runWeight(base, false)) ?: return 0f
+                val p = TextPaint(CrispText.PAINT_FLAGS)
+                p.textLocale = Locale.KOREAN
+                p.typeface = tf
+                p.textSize = size
+                val fm = p.fontMetrics
+                var asc = -fm.ascent
+                var desc = fm.descent
+                if (!(asc > 0f) || asc.isInfinite()) asc = size * 0.8f
+                if (!(desc >= 0f) || desc.isInfinite()) desc = size * 0.2f
+                val px = (asc + desc).takeIf { it.isFinite() } ?: 0f
+                lastNatural = NaturalLine(s.fontId, s.fontWeight, size, px)
+                px
+            } catch (t: Throwable) {
+                0f
+            }
+        }
+
+        private class NaturalLine(val fontId: String, val weight: Int, val size: Float, val px: Float)
+
+        /** Only built typefaces are measured, so a kept answer stays right (a user font is never kept). */
+        @Volatile
+        private var lastNatural: NaturalLine? = null
     }
 }

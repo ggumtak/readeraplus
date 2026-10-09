@@ -222,11 +222,16 @@ class BackupPdfNotesTest {
         assertEquals(listOf("7.json"), dir2.list()!!.toList())
         assertEquals(ink, PdfNotesStore.load(dir2, 7L).toJson())
         assertTrue(PdfNotesStore.load(dir2, 42L).isEmpty)
-        // A second restore, or one over notes the device drew meanwhile, leaves the device's file as it is.
+        // A second restore changes nothing; one over notes the device drew meanwhile keeps them and adds the backup's.
         assertFalse(PdfNoteFiles.restore(dir2, 7L, restored.pdfNotes!!))
         val own = notes(page = 9, mark = 9)
         assertTrue(PdfNoteFiles.writeText(dir2, 7L, own))
-        assertFalse(PdfNoteFiles.restore(dir2, 7L, restored.pdfNotes!!))
-        assertEquals(own, PdfNoteFiles.readText(dir2, 7L))
+        assertTrue(PdfNoteFiles.restore(dir2, 7L, restored.pdfNotes!!))
+        val both = PdfNotesStore.load(dir2, 7L)
+        assertEquals(listOf(4, 9), inked(both))
+        assertEquals(listOf(2, 9), both.bookmarks().toList())
     }
+
+    /** The pages with ink, ascending. */
+    private fun inked(n: PdfNotes): List<Int> = (0..50).filter { n.strokes(it).isNotEmpty() }
 }

@@ -112,6 +112,18 @@ class EpubDocumentsTest {
         EpubDocuments.open(f, ParseOptions()).use { doc ->
             assertEquals(1, (doc as EpubBook).missingSpineItems)
         }
+        // the same missing file named twice is one file; a spine with nothing readable shows the other files instead
+        val twice = opf.replace("""<itemref idref="b"/>""", """<itemref idref="b"/><itemref idref="b"/>""")
+        val f2 = writeEpub(listOf(container(), text("OEBPS/content.opf", twice), text("OEBPS/a.xhtml", xhtml("A", "<p>${EpubTestUtil.SENTENCES[0]}</p>"))))
+        EpubDocuments.open(f2, ParseOptions()).use { doc ->
+            assertEquals(1, (doc as EpubBook).missingSpineItems)
+        }
+        val none = opf.replace("""<itemref idref="a"/>""", "")
+        val f3 = writeEpub(listOf(container(), text("OEBPS/content.opf", none), text("OEBPS/a.xhtml", xhtml("A", "<p>${EpubTestUtil.SENTENCES[0]}</p>"))))
+        EpubDocuments.open(f3, ParseOptions()).use { doc ->
+            assertEquals(0, (doc as EpubBook).missingSpineItems)
+            assertTrue(doc.sections.isNotEmpty())
+        }
     }
 
     @Test

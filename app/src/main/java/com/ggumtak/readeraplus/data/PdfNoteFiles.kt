@@ -1,6 +1,7 @@
 package com.ggumtak.readeraplus.data
 
 import android.content.Context
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
@@ -35,6 +36,16 @@ internal object PdfNoteFiles {
         file(dir, bookId).isFile
     } catch (e: Exception) {
         false
+    }
+
+    /** The ids of the books with a notes file (one directory listing; empty on any failure). */
+    fun ids(context: Context): Set<Long> = ids(dir(context))
+
+    fun ids(dir: File): Set<Long> = try {
+        val names = dir.list() ?: emptyArray()
+        names.mapNotNullTo(HashSet()) { n -> if (n.endsWith(".json")) n.substring(0, n.length - 5).toLongOrNull() else null }
+    } catch (e: Exception) {
+        emptySet()
     }
 
     /** Deletes the book's notes file (best effort; a missing file is fine). */
@@ -98,38 +109,197 @@ internal object PdfNoteFiles {
     /**
      * Pure: whether [text] is a notes object holding something — at least one bookmark or one stroke (the shape
      * `PdfNotes.toJson` writes: `{"v":1,"bookmarks":[…],"pages":{"<page>":[strokes]}}`). Not JSON, or an empty
-     * object, is nothing: the viewer reads such a file as no notes at all.
+     * object, is nothing: the viewer reads such a file as no notes at all. Scans instead of parsing (a notes file can
+     * hold MBs of numbers) and stops at the first bookmark or stroke.
      */
     fun hasContent(text: String?): Boolean {
-        if (text.isNullOrBlank()) return false
-        val o = try {
-            JSONObject(text)
-        } catch (e: Exception) {
-            return false
+        if (text == null) return false
+        val t: String = text
+        var i = ws(t, 0)
+        if (i >= t.length || t[i] != '{') return false
+        i++
+        while (true) {
+            i = ws(t, i)
+            if (i >= t.length) return false
+            when (t[i]) {
+                '}' -> return false
+                ',' -> {
+                    i++
+                    continue
+                }
+                '"' -> {}
+                else -> return false
+            }
+            val keyEnd = stringEnd(t, i)
+            if (keyEnd < 0) return false
+            val marks = keyIs(t, i, keyEnd, "bookmarks")
+            val pages = !marks && keyIs(t, i, keyEnd, "pages")
+            i = ws(t, keyEnd + 1)
+            if (i >= t.length || t[i] != ':') return false
+            i = ws(t, i + 1)
+            if (i >= t.length) return false
+            if (marks && t[i] == '[') {
+                val j = ws(t, i + 1)
+                if (j < t.length && t[j] in '0'..'9') return true
+            } else if (pages && t[i] == '{' && anyStroke(t, i)) {
+                return true
+            }
+            i = skipValue(t, i)
+            if (i < 0) return false
         }
-        if ((o.optJSONArray("bookmarks")?.length() ?: 0) > 0) return true
-        val pages = o.optJSONObject("pages") ?: return false
-        val keys = pages.keys()
-        while (keys.hasNext()) {
-            if ((pages.optJSONArray(keys.next())?.length() ?: 0) > 0) return true
-        }
-        return false
     }
 
     /**
-     * Pure: whether a restore writes the backup's notes [backup] over the device's file [local] (null = none). A
-     * restore never deletes: notes already on the device stay (the device's own strokes are the newer ones in the
-     * cases that matter — same device, or a device the user kept drawing on); the backup's fill in only where the
-     * device has nothing, a corrupt or empty file included (the viewer reads those as no notes).
+     * Pure: what a restore writes for the backup's notes [backup] where the device's file holds [local] (null = none);
+     * null when it writes nothing. A restore never deletes: the backup fills in only where the device has nothing — the
+     * whole file when the device has no notes (a corrupt or empty file included: the viewer reads those as none), else
+     * the pages without ink here, plus the backup's bookmarks. A page with ink on both keeps the device's strokes (the
+     * newer ones in the cases that matter: same device, or a device the user kept drawing on). Parses both only in
+     * that last case.
      */
-    fun shouldRestore(local: String?, backup: String?): Boolean = hasContent(backup) && !hasContent(local)
+    fun merged(local: String?, backup: String?): String? {
+        if (!hasContent(backup)) return null
+        if (!hasContent(local)) return backup
+        val dev = try {
+            JSONObject(local!!)
+        } catch (e: Exception) {
+            return backup
+        }
+        val bak = try {
+            JSONObject(backup!!)
+        } catch (e: Exception) {
+            return null
+        }
+        var added = false
+        val marks = java.util.TreeSet<Int>()
+        fun addMarks(o: JSONObject, from: Boolean) {
+            val a = o.optJSONArray("bookmarks") ?: return
+            for (k in 0 until a.length()) {
+                val n = a.opt(k) as? Number ?: continue
+                val p = n.toInt()
+                if (p >= 0 && n.toDouble() == p.toDouble() && marks.add(p) && from) added = true
+            }
+        }
+        addMarks(dev, false)
+        addMarks(bak, true)
+        val pages = java.util.TreeMap<Int, JSONArray>()
+        fun addPages(o: JSONObject, from: Boolean) {
+            val ps = o.optJSONObject("pages") ?: return
+            val keys = ps.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val page = key.toIntOrNull() ?: continue
+                val strokes = ps.optJSONArray(key) ?: continue
+                if (page < 0 || strokes.length() == 0 || pages.containsKey(page)) continue
+                pages[page] = strokes
+                if (from) added = true
+            }
+        }
+        addPages(dev, false)
+        addPages(bak, true)
+        if (!added) return null
+        val sb = StringBuilder((local?.length ?: 0) + (backup?.length ?: 0) + 64)
+        sb.append("{\"v\":1,\"bookmarks\":[")
+        marks.forEachIndexed { k, p -> if (k > 0) sb.append(','); sb.append(p) }
+        sb.append("],\"pages\":{")
+        var first = true
+        for ((page, strokes) in pages) {
+            if (!first) sb.append(',')
+            first = false
+            sb.append('"').append(page).append("\":").append(strokes.toString())
+        }
+        sb.append("}}")
+        return sb.toString()
+    }
 
     /**
-     * Restores the backup's notes [text] of the book whose id on this device is [bookId] ([shouldRestore]); returns
-     * whether the file was written.
+     * Restores the backup's notes [text] of the book whose id on this device is [bookId] ([merged]); returns whether
+     * the file was written.
      */
     fun restore(context: Context, bookId: Long, text: String): Boolean = restore(dir(context), bookId, text)
 
-    fun restore(dir: File, bookId: Long, text: String): Boolean =
-        shouldRestore(readText(dir, bookId), text) && writeText(dir, bookId, text)
+    fun restore(dir: File, bookId: Long, text: String): Boolean {
+        if (!hasContent(text)) return false
+        val out = merged(readText(dir, bookId), text) ?: return false
+        return writeText(dir, bookId, out)
+    }
+
+    private fun ws(t: String, from: Int): Int {
+        var i = from
+        while (i < t.length && (t[i] == ' ' || t[i] == '\n' || t[i] == '\r' || t[i] == '\t')) i++
+        return i
+    }
+
+    /** The index of the quote closing the string that opens at [from], or -1. */
+    private fun stringEnd(t: String, from: Int): Int {
+        var i = from + 1
+        while (i < t.length) {
+            when (t[i]) {
+                '\\' -> i += 2
+                '"' -> return i
+                else -> i++
+            }
+        }
+        return -1
+    }
+
+    private fun keyIs(t: String, open: Int, close: Int, name: String): Boolean =
+        close - open - 1 == name.length && t.regionMatches(open + 1, name, 0, name.length)
+
+    /** The index just after the JSON value starting at [from], or -1 when it doesn't end. */
+    private fun skipValue(t: String, from: Int): Int {
+        var i = from
+        val c = t[i]
+        if (c == '"') return stringEnd(t, i).let { if (it < 0) -1 else it + 1 }
+        if (c != '{' && c != '[') {
+            while (i < t.length && t[i] != ',' && t[i] != '}' && t[i] != ']' && t[i] > ' ') i++
+            return if (i == from) -1 else i
+        }
+        var depth = 0
+        while (i < t.length) {
+            when (t[i]) {
+                '"' -> {
+                    i = stringEnd(t, i)
+                    if (i < 0) return -1
+                }
+                '{', '[' -> depth++
+                '}', ']' -> {
+                    depth--
+                    if (depth == 0) return i + 1
+                }
+            }
+            i++
+        }
+        return -1
+    }
+
+    /** Whether the "pages" object opening at [from] has a page whose stroke list starts with a stroke. */
+    private fun anyStroke(t: String, from: Int): Boolean {
+        var i = from + 1
+        while (true) {
+            i = ws(t, i)
+            if (i >= t.length) return false
+            when (t[i]) {
+                '}' -> return false
+                ',' -> {
+                    i++
+                    continue
+                }
+                '"' -> {}
+                else -> return false
+            }
+            val keyEnd = stringEnd(t, i)
+            if (keyEnd < 0) return false
+            i = ws(t, keyEnd + 1)
+            if (i >= t.length || t[i] != ':') return false
+            i = ws(t, i + 1)
+            if (i >= t.length) return false
+            if (t[i] == '[') {
+                val j = ws(t, i + 1)
+                if (j < t.length && t[j] == '{') return true
+            }
+            i = skipValue(t, i)
+            if (i < 0) return false
+        }
+    }
 }

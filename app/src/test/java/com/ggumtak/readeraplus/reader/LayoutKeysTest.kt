@@ -63,8 +63,8 @@ class LayoutKeysTest {
         var prevBottom = Int.MAX_VALUE
         var drops = 0
         var prevH = -1
-        // From -10 both margins move (below it the bottom one is already 0 and only the top grows).
-        for (ui in -10..40 step 2) {
+        // From -10 to +65 both margins move (below, the bottom one is already 0; above, the top one is at its 80 dp).
+        for (ui in -10..64 step 2) {
             val t = s.copy(marginTopDp = VerticalMargin.topDp(ui), marginBottomDp = VerticalMargin.bottomDp(ui))
             val g = LayoutKeys.geometry(t, 720, 1440, density, emPx = em)
             val top = g.contentTop
@@ -80,6 +80,48 @@ class LayoutKeysTest {
             prevH = g.contentHeight
         }
         assertTrue("the sweep drops lines", drops >= 2)
+    }
+
+    @Test
+    fun atTheStepperEndsTheTextMovesHalfOfTheOneMarginThatStillMoves() {
+        // Below -10 only the top margin changes, above +65 only the bottom one: the text moves by at most half of it
+        // (it stays centred between the margins), in the direction that margin pushes, never the other way.
+        val em = 40f
+        fun g(ui: Int) = LayoutKeys.geometry(
+            s.copy(marginTopDp = VerticalMargin.topDp(ui), marginBottomDp = VerticalMargin.bottomDp(ui)), 720, 1440, density, emPx = em,
+        )
+        for (ui in VerticalMargin.UI_MIN until -10) {
+            val a = g(ui)
+            val b = g(ui + 1)
+            val step = Math.round((VerticalMargin.topDp(ui + 1) - VerticalMargin.topDp(ui)) * density)
+            val moved = b.contentTop - a.contentTop
+            if (b.contentHeight == a.contentHeight) assertTrue("ui $ui: moved $moved of $step", moved in 0..(step + 1) / 2)
+        }
+        for (ui in 66 until VerticalMargin.UI_MAX) {
+            val a = g(ui)
+            val b = g(ui + 1)
+            val step = Math.round((VerticalMargin.bottomDp(ui + 1) - VerticalMargin.bottomDp(ui)) * density)
+            val moved = a.contentTop - b.contentTop
+            if (b.contentHeight == a.contentHeight) assertTrue("ui $ui: moved up $moved of $step", moved in 0..(step + 1) / 2)
+        }
+    }
+
+    @Test
+    fun atASmallLineSpacingTheFontsOwnHeightIsTheLine() {
+        // 줄 간격 100 % with a font 1.4 em tall: the engine's line is 56 px, not 40. Cut by 40 px lines the 1304 px box
+        // kept 1280 px, 22 lines of 56 (the reviewer's case); by the real pitch it keeps 23 (1288 px), centred.
+        val em = 40f
+        val t = s.copy(lineHeightPct = 100)
+        val g = LayoutKeys.geometry(t, 720, 1440, density, emPx = em, naturalLinePx = 56f)
+        assertEquals(23 * 56, g.contentHeight)
+        val above = g.contentTop - 80
+        val below = 1384 - (g.contentTop + g.contentHeight)
+        assertTrue("above $above, below $below", Math.abs(above - below) <= 1)
+        // a font shorter than the nominal line changes nothing
+        assertEquals(LayoutKeys.geometry(s, 720, 1440, density, emPx = em).contentHeight,
+            LayoutKeys.geometry(s, 720, 1440, density, emPx = em, naturalLinePx = 46f).contentHeight)
+        // unknown em: no cut, whatever the font
+        assertEquals(1304, LayoutKeys.geometry(t, 720, 1440, density, naturalLinePx = 56f).contentHeight)
     }
 
     @Test

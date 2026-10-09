@@ -109,7 +109,9 @@ object LayoutKeys {
      * the part of a line left over split half above, half below. Without it the lines fill the box from its top and that
      * part piled up at the bottom: raising 위·아래 여백 together moved the text down at once while its bottom stayed put
      * until a whole line dropped (user, 2026-10-09: "위에만 여백이 늘어나서 아래로 내려오는 느낌"). Now a dropped line
-     * takes half a line from each side. Every caller that maps touches to the page must pass the same [emPx].
+     * takes half a line from each side. A line is lineHeight × em or, when larger, [naturalLinePx] (the body font's
+     * ascent + descent, 0 when unknown), as the engine makes it: at a small 줄 간격 the font's own height is the pitch.
+     * Every caller that maps touches to the page must pass the same [emPx] and [naturalLinePx].
      */
     fun geometry(
         s: ReaderSettings,
@@ -119,6 +121,7 @@ object LayoutKeys {
         extraTop: Int = 0,
         columns: Int = 1,
         emPx: Float = 0f,
+        naturalLinePx: Float = 0f,
     ): PageGeometry {
         fun px(dp: Int): Int = Math.round(dp * density)
         fun margin(dp: Int): Int = if (s.pageMargins) dp.coerceAtLeast(0) else TINY_MARGIN_DP
@@ -160,7 +163,8 @@ object LayoutKeys {
             h = minOf(minBox, below).coerceAtLeast(1)
             top = band + ((below - h) / 2).coerceAtLeast(0)
         } else {
-            val snapped = linesBox(h, s.lineHeightPct / 100f * emPx)
+            val pitch = if (emPx > 0f) maxOf(s.lineHeightPct / 100f * emPx, naturalLinePx) else 0f
+            val snapped = linesBox(h, pitch)
             top += (h - snapped) / 2
             h = snapped
         }

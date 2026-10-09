@@ -580,7 +580,7 @@ internal object BackupJson {
     /**
      * A backup entry's PDF notes text: the string value of `pdfNotes` (a nested object is taken as its text), null
      * when absent, blank, not text or longer than a book's cap ([PdfNoteFiles.MAX_BACKUP_BOOK_CHARS]). Not checked
-     * here for being notes: [PdfNoteFiles.shouldRestore] does that for the books actually restored.
+     * here for being notes: [PdfNoteFiles.merged] does that for the books actually restored.
      */
     fun pdfNotesFromJson(o: JSONObject, maxChars: Int = PdfNoteFiles.MAX_BACKUP_BOOK_CHARS): String? {
         if (!o.has("pdfNotes") || o.isNull("pdfNotes")) return null

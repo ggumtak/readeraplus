@@ -176,4 +176,23 @@ class TxtPrefaceMergeTest {
         )
         assertNull(TxtIndexStore.decode(TxtIndexStore.encode(bad), "k", Long.MAX_VALUE))
     }
+
+    @Test
+    fun indexRoundTripKeepsEveryDecision() {
+        val idx = TxtTestUtil.parse(book("리더플러스 샘플 소설\n\n")).toIndex("k")
+        for (wrap in listOf(false, true)) {
+            val d = idx.decisions
+            val x = TxtIndex(
+                "k", idx.encoding, idx.newline, TxtDecisions(d.blankMode, d.sceneRun, d.joinMinWidth, d.joinStopAtIndent, d.joinIgnoreTerminal, wrap),
+                idx.byteStart, idx.byteEnd, idx.flags, idx.chars, idx.titles, idx.headLine, idx.headChar,
+            )
+            val back = TxtIndexStore.decode(TxtIndexStore.encode(x), "k", Long.MAX_VALUE)!!.decisions
+            assertEquals(wrap, back.wrapSpaces)
+            assertEquals(d.blankMode, back.blankMode)
+            assertEquals(d.sceneRun, back.sceneRun)
+            assertEquals(d.joinMinWidth, back.joinMinWidth)
+            assertEquals(d.joinStopAtIndent, back.joinStopAtIndent)
+            assertEquals(d.joinIgnoreTerminal, back.joinIgnoreTerminal)
+        }
+    }
 }

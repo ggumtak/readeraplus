@@ -1277,10 +1277,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             var adopted = false
             try {
                 val opened = withContext(Dispatchers.IO) {
-                    val b = IntentFiles.resolveBook(this@ReaderActivity, intent)
-                    if (b.format == BookFormat.PDF) throw PdfRedirect(b)
-                    val f = File(b.path)
-                    if (!f.isFile) throw DocumentException("파일을 찾을 수 없습니다\n${b.path}")
+                    val r = IntentFiles.resolveBook(this@ReaderActivity, intent)
+                    if (r.format == BookFormat.PDF) throw PdfRedirect(r)
+                    val f = File(r.path)
+                    if (!f.isFile) throw DocumentException("파일을 찾을 수 없습니다\n${r.path}")
+                    // The file's size now, not at the last scan: a file replaced since then gets another TXT position
+                    // signature (it carries the size), so its saved place is found again by fraction, not at stale offsets.
+                    val len = f.length()
+                    val b = if (len > 0L && len != r.sizeBytes) r.copy(sizeBytes = len) else r
                     parsing = b
                     // T1-9: the book's own TXT options, one primary-key read on the connection resolveBook just used.
                     val over = if (b.format == BookFormat.TXT) txtOverrideOf(b.id) else null
@@ -3712,7 +3716,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 s.listener = sessionListener
                 // The old parse stays readable while this one is made (seconds for a big TXT): pages turned meanwhile
                 // count, so the new parse opens where the reader is now, not where the re-open started. A turn during
-                // the layout below lays out again (a few times at most; then the latest place wins by ratio).
+                // the layout below lays out again around the new place (a few times at most: a turn during the last
+                // one is not followed).
                 var target: DocPosition
                 var sec: Int
                 var l: SectionLayout?
@@ -3727,7 +3732,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     sec = target.section.coerceIn(0, s.sectionCount - 1)
                     val (vw, vh) = pageTargetSize()
                     // The needle is text of the old anchor's section: searched only where that section still is.
-                    s.setViewport(vw, vh, pageCutoutTop, AnchorSpec(sec, target.offset, if (target === pos && sec == pos.section) needle else null))
+                    val spec = AnchorSpec(sec, target.offset, if (target === pos && sec == pos.section) needle else null)
+                    // Same size again: setViewport keeps the first generation (and its anchor), so a retarget rebuilds.
+                    if (!s.setViewport(vw, vh, pageCutoutTop, spec) && tries > 0) s.reanchor(spec)
                     l = s.layout(sec)
                     if (l != null) {
                         val at = if (l.anchorBreak >= 0) l.anchorBreak else target.offset.coerceIn(0, l.content.length)

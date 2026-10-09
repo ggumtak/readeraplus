@@ -9,8 +9,8 @@ package com.ggumtak.readeraplus.data
  *   TXT options store the same quote at other offsets); bookmarks on `section,offset`; a match only fills what the
  *   device lacks (style onto 0, place onto `frac < 0`, note onto empty);
  * - lookups are deduplicated on (word key, section, start, createdAt);
- * - a PDF's ink and bookmarks (`pdfNotes`, one file per book) are written only where the device has none of its own
- *   ([PdfNoteFiles.shouldRestore]): the device's file stays, whoever read the book later;
+ * - a PDF's ink and bookmarks (`pdfNotes`, one file per book) fill in only where the device has none of its own
+ *   ([PdfNoteFiles.merged]): bookmarks join, a page with ink here keeps it, whoever read the book later;
  * - a backup book with notes whose file is not here becomes a placeholder (trashed, missing) holding them.
  */
 internal object BackupMerge {

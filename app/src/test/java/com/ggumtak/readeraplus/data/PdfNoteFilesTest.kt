@@ -89,6 +89,17 @@ class PdfNoteFilesTest {
     }
 
     @Test
+    fun idsAreTheBooksWithANotesFile() {
+        val dir = tempDir()
+        assertTrue(PdfNoteFiles.ids(File(dir, "none")).isEmpty())
+        PdfNoteFiles.writeText(dir, 7L, notes())
+        PdfNoteFiles.writeText(dir, 12L, notes())
+        File(dir, "x.json").writeText("{}")
+        File(dir, "3.json.tmp").writeText("{}")
+        assertEquals(setOf(7L, 12L), PdfNoteFiles.ids(dir))
+    }
+
+    @Test
     fun contentMeansABookmarkOrAStroke() {
         assertTrue(PdfNoteFiles.hasContent(notes()))
         assertTrue(PdfNoteFiles.hasContent("""{"v":1,"bookmarks":[3],"pages":{}}"""))
@@ -96,6 +107,12 @@ class PdfNoteFilesTest {
         assertFalse(PdfNoteFiles.hasContent(PdfNotes().toJson()))
         assertFalse(PdfNoteFiles.hasContent("""{"v":1,"bookmarks":[],"pages":{"2":[]}}"""))
         assertFalse(PdfNoteFiles.hasContent("{}"))
+        // Found by a scan, whatever comes first and however it is spaced; strings may hold the key names.
+        assertTrue(PdfNoteFiles.hasContent(""" { "pages" : { "1" : [ ] , "5" : [ { "t" : 0 } ] } , "v" : 1 } """))
+        assertTrue(PdfNoteFiles.hasContent("""{"x":{"bookmarks":[1]},"note":"\"pages\"","bookmarks":[0]}"""))
+        assertFalse(PdfNoteFiles.hasContent("""{"x":{"bookmarks":[1],"pages":{"1":[{}]}},"bookmarks":[]}"""))
+        assertFalse(PdfNoteFiles.hasContent("""{"v":1,"bookmarks":[-1],"pages":{"2":[3]}}"""))
+        assertFalse(PdfNoteFiles.hasContent("""{"v":"unterminated"""))
         assertFalse(PdfNoteFiles.hasContent("{{{ definitely not json"))
         assertFalse(PdfNoteFiles.hasContent("5"))
         assertFalse(PdfNoteFiles.hasContent(""))
@@ -106,15 +123,38 @@ class PdfNoteFilesTest {
     fun theDevicesNotesStayAndTheBackupFillsInWhereThereAreNone() {
         val backup = notes(page = 3, mark = 8)
         val device = notes(page = 1, mark = 6)
-        assertTrue(PdfNoteFiles.shouldRestore(null, backup))
-        assertFalse(PdfNoteFiles.shouldRestore(device, backup))
-        // The viewer reads these as no notes: the backup's may take their place.
-        assertTrue(PdfNoteFiles.shouldRestore(PdfNotes().toJson(), backup))
-        assertTrue(PdfNoteFiles.shouldRestore("{{{ garbage", backup))
+        assertEquals(backup, PdfNoteFiles.merged(null, backup))
+        // The viewer reads these as no notes: the backup's take their place.
+        assertEquals(backup, PdfNoteFiles.merged(PdfNotes().toJson(), backup))
+        assertEquals(backup, PdfNoteFiles.merged("{{{ garbage", backup))
+        // Both have notes: the device's page 1 and the backup's page 3, both bookmarks.
+        val both = PdfNotes.fromJson(PdfNoteFiles.merged(device, backup)!!)
+        assertEquals(listOf(1, 3), inked(both))
+        assertEquals(listOf(6, 8), both.bookmarks().toList())
         // Nothing to restore.
-        assertFalse(PdfNoteFiles.shouldRestore(null, null))
-        assertFalse(PdfNoteFiles.shouldRestore(null, PdfNotes().toJson()))
-        assertFalse(PdfNoteFiles.shouldRestore(null, "garbage"))
+        assertNull(PdfNoteFiles.merged(null, null))
+        assertNull(PdfNoteFiles.merged(null, PdfNotes().toJson()))
+        assertNull(PdfNoteFiles.merged(null, "garbage"))
+        assertNull(PdfNoteFiles.merged(device, device))
+    }
+
+    @Test
+    fun aPageWithInkOnTheDeviceKeepsItsOwnStrokes() {
+        // The same page drawn on both: the device's strokes stay (an erase made after the backup is not undone).
+        val device = PdfNotes().also { it.add(2, InkStroke(InkTool.PEN, 1, 3f, floatArrayOf(9f, 9f, 8f, 8f))) }.toJson()
+        val backup = PdfNotes().also {
+            it.add(2, InkStroke(InkTool.PEN, 1, 2f, floatArrayOf(1f, 1f, 2f, 2f)))
+            it.add(2, InkStroke(InkTool.HIGHLIGHTER, 1, 9f, floatArrayOf(1f, 5f, 2f, 5f)))
+        }.toJson()
+        assertNull(PdfNoteFiles.merged(device, backup))
+        val withMark = PdfNotes().also {
+            it.add(2, InkStroke(InkTool.PEN, 1, 2f, floatArrayOf(1f, 1f, 2f, 2f)))
+            it.toggleBookmark(4)
+        }.toJson()
+        val m = PdfNotes.fromJson(PdfNoteFiles.merged(device, withMark)!!)
+        assertEquals(1, m.strokes(2).size)
+        assertEquals(3f, m.strokes(2)[0].width)
+        assertEquals(listOf(4), m.bookmarks().toList())
     }
 
     @Test
@@ -133,8 +173,12 @@ class PdfNoteFilesTest {
         val dir = tempDir()
         val device = notes(page = 1, mark = 6)
         assertTrue(PdfNoteFiles.writeText(dir, 7L, device))
+        // The device's notes stay; the backup's other page and bookmark join them.
+        assertTrue(PdfNoteFiles.restore(dir, 7L, notes(page = 3, mark = 8)))
+        val joined = PdfNotesStore.load(dir, 7L)
+        assertEquals(listOf(1, 3), inked(joined))
+        assertEquals(listOf(6, 8), joined.bookmarks().toList())
         assertFalse(PdfNoteFiles.restore(dir, 7L, notes(page = 3, mark = 8)))
-        assertEquals(device, PdfNoteFiles.readText(dir, 7L))
         // Restoring the same backup twice changes nothing either.
         val fresh = tempDir()
         val backup = notes(page = 3, mark = 8)
@@ -154,4 +198,7 @@ class PdfNoteFilesTest {
         assertFalse(PdfNoteFiles.restore(dir, 7L, "not json"))
         assertEquals(0, dir.list()!!.size)
     }
+
+    /** The pages with ink, ascending. */
+    private fun inked(n: PdfNotes): List<Int> = (0..50).filter { n.strokes(it).isNotEmpty() }
 }

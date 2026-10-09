@@ -84,6 +84,8 @@ class PdfActivity : Activity() {
         private const val DETAIL_DELAY_MS = 120L
         private const val SAVE_DELAY_MS = 800L
         private const val NOTES_SAVE_DELAY_MS = 1000L
+        /** A failed notes write is tried again after this long (a full disk may have room by then). */
+        private const val NOTES_RETRY_MS = 15_000L
         private const val NOTES_DIR = "pdf_notes"
         private const val PREFS = "pdf_viewer"
         /** Longest selected text shown as the action dialog's title. */
@@ -138,6 +140,11 @@ class PdfActivity : Activity() {
     private var detailBusy = false
     /** The viewport whose detail render just failed: not retried until zoom / pan move on. */
     private var failedDetail: PdfPageView.Viewport? = null
+    /**
+     * The page whose "could not draw" message shows, else -1: a tap in the middle tries it again. The message itself
+     * takes no touches, so swipes and side taps still turn the page and the middle still shows the bars.
+     */
+    private var failedPage = -1
     /** The page on screen, for the render thread to skip prefetches that are no longer wanted. */
     @Volatile private var wantedPage = -1
 
@@ -279,6 +286,8 @@ class PdfActivity : Activity() {
             setBackgroundColor(PdfChrome.BAR)
             gravity = Gravity.CENTER
             setPadding(dp(24), dp(24), dp(24), dp(24))
+            // Over a page that could not be drawn a drawing tool inks nothing: the page behind is not the one named.
+            setOnTouchListener { _, _ -> failedPage >= 0 && pageView.mode != PdfPageView.MODE_NONE }
         }
         root.addView(message, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
@@ -351,6 +360,7 @@ class PdfActivity : Activity() {
     }
 
     private fun showMessage(text: CharSequence?) {
+        failedPage = -1
         message.text = text ?: ""
         message.visibility = if (text == null) View.GONE else View.VISIBLE
         if (text == null) clearMessageTap()
@@ -595,8 +605,8 @@ class PdfActivity : Activity() {
                 }
                 if (result == null) {
                     if (index == current) {
-                        showMessage("${index + 1}쪽을 그리지 못했습니다.\n\n(눌러서 다시 시도)")
-                        message.setOnClickListener { retryPage(index) }
+                        showMessage("${index + 1}쪽을 그리지 못했습니다.\n\n(가운데를 눌러 다시 시도)")
+                        failedPage = index
                     }
                     return@post
                 }
@@ -615,10 +625,9 @@ class PdfActivity : Activity() {
         }
     }
 
-    /** A tap on the "could not draw" message: forgets the failed render and asks for the page again. */
+    /** A tap in the middle over the "could not draw" message: forgets the failed render and asks for the page again. */
     private fun retryPage(index: Int) {
         if (pageCount <= 0 || index != current) return
-        clearMessageTap()
         showMessage("불러오는 중…")
         cache.remove(index)
         failedDetail = null
@@ -737,6 +746,7 @@ class PdfActivity : Activity() {
         keeper.poke()
         var zone = PdfMath.tapZone(x, pageView.width)
         if (app.invertTaps) zone = -zone
+        if (zone == 0 && failedPage >= 0 && failedPage == current) retryPage(current)
         if (zone == 0) toggleBars() else turn(zone)
     }
 
@@ -823,13 +833,19 @@ class PdfActivity : Activity() {
     }
 
     /**
-     * A notes write failed: the notes are changed-and-unsaved again, so the next debounce or [onPause] tries once
-     * more (a newer save already queued carries these changes; notes of a closed document are gone). The reader is
-     * told once.
+     * A notes write failed: the notes are changed-and-unsaved again and tried again in [NOTES_RETRY_MS] (sooner after
+     * the next edit, and at [onPause]); a newer save already queued carries these changes, notes of a closed document
+     * are gone. The reader is told once.
      */
     private fun notesSaveFailed(n: PdfNotes, seq: Int) {
         Log.w(TAG, "notes save failed")
-        if (notes === n && seq == notesSaveSeq) n.dirty = true
+        if (notes === n && seq == notesSaveSeq) {
+            n.dirty = true
+            if (!isDestroyed) {
+                handler.removeCallbacks(notesSaveRunnable)
+                handler.postDelayed(notesSaveRunnable, NOTES_RETRY_MS)
+            }
+        }
         if (notesFailShown) return
         notesFailShown = true
         (if (isDestroyed) applicationContext else this).toast(NOTES_SAVE_FAILED)

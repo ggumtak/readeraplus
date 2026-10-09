@@ -692,10 +692,17 @@ internal class EpubBook private constructor(
         private const val TITLE_PEEK_BYTES = 8 * 1024
         private const val TITLE_SCAN_BYTES = 24 * 1024
 
-        /** See [missingSpineItems]. */
-        internal fun missingSpine(zip: EpubZip, pkg: EpubPackage): Int =
-            (pkg.spineRefCount - pkg.spine.size).coerceAtLeast(0) +
-                pkg.spine.count { (it.isHtml || it.isImage) && zip.find(it.path) == null }
+        /**
+         * See [missingSpineItems]: itemrefs to no manifest item, plus spine files not in the zip (each file once). 0 when
+         * no spine item is readable: then [selectSpine] shows the book's other files instead, nothing is skipped.
+         */
+        internal fun missingSpine(zip: EpubZip, pkg: EpubPackage): Int {
+            fun shown(it: ManifestItem) = it.isHtml || it.isImage
+            if (pkg.spine.none { shown(it) && zip.find(it.path) != null }) return 0
+            val gone = HashSet<String>()
+            for (it in pkg.spine) if (shown(it) && zip.find(it.path) == null) gone += it.path
+            return (pkg.spineRefCount - pkg.spine.size).coerceAtLeast(0) + gone.size
+        }
 
         /** Displayable spine items (XHTML or image) in reading order, with canonical zip paths; may be empty. */
         internal fun selectSpine(zip: EpubZip, pkg: EpubPackage): List<ManifestItem> {
