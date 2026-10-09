@@ -72,7 +72,7 @@ for dx in -90 -60 -30 0 30 60 90 120; do adb shell input motionevent MOVE $((CX 
 shot 04p1_live 0; log "light share live: $(python3 tools/ci/dark_share.py shots/04p1_live.png $((YP - 6)) $((YP + 6)) light)"
 adb shell input motionevent UP $((CX + 120)) $YP
 shot 04p2_after 1; log "light share after: $(python3 tools/ci/dark_share.py shots/04p2_after.png $((YP - 6)) $((YP + 6)) light)"
-crashes dark_pen
+inklog; crashes dark_pen
 tap_label "필기 끝내기"; tap_label "PDF 설정"; sleep 1; tap_label "기본"; tap_label "닫기"; sleep 1
 
 log "tool bar layout (fold, float, drag, dock)"

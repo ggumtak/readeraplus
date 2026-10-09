@@ -40,12 +40,14 @@ def read_png(path):
 w, h, bpp, rows = read_png(sys.argv[1])
 y0, y1 = max(0, int(sys.argv[2])), min(h, int(sys.argv[3]))
 light = len(sys.argv) > 4 and sys.argv[4] == "light"
+peak = 0
 dark = total = 0
 for y in range(y0, y1):
     r = rows[y]
     for x in range(w):
         o = x * bpp
         total += 1
+        peak = max(peak, min(r[o], r[o + 1], r[o + 2]))
         if (r[o] > 90 and r[o + 1] > 90 and r[o + 2] > 90) if light else (r[o] < 40 and r[o + 1] < 40 and r[o + 2] < 40):
             dark += 1
-print("%.3f" % (dark / total if total else 0))
+print("%.3f" % (dark / total if total else 0) + (" (brightest %d)" % peak if light else ""))
