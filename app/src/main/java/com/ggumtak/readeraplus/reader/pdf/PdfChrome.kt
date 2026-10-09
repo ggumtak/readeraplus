@@ -341,6 +341,8 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
                                 // Off the top: a floating bar from here on (it lays out again at its own width).
                                 setLayout(docked = false, folded = false, x = posX, y = posY)
                                 report()
+                                // Its new width is known after the next layout: placed from the next move on.
+                                return true
                             }
                         }
                         if (dragging) {

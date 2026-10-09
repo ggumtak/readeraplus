@@ -495,7 +495,17 @@ class PdfActivity : Activity() {
         pageView.setNeighbors(prev, next)
     }
 
-    private fun fits(p: PageBitmap): Boolean = p.areaW == areaW() && p.areaH == areaH()
+    /**
+     * Whether [p] is the size a render for the page area now would be. By size, not by area: bars shown or hidden
+     * change the area's height, but a page fitted to the width keeps its bitmap (no re-render on every toggle).
+     */
+    private fun fits(p: PageBitmap): Boolean {
+        val aw = areaW()
+        val ah = areaH()
+        if (aw <= 0 || ah <= 0) return false
+        val size = PdfMath.renderSize(p.w, p.h, PdfMath.fitScale(p.w, p.h, aw, ah), MAX_BASE_PIXELS)
+        return PdfMath.packedW(size) == p.bitmap.width && PdfMath.packedH(size) == p.bitmap.height
+    }
 
     private fun areaW(): Int = (pageView.width - pageView.paddingLeft - pageView.paddingRight).coerceAtLeast(0)
     private fun areaH(): Int = (pageView.height - pageView.paddingTop - pageView.paddingBottom).coerceAtLeast(0)
@@ -561,7 +571,7 @@ class PdfActivity : Activity() {
                     if (index == current) showMessage("${index + 1}쪽을 그리지 못했습니다.")
                     return@post
                 }
-                if (result.areaW != areaW() || result.areaH != areaH()) {
+                if (!fits(result)) {
                     if (index == current) goTo(current, showFromEnd)
                     return@post
                 }
@@ -875,6 +885,7 @@ class PdfActivity : Activity() {
         body.addView(PdfSheet.switchRow(ctx, "한 손가락 패닝(펜)", "켜면 필기 중에도 손가락으로는 넘기고 움직이며, 펜으로만 씁니다. 펜을 한 번 쓰면 이 화면에서는 자동으로 이렇게 됩니다", !p.fingerDraws) {
             p.fingerDraws = !it
             pageView.fingerDraws = !it
+            pageView.resetStylusSeen()
         })
         body.addView(PdfSheet.section(ctx, "펜 도구"))
         body.addView(PdfSheet.switchRow(ctx, "펜 입력 감도 사용", "스타일러스를 누르는 힘에 따라 펜 굵기가 변합니다", p.pressure) {

@@ -201,6 +201,11 @@ internal class PdfPageView(context: Context) : View(context) {
      * Flexcil), whatever [fingerDraws] says.
      */
     private var stylusSeen = false
+    /** Forgets the pen seen so far ([fingerDraws] set again in the settings: fingers draw again if it says so). */
+    fun resetStylusSeen() {
+        stylusSeen = false
+    }
+
     /** Whether a finger touch with a tool on draws (else it navigates). */
     private val fingerTools: Boolean get() = mode != MODE_NONE && fingerDraws && !stylusSeen
     /** The pointer the stroke follows (the pen, or the drawing finger), by id: contacts come and go around it. */
@@ -1091,6 +1096,9 @@ internal class PdfPageView(context: Context) : View(context) {
                 if (liveOn && Build.VERSION.SDK_INT >= 34 && e.pointerCount == 1) {
                     Prediction.record(this, e)
                     predictedCount = Prediction.predict(this, e, predicted)
+                } else {
+                    // No prediction with a palm down: an old tail must not linger ahead of the line.
+                    predictedCount = 0
                 }
             }
             MotionEvent.ACTION_UP -> {
@@ -1360,8 +1368,9 @@ internal class PdfPageView(context: Context) : View(context) {
             inkGesture = inkToolFor(event)
             inkTouched = inkGesture != MODE_NONE
             inkStylus = inkTouched && pen
-        } else if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && !inkStylus) {
-            // The pen comes down while a palm or finger already touches: the pen wins, the rest is ignored.
+        } else if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && (!inkStylus || inkGesture == MODE_NONE)) {
+            // The pen comes down while a palm or finger already touches (or again, the palm still resting after the
+            // last stroke): the pen wins, the rest is ignored.
             val i = event.actionIndex
             val type = event.getToolType(i)
             if (type == MotionEvent.TOOL_TYPE_STYLUS || type == MotionEvent.TOOL_TYPE_ERASER) {
