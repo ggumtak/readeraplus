@@ -1,8 +1,8 @@
 ---
 name: designer
-description: Read-only detailed implementation designer under the main Opus architectural decisions. Returns a concrete plan, interfaces and regression risks.
+description: Read-only detailed implementation designer using Opus 5.5 for development design. Returns a concrete plan, interfaces and regression risks.
 tools: Read, Grep, Glob, Bash
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 effort: high
 maxTurns: 20
 ---
