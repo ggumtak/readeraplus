@@ -144,6 +144,48 @@ class NumPadStateTest {
     }
 
     @Test
+    fun aValuePadTakesAMinusAndDecimals() {
+        val s = NumPadState(2, signed = true, decimals = 1)
+        assertTrue(s.minus())
+        assertEquals("−", s.shown)
+        assertNull(s.number)
+        assertTrue(s.digit(1)); assertTrue(s.digit(7))
+        assertFalse(s.digit(3))          // two digits before the point
+        assertTrue(s.point())
+        assertFalse(s.point())
+        assertTrue(s.digit(5))
+        assertFalse(s.digit(1))          // one decimal
+        assertEquals("−17.5", s.shown)
+        assertEquals(-17.5, s.number!!, 0.0)
+        assertTrue(s.backspace()); assertTrue(s.backspace())
+        assertEquals(-17.0, s.number!!, 0.0)
+        assertEquals(-17, s.value)
+        assertTrue(s.backspace()); assertTrue(s.backspace())
+        assertEquals("−", s.shown)
+        assertTrue(s.backspace())        // then the minus
+        assertTrue(s.isEmpty)
+        assertFalse(s.backspace())
+        // a point first is "0."
+        assertTrue(s.point())
+        assertEquals("0.", s.shown)
+        assertTrue(s.digit(5))
+        assertEquals(0.5, s.number!!, 0.0)
+        assertTrue(s.clear())
+        assertTrue(s.isEmpty)
+    }
+
+    @Test
+    fun thePagePadHasNoMinusNorPoint() {
+        val s = NumPadState(3)
+        assertFalse(s.minus())
+        assertFalse(s.point())
+        s.digit(4); s.digit(2)
+        assertEquals("42", s.shown)
+        assertEquals(42, s.value)
+        assertEquals(42.0, s.number!!, 0.0)
+    }
+
+    @Test
     fun pagerLabel() {
         assertEquals("3 / 27", PagerMath.label(3, 27))
         assertEquals("", PagerMath.label(0, 0))

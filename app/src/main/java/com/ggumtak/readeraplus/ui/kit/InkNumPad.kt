@@ -18,8 +18,11 @@ import android.widget.TextView
  * Text input (Hangul) keeps the system IME.
  */
 
-/** Pure state of an [InkNumPad]: the digits typed so far (unit-tested). */
-class NumPadState(maxLength: Int = 5) {
+/**
+ * Pure state of an [InkNumPad]: the digits typed so far (unit-tested). [signed] allows a minus ([minus]) and [decimals]
+ * digits after a point ([point]), for setting values ("−4", "17.5"); without them it is the page pad it always was.
+ */
+class NumPadState(maxLength: Int = 5, val signed: Boolean = false, val decimals: Int = 0) {
     /** Most digits accepted (1..[MAX_LENGTH]); lowering it drops the extra digits. */
     var maxLength: Int = clampLength(maxLength)
         set(v) {
@@ -27,16 +30,35 @@ class NumPadState(maxLength: Int = 5) {
             if (text.length > field) text = text.substring(0, field)
         }
 
-    /** The digits, without leading zeros ("0" alone is kept). */
+    /** The digits (and a point), without leading zeros ("0" alone is kept, "0." before decimals). */
     var text: String = ""
         private set
 
-    val isEmpty: Boolean get() = text.isEmpty()
+    /** A minus was typed ([signed] only). */
+    var negative: Boolean = false
+        private set
 
-    /** The typed number, or null when nothing was typed. */
-    val value: Int? get() = text.toIntOrNull()
+    val isEmpty: Boolean get() = text.isEmpty() && !negative
 
-    /** Appends digit [d]. False (nothing changes) when [d] is not 0..9, the field is full or it would be a leading 0. */
+    /** What the pad shows: the text with its minus ("−4"). */
+    val shown: String get() = if (negative) "−$text" else text
+
+    /** The typed whole number, or null when nothing was typed (the page pad). */
+    val value: Int? get() = text.toIntOrNull()?.let { if (negative) -it else it }
+
+    /** The typed number with its sign and decimals, or null when no digit was typed. */
+    val number: Double?
+        get() {
+            val t = text.trimEnd('.')
+            if (t.isEmpty()) return null
+            val v = t.toDoubleOrNull() ?: return null
+            return if (negative) -v else v
+        }
+
+    /**
+     * Appends digit [d]. False (nothing changes) when [d] is not 0..9, the field is full ([maxLength] digits, or
+     * [decimals] after the point) or it would be a leading 0.
+     */
     fun digit(d: Int): Boolean {
         if (d !in 0..9) return false
         if (text == "0") {
@@ -44,22 +66,46 @@ class NumPadState(maxLength: Int = 5) {
             text = d.toString()
             return true
         }
-        if (text.length >= maxLength) return false
+        val dot = text.indexOf('.')
+        if (dot >= 0) {
+            if (text.length - dot - 1 >= decimals) return false
+        } else if (text.length >= maxLength) {
+            return false
+        }
         text += ('0' + d)
         return true
     }
 
-    /** Removes the last digit; false when there is none. */
+    /** Starts the decimals ("0." when nothing was typed); false without [decimals] or with a point already. */
+    fun point(): Boolean {
+        if (decimals <= 0 || text.contains('.')) return false
+        text = if (text.isEmpty()) "0." else "$text."
+        return true
+    }
+
+    /** Turns the minus on or off; false when not [signed]. */
+    fun minus(): Boolean {
+        if (!signed) return false
+        negative = !negative
+        return true
+    }
+
+    /** Removes the last digit (or point), then the minus; false when there is nothing. */
     fun backspace(): Boolean {
-        if (text.isEmpty()) return false
+        if (text.isEmpty()) {
+            if (!negative) return false
+            negative = false
+            return true
+        }
         text = text.substring(0, text.length - 1)
         return true
     }
 
-    /** Removes every digit; false when there was none. */
+    /** Removes everything typed; false when there was nothing. */
     fun clear(): Boolean {
-        if (text.isEmpty()) return false
+        if (isEmpty) return false
         text = ""
+        negative = false
         return true
     }
 
@@ -83,8 +129,8 @@ class NumPadState(maxLength: Int = 5) {
  * update per digit; the labels have fixed sizes, so typing never re-lays out the window. ⌫ held clears the field.
  * Hardware digit / Del / Enter keys work through [handleKey]. Main thread only.
  */
-class InkNumPad(context: Context, maxLength: Int = 5) : LinearLayout(context) {
-    val state = NumPadState(maxLength)
+class InkNumPad(context: Context, maxLength: Int = 5, signed: Boolean = false, decimals: Int = 0) : LinearLayout(context) {
+    val state = NumPadState(maxLength, signed, decimals)
 
     /** 이동 (or Enter) was pressed: the typed number, null when the field is empty. */
     var onEnter: ((Int?) -> Unit)? = null
@@ -114,10 +160,17 @@ class InkNumPad(context: Context, maxLength: Int = 5) : LinearLayout(context) {
         orientation = VERTICAL
         addView(display, LayoutParams(LayoutParams.MATCH_PARENT, context.dp(64)))
         addView(hintLine, LayoutParams(LayoutParams.MATCH_PARENT, context.dp(30)))
-        val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "이동")
-        for (r in 0 until 4) {
+        // A value pad (sign or decimals) puts − and . beside the 0 and ⌫ with a wide 이동 on a row of their own.
+        val extended = signed || decimals > 0
+        val rows = if (!extended) {
+            listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("⌫", "0", "이동"))
+        } else {
+            listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"),
+                listOf(if (signed) "−" else "", "0", if (decimals > 0) "." else ""), listOf("⌫", "이동"))
+        }
+        for (keys in rows) {
             val row = LinearLayout(context).apply { orientation = HORIZONTAL }
-            for (c in 0 until 3) row.addView(key(keys[r * 3 + c]), LayoutParams(0, context.dp(KEY_DP), 1f).apply {
+            for (k in keys) row.addView(key(k), LayoutParams(0, context.dp(KEY_DP), if (k == "이동" && extended) 2f else 1f).apply {
                 val m = context.dp(3)
                 setMargins(m, m, m, m)
             })
@@ -146,6 +199,14 @@ class InkNumPad(context: Context, maxLength: Int = 5) : LinearLayout(context) {
                 setOnClickListener { edit(state.backspace()) }
                 setOnLongClickListener { edit(state.clear()); true }
             }
+            "" -> isClickable = false
+            "−", "." -> {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+                setTextColor(Ink.BLACK)
+                background = context.borderBox(radiusDp = 3f)
+                contentDescription = if (text == "−") "빼기 부호" else "소수점"
+                setOnClickListener { edit(if (text == "−") state.minus() else state.point()) }
+            }
             else -> {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
                 setTextColor(Ink.BLACK)
@@ -173,12 +234,12 @@ class InkNumPad(context: Context, maxLength: Int = 5) : LinearLayout(context) {
     fun reset(maxLength: Int, hint: CharSequence) {
         state.clear()
         state.maxLength = maxLength
-        display.text = ""
+        display.text = state.shown
         clearError()
         setHint(hint)
     }
 
-    /** Hardware keys: digits, Del, Enter. True when the key is the pad's (its DOWN and UP are both consumed). */
+    /** Hardware keys: digits, minus, point, Del, Enter. True when the key is the pad's (its DOWN and UP are both consumed). */
     fun handleKey(keyCode: Int, ev: KeyEvent): Boolean {
         val d = when (keyCode) {
             in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> keyCode - KeyEvent.KEYCODE_0
@@ -186,11 +247,15 @@ class InkNumPad(context: Context, maxLength: Int = 5) : LinearLayout(context) {
             else -> -1
         }
         val isEnter = keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
-        if (d < 0 && !isEnter && keyCode != KeyEvent.KEYCODE_DEL) return false
+        val isMinus = state.signed && (keyCode == KeyEvent.KEYCODE_MINUS || keyCode == KeyEvent.KEYCODE_NUMPAD_SUBTRACT)
+        val isPoint = state.decimals > 0 && (keyCode == KeyEvent.KEYCODE_PERIOD || keyCode == KeyEvent.KEYCODE_NUMPAD_DOT)
+        if (d < 0 && !isEnter && !isMinus && !isPoint && keyCode != KeyEvent.KEYCODE_DEL) return false
         if (ev.action != KeyEvent.ACTION_DOWN) return true
         when {
             d >= 0 -> edit(state.digit(d))
             isEnter -> if (ev.repeatCount == 0) enter()
+            isMinus -> edit(state.minus())
+            isPoint -> edit(state.point())
             else -> edit(state.backspace())
         }
         return true
@@ -198,7 +263,7 @@ class InkNumPad(context: Context, maxLength: Int = 5) : LinearLayout(context) {
 
     private fun edit(changed: Boolean) {
         clearError()
-        if (changed) display.text = state.text
+        if (changed) display.text = state.shown
     }
 
     private fun clearError() {
@@ -222,6 +287,22 @@ class InkNumPad(context: Context, maxLength: Int = 5) : LinearLayout(context) {
          */
         fun show(context: Context, title: String, hint: CharSequence, maxLength: Int, onEnter: (Int) -> CharSequence?): AlertDialog {
             val pad = InkNumPad(context, maxLength)
+            return dialog(context, title, hint, pad) { onEnter(pad.state.value!!) }
+        }
+
+        /**
+         * A setting's value: like [show], with a minus key when [signed] and a point for [decimals] digits after it
+         * ("17.5"). [onEnter] gets the typed number; null closes the dialog, a message keeps it open.
+         */
+        fun showValue(
+            context: Context, title: String, hint: CharSequence, maxLength: Int, signed: Boolean, decimals: Int,
+            onEnter: (Double) -> CharSequence?,
+        ): AlertDialog {
+            val pad = InkNumPad(context, maxLength, signed, decimals)
+            return dialog(context, title, hint, pad) { onEnter(pad.state.number!!) }
+        }
+
+        private fun dialog(context: Context, title: String, hint: CharSequence, pad: InkNumPad, enter: () -> CharSequence?): AlertDialog {
             pad.setHint(hint)
             val box = FrameLayout(context).apply {
                 setPadding(context.dp(20), context.dp(8), context.dp(20), 0)
@@ -234,11 +315,11 @@ class InkNumPad(context: Context, maxLength: Int = 5) : LinearLayout(context) {
                 addView(box, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
             }
             val dialog = context.alert().setTitle(title).setView(scroll).setNegativeButton("취소", null).create()
-            pad.onEnter = { v ->
-                if (v == null) {
+            pad.onEnter = {
+                if (pad.state.number == null) {
                     pad.showError("숫자를 입력하세요")
                 } else {
-                    val msg = onEnter(v)
+                    val msg = enter()
                     if (msg == null) dialog.dismiss() else pad.showError(msg)
                 }
             }

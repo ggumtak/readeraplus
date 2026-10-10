@@ -186,10 +186,16 @@ internal class PagePalette private constructor(
          * shadow sum is within 1 % of MaruViewer's on two lines. Its white page has no shadow (a fit gives alpha 0, its
          * extra faint pixels are the hinting), so [PAPER] stays without one. On the Comet (2 px per dp) the shadow is
          * (1, 1) px (was ≈ 1.25 / 1 px) with sigma 0.98 px (was 0.90).
+         * Re-measured 2026-10-10 on one lossless S25 screenshot with both apps on the same page of the same book (user:
+         * "그림자랑 글자 선명도는 정말 중요해 최대한 똑같아야"): the glyphs are now drawn alike (six lines aligned with no shift,
+         * every glyph pixel within one level, 93 % equal), so the shadow alone differed: ours lighter in its core (up to
+         * 0.6 level) and darker in its rim (up to 0.26): a wider blur. Regressing the difference on the blur's width
+         * gives ours 0.045 px wider (+0.0452 on either half of the lines), offset and strength the same: sigma 0.474 dp
+         * (1.333 px, radius 1.44 px; was 0.49 dp, 1.378 px). On the Comet 0.95 px.
          */
         val MARU = PagePalette(
             background = 0xFF323232.toInt(), text = 0xFFDDDDDD.toInt(), status = 0xFFFFD387.toInt(),
-            shadowDxDp = 0.71f, shadowDyDp = 0.36f, shadowSigmaDp = 0.49f, shadowColor = 0xFF000000.toInt(),
+            shadowDxDp = 0.71f, shadowDyDp = 0.36f, shadowSigmaDp = 0.474f, shadowColor = 0xFF000000.toInt(),
             dark = true, invertImages = false,
         )
 
@@ -200,7 +206,7 @@ internal class PagePalette private constructor(
          */
         val BLACK = PagePalette(
             background = OPAQUE, text = 0xFFDDDDDD.toInt(), status = 0xFFFFD387.toInt(),
-            shadowDxDp = 0.71f, shadowDyDp = 0.36f, shadowSigmaDp = 0.49f, shadowColor = 0xFF000000.toInt(),
+            shadowDxDp = 0.71f, shadowDyDp = 0.36f, shadowSigmaDp = 0.474f, shadowColor = 0xFF000000.toInt(),
             dark = true, invertImages = false,
         )
 

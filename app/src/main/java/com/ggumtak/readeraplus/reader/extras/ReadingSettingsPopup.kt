@@ -30,6 +30,7 @@ import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.SideMargin
 import com.ggumtak.readeraplus.settings.VerticalMargin
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.InkNumPad
 import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.horizontal
@@ -148,7 +149,8 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     private fun buildContent(): LinearLayout {
         val root = ctx.vertical { setBackgroundColor(Ink.WHITE) }
         root.addView(topBar(), lp())
-        root.addView(stepperRow("글자 크기", cur.fontSizeSp, ReaderSettings.MIN_FONT_SP, ReaderSettings.MAX_FONT_SP, 0.5f, Fmt::number) {
+        root.addView(stepperRow("글자 크기", cur.fontSizeSp, ReaderSettings.MIN_FONT_SP, ReaderSettings.MAX_FONT_SP, 0.5f, Fmt::number,
+            entry = StepperEntry(decimals = 1, digits = 2)) {
             update(cur.copy(fontSizeSp = it), debounce = true)
         })
         // 굵기 counts steps from the font's own weight ("기본"); a static file can't get thinner than it is. Read per
@@ -156,8 +158,14 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         val minWeight = minWeightOf(cur.fontId)
         // The floor follows the font picked in this popup too: a "−" below a static font's weight changed only the
         // number before (the page drew the same).
+        // Typed as the steps it shows from 기본 ("2" = +2, "−1"), of the font picked when the pad opens.
+        val weightEntry = StepperEntry(
+            signed = true, digits = 2,
+            toShown = { (it - FontManager.naturalWeight(cur.fontId)) / 50.0 },
+            fromShown = { FontManager.naturalWeight(cur.fontId) + it.toFloat() * 50f },
+        )
         root.addView(stepperRow("굵기", cur.fontWeight.toFloat().coerceAtLeast(minWeight), minWeight, 900f, 50f,
-            { Fmt.weight(it.toInt(), FontManager.naturalWeight(cur.fontId)) }, floor = { minWeightOf(cur.fontId) }) {
+            { Fmt.weight(it.toInt(), FontManager.naturalWeight(cur.fontId)) }, floor = { minWeightOf(cur.fontId) }, entry = weightEntry) {
             update(cur.copy(fontWeight = it.toInt()), debounce = true)
         })
         root.addView(stepperRow("줄 간격", cur.lineHeightPct.toFloat(), 100f, 300f, 5f, { Fmt.pct(it.toInt()) }) {
@@ -175,6 +183,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             QuickFields.sideUi(cur).toFloat(),
             SideMargin.UI_MIN.toFloat(), SideMargin.UI_MAX.toFloat(), SideMargin.UI_STEP.toFloat(),
             { SideMargin.label(it.toInt()) },
+            entry = StepperEntry(signed = true, digits = 2),
         ) { update(QuickFields.withSide(cur, it.toInt()), debounce = true) })
         var vertical = QuickFields.verticalUi(cur)
         root.addView(stepperRow(
@@ -182,6 +191,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             vertical.toFloat(),
             VerticalMargin.UI_MIN.toFloat(), VerticalMargin.UI_MAX.toFloat(), VerticalMargin.UI_STEP.toFloat(),
             { VerticalMargin.label(it.toInt()) },
+            entry = StepperEntry(signed = true, digits = 2),
         ) {
             val to = it.toInt()
             update(QuickFields.withVertical(cur, vertical, to), debounce = true)
@@ -313,7 +323,8 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
     /**
      * Label left, "−  value  +" right (48 dp buttons, "<title> 줄이기" / "<title> 늘리기") on the same row. [floor], when
-     * given, is read at each tap instead of [min] (it can move while the popup is open).
+     * given, is read at each tap instead of [min] (it can move while the popup is open). A tap on the value opens a number
+     * pad to type it in ([entry]: its units, sign and decimals; [StepperEntry]).
      */
     private fun stepperRow(
         title: String,
@@ -323,6 +334,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         step: Float,
         format: (Float) -> String,
         floor: (() -> Float)? = null,
+        entry: StepperEntry = StepperEntry(),
         onChange: (Float) -> Unit,
     ): LinearLayout {
         var v = value
@@ -332,12 +344,24 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         // Fixed width for the widest possible value (at least the common column width): the − / + buttons stay put
         // while tapping repeatedly, and line up with the other rows' buttons.
         valueView.lockWidthForValues(min, max, step, format, minPx = ctx.dp(Compact.STEP_VALUE_DP))
-        fun set(nv: Float) {
-            val s = Fmt.stepFloat(nv, step, floor?.invoke() ?: min, max)
+        fun apply(s: Float) {
             if (s == v) return
             v = s
             valueView.text = format(v)
             onChange(v)
+        }
+        fun set(nv: Float) = apply(Fmt.stepFloat(nv, step, floor?.invoke() ?: min, max))
+        valueView.isClickable = true
+        valueView.background = pressableBackground()
+        valueView.contentDescription = "$title 직접 입력"
+        valueView.setOnClickListener {
+            val lo = floor?.invoke() ?: min
+            InkNumPad.showValue(ctx, title, "지금 ${format(v)} · ${entry.range(lo, max)}", entry.digits, entry.signed,
+                entry.decimals) { typed ->
+                val nv = entry.valueFor(typed, lo, max) ?: return@showValue "${entry.range(lo, max)} 사이로 입력하세요"
+                apply(nv)
+                null
+            }
         }
         row.addView(ctx.compactIcon(R.drawable.ic_do_not_disturb_on, "$title 줄이기") { set(v - step) })
         row.addView(valueView)
