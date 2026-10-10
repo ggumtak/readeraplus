@@ -689,7 +689,15 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                if (localAi) return !EinkAiSite.isDocument(request.url.toString())
+                if (localAi) {
+                    val address = request.url.toString()
+                    if (EinkAiSite.isDocument(address)) return false
+                    if (request.isForMainFrame && request.hasGesture() && request.method == "GET" &&
+                        EinkAiSite.isSourceLink(address)) {
+                        TextActions.start(ctx, Intent(Intent.ACTION_VIEW, request.url))
+                    }
+                    return true
+                }
                 val scheme = request.url.scheme?.lowercase()
                 // http(s) stays in the panel; intent://, market:// and the like are never followed.
                 return scheme != "http" && scheme != "https"

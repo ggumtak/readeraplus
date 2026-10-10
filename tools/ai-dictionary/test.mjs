@@ -10,12 +10,12 @@ const html = readFileSync(new URL('app/src/main/assets/ai-dictionary.html', root
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const core = script.split('/* UI */')[0];
 const key = 'sk-' + 'ant-' + 'x'.repeat(48);
-const options = {model:'claude-haiku-5-5', effort:'medium', messages:[{role:'user',content:'귀접 뜻'}]};
+const options = {model:'claude-sonnet-5-5', effort:'medium', messages:[{role:'user',content:'귀접 뜻'}]};
 const event = (data, ending='\n') => 'event: '+data.type+ending+'data: '+JSON.stringify(data)+ending+ending;
 const end = event({type:'message_stop'});
 const reply = () => new Response(event({type:'content_block_delta',delta:{type:'text_delta',text:'단어의 뜻입니다.'}})+end);
 function runtime(fetch, streaming=true) {
-  const ctx = vm.createContext({fetch,Response,ReadableStream:streaming?ReadableStream:undefined,TextDecoder,AbortController});
+  const ctx = vm.createContext({fetch,Response,ReadableStream:streaming?ReadableStream:undefined,TextDecoder,AbortController,URL});
   vm.runInContext(core, ctx);
   return ctx.ReaderAi;
 }
@@ -119,14 +119,14 @@ test('keys persist only when requested and can be forgotten or used in memory',(
   assert.equal(api.loadKey(blocked),'');assert.throws(()=>api.saveKey(blocked,key,true),/quota/);
 });
 
-function ui({savedKey='',hash='',fetch=async()=>reply(),abort=AbortController}={}) {
+function ui({savedKey='',savedPrefs,hash='',fetch=async()=>reply(),abort=AbortController}={}) {
   class Node {
     constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.events={};this.value='';this.textContent='';this.hidden=false;this.checked=true;this.style={};this.classList={remove(){}};this.scrollHeight=1000;this.clientHeight=800;}
     get firstChild(){return this.children[0]??null;}
     appendChild(n){if(n.parent)n.parent.removeChild(n);this.children.push(n);n.parent=this;return n;}
     removeChild(n){this.children.splice(this.children.indexOf(n),1);n.parent=null;}
     remove(){this.parent?.removeChild(this);}
-    setAttribute(){}
+    setAttribute(k,v){(this.attributes??={})[k]=v;}
     addEventListener(type,fn){this.events[type]=fn;}
     querySelector(){return null;}
     querySelectorAll(){return [];}
@@ -136,8 +136,9 @@ function ui({savedKey='',hash='',fetch=async()=>reply(),abort=AbortController}={
   const nodes=Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map(m=>[m[1],new Node()]));
   nodes['key-dialog'].hidden=true;nodes.chat.appendChild(nodes.welcome);
   const s=storage();if(savedKey)s.setItem('readeraplus-anthropic-key-v1',savedKey);
+  if(savedPrefs)s.setItem('reader-ai-preferences',JSON.stringify(savedPrefs));
   const document={getElementById:id=>nodes[id],querySelectorAll:()=>[],addEventListener(){},createElement:tag=>new Node(tag),createTextNode:text=>Object.assign(new Node('text'),{textContent:text}),createDocumentFragment:()=>new Node('fragment')};
-  const context=vm.createContext({fetch,Response,ReadableStream,TextDecoder,AbortController:abort,URLSearchParams,localStorage:s,document,location:{hash},window:{innerHeight:800,addEventListener(){}},setTimeout,clearTimeout});
+  const context=vm.createContext({fetch,Response,ReadableStream,TextDecoder,AbortController:abort,URL,URLSearchParams,localStorage:s,document,location:{hash},window:{innerHeight:800,addEventListener(){}},setTimeout,clearTimeout});
   vm.runInContext(script,context);
   return {nodes,storage:s};
 }
@@ -146,7 +147,8 @@ test('opening the dictionary needs no login or configuration request',()=>{
   let calls=0;
   for(const savedKey of ['',key]) {
     const app=ui({savedKey,fetch:async()=>{calls++;return reply();}});
-    assert.equal(calls,0);assert.equal(app.nodes.model.textContent,'Haiku 5.5 중간');
+    assert.equal(calls,0);assert.equal(app.nodes.model.textContent,'Sonnet 5.5 중간');
+    assert.equal(app.nodes['web-search'].attributes['aria-pressed'],'true');
   }
 });
 
@@ -157,9 +159,136 @@ test('selection waits for the first key, then auto-sends and persists for reopen
   assert.equal(app.nodes.input.value,'귀접 뜻');
   app.nodes['api-key'].value=key;app.nodes['key-form'].events.submit({preventDefault(){}});
   await new Promise(r=>setTimeout(r,15));
-  assert.equal(calls.length,1);assert.equal(JSON.parse(calls[0].init.body).messages[0].content,'귀접 뜻');
+  assert.equal(calls.length,1);
+  const sent=JSON.parse(calls[0].init.body);
+  assert.equal(sent.messages[0].content,'귀접 뜻');
+  assert.equal(sent.model,'claude-sonnet-5-5');assert.equal(sent.output_config.effort,'medium');
+  assert.equal(sent.tool_choice.type,'auto');
   assert.equal(app.nodes['api-key'].value,'');
   assert.equal(runtime(()=>{}).loadKey(app.storage),key);
+});
+
+const citation={type:'web_search_result_location',url:'https://example.com/article',title:'검색 출처',encrypted_index:'opaque-index',cited_text:'확인한 내용'};
+const searchContent=[
+  {type:'thinking',thinking:'private reasoning',signature:'opaque-signature'},
+  {type:'server_tool_use',id:'srvtoolu_search',name:'web_search',input:{query:'latest information'}},
+  {type:'web_search_tool_result',tool_use_id:'srvtoolu_search',content:[
+    {type:'web_search_result',url:citation.url,title:citation.title,encrypted_content:'opaque-result',page_age:'October 2026'}
+  ]}
+];
+function searchStream(content,reason='end_turn'){
+  return content.map((b,index)=>{
+    if(b.type==='text')return event({type:'content_block_start',index,content_block:{type:'text',text:''}})+
+      event({type:'content_block_delta',index,delta:{type:'text_delta',text:b.text}})+
+      (b.citations||[]).map(c=>event({type:'content_block_delta',index,delta:{type:'citations_delta',citation:c}})).join('')+
+      event({type:'content_block_stop',index});
+    if(b.type==='thinking')return event({type:'content_block_start',index,content_block:{type:'thinking',thinking:'',signature:''}})+
+      event({type:'content_block_delta',index,delta:{type:'thinking_delta',thinking:b.thinking}})+
+      event({type:'content_block_delta',index,delta:{type:'signature_delta',signature:b.signature}})+
+      event({type:'content_block_stop',index});
+    if(b.type==='server_tool_use'){
+      const json=JSON.stringify(b.input),cut=8;
+      return event({type:'content_block_start',index,content_block:{...b,input:{}}})+
+        event({type:'content_block_delta',index,delta:{type:'input_json_delta',partial_json:json.slice(0,cut)}})+
+        event({type:'content_block_delta',index,delta:{type:'input_json_delta',partial_json:json.slice(cut)}})+
+        event({type:'content_block_stop',index});
+    }
+    return event({type:'content_block_start',index,content_block:b})+event({type:'content_block_stop',index});
+  }).join('')+event({type:'message_delta',delta:{stop_reason:reason}})+end;
+}
+const searchAnswer={type:'text',text:'검색한 답변',citations:[citation]};
+
+test('search is optional and automatic across all model and effort choices',async()=>{
+  const calls=[];const api=runtime(async(url,init)=>{calls.push({url,body:JSON.parse(init.body)});return reply();});
+  for(const model of ['claude-haiku-5-5','claude-sonnet-5-5','claude-opus-5-5']){
+    for(const effort of ['low','medium','high','xhigh']){
+      for(const webSearch of [true,false]){
+        await api.request(key,{...options,model,effort,webSearch},()=>{});
+        const {url,body}=calls.at(-1);assert.equal(url,'https://api.anthropic.com/v1/messages');
+        if(webSearch){
+          assert.equal(body.tool_choice.type,'auto');
+          assert.deepEqual(body.tools,[{type:'web_search_20250305',name:'web_search',max_uses:3,allowed_callers:['direct']}]);
+          assert.match(body.system,/일반 단어 뜻.*검색 없이/);
+        }else assert.equal(body.tools,undefined);
+      }
+    }
+  }
+  assert.equal(calls.length,24);
+});
+
+test('search streaming keeps encrypted results and thinking signatures while showing citations',async()=>{
+  const content=[...searchContent,searchAnswer],events=[];
+  const api=runtime(async()=>new Response(searchStream(content)));let visible='';
+  const result=await api.request(key,{...options,webSearch:true},t=>visible+=t,undefined,k=>events.push(k));
+  assert.equal(visible,'검색한 답변 [1]');assert.equal(visible.includes('private'),false);
+  assert.equal(result.searched,true);assert.equal(result.searchError,false);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.content)),content);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.sources)),[{url:citation.url,title:citation.title}]);
+  assert.deepEqual(events,['search','search_done','citation']);
+});
+
+test('paused search resumes with intact tool state and is reusable on the next turn',async()=>{
+  const calls=[];
+  const api=runtime(async(url,init)=>{
+    calls.push(JSON.parse(init.body));
+    return calls.length===1?new Response(searchStream(searchContent,'pause_turn')):
+      calls.length===2?new Response(searchStream([searchAnswer])):reply();
+  });
+  const result=await api.request(key,{...options,webSearch:true},()=>{});
+  assert.equal(calls.length,2);assert.deepEqual(calls[1].messages[1].content,searchContent);
+  assert.deepEqual(calls[1].tools,calls[0].tools);
+  await api.request(key,{...options,webSearch:false,messages:[
+    options.messages[0],{role:'assistant',content:result.content},{role:'user',content:'더 알려줘'}
+  ]},()=>{});
+  assert.equal(calls.length,3);assert.equal(calls[2].tools,undefined);
+  assert.deepEqual(calls[2].messages[1].content,[...searchContent,searchAnswer]);
+});
+
+test('search failures and continuation limits cannot masquerade as successful searches',async()=>{
+  const failed={...searchContent[2],content:{type:'web_search_tool_result_error',error_code:'unavailable'}};
+  const api=runtime(async()=>new Response(searchStream([searchContent[1],failed,{type:'text',text:'검색 없이 설명'}])));
+  const result=await api.request(key,{...options,webSearch:true},()=>{});
+  assert.equal(result.searchError,true);assert.equal(result.sources.length,0);
+  const disabled=runtime(async()=>new Response(JSON.stringify({error:{type:'invalid_request_error',message:'web search is not enabled '+key}}),{status:400}));
+  await assert.rejects(disabled.request(key,{...options,webSearch:true},()=>{}),/search_disabled/);
+  let count=0;
+  const paused=runtime(async()=>{count++;return new Response(searchStream(searchContent,'pause_turn'));});
+  await assert.rejects(paused.request(key,{...options,webSearch:true},()=>{}),/search_incomplete/);
+  assert.equal(count,3);
+});
+
+test('non-streaming search displays deduplicated sources and rejects unsafe source URLs',async()=>{
+  const bad={...citation,url:'javascript:alert(1)'},duplicate={...citation,title:'같은 주소'};
+  const answer={...searchAnswer,citations:[citation,duplicate,bad]};
+  const api=runtime(async()=>new Response(JSON.stringify({content:[...searchContent,answer],stop_reason:'end_turn'})),false);
+  let text='';const result=await api.request(key,{...options,webSearch:true},t=>text+=t);
+  assert.equal(text,'검색한 답변 [1] [1]');assert.equal(result.sources.length,1);
+  for(const url of ['javascript:alert(1)','data:text/html,test','file:///secret','intent://example.com','https://user:pass@example.com/', 'https://api.anthropic.com/', 'https://appassets.androidplatform.net/']){
+    assert.equal(api.sourceUrl(url),'');
+  }
+});
+
+test('existing defaults migrate once, manual choices and the search switch persist',async()=>{
+  const migrated=ui({savedPrefs:{model:'claude-haiku-5-5',effort:'medium'}});
+  assert.equal(migrated.nodes.model.textContent,'Sonnet 5.5 중간');
+  const manual=ui({savedPrefs:{model:'claude-haiku-5-5',effort:'medium',defaultsVersion:2,webSearch:false}});
+  assert.equal(manual.nodes.model.textContent,'Haiku 5.5 중간');
+  assert.equal(manual.nodes['web-search'].attributes['aria-pressed'],'false');
+  const calls=[];
+  const app=ui({savedKey:key,fetch:async(url,init)=>{calls.push(JSON.parse(init.body));return new Response(searchStream([...searchContent,searchAnswer]));}});
+  app.nodes.input.value='검색해 줘';app.nodes.form.events.submit({preventDefault(){}});
+  await new Promise(r=>setTimeout(r,15));
+  const walk=n=>[n,...n.children.flatMap(walk)];
+  const links=walk(app.nodes.chat).filter(n=>n.tagName==='A');
+  assert.equal(links.length,1);assert.equal(links[0].href,citation.url);
+  assert.equal(links[0].rel,'noreferrer noopener');
+  app.nodes['web-search'].events.click();
+  assert.equal(app.nodes['web-search'].attributes['aria-pressed'],'false');
+  const prefs=JSON.parse(app.storage.getItem('reader-ai-preferences'));
+  assert.equal(prefs.webSearch,false);assert.equal(ui({savedPrefs:prefs}).nodes['web-search'].textContent,'웹 검색 · 끔');
+  app.nodes.input.value='더 설명해 줘';app.nodes.form.events.submit({preventDefault(){}});
+  await new Promise(r=>setTimeout(r,15));
+  assert.equal(calls[1].tools,undefined);assert.deepEqual(calls[1].messages[1].content,[...searchContent,searchAnswer]);
 });
 
 test('an old WebView gets an update message instead of an uncaught submission error',()=>{
@@ -170,8 +299,8 @@ test('an old WebView gets an update message instead of an uncaught submission er
 
 test('the page is self-contained, safe to render, and its CSP matches the actual script',()=>{
   new vm.Script(script);
-  assert.ok(Buffer.byteLength(html)<32768);
-  assert.ok(gzipSync(html).byteLength<12288);
+  assert.ok(Buffer.byteLength(html)<40960);
+  assert.ok(gzipSync(html).byteLength<14336);
   assert.equal(/<script[^>]*\bsrc=|<link\b|<iframe|innerHTML|eval\(|signin-with-chatgpt|\/api\/(config|key|chat)|requestAnimationFrame|@font-face|animation:|transition:/.test(html),false);
   const digest=createHash('sha256').update(script).digest('base64');
   assert.ok(html.includes("script-src 'sha256-"+digest+"'"));

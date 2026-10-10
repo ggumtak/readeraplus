@@ -37,4 +37,15 @@ class EinkAiSiteTest {
             assertFalse(address, EinkAiSite.isApiRequest(address))
         }
     }
+
+    @Test fun sourcesCanOnlyOpenOrdinaryWebAddressesWithoutCredentials() {
+        assertTrue(EinkAiSite.isSourceLink("https://example.com/article?q=test#source"))
+        assertTrue(EinkAiSite.isSourceLink("http://example.com/article"))
+        for (address in listOf("javascript:alert(1)", "intent://example.com/", "file:///secret",
+            "data:text/html,test", "https://user:password@example.com/", EinkAiSite.DEFAULT_URL,
+            EinkAiSite.API_URL, "https://API.ANTHROPIC.COM/", "https://APPASSETS.ANDROIDPLATFORM.NET/",
+            "https:/example.com", "not a url")) {
+            assertFalse(address, EinkAiSite.isSourceLink(address))
+        }
+    }
 }
