@@ -2,7 +2,12 @@ package com.ggumtak.readeraplus.reader
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.Drawable
@@ -183,6 +188,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     // Slider thumbs (U §2.2), coloured in place on a look change: manual = a solid dot in the thumb tone; auto = a
     // hollow ring over a track-coloured progress. Each bar has its own drawable (a drawable has one callback).
     private var seekThumb = dot(hollow = false)
+    /** The page bar's chapter marks ([setChapterStarts]), kept across the track rebuilds of [sizeSliders]. */
+    private val seekTicks = ChapterTickDrawable(ctx.dp(1), ctx.dp(TICK_GAP_DP))
     private var manualThumb = dot(hollow = false)
     private var autoDot: GradientDrawable? = null
 
@@ -270,7 +277,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             setPadding(ctx.dp(16), ctx.dp(10), ctx.dp(16), ctx.dp(10))
             visibility = View.GONE
         }
-        seek = chromeSeekBar(seekThumb).apply {
+        seek = chromeSeekBar(seekThumb, seekTicks).apply {
             contentDescription = "페이지 위치"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
@@ -392,8 +399,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
      * an animated selector (it grows on press: several e-ink updates), so the thumb is a plain dot. Vertical swipes
      * over the bars belong to the system (home, recents, notifications): [SwipeSafeSeekBar].
      */
-    private fun chromeSeekBar(thumbDot: Drawable): SeekBar = SwipeSafeSeekBar(ctx).apply {
-        progressDrawable = track()
+    private fun chromeSeekBar(thumbDot: Drawable, ticks: ChapterTickDrawable? = null): SeekBar = SwipeSafeSeekBar(ctx).apply {
+        progressDrawable = track(ticks)
         setThumb(this, thumbDot)
         background = null
         splitTrack = false
@@ -410,20 +417,32 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
      * The track: two white rounded bars (coloured by the bar's tint lists), [TRACK_DP] tall (e-ink [TRACK_DP_EINK]) and
      * centred whatever height the platform gives the track; the progress layer is clipped to the progress.
      */
-    private fun track(): Drawable {
+    private fun track(ticks: ChapterTickDrawable? = null): Drawable {
         val h = ctx.dp(if (slidersEink) TRACK_DP_EINK else TRACK_DP)
         fun bar() = GradientDrawable().apply {
             setColor(Color.WHITE)
             cornerRadius = h / 2f
         }
-        return LayerDrawable(arrayOf(bar(), ClipDrawable(bar(), Gravity.START, ClipDrawable.HORIZONTAL))).apply {
-            setId(0, android.R.id.background)
-            setId(1, android.R.id.progress)
-            for (i in 0..1) {
+        val bars = arrayOf<Drawable>(bar(), ClipDrawable(bar(), Gravity.START, ClipDrawable.HORIZONTAL))
+        // The chapter marks lie under the bars (no id: the bar's tint lists leave them alone) and stick out above and below.
+        val layers = if (ticks == null) bars else arrayOf(ticks, *bars)
+        val first = layers.size - 2
+        return LayerDrawable(layers).apply {
+            setId(first, android.R.id.background)
+            setId(first + 1, android.R.id.progress)
+            for (i in layers.indices) {
                 setLayerGravity(i, Gravity.CENTER_VERTICAL or Gravity.FILL_HORIZONTAL)
-                setLayerHeight(i, h)
+                setLayerHeight(i, if (i < first) h + ctx.dp(TICK_OVERHANG_DP) * 2 else h)
             }
         }
+    }
+
+    /**
+     * Chapter starts on the page bar ([ChapterTicks]): [starts] are 0-based global pages, [max] the bar's max (total
+     * pages − 1); null clears them (pages still being counted). Repeating the same values changes nothing.
+     */
+    fun setChapterStarts(starts: IntArray?, max: Int) {
+        seekTicks.set(starts, max)
     }
 
     /**
@@ -448,7 +467,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         seekThumb = dot(hollow = false)
         manualThumb = dot(hollow = false)
         autoDot = null
-        seek.progressDrawable = track()
+        seek.progressDrawable = track(seekTicks)
         brightnessBar.progressDrawable = track()
         setThumb(seek, seekThumb)
         setThumb(brightnessBar, if (boundAuto == true) autoThumb() else manualThumb)
@@ -535,6 +554,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         val thumbTint = ColorStateList.valueOf(k.thumb)
         seek.progressBackgroundTintList = trackTint
         seek.progressTintList = thumbTint
+        seekTicks.setColor(k.text2)
         brightnessBar.progressBackgroundTintList = trackTint
         brightnessBar.progressTintList = if (boundAuto == true) trackTint else thumbTint
         paintDot(seekThumb, hollow = false)
@@ -1193,10 +1213,71 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         /** The same on e-ink: a heavier line and a larger dot survive every waveform. */
         const val TRACK_DP_EINK = 3
         const val THUMB_DP_EINK = 16
+        /** Chapter marks reach this far above and below the track; [TICK_GAP_DP] is the least room per mark. */
+        const val TICK_OVERHANG_DP = 3
+        const val TICK_GAP_DP = 6
         /** The page label's total ("/ 183") against the current page: 17 sp → ≈ 14 sp, regular, in text2. */
         const val TOTAL_SCALE = 0.82f
         /** Decelerate in, accelerate out (Material's standard curves); built on the first fade (never on e-ink). */
         val SHOW_EASE by lazy(LazyThreadSafetyMode.NONE) { PathInterpolator(0f, 0f, 0.2f, 1f) }
         val HIDE_EASE by lazy(LazyThreadSafetyMode.NONE) { PathInterpolator(0.4f, 0f, 1f, 1f) }
     }
+}
+
+/**
+ * Thin vertical marks at the chapter starts of the page bar ([ChapterTicks]), as wide as [markW] px, at least [minGap] px
+ * apart on average. Positions are worked out when the values or the width change, never while drawing.
+ */
+internal class ChapterTickDrawable(private val markW: Int, private val minGap: Int) : Drawable() {
+    private val paint = Paint().apply { color = Color.GRAY }
+    private var starts: IntArray? = null
+    private var max = 0
+    private var xs = FloatArray(0)
+    private var n = 0
+
+    fun set(starts: IntArray?, max: Int) {
+        if (max == this.max && starts.contentEquals(this.starts)) return
+        this.starts = starts
+        this.max = max
+        place()
+    }
+
+    fun setColor(c: Int) {
+        if (paint.color == c) return
+        paint.color = c
+        if (n > 0) invalidateSelf()
+    }
+
+    override fun onBoundsChange(bounds: Rect) = place()
+
+    private fun place() {
+        val s = starts
+        val before = n
+        n = if (s == null) 0 else {
+            if (xs.size < s.size) xs = FloatArray(s.size)
+            ChapterTicks.place(s, max, bounds.width(), minGap, xs)
+        }
+        if (n > 0 || before > 0) invalidateSelf()
+    }
+
+    override fun draw(canvas: Canvas) {
+        if (n == 0) return
+        val b = bounds
+        val half = markW / 2f
+        for (i in 0 until n) {
+            val x = b.left + xs[i]
+            canvas.drawRect(x - half, b.top.toFloat(), x - half + markW, b.bottom.toFloat(), paint)
+        }
+    }
+
+    override fun setAlpha(alpha: Int) {
+        paint.alpha = alpha
+    }
+
+    override fun setColorFilter(colorFilter: ColorFilter?) {
+        paint.colorFilter = colorFilter
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }

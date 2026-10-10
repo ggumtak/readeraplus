@@ -25,8 +25,16 @@ object CrashLog {
         }
     }
 
-    /** The crash recorded by an earlier run, removed from disk; null when there is none. */
+    /** Set once this process has looked: a crash of this process ends it, so only an earlier run leaves a file. */
+    @Volatile private var taken = false
+
+    /**
+     * The crash recorded by an earlier run, removed from disk; null when there is none. Only the first call of a
+     * process touches the disk (the library calls this on every resume).
+     */
     fun take(ctx: Context): String? {
+        if (taken) return null
+        taken = true
         val file = File(ctx.filesDir, FILE)
         if (!file.exists()) return null
         val text = runCatching { file.readText() }.getOrNull()

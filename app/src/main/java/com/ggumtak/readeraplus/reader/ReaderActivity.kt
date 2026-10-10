@@ -4560,6 +4560,33 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     // ================================================================== chrome
 
+    /** Session and chapter pages (a hash) the page bar's chapter marks were made for ([bindChapterTicks]). */
+    private var ticksSession: BookSession? = null
+    private var ticksKey = -1L
+
+    /**
+     * The page bar's chapter marks: each chapter's first page (its section's start: an anchor inside a section counts
+     * from there). The check walks the chapters without allocating; the marks are made again only when a chapter's
+     * page or the total changes. [c] null (still counting) clears them.
+     */
+    private fun bindChapterTicks(s: BookSession, c: PageCounts?) {
+        val ch = s.chapters
+        var key = 0L
+        if (c != null && ch.size > 0) {
+            key = c.total().toLong()
+            for (i in 0 until ch.size) key = key * 31 + c.pagesBefore(ch.section(i))
+            if (key == 0L) key = 1L
+        }
+        if (s === ticksSession && key == ticksKey) return
+        ticksSession = s
+        ticksKey = key
+        if (c == null || key == 0L) {
+            chrome.setChapterStarts(null, 0)
+            return
+        }
+        chrome.setChapterStarts(IntArray(ch.size) { c.pagesBefore(ch.section(it)) }, c.total() - 1)
+    }
+
     private fun bindChrome() {
         val s = session ?: return
         val l = curLayout ?: return
@@ -4568,7 +4595,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val label = pageLabelOf(curSection, curPageIdx)
         if (c.isComplete) {
             chrome.setPage(label, c.total() - 1, c.globalPage(curSection, curPageIdx) - 1)
+            bindChapterTicks(s, c)
         } else {
+            bindChapterTicks(s, null)
             // No estimated number on screen (nor in its description) while counting.
             val shown = if (s.countFailed) ReaderFormat.PAGES_FAILED else ReaderFormat.PAGES_COUNTING
             // Floored like ReaderFormat.percent, so the seek preview at touch reads the footer's percent.
