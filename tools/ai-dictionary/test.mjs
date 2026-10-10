@@ -119,35 +119,62 @@ test('keys persist only when requested and can be forgotten or used in memory',(
   assert.equal(api.loadKey(blocked),'');assert.throws(()=>api.saveKey(blocked,key,true),/quota/);
 });
 
-function ui({savedKey='',savedPrefs,hash='',fetch=async()=>reply(),abort=AbortController}={}) {
-  class Node {
-    constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.events={};this.value='';this.textContent='';this.hidden=false;this.checked=true;this.style={};this.classList={remove(){}};this.scrollHeight=1000;this.clientHeight=800;}
-    get firstChild(){return this.children[0]??null;}
-    appendChild(n){if(n.parent)n.parent.removeChild(n);this.children.push(n);n.parent=this;return n;}
-    removeChild(n){this.children.splice(this.children.indexOf(n),1);n.parent=null;}
-    remove(){this.parent?.removeChild(this);}
-    setAttribute(k,v){(this.attributes??={})[k]=v;}
-    addEventListener(type,fn){this.events[type]=fn;}
-    querySelector(){return null;}
-    querySelectorAll(){return [];}
-    focus(){}
-    blur(){}
+function ui({savedKey='',savedPrefs,hash='',fetch=async()=>reply(),abort=AbortController,sharedStorage}={}) {
+  let document;
+  const walk=n=>[n,...n.children.flatMap(walk)];
+  function matches(n,s) {
+    if(s[0]==='[')return n.getAttribute(s.slice(1,-1))!==null;
+    if(s[0]==='.')return n.className.split(/\s+/).includes(s.slice(1));
+    return n.tagName===s.toUpperCase();
   }
-  const nodes=Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map(m=>[m[1],new Node()]));
-  nodes['key-dialog'].hidden=true;nodes.chat.appendChild(nodes.welcome);
-  const s=storage();if(savedKey)s.setItem('readeraplus-anthropic-key-v1',savedKey);
+  class Node {
+    constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.events={};this.attributes={};this.value='';this._text='';this.hidden=false;this.checked=false;this.className='';this.style={setProperty(k,v){this[k]=v;}};this.classList={remove:()=>{}};this.scrollHeight=1000;this.clientHeight=800;this.offsetParent={};}
+    get textContent(){return this._text+this.children.map(x=>x.textContent).join('');}
+    set textContent(v){this.children.forEach(n=>n.parent=null);this.children=[];this._text=String(v);}
+    get firstChild(){return this.children[0]??null;}
+    appendChild(n){if(n.tagName==='FRAGMENT'){for(const x of [...n.children])this.appendChild(x);return n;}if(n.parent)n.parent.removeChild(n);this.children.push(n);n.parent=this;return n;}
+    removeChild(n){const i=this.children.indexOf(n);if(i>=0)this.children.splice(i,1);n.parent=null;}
+    remove(){this.parent?.removeChild(this);}
+    setAttribute(k,v){this.attributes[k]=String(v);if(k==='class')this.className=v;}
+    getAttribute(k){return this.attributes[k]??null;}
+    addEventListener(type,fn){this.events[type]=fn;}
+    querySelector(s){return this.querySelectorAll(s)[0]??null;}
+    querySelectorAll(s){return walk(this).slice(1).filter(n=>s.split(',').some(x=>matches(n,x)));}
+    focus(){document.activeElement=this;}
+    blur(){if(document.activeElement===this)document.activeElement=null;}
+  }
+  const nodes={},body=new Node('body'),stack=[body];
+  const markup=html.split('<body>')[1].split('<script>')[0];
+  for(const m of markup.matchAll(/<\/?([\w-]+)([^>]*)>/g)){
+    const tag=m[1].toLowerCase();
+    if(m[0].startsWith('</')){if(stack.at(-1).tagName===tag.toUpperCase())stack.pop();continue;}
+    const n=new Node(tag);
+    for(const attr of m[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g))n.setAttribute(attr[1],attr[2]??'');
+    n.hidden=n.getAttribute('hidden')!==null;n.checked=n.getAttribute('checked')!==null;n.disabled=n.getAttribute('disabled')!==null;
+    if(n.getAttribute('id'))nodes[n.getAttribute('id')]=n;
+    stack.at(-1).appendChild(n);
+    if(!['meta','input','path','circle','rect','br','hr'].includes(tag)&&!m[0].endsWith('/>'))stack.push(n);
+  }
+  const s=sharedStorage??storage();if(savedKey)s.setItem('readeraplus-anthropic-key-v1',savedKey);
   if(savedPrefs)s.setItem('reader-ai-preferences',JSON.stringify(savedPrefs));
-  const document={getElementById:id=>nodes[id],querySelectorAll:()=>[],addEventListener(){},createElement:tag=>new Node(tag),createTextNode:text=>Object.assign(new Node('text'),{textContent:text}),createDocumentFragment:()=>new Node('fragment')};
-  const context=vm.createContext({fetch,Response,ReadableStream,TextDecoder,AbortController:abort,URL,URLSearchParams,localStorage:s,document,location:{hash},window:{innerHeight:800,addEventListener(){}},setTimeout,clearTimeout});
+  document={getElementById:id=>nodes[id],querySelectorAll:q=>body.querySelectorAll(q),events:{},addEventListener(type,fn){this.events[type]=fn;},documentElement:new Node('html'),createElement:tag=>new Node(tag),createTextNode:text=>Object.assign(new Node('text'),{textContent:text}),createDocumentFragment:()=>new Node('fragment')};
+  const window={innerHeight:800,events:{},addEventListener(type,fn){this.events[type]=fn;}};
+  const location={hash};
+  const context=vm.createContext({fetch,Response,ReadableStream,TextDecoder,AbortController:abort,URL,URLSearchParams,localStorage:s,document,location,window,setTimeout,clearTimeout});
   vm.runInContext(script,context);
-  return {nodes,storage:s};
+  return {nodes,storage:s,document,window,location,walk};
 }
+const settle=()=>new Promise(r=>setTimeout(r,15));
+const click=n=>n.events.click({target:n});
+const submit=n=>n.events.submit({preventDefault(){}});
+async function askUi(app,q){app.nodes.input.value=q;submit(app.nodes.form);await settle();}
+function sessionApi(){const c=vm.createContext({URL});vm.runInContext(core,c);return c.ReaderSessions;}
 
 test('opening the dictionary needs no login or configuration request',()=>{
   let calls=0;
   for(const savedKey of ['',key]) {
     const app=ui({savedKey,fetch:async()=>{calls++;return reply();}});
-    assert.equal(calls,0);assert.equal(app.nodes.model.textContent,'Sonnet 5.5 중간');
+    assert.equal(calls,0);assert.equal(app.nodes.model.textContent,'Haiku 5.5 낮음');
     assert.equal(app.nodes['web-search'].attributes['aria-pressed'],'true');
     assert.match(app.nodes['web-search'].attributes.title,/켜짐/);
   }
@@ -163,7 +190,7 @@ test('selection waits for the first key, then auto-sends and persists for reopen
   assert.equal(calls.length,1);
   const sent=JSON.parse(calls[0].init.body);
   assert.equal(sent.messages[0].content,'귀접 뜻');
-  assert.equal(sent.model,'claude-sonnet-5-5');assert.equal(sent.output_config.effort,'medium');
+  assert.equal(sent.model,'claude-haiku-5-5');assert.equal(sent.output_config.effort,'low');
   assert.equal(sent.tool_choice.type,'auto');
   assert.equal(app.nodes['api-key'].value,'');
   assert.equal(runtime(()=>{}).loadKey(app.storage),key);
@@ -271,7 +298,7 @@ test('non-streaming search displays deduplicated sources and rejects unsafe sour
 
 test('existing defaults migrate once, manual choices and the search switch persist',async()=>{
   const migrated=ui({savedPrefs:{model:'claude-haiku-5-5',effort:'medium'}});
-  assert.equal(migrated.nodes.model.textContent,'Sonnet 5.5 중간');
+  assert.equal(migrated.nodes.model.textContent,'Haiku 5.5 낮음');
   const manual=ui({savedPrefs:{model:'claude-haiku-5-5',effort:'medium',defaultsVersion:2,webSearch:false}});
   assert.equal(manual.nodes.model.textContent,'Haiku 5.5 중간');
   assert.equal(manual.nodes['web-search'].attributes['aria-pressed'],'false');
@@ -303,8 +330,8 @@ test('an old WebView gets an update message instead of an uncaught submission er
 
 test('the page is self-contained, safe to render, and its CSP matches the actual script',()=>{
   new vm.Script(script);
-  assert.ok(Buffer.byteLength(html)<40960);
-  assert.ok(gzipSync(html).byteLength<14336);
+  assert.ok(Buffer.byteLength(html)<65536);
+  assert.ok(gzipSync(html).byteLength<20480);
   assert.equal(/<script[^>]*\bsrc=|<link\b|<iframe|innerHTML|eval\(|signin-with-chatgpt|\/api\/(config|key|chat)|requestAnimationFrame|@font-face|animation:|transition:/.test(html),false);
   const digest=createHash('sha256').update(script).digest('base64');
   assert.ok(html.includes("script-src 'sha256-"+digest+"'"));
@@ -313,4 +340,148 @@ test('the page is self-contained, safe to render, and its CSP matches the actual
   const legacy=readFileSync(new URL('app/src/main/res/xml/backup_rules.xml',root),'utf8');
   const modern=readFileSync(new URL('app/src/main/res/xml/data_extraction_rules.xml',root),'utf8');
   assert.ok(legacy.includes('path="app_webview/"'));assert.equal((modern.match(/path="app_webview\/"/g)||[]).length,2);
+});
+
+test('custom instructions and answer length apply to every model, with bounded inputs',async()=>{
+  const calls=[];const api=runtime(async(u,i)=>{calls.push(JSON.parse(i.body));return reply();});
+  for(const model of ['claude-haiku-5-5','claude-sonnet-5-5','claude-opus-5-5']){
+    await api.request(key,{...options,model,instructions:'쉬운 비유를 곁들여 줘.',answerLength:'long'},()=>{});
+    assert.match(calls.at(-1).system,/사용자 지침:\n쉬운 비유/);
+    assert.match(calls.at(-1).system,/충분히 설명/);
+  }
+  for(const extra of [{instructions:'x'.repeat(4001)},{instructions:3},{answerLength:'unknown'}])await assert.rejects(api.request(key,{...options,...extra},()=>{}),/invalid_request/);
+  assert.equal(calls.length,3);
+});
+
+test('drawer settings preserve their parent, persist instructions and font, and affect the next request',async()=>{
+  const calls=[];const app=ui({savedKey:key,fetch:async(u,i)=>{calls.push(JSON.parse(i.body));return reply();}});
+  click(app.nodes.menu);assert.equal(app.nodes['menu-dialog'].hidden,false);assert.equal(app.nodes.app.inert,true);
+  click(app.nodes['menu-settings']);assert.equal(app.nodes['settings-dialog'].hidden,false);assert.equal(app.nodes['menu-dialog'].hidden,true);
+  app.nodes.instructions.value='비유로 쉽게 설명해 줘.';
+  click(app.document.querySelectorAll('[data-length]')[2]);click(app.document.querySelectorAll('[data-size]')[2]);
+  app.nodes['settings-search'].checked=false;submit(app.nodes['settings-form']);
+  assert.equal(app.nodes['settings-dialog'].hidden,true);assert.equal(app.nodes['menu-dialog'].hidden,false);
+  assert.equal(app.document.documentElement.style['--chat-font'],'22px');
+  app.document.events.keydown({key:'Escape',preventDefault(){}});assert.equal(app.nodes.app.inert,false);
+  await askUi(app,'전당품 뜻');assert.match(calls[0].system,/비유로 쉽게/);assert.equal(calls[0].tools,undefined);
+  const again=ui({sharedStorage:app.storage});assert.equal(again.document.documentElement.style['--chat-font'],'22px');
+  click(again.nodes.settings);assert.equal(again.nodes.instructions.value,'비유로 쉽게 설명해 줘.');
+});
+
+test('sessions reopen without network and retain independent follow-up context',async()=>{
+  const calls=[];const app=ui({savedKey:key,fetch:async(u,i)=>{calls.push(JSON.parse(i.body));return reply();}});
+  await askUi(app,'첫 단어 뜻');click(app.nodes.menu);click(app.nodes['menu-new']);await askUi(app,'둘째 단어 뜻');
+  assert.equal(calls[1].messages.length,1);
+  click(app.nodes.menu);const recents=app.nodes['recent-list'].querySelectorAll('.recent-open');assert.equal(recents.length,2);
+  click(recents[1]);assert.equal(calls.length,2);assert.match(app.nodes.chat.textContent,/첫 단어 뜻/);assert.doesNotMatch(app.nodes.chat.textContent,/둘째 단어 뜻/);
+  await askUi(app,'예문도 알려줘');assert.equal(calls[2].messages[0].content,'첫 단어 뜻');assert.equal(calls[2].messages.length,3);
+  let unexpected=0;const restored=ui({sharedStorage:app.storage,fetch:async()=>{unexpected++;return reply();}});
+  assert.equal(unexpected,0);assert.match(restored.nodes.chat.textContent,/예문도 알려줘/);
+  assert.equal(restored.nodes['key-dialog'].hidden,true);
+});
+
+test('selection opens a new session and preserves previous conversation with the unchanged meaning prompt',async()=>{
+  const calls=[];const app=ui({savedKey:key,fetch:async(u,i)=>{calls.push(JSON.parse(i.body));return reply();}});
+  await askUi(app,'옛 대화');app.location.hash='#q='+encodeURIComponent('귀접 뜻');app.window.events.hashchange();await settle();
+  assert.equal(calls[1].messages.length,1);assert.equal(calls[1].messages[0].content,'귀접 뜻');
+  click(app.nodes.menu);assert.equal(app.nodes['recent-list'].querySelectorAll('.recent-open').length,2);
+});
+
+test('persisted search state keeps citations and signatures, but changing model uses visible text context',async()=>{
+  const app=ui({savedKey:key,fetch:async()=>new Response(searchStream([...searchContent,searchAnswer]))});await askUi(app,'검색 질문');
+  const calls=[];const again=ui({sharedStorage:app.storage,fetch:async(u,i)=>{calls.push(JSON.parse(i.body));return reply();}});
+  assert.equal(again.nodes.chat.querySelectorAll('a').length,1);
+  await askUi(again,'이어 설명');assert.deepEqual(calls[0].messages[1].content,[...searchContent,searchAnswer]);
+  click(again.document.querySelectorAll('[data-model]')[1]);await askUi(again,'다른 모델 질문');
+  assert.equal(calls[1].messages[1].content,'검색한 답변 [1]');
+});
+
+test('switching sessions aborts pending streams and does not write their output into another conversation',async()=>{
+  let streamController,calls=0,aborted=false;
+  const app=ui({savedKey:key,fetch:async(u,i)=>{
+    calls++;if(calls!==1)return reply();
+    return new Response(new ReadableStream({start(c){streamController=c;c.enqueue(new TextEncoder().encode(event({type:'content_block_delta',delta:{type:'text_delta',text:'이전 부분 답변'}})));i.signal.addEventListener('abort',()=>{aborted=true;c.error(new DOMException('Canceled','AbortError'));});}}));
+  }});
+  await askUi(app,'이전 질문');click(app.nodes.new);await askUi(app,'새 질문');
+  assert.equal(aborted,true);assert.match(app.nodes.chat.textContent,/새 질문/);assert.doesNotMatch(app.nodes.chat.textContent,/이전 부분 답변/);
+  click(app.nodes.menu);click(app.nodes['recent-list'].querySelectorAll('.recent-open')[1]);
+  assert.match(app.nodes.chat.textContent,/이전 부분 답변/);assert.doesNotMatch(app.nodes.chat.textContent,/새 질문/);
+});
+
+test('pagehide preserves partial answers and reopening never resends a request',async()=>{
+  let aborted=false;
+  const app=ui({savedKey:key,fetch:async(u,i)=>new Response(new ReadableStream({start(c){
+    c.enqueue(new TextEncoder().encode(event({type:'content_block_delta',delta:{type:'text_delta',text:'중간까지 답변'}})));
+    i.signal.addEventListener('abort',()=>{aborted=true;c.error(new DOMException('Canceled','AbortError'));});
+  }}))});
+  await askUi(app,'진행 질문');app.window.events.pagehide();await settle();assert.equal(aborted,true);
+  const again=ui({sharedStorage:app.storage,fetch:async()=>{throw Error('must not resend');}});
+  assert.match(again.nodes.chat.textContent,/중간까지 답변/);assert.match(again.nodes.chat.textContent,/중지/);
+});
+
+test('storage failures never prevent an answer or expose the key in conversation data',async()=>{
+  const s=storage();s.setItem('readeraplus-anthropic-key-v1',key);
+  const blocked={getItem:s.getItem,setItem(){throw Error('quota');},removeItem(){throw Error('denied');}};
+  const app=ui({sharedStorage:blocked});await askUi(app,'저장 실패 질문');
+  assert.match(app.nodes.chat.textContent,/단어의 뜻입니다/);assert.match(app.nodes.hint.textContent,/저장하지 못/);
+  const normal=ui({savedKey:key});await askUi(normal,'질문');
+  const index=JSON.parse(normal.storage.getItem('reader-ai-sessions-v1'));
+  assert.equal(normal.storage.getItem('reader-ai-session-'+index.current).includes(key),false);
+});
+
+test('history off leaves saved conversations intact; confirmed deletes preserve key and instructions',async()=>{
+  const app=ui({savedKey:key});await askUi(app,'저장된 대화');
+  const before=app.storage.getItem('reader-ai-sessions-v1');click(app.nodes.settings);
+  app.nodes.instructions.value='쉽게';app.nodes['remember-history'].checked=false;submit(app.nodes['settings-form']);
+  click(app.nodes.new);await askUi(app,'임시 대화');assert.equal(app.storage.getItem('reader-ai-sessions-v1'),before);
+  click(app.nodes.menu);click(app.nodes['recent-list'].querySelectorAll('.recent-delete')[1]);
+  assert.equal(app.nodes['delete-dialog'].hidden,false);assert.equal(JSON.parse(app.storage.getItem('reader-ai-sessions-v1')).items.length,1);
+  click(app.nodes['confirm-delete']);assert.equal(JSON.parse(app.storage.getItem('reader-ai-sessions-v1')).items.length,0);
+  assert.equal(runtime(()=>{}).loadKey(app.storage),key);assert.equal(JSON.parse(app.storage.getItem('reader-ai-preferences')).instructions,'쉽게');
+  click(app.nodes['menu-settings']);click(app.nodes['clear-history']);click(app.nodes['confirm-delete']);assert.equal(app.nodes.chat.querySelectorAll('.group').length,0);
+});
+
+test('session index and bounded records load lazily and reject corrupt or unsafe data',()=>{
+  const api=sessionApi(),s=storage();let index=api.empty();
+  for(let n=0;n<25;n++)index=api.write(s,index,{id:'session-'+n,title:'제목 '+n,updated:n,turns:[{q:'질문',a:'답변',complete:true,model:'claude-haiku-5-5',sources:[]}]});
+  assert.equal(index.items.length,20);assert.equal(s.getItem('reader-ai-session-session-0'),null);
+  const reads=[];const tracked={...s,getItem(k){reads.push(k);return s.getItem(k);}};ui({sharedStorage:tracked});
+  assert.deepEqual(reads.filter(k=>k.startsWith('reader-ai-session-')),['reader-ai-session-'+index.current]);
+  const bounded=api.clean({id:'safe-session',title:'<script>attack</script>',updated:1,turns:Array.from({length:40},()=>({q:'x'.repeat(2001),a:'y'.repeat(24001),sources:[{url:'javascript:alert(1)',title:'bad'}, {url:citation.url,title:'safe'}],content:searchContent,complete:true}))});
+  assert.equal(bounded.turns.length,1);assert.equal(bounded.turns[0].q.length,2000);assert.equal(bounded.turns[0].a.length,24000);assert.equal(bounded.turns[0].sources.length,1);
+  s.setItem('reader-ai-session-bad-session','null');assert.equal(api.read(s,'bad-session'),null);
+  s.setItem('reader-ai-sessions-v1','{broken');assert.equal(api.load(s).items.length,0);
+  s.setItem('reader-ai-session-safe-session',JSON.stringify(bounded));s.setItem('reader-ai-sessions-v1',JSON.stringify({version:1,current:'safe-session',items:[{id:'safe-session',title:bounded.title,updated:1}]}));
+  const app=ui({sharedStorage:s});click(app.nodes.menu);assert.match(app.nodes['recent-list'].textContent,/<script>attack/);assert.equal(app.nodes['recent-list'].querySelectorAll('script').length,0);
+});
+
+test('default migration preserves explicit version 3 model choices',()=>{
+  assert.equal(ui({savedPrefs:{model:'claude-sonnet-5-5',effort:'medium',defaultsVersion:2}}).nodes.model.textContent,'Haiku 5.5 낮음');
+  assert.equal(ui({savedPrefs:{model:'claude-sonnet-5-5',effort:'medium',defaultsVersion:3}}).nodes.model.textContent,'Sonnet 5.5 중간');
+  assert.equal(ui({savedPrefs:{model:'claude-opus-5-5',effort:'high',defaultsVersion:2}}).nodes.model.textContent,'Opus 5.5 높음');
+});
+
+test('long sessions bound rendered groups as well as saved and in-memory history',async()=>{
+  const app=ui({savedKey:key,fetch:async()=>new Response(event({type:'content_block_delta',delta:{type:'text_delta',text:'답'.repeat(5000)}})+end)});
+  for(let n=0;n<8;n++)await askUi(app,'질문 '+n);
+  assert.equal(app.nodes.chat.querySelectorAll('.group').length,5);
+  const index=JSON.parse(app.storage.getItem('reader-ai-sessions-v1'));
+  const record=JSON.parse(app.storage.getItem('reader-ai-session-'+index.current));assert.equal(record.turns.length,5);
+  assert.equal(record.turns[0].q,'질문 3');assert.equal(record.turns.at(-1).q,'질문 7');
+});
+
+test('retry removes the failed turn and does not replay an incomplete answer as context',async()=>{
+  const calls=[];const app=ui({savedKey:key,fetch:async(u,i)=>{calls.push(JSON.parse(i.body));return calls.length===1?new Response(event({type:'content_block_delta',delta:{type:'text_delta',text:'실패한 일부'}})):reply();}});
+  await askUi(app,'재시도 질문');const retry=app.nodes.chat.querySelectorAll('button')[0];click(retry);await settle();
+  assert.equal(calls.length,2);assert.equal(calls[1].messages.length,1);
+  const index=JSON.parse(app.storage.getItem('reader-ai-sessions-v1'));
+  const record=JSON.parse(app.storage.getItem('reader-ai-session-'+index.current));assert.equal(record.turns.length,1);assert.equal(record.turns[0].complete,true);
+});
+
+test('default instructions allow ordinary conversation without dictionary role or a sentence limit',async()=>{
+  let body;const api=runtime(async(u,i)=>{body=JSON.parse(i.body);return reply();});
+  await api.request(key,{...options,messages:[{role:'user',content:'오늘 하루를 어떻게 보내면 좋을까?'}],answerLength:'normal'},()=>{});
+  assert.equal(body.messages[0].content,'오늘 하루를 어떻게 보내면 좋을까?');
+  assert.doesNotMatch(body.system,/AI 사전|독서|2~6|핵심만|뜻을 묻는 질문/);
+  assert.match(body.system,/사용자의 질문과 요청/);
 });

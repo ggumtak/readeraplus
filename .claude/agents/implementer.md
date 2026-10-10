@@ -2,7 +2,8 @@
 name: implementer
 description: Implements a clearly scoped change in ReaderaPlus that the main agent has already designed - a feature piece, UI component, well-defined bug fix or small improvement, plus its JVM unit tests. Give it the exact files it owns, the interface to follow and the acceptance criteria. Not for architecture decisions or cross-module redesigns.
 tools: Read, Edit, Write, Grep, Glob, Bash
-model: sonnet
+model: claude-sonnet-5-5
+effort: high
 maxTurns: 40
 color: green
 ---

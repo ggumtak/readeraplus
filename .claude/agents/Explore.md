@@ -2,7 +2,8 @@
 name: Explore
 description: Read-only codebase explorer for ReaderaPlus. Use proactively for finding files, symbols, call sites, existing implementations and dependencies before the main agent decides on a change. Returns file:line pointers and a short summary, never file dumps. Never edits files.
 tools: Read, Grep, Glob, Bash
-model: sonnet
+model: claude-sonnet-5-5
+effort: high
 maxTurns: 25
 color: cyan
 ---

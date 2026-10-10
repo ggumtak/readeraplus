@@ -2,7 +2,8 @@
 name: code-reviewer
 description: Read-only reviewer for ReaderaPlus changes. Use after implementation (on the working-tree diff, a commit range or named files) to find real bugs, regressions, performance and robustness problems, ranked by severity with file:line evidence. Never edits code.
 tools: Read, Grep, Glob, Bash
-model: sonnet
+model: claude-sonnet-5-5
+effort: high
 maxTurns: 30
 color: purple
 ---
