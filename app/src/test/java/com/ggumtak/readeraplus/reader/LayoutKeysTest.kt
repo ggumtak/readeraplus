@@ -25,112 +25,114 @@ class LayoutKeysTest {
     @Test
     fun geometryWithMarginsHeaderFooter() {
         val g = LayoutKeys.geometry(s, 720, 1440, density)
-        // MaruViewer's 20 dp at the sides; at the top the header's band and its margin (25 + 15 dp) are the 40 dp the text
-        // box always had, at the bottom the progress line's band and 10 dp (18 + 10; 22 dp before 2026-10-06): the
-        // Comet's rows 80..1384.
+        // MaruViewer's 20 dp at the sides; the header's band (25 dp) at the top, the progress line's (18 dp) at the bottom,
+        // and the two margins (15 + 10 dp) split evenly between them (2026-10-10: the same paper above and below the
+        // text): the Comet's rows 75..1379, as tall as the 80..1384 the text box had before.
         assertEquals(40, g.contentLeft)
-        assertEquals(80, g.contentTop)
+        assertEquals(75, g.contentTop)
         assertEquals(720 - 80, g.contentWidth)
         assertEquals(1440 - 136, g.contentHeight)
-        assertEquals(1384, g.contentTop + g.contentHeight)
+        assertEquals(1379, g.contentTop + g.contentHeight)
     }
 
+    /** The body line the engine draws in [g]'s layout, px (1 em = [em]). */
+    private fun pitchOf(t: ReaderSettings, g: PageGeometry, em: Float): Float = LayoutKeys.config(t, g).lineHeightEm * em
+
     @Test
-    fun textBoxIsWholeLinesCentredBetweenTheMargins() {
-        // Comet, default settings: box rows 80..1384 (1304 px). 1 em = 40 px; the line pitch is lineHeight × em.
+    fun theLinesFillTheBoxBetweenTheMargins() {
+        // Comet, default settings: box rows 75..1379 (1304 px). 1 em = 40 px, 200 %: 16 lines of 80 px fit and the 24 px
+        // left over stretch them to 81.5 px, so the 16th line ends at the bottom margin.
         val em = 40f
-        val pitch = s.lineHeightPct / 100f * em
         val g = LayoutKeys.geometry(s, 720, 1440, density, emPx = em)
-        val lines = (1304 / pitch).toInt()
-        assertEquals(Math.ceil((lines * pitch).toDouble()).toInt(), g.contentHeight)
-        // the rest of a line is split: as much above as below (to a pixel)
-        val above = g.contentTop - 80
-        val below = 1384 - (g.contentTop + g.contentHeight)
-        assertTrue("above $above, below $below", above >= 0 && below >= 0 && Math.abs(above - below) <= 1)
-        assertTrue("less than a line left over", above + below < pitch)
-        // the side geometry is untouched
+        assertEquals(75, g.contentTop)
+        assertEquals(1304, g.contentHeight)
+        val pitch = pitchOf(s, g, em)
+        assertEquals(1304f / 16, pitch, 0.01f)
+        assertTrue(16 * pitch <= 1304f)
+        assertEquals(16, LayoutKeys.linesIn(g.contentHeight, pitch))
+        // paragraph spacing stretches alike, by less than a line's share
+        val c = LayoutKeys.config(s, g)
+        assertEquals(s.paragraphSpacingPct / 100f * pitch / 80f, c.paragraphSpacingEm, 1e-4f)
+        assertTrue(g.lineScale >= 1f && g.lineScale < 1f + 1f / 16)
+        // the side geometry is untouched; without em nothing stretches
         val plain = LayoutKeys.geometry(s, 720, 1440, density)
         assertEquals(plain.contentLeft, g.contentLeft)
         assertEquals(plain.contentWidth, g.contentWidth)
+        assertEquals(s.lineHeightPct / 100f, LayoutKeys.config(s, plain).lineHeightEm, 0f)
     }
 
     @Test
-    fun raisingBothVerticalMarginsMovesBothTextEdgesInward() {
-        // The user's complaint: raising 위·아래 여백 only seemed to grow the top. Across a sweep of the stepper the text's
-        // top only goes down and its bottom only goes up, and every dropped line takes from both ends.
+    fun raisingBothVerticalMarginsPushesTheTopDownAndTheBottomUp() {
+        // The user's ask (2026-10-10): at every step of 상하 여백 the text moves, the top line down and the last one up,
+        // the line spacing never closer than the settings' and never more than a line's share wider.
         val em = 40f
-        var prevTop = -1
-        var prevBottom = Int.MAX_VALUE
+        var prev: PageGeometry? = null
         var drops = 0
-        var prevH = -1
-        // From -10 to +65 both margins move (below, the bottom one is already 0; above, the top one is at its 80 dp).
         for (ui in -10..64 step 2) {
             val t = s.copy(marginTopDp = VerticalMargin.topDp(ui), marginBottomDp = VerticalMargin.bottomDp(ui))
             val g = LayoutKeys.geometry(t, 720, 1440, density, emPx = em)
-            val top = g.contentTop
-            val bottom = g.contentTop + g.contentHeight
-            assertTrue("top never moves up ($ui)", top >= prevTop)
-            assertTrue("bottom never moves down ($ui)", bottom <= prevBottom)
-            if (prevH >= 0 && g.contentHeight < prevH) {
-                drops++
-                assertTrue("a dropped line moves the bottom up too ($ui)", bottom < prevBottom)
+            val pitch = pitchOf(t, g, em)
+            val n = LayoutKeys.linesIn(g.contentHeight, pitch)
+            // (a hair under the box: n lines always fit, so the line may be a few thousandths of a px under 80)
+            assertTrue("ui $ui: pitch $pitch", pitch >= 80f - 0.01f && pitch < 80f * (1f + 1f / n))
+            val p = prev
+            if (p != null) {
+                val pp = pitchOf(t, p, em)
+                val pn = LayoutKeys.linesIn(p.contentHeight, pp)
+                assertTrue("ui $ui: top line moves down", g.contentTop > p.contentTop)
+                if (n == pn) {
+                    assertTrue("ui $ui: last line moves up", g.contentTop + n * pitch < p.contentTop + pn * pp)
+                    assertTrue("ui $ui: lines closer", pitch < pp)
+                } else {
+                    drops++
+                }
             }
-            prevTop = top
-            prevBottom = bottom
-            prevH = g.contentHeight
+            prev = g
         }
         assertTrue("the sweep drops lines", drops >= 2)
     }
 
     @Test
-    fun atTheStepperEndsTheTextMovesHalfOfTheOneMarginThatStillMoves() {
-        // Below -10 only the top margin changes, above +65 only the bottom one: the text moves by at most half of it
-        // (it stays centred between the margins), in the direction that margin pushes, never the other way.
+    fun atTheStepperEndsBothEdgesStillMove() {
+        // Below -10 only the top margin changes, above +65 only the bottom one: split evenly, both edges of the text
+        // still move inward (half a step each).
         val em = 40f
         fun g(ui: Int) = LayoutKeys.geometry(
             s.copy(marginTopDp = VerticalMargin.topDp(ui), marginBottomDp = VerticalMargin.bottomDp(ui)), 720, 1440, density, emPx = em,
         )
-        for (ui in VerticalMargin.UI_MIN until -10) {
-            val a = g(ui)
-            val b = g(ui + 1)
-            val step = Math.round((VerticalMargin.topDp(ui + 1) - VerticalMargin.topDp(ui)) * density)
-            val moved = b.contentTop - a.contentTop
-            if (b.contentHeight == a.contentHeight) assertTrue("ui $ui: moved $moved of $step", moved in 0..(step + 1) / 2)
-        }
-        for (ui in 66 until VerticalMargin.UI_MAX) {
-            val a = g(ui)
-            val b = g(ui + 1)
-            val step = Math.round((VerticalMargin.bottomDp(ui + 1) - VerticalMargin.bottomDp(ui)) * density)
-            val moved = a.contentTop - b.contentTop
-            if (b.contentHeight == a.contentHeight) assertTrue("ui $ui: moved up $moved of $step", moved in 0..(step + 1) / 2)
+        for (ui in (VerticalMargin.UI_MIN until -10) + (66 until VerticalMargin.UI_MAX)) {
+            val a = g(ui); val b = g(ui + 1)
+            assertTrue("ui $ui", b.contentTop >= a.contentTop)
+            assertTrue("ui $ui", b.contentTop + b.contentHeight <= a.contentTop + a.contentHeight)
+            assertTrue("ui $ui", b.contentHeight < a.contentHeight)
         }
     }
 
     @Test
     fun atASmallLineSpacingTheFontsOwnHeightIsTheLine() {
-        // 줄 간격 100 % with a font 1.4 em tall: the engine's line is 56 px, not 40. Cut by 40 px lines the 1304 px box
-        // kept 1280 px, 22 lines of 56 (the reviewer's case); by the real pitch it keeps 23 (1288 px), centred.
+        // 줄 간격 100 % with a font 1.4 em tall: the engine's line is 56 px, not 40: 23 of them fit in 1304 px (by 40 px
+        // lines it would count 32), stretched to fill it.
         val em = 40f
         val t = s.copy(lineHeightPct = 100)
         val g = LayoutKeys.geometry(t, 720, 1440, density, emPx = em, naturalLinePx = 56f)
-        assertEquals(23 * 56, g.contentHeight)
-        val above = g.contentTop - 80
-        val below = 1384 - (g.contentTop + g.contentHeight)
-        assertTrue("above $above, below $below", Math.abs(above - below) <= 1)
+        val pitch = pitchOf(t, g, em)
+        assertEquals(1304f / 23, pitch, 0.01f)
+        assertEquals(23, LayoutKeys.linesIn(g.contentHeight, pitch))
         // a font shorter than the nominal line changes nothing
-        assertEquals(LayoutKeys.geometry(s, 720, 1440, density, emPx = em).contentHeight,
-            LayoutKeys.geometry(s, 720, 1440, density, emPx = em, naturalLinePx = 46f).contentHeight)
-        // unknown em: no cut, whatever the font
-        assertEquals(1304, LayoutKeys.geometry(t, 720, 1440, density, naturalLinePx = 56f).contentHeight)
+        assertEquals(pitchOf(s, LayoutKeys.geometry(s, 720, 1440, density, emPx = em), em),
+            pitchOf(s, LayoutKeys.geometry(s, 720, 1440, density, emPx = em, naturalLinePx = 46f), em), 0f)
     }
 
     @Test
-    fun linesBoxKeepsTinyOrUnknownBoxes() {
-        assertEquals(500, LayoutKeys.linesBox(500, 0f))
-        assertEquals(500, LayoutKeys.linesBox(500, Float.NaN))
-        assertEquals(100, LayoutKeys.linesBox(100, 60f))
-        assertEquals(120, LayoutKeys.linesBox(130, 60f))
-        assertEquals(121, LayoutKeys.linesBox(130, 60.4f))
+    fun fewLinesAreNotStretched() {
+        // Three lines of a huge font would each grow by up to a third: they keep the settings' line.
+        val big = s.copy(fontSizeSp = 200f)
+        val g = LayoutKeys.geometry(big, 720, 1440, density, emPx = 400f)
+        assertEquals(0f, g.fillLineEm, 0f)
+        assertEquals(1f, g.lineScale, 0f)
+        assertEquals(big.lineHeightPct / 100f, LayoutKeys.config(big, g).lineHeightEm, 0f)
+        assertEquals(0, LayoutKeys.linesIn(500, 0f))
+        assertEquals(1, LayoutKeys.linesIn(50, 80f))
     }
 
     /** The geometry before the bands (4efdf0b): margins from the screen's edges (below a cutout band), no status term. */
@@ -143,47 +145,46 @@ class LayoutKeysTest {
     private fun box(g: PageGeometry) = intArrayOf(g.contentLeft, g.contentTop, g.contentWidth, g.contentHeight)
 
     @Test
-    fun theBodyStaysWhereItWasOnBothDevices() {
+    fun theBodySitsMidwayBetweenTheBandsOnBothDevices() {
         // The user (2026-10-05): "코멧에서 본문 지금 자리 그대로", "S25 전체 화면도 지금 자리 유지". 40/40 saved from the
         // edge with MaruViewer's header, no footer items and the progress line read as the new defaults
-        // (VerticalMargin.fromEdge, the 13 sp bands): the text box is pixel-identical to 4efdf0b's.
-        // Since 2026-10-06 the bottom comes 12 dp closer (VerticalMargin.shiftBottom, once, on load): the box from the edge
-        // that 40/28 gave.
+        // (VerticalMargin.fromEdge, the 13 sp bands); since 2026-10-06 the bottom comes 12 dp closer (shiftBottom, once).
         val old = s.copy(marginTopDp = 40, marginBottomDp = 40)
         val now = VerticalMargin.fromEdge(old).let { it.copy(marginBottomDp = VerticalMargin.shiftBottom(it.marginBottomDp)) }
         assertEquals(s, now)
         val edge = old.copy(marginBottomDp = 40 - VerticalMargin.BOTTOM_SHIFT_DP)
-        // Their devices since the bands: 18/22 at 11 sp. MaruViewer's 13 sp comes once (MaruSize) and the top margin
-        // loses the 3 dp the header's band grows: the same defaults, the same box.
+        // Their devices since the bands: 18/22 at 11 sp. MaruViewer's 13 sp comes once (MaruSize): the same defaults.
         val eleven = s.copy(statusFontSizeSp = MaruSize.OLD_SP, marginTopDp = 18)
         assertEquals(s, MaruSize.keepBox(eleven, MaruSize.applyTo(eleven)))
-        // (Without a cutout: under one the header shares the camera band, so the bands' sizes no longer add up.)
-        for ((w, h, d, band) in listOf(Quad(720, 1440, 2f, 0), Quad(1080, 2120, 3f, 0)))
-            assertTrue(box(LayoutKeys.geometry(eleven, w, h, d, band)).contentEquals(box(LayoutKeys.geometry(s, w, h, d, band))))
-        // Comet 720×1440 @2, no cutout: rows 80..1384.
+        // Since 2026-10-10 (user: "윗 여백은 개넓은 거에 비해 아랫 여백은 별로 안 넓어"): the box keeps its height, the
+        // two margins split evenly between the bands. Comet 720×1440 @2: rows 75..1379 (was 80..1384).
         val comet = LayoutKeys.geometry(now, 720, 1440, 2f)
-        assertEquals(listOf(80, 1384), listOf(comet.contentTop, comet.contentTop + comet.contentHeight))
-        assertTrue(box(comet).contentEquals(edgeGeometry(edge, 720, 1440, 2f)))
-        // S25 1080×2340 @3, fullscreen: the page view starts at the top; the 87 px camera band holds the header (its 75 px
-        // band is not stacked below it since 2026-10-06), then the 15 dp margin: rows 132..2256, the bottom 28 dp from
-        // the edge. (Before: 207, the header's band below the camera band, as on the user's screenshot.)
+        assertEquals(listOf(75, 1379), listOf(comet.contentTop, comet.contentTop + comet.contentHeight))
+        assertEquals(edgeGeometry(edge, 720, 1440, 2f)[3], comet.contentHeight)
+        // S25 1080×2340 @3, fullscreen: the 87 px camera band holds the header (its 75 px band is not stacked below it),
+        // then half of the 25 dp margins: rows 124..2248 (was 132..2256).
         val full = LayoutKeys.geometry(now, 1080, 2340, 3f, extraTop = 87)
-        assertEquals(listOf(132, 2256), listOf(full.contentTop, full.contentTop + full.contentHeight))
+        assertEquals(listOf(124, 2248), listOf(full.contentTop, full.contentTop + full.contentHeight))
         assertEquals(87, full.cutoutTop)
         // A cutout band shorter than the header's: the header's band decides (no overlap).
-        assertEquals(75 + 45, LayoutKeys.geometry(now, 1080, 2340, 3f, extraTop = 40).contentTop)
+        assertEquals(75 + 37, LayoutKeys.geometry(now, 1080, 2340, 3f, extraTop = 40).contentTop)
         // S25 with the system bars: the page view starts below the 110 px status bar and ends above the navigation bar
-        // (whatever its inset): the box is 120 px inside the view at the top, 84 px at the bottom.
+        // (whatever its inset): the box is 112 px inside the view at the top, 92 px at the bottom.
         for (bottomInset in listOf(0, 48, 63, 144)) {
             val viewH = 2340 - 110 - bottomInset
             val bars = LayoutKeys.geometry(now, 1080, viewH, 3f)
-            assertEquals(120, bars.contentTop)
-            assertEquals(viewH - 84, bars.contentTop + bars.contentHeight)
-            assertTrue(box(bars).contentEquals(edgeGeometry(edge, 1080, viewH, 3f)))
+            assertEquals(112, bars.contentTop)
+            assertEquals(viewH - 92, bars.contentTop + bars.contentHeight)
+            assertEquals(edgeGeometry(edge, 1080, viewH, 3f)[3], bars.contentHeight)
         }
-        // Whole-dp bands and margins rounded once: the same pixels on any density.
-        for (d in listOf(1f, 1.5f, 2f, 2.625f, 2.75f, 3f, 3.5f, 4f))
-            assertTrue("density $d", box(LayoutKeys.geometry(now, 1000, 2000, d)).contentEquals(edgeGeometry(edge, 1000, 2000, d)))
+        // On any density: as tall as before (to a pixel of rounding), the paper above and below within a pixel.
+        for (d in listOf(1f, 1.5f, 2f, 2.625f, 2.75f, 3f, 3.5f, 4f)) {
+            val g = LayoutKeys.geometry(now, 1000, 2000, d)
+            assertTrue("density $d", Math.abs(edgeGeometry(edge, 1000, 2000, d)[3] - g.contentHeight) <= 1)
+            val above = g.contentTop - Math.round(StatusBands.headerDp(now) * d)
+            val below = 2000 - Math.round(StatusBands.footerDp(now) * d) - (g.contentTop + g.contentHeight)
+            assertTrue("density $d: $above / $below", Math.abs(above - below) <= 1)
+        }
     }
 
     @Test
@@ -201,13 +202,16 @@ class LayoutKeysTest {
             assertEquals(50 + 2 * m, t.contentTop)
             assertEquals(1440 - 36 - 2 * m, t.contentTop + t.contentHeight)
         }
-        // Without bands the margins count from the edges again.
+        // Without bands the margins count from the edges again (half of 15 + 10 dp each side).
         val bare = s.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE, progressBar = false)
         val b = LayoutKeys.geometry(bare, 720, 1440, 2f)
-        assertEquals(listOf(30, 1440 - 20), listOf(b.contentTop, b.contentTop + b.contentHeight))
-        // Footer items above the line: a 39 dp band (78 px) under the 10 dp margin.
+        assertEquals(listOf(25, 1440 - 25), listOf(b.contentTop, b.contentTop + b.contentHeight))
+        // Footer items above the line: a 39 dp band (78 px) under half of the two margins.
         val f = LayoutKeys.geometry(s.withSlot(1, 1, StatusItem.PAGE), 720, 1440, 2f)
-        assertEquals(1440 - 78 - 20, f.contentTop + f.contentHeight)
+        assertEquals(1440 - 78 - 25, f.contentTop + f.contentHeight)
+        // An unbalanced pair (old migrations moved only the bottom one) shows balanced: the same paper above and below.
+        val lop = LayoutKeys.geometry(s.copy(marginTopDp = 40, marginBottomDp = 0), 720, 1440, 2f)
+        assertEquals(lop.contentTop - 50, 1440 - 36 - (lop.contentTop + lop.contentHeight))
         // "페이지 여백" off: the tiny margins, still clear of the bands.
         val off = LayoutKeys.geometry(s.copy(pageMargins = false), 720, 1440, 2f)
         assertEquals(listOf(50 + 8, 1440 - 36 - 8), listOf(off.contentTop, off.contentTop + off.contentHeight))
@@ -227,14 +231,14 @@ class LayoutKeysTest {
     @Test
     fun aCutoutBandAtTheTopKeepsTheTextBoxWhereItWas() {
         // Fullscreen on the S25: the page view starts at the screen's top edge; the camera band is left out like a system
-        // bar, and the header, drawn inside it, shares it (2026-10-06): the text starts one top margin under the taller of
-        // the band and the header's band. Sides and bottom are those of the view laid out below the band.
+        // bar, and the header, drawn inside it, shares it (2026-10-06): the text starts half of the two margins under the
+        // taller of the band and the header's band. Sides and bottom are those of the view laid out below the band.
         val noHeader = s.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
         for (band in listOf(0, 1, 87, 120)) for (t in listOf(s, s.copy(pageMargins = false), s.copy(marginTopDp = 0), noHeader)) {
             val below = LayoutKeys.geometry(t, 1080, 2340 - band, 3f)
             val into = LayoutKeys.geometry(t, 1080, 2340, 3f, extraTop = band)
-            val margin = Math.round((if (t.pageMargins) t.marginTopDp else LayoutKeys.TINY_MARGIN_DP) * 3f)
-            val top = if (band == 0) below.contentTop else maxOf(band, Math.round(StatusBands.headerDp(t) * 3f)) + margin
+            val margins = Math.round((if (t.pageMargins) t.marginTopDp + t.marginBottomDp else 2 * LayoutKeys.TINY_MARGIN_DP) * 3f)
+            val top = if (band == 0) below.contentTop else maxOf(band, Math.round(StatusBands.headerDp(t) * 3f)) + margins / 2
             assertEquals(below.contentLeft, into.contentLeft)
             assertEquals(top, into.contentTop)
             assertEquals(below.contentWidth, into.contentWidth)
@@ -420,11 +424,11 @@ class LayoutKeysTest {
         // none ↔ item moves the box by the band: the header's (all three slots none), the footer's (one item).
         val noHeader=s.copy(headerLeft=StatusItem.NONE,headerCenter=StatusItem.NONE,headerRight=StatusItem.NONE)
         assertTrue(LayoutKeys.layoutChanged(s,noHeader))
-        assertEquals(80-50,LayoutKeys.geometry(noHeader,720,1440,density).contentTop)
+        assertEquals(25,LayoutKeys.geometry(noHeader,720,1440,density).contentTop)
         assertFalse(LayoutKeys.layoutChanged(noHeader,noHeader.copy(statusFontSizeSp=16f)))
         // The status size moves a band with text (whole dp: 13 → 13.5 sp is 19 → 20 dp), not the progress line alone.
         assertTrue(LayoutKeys.layoutChanged(s,s.copy(statusFontSizeSp=13.5f)))
-        assertEquals((4+20+2+15)*2,LayoutKeys.geometry(s.copy(statusFontSizeSp=13.5f),720,1440,density).contentTop)
+        assertEquals((4+20+2)*2+25,LayoutKeys.geometry(s.copy(statusFontSizeSp=13.5f),720,1440,density).contentTop)
         assertEquals(LayoutKeys.geometry(noHeader,720,1440,density),LayoutKeys.geometry(noHeader.copy(statusFontSizeSp=14f),720,1440,density))
         // A key is per box: a band change never reuses another box's counts; the box alone decides (the slots don't).
         assertNotEquals(k,LayoutKeys.keyFor(noHeader,BookFormat.TXT,"",LayoutKeys.geometry(noHeader,720,1440,density),density,"font"))
@@ -439,5 +443,4 @@ class LayoutKeysTest {
     }
 
 
-    private data class Quad(val w: Int, val h: Int, val d: Float, val band: Int)
 }

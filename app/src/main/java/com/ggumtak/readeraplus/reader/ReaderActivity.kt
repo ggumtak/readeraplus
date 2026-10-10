@@ -3681,16 +3681,14 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     }
 
     /**
-     * 위·아래 여백 changed the box of [shown] (the page on screen) by whole lines: the page gives its top lines to the page
-     * before, or takes them back, instead of sliding half a line the wrong way ([MarginShift]); the new generation is
-     * anchored at its new first line.
+     * 위·아래 여백 changed how many whole lines the box of [shown] (the page on screen) holds: the page gives its top
+     * lines to the page before, or takes them back ([MarginShift]), so the lines left move up (raising) or down
+     * (lowering), never the other way; the new generation is anchored at its new first line.
      */
     private fun keepLinesInPlace(s: BookSession, shown: SectionLayout, base: Int) {
         val g = s.generation ?: return
-        val pitch = s.linePitch()
-        // The box on screen was cut by this pitch too (not when the font's own height became known in between).
-        if (LayoutKeys.linesBox(shown.config.height, pitch) != shown.config.height) return
-        val delta = LayoutKeys.linesIn(shown.config.height, pitch) - LayoutKeys.linesIn(g.geometry.contentHeight, pitch)
+        // Each box's own line count, at the line height that fills it (the same font size: margins alone changed).
+        val delta = s.boxLines(shown.config) - s.boxLines(g.config)
         // No whole line gained or lost (or none can cross the top): the page starts where the one on screen does.
         val off = MarginShift.start(shown, curPageIdx, base, delta).let { if (it < 0) base else it }
         if (off == anchor.offset) return

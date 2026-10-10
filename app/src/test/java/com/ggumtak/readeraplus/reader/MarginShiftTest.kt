@@ -104,35 +104,48 @@ class MarginShiftTest {
     }
 
     @Test
-    fun raisingTheMarginsNeverMovesALineDownAndLoweringThemNeverUp() {
+    fun raisingTheMarginsSqueezesTheLinesAndNeverSlidesThemDown() {
         // The Comet's page, 1 em = 40 px, 줄 간격 200 %: the 상하 여백 stepper swept up and back down as the reader
-        // applies it (the box from the margins, the page start from MarginShift). Every line still on the page after a
-        // step moved up (raising) or down (lowering) or stayed, and the page is back at its first line at the end.
+        // applies it (the box and its filled line from the margins, the page start from MarginShift). Raising: the lines
+        // from the middle of the box down move up, the upper half down by no more than the top margin did, and a step that drops a line
+        // moves no line down. Lowering is the mirror. The page is back at its first line at the end.
         fun g(ui: Int) = LayoutKeys.geometry(
             s.copy(marginTopDp = VerticalMargin.topDp(ui), marginBottomDp = VerticalMargin.bottomDp(ui)), 720, 1440, density, emPx = em,
         )
+        fun pitchOf(geo: PageGeometry) = LayoutKeys.config(s, geo).lineHeightEm * em
         val start = 200
         var first = start
         var drops = 0
         fun step(from: Int, to: Int) {
             val a = g(from)
             val b = g(to)
-            val na = LayoutKeys.linesIn(a.contentHeight, pitch)
-            val nb = LayoutKeys.linesIn(b.contentHeight, pitch)
+            val pa = pitchOf(a)
+            val pb = pitchOf(b)
+            val na = LayoutKeys.linesIn(a.contentHeight, pa)
+            val nb = LayoutKeys.linesIn(b.contentHeight, pb)
             val l = layout(1000, first, na)
             val off = MarginShift.start(l, 1, first * 10, na - nb)
             val next = if (off < 0) first else off / 10
             if (na != nb) drops++
+            val raising = to > from
+            val topMoved = (b.contentTop - a.contentTop).toFloat()
             for (j in maxOf(first, next) until minOf(first + na, next + nb)) {
-                val before = a.contentTop + (j - first) * pitch
-                val after = b.contentTop + (j - next) * pitch
-                if (to > from) assertTrue("ui $from→$to line $j: $before → $after", after <= before)
-                else assertTrue("ui $from→$to line $j: $before → $after", after >= before)
+                val before = a.contentTop + (j - first) * pa
+                val after = b.contentTop + (j - next) * pb
+                val moved = after - before
+                val what = "ui $from→$to line $j: $before → $after"
+                if (raising) {
+                    if (2 * (j - next) >= nb || na != nb) assertTrue(what, moved <= 0.01f)
+                    assertTrue(what, moved <= topMoved + 0.01f)
+                } else {
+                    if (2 * (j - next) >= nb || na != nb) assertTrue(what, moved >= -0.01f)
+                    assertTrue(what, moved >= topMoved - 0.01f)
+                }
             }
-            // the bottom of the text goes the margins' way too
-            val bottomBefore = a.contentTop + na * pitch
-            val bottomAfter = b.contentTop + nb * pitch
-            if (to > from) assertTrue(bottomAfter <= bottomBefore) else assertTrue(bottomAfter >= bottomBefore)
+            // the bottom of the text goes the margins' way
+            val bottomBefore = a.contentTop + na * pa
+            val bottomAfter = b.contentTop + nb * pb
+            if (raising) assertTrue(bottomAfter < bottomBefore) else assertTrue(bottomAfter > bottomBefore)
             first = next
         }
         for (ui in -10 until 64 step 2) step(ui, ui + 2)

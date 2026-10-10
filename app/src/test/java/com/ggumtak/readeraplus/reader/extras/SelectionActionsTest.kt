@@ -125,21 +125,21 @@ class SelectionActionsTest {
 
     @Test
     fun originFallback_isTheContentBox_whichHoldsTheHeadersBand() {
-        // Comet: 720 × 1440 px, density 2. The top margin counts from the header's band (2026-10-05), so the geometry's box
-        // already has the header in it: no separate header term.
+        // Comet: 720 × 1440 px, density 2. The margins count from the header's band (2026-10-05), so the geometry's box
+        // already has the header in it: no separate header term. Above the text: half of the two margins (30 + 10 dp).
         val d = 2f
         val withHeader = ReaderSettings(pageMargins = true, marginLeftDp = 24, marginTopDp = 30)
         val g = LayoutKeys.geometry(withHeader, 720, 1440, d)
         assertEquals(48f, SelectionOrigin.fallbackX(g, 0), 0f)
-        assertEquals((25f + 30f) * d, SelectionOrigin.fallbackY(g, 0), 0f)
-        assertEquals((25f + 30f) * d + 3f, SelectionOrigin.fallbackY(g, 3), 0f)
+        assertEquals((25f + 20f) * d, SelectionOrigin.fallbackY(g, 0), 0f)
+        assertEquals((25f + 20f) * d + 3f, SelectionOrigin.fallbackY(g, 3), 0f)
         // No header slot: the margin alone; a larger status font: a taller band (20 sp: 4 + 29 + 2 dp).
         val noHeader = withHeader.copy(headerLeft = StatusItem.NONE, headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE)
         assertFalse(noHeader.hasHeader)
-        assertEquals(60f, SelectionOrigin.fallbackY(LayoutKeys.geometry(noHeader, 720, 1440, d), 0), 0f)
+        assertEquals(40f, SelectionOrigin.fallbackY(LayoutKeys.geometry(noHeader, 720, 1440, d), 0), 0f)
         val bigStatus = withHeader.copy(headerLeft = StatusItem.CHAPTER, statusFontSizeSp = 20f)
         assertTrue(bigStatus.hasHeader)
-        assertEquals((35f + 30f) * d, SelectionOrigin.fallbackY(LayoutKeys.geometry(bigStatus, 720, 1440, d), 0), 0f)
+        assertEquals((35f + 20f) * d, SelectionOrigin.fallbackY(LayoutKeys.geometry(bigStatus, 720, 1440, d), 0), 0f)
         // "페이지 여백" off: the tiny margin, below the header's band still.
         val tiny = LayoutKeys.geometry(withHeader.copy(pageMargins = false), 720, 1440, d)
         assertEquals(LayoutKeys.TINY_MARGIN_DP * d, SelectionOrigin.fallbackX(tiny, 0), 0f)

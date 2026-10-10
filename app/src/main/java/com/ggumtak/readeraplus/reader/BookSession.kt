@@ -268,9 +268,12 @@ class BookSession(
         return Change.RELAYOUT
     }
 
-    /** The body line pitch the text box is cut by ([LayoutKeys.linePitch]) for the settings now. */
-    fun linePitch(): Float = LayoutKeys.linePitch(settings, AndroidTextMeasurer.emPxFor(context, settings.fontSizeSp),
-        AndroidTextMeasurer.naturalLinePxFor(context, settings))
+    /**
+     * Whole body lines the box of layout config [c] holds at its own line height (filled to the box:
+     * [PageGeometry.fillLineEm]), at this session's font size.
+     */
+    fun boxLines(c: LayoutConfig): Int =
+        LayoutKeys.linesIn(c.height, c.lineHeightEm * AndroidTextMeasurer.emPxFor(context, settings.fontSizeSp))
 
     /** The geometry the settings, the view and the read mode make now. */
     private fun geometryNow(): PageGeometry {

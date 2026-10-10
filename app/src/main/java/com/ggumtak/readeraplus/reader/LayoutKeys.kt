@@ -39,6 +39,13 @@ data class PageGeometry(
      * margin, one column and the right margin): what a thumbnail of one page shows ([PageThumbs]).
      */
     val pageWidth: Int = viewWidth,
+    /**
+     * The body line height (lineHeight in em) that fills the box with whole lines ([LayoutKeys.geometry]); 0: the
+     * settings' own ([LayoutKeys.config]).
+     */
+    val fillLineEm: Float = 0f,
+    /** How much [fillLineEm] stretches the settings' line ([LayoutKeys.linePitch]): paragraph spacing stretches as much. */
+    val lineScale: Float = 1f,
 ) {
     /** Left edge (px) of column [i] (0 = left page). */
     fun columnLeft(i: Int): Int = contentLeft + i * (contentWidth + gutter)
@@ -57,8 +64,10 @@ object LayoutKeys {
      * The parse version ([parseVersionOf]) covers the TXT parse and the EPUB section split only: a change to what the
      * EPUB content parser makes of an item's XHTML (text, block styles) has no version of its own, so bump this then.
      * 4: the text box is a whole number of body lines tall, the rest split above and below it ([geometry] with emPx).
+     * 5: the box is the whole space between the margins again, and the body lines (and paragraph spacing) stretch a
+     * little to fill it with whole lines ([PageGeometry.fillLineEm]).
      */
-    const val VERSION = 4
+    const val VERSION = 5
 
     /**
      * Version of the line-breaking output: bump exactly when `TypesetPass` (or the measurer) can produce different
@@ -105,12 +114,15 @@ object LayoutKeys {
      * (Comet row 80); under the S25's 87 px band it starts one 15 dp margin below it (row 129). Only settings decide the
      * bands: nothing shown or hidden on the page moves the box.
      *
-     * With [emPx] (1 em of the body text in px) the box is then cut to a whole number of body lines (lineHeight × em),
-     * the part of a line left over split half above, half below. Without it the lines fill the box from its top and that
-     * part piled up at the bottom: raising 위·아래 여백 together moved the text down at once while its bottom stayed put
-     * until a whole line dropped (user, 2026-10-09: "위에만 여백이 늘어나서 아래로 내려오는 느낌"). Now a dropped line
-     * takes half a line from each side. A line is lineHeight × em or, when larger, [naturalLinePx] (the body font's
-     * ascent + descent, 0 when unknown), as the engine makes it: at a small 줄 간격 the font's own height is the pitch.
+     * With [emPx] (1 em of the body text in px) the body lines fill the box exactly: as many whole lines as fit at the
+     * settings' pitch ([linePitch]: lineHeight × em or, when larger, [naturalLinePx], the body font's ascent + descent,
+     * as the engine makes it), each stretched by the part of a line left over ([PageGeometry.fillLineEm], at most 1/n;
+     * paragraph spacing stretches alike, [PageGeometry.lineScale]). So raising 위·아래 여백 pushes the top line down and
+     * the bottom line up at every step, the middle one staying, and a line leaves only when the lines would get closer
+     * than the settings' (then the page gives its top line to the page before: [MarginShift]). History: top-aligned the
+     * lines slid down with every step (user, 2026-10-09: "위에만 여백이 늘어나서 아래로 내려오는 느낌"); a whole-line box
+     * centred between the margins moved only by half lines (user, 2026-10-10: "반줄이나 그 이하로는 자연스럽게 위아래로
+     * 못 밀리게해?"; chose stretching the line spacing). Fewer than [MIN_FILL_LINES] lines are not stretched.
      * Every caller that maps touches to the page must pass the same [emPx] and [naturalLinePx].
      */
     fun geometry(
@@ -127,8 +139,6 @@ object LayoutKeys {
         fun margin(dp: Int): Int = if (s.pageMargins) dp.coerceAtLeast(0) else TINY_MARGIN_DP
         val ml = px(margin(s.marginLeftDp))
         val mr = px(margin(s.marginRightDp))
-        val mt = px(StatusBands.headerDp(s) + margin(s.marginTopDp))
-        val mb = px(StatusBands.footerDp(s) + margin(s.marginBottomDp))
         val minBox = Math.round(48 * density).coerceAtLeast(16)
         var w = viewW - ml - mr
         var left = ml
@@ -154,20 +164,28 @@ object LayoutKeys {
         val band = extraTop.coerceIn(0, viewH)
         val below = viewH - band
         // Under a display cutout the header is drawn inside the cutout's band (StatusFit.headerBaseline), so its own band
-        // is not stacked below it: the text starts one top margin under the taller of the two (user, 2026-10-06: "윗여백은
-        // 왤케 넓음?"; the S25 fullscreen text rose 70 px). Without a cutout: the header's band and the margin, as before.
-        val topEdge = if (band > 0) maxOf(band, px(StatusBands.headerDp(s))) + px(margin(s.marginTopDp)) else mt
-        var h = viewH - topEdge - mb
+        // is not stacked below it: the text starts under the taller of the two (user, 2026-10-06: "윗여백은 왤케 넓음?";
+        // the S25 fullscreen text rose 70 px). Without a cutout: under the header's band.
+        val head = if (band > 0) maxOf(band, px(StatusBands.headerDp(s))) else px(StatusBands.headerDp(s))
+        val foot = px(StatusBands.footerDp(s))
+        // The paper above the text and below it is the same: half of the two margins each, from the header's band and
+        // from the footer's (user, 2026-10-10: "윗 여백은 개넓은 거에 비해 아랫 여백은 별로 안 넓어 ... 균일하지 않으니까").
+        // Their "0"s differ (15 / 10 dp) and old migrations moved only the bottom one, so a saved pair could keep the top
+        // wider at every step of the one 상하 여백 stepper; now that stepper widens both alike, at its ends too.
+        val margins = px(margin(s.marginTopDp) + margin(s.marginBottomDp))
+        val topEdge = head + margins / 2
+        var h = viewH - topEdge - foot - (margins - margins / 2)
         var top = topEdge
         if (h < minBox) {
             h = minOf(minBox, below).coerceAtLeast(1)
             top = band + ((below - h) / 2).coerceAtLeast(0)
-        } else {
-            val snapped = linesBox(h, linePitch(s, emPx, naturalLinePx))
-            top += (h - snapped) / 2
-            h = snapped
         }
-        return PageGeometry(viewW, viewH, left, top, w, h, band, cols, gutter, pageW)
+        val pitch = linePitch(s, emPx, naturalLinePx)
+        val lines = linesIn(h, pitch)
+        if (lines < MIN_FILL_LINES) return PageGeometry(viewW, viewH, left, top, w, h, band, cols, gutter, pageW)
+        // A hair under the box, so float sums of n lines never come out past its bottom.
+        val filled = (h - FILL_SLACK_PX) / lines
+        return PageGeometry(viewW, viewH, left, top, w, h, band, cols, gutter, pageW, filled / emPx, filled / pitch)
     }
 
     /**
@@ -186,27 +204,21 @@ object LayoutKeys {
             a.copy(marginTopDp = b.marginTopDp, marginBottomDp = b.marginBottomDp) == b
 
     /**
-     * Whole lines of [pitch] px in a box [h] px tall ([linesBox] keeps exactly these), at least the one the engine always
-     * places; 0 when [pitch] is unknown.
+     * Whole lines of [pitch] px in a box [h] px tall, at least the one the engine always places; 0 when [pitch] is
+     * unknown. With the filled pitch of a layout ([config]'s line height × em) it gives back the box's line count.
      */
     fun linesIn(h: Int, pitch: Float): Int = if (pitch >= 1f && h > 0) (h / pitch + 1e-3f).toInt().coerceAtLeast(1) else 0
 
-    /**
-     * [h] cut to the height of the most whole lines of [pitch] px it holds (rounded up to a pixel, so they still fit),
-     * at least two lines; [h] itself when [pitch] is unknown or a line doesn't fit twice.
-     */
-    internal fun linesBox(h: Int, pitch: Float): Int {
-        if (!(pitch >= 1f) || h < 2 * pitch) return h
-        val lines = (h / pitch).toInt()
-        return Math.ceil((lines * pitch).toDouble()).toInt().coerceIn(1, h)
-    }
+    /** Fewer whole lines than this in the box are not stretched to fill it (each would grow by a quarter or more). */
+    const val MIN_FILL_LINES = 4
+    private const val FILL_SLACK_PX = 0.05f
 
     /** [txt]: TXT books always honour their parser's block hints (centred scene breaks, headings). */
     fun config(s: ReaderSettings, g: PageGeometry, txt: Boolean = false): LayoutConfig = LayoutConfig(
         width = g.contentWidth,
         height = g.contentHeight,
-        lineHeightEm = s.lineHeightPct / 100f,
-        paragraphSpacingEm = s.paragraphSpacingPct / 100f,
+        lineHeightEm = if (g.fillLineEm > 0f) g.fillLineEm else s.lineHeightPct / 100f,
+        paragraphSpacingEm = s.paragraphSpacingPct / 100f * g.lineScale,
         indentEm = s.indentPct / 100f,
         align = s.align,
         lineBreak = s.lineBreak,

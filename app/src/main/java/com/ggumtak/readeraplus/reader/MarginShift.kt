@@ -5,12 +5,12 @@ import com.ggumtak.readeraplus.engine.SectionLayout
 
 /**
  * Where the page starts after 위·아래 여백 alone changed (user, 2026-10-09: "상하여백을 늘리는데 글이 아래로는 안
- * 내려오게"). The text box is a whole number of lines centred between the margins ([LayoutKeys.geometry]), so a margin
- * step moves nothing until the box holds a line fewer (or more); then the box's top moves half a line down (up). Kept
- * at the same first line the page would slide down (up) by half a line. Instead the page gives its top line(s) to the
- * page before (takes them back from it): the lines that stay move up by half a line when the margins grow and down when
- * they shrink, never the other way. The line breaks are the same (only the height changed), so the lines are those of
- * the layout on screen.
+ * 내려오게"). The body lines fill the box between the margins with whole lines, a little stretched ([LayoutKeys.geometry]),
+ * so a margin step squeezes them (top line down, bottom line up) until they would get closer than the settings' line;
+ * then the box holds a line fewer and the lines spread again. Kept at the same first line that spread would push the
+ * lower lines down by up to a line. Instead the page gives its top line(s) to the page before (takes them back from it
+ * when the margins shrink): every line left moves up when the margins grow and down when they shrink. The line breaks
+ * are the same (only the height changed), so the lines are those of the layout on screen.
  */
 internal object MarginShift {
 
