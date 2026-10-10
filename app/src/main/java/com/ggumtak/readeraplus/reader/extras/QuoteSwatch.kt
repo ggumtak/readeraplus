@@ -158,8 +158,9 @@ class QuoteSwatch(context: Context, style: Int, sizeDp: Int, ink: Boolean, priva
 }
 
 /**
- * The "more" button's three dots (⋯) of the selection popup, drawn rather than typeset so no font has to carry the
- * glyph: three black dots, 3.5 dp wide, 4 dp apart. Static; the cell around it is the touch target.
+ * The "more" button's three dots of the selection popup, stacked upright (⋮; user, 2026-10-10: "가로가 아니라 세로로"),
+ * drawn rather than typeset so no font has to carry the glyph: three black dots, 3.5 dp wide, 4 dp apart. Static; the
+ * cell around it is the touch target.
  */
 internal class MoreDotsView(context: Context) : View(context) {
     private val density = context.resources.displayMetrics.density
@@ -174,16 +175,16 @@ internal class MoreDotsView(context: Context) : View(context) {
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         setMeasuredDimension(
-            resolveSize(Math.round(3 * 2 * radius + 2 * gap), widthMeasureSpec),
-            resolveSize(Math.round(2 * radius), heightMeasureSpec),
+            resolveSize(Math.round(2 * radius), widthMeasureSpec),
+            resolveSize(Math.round(3 * 2 * radius + 2 * gap), heightMeasureSpec),
         )
     }
 
     override fun onDraw(canvas: Canvas) {
-        val cy = height / 2f
+        val cx = width / 2f
         val step = 2 * radius + gap
-        val x0 = width / 2f - step
-        for (i in 0 until 3) canvas.drawCircle(x0 + i * step, cy, radius, paint)
+        val y0 = height / 2f - step
+        for (i in 0 until 3) canvas.drawCircle(cx, y0 + i * step, radius, paint)
     }
 
     private companion object {

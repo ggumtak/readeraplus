@@ -7,9 +7,10 @@ import com.ggumtak.readeraplus.render.HighlightKind
 
 /**
  * The selection popup's actions (UI_SPEC polish 13, NOTES_SPEC §7.1, PLAN C26; RIDI's layout), pure and unit-tested:
- * one row of text cells — 복사 · 형광펜 · (colour dot) · 메모 · 검색 · ⋯ · 공유 (over an existing highlight, under its
- * colour row: 복사 · 메모 · 삭제 · 검색 · ⋯ · 공유) — and the ⋯ menu in the order 사전·번역 · 문단 선택 · 책에서 검색 ·
- * 웹 검색 · 여기부터 듣기 · 문구 지우기 (TXT only). 공유 is the row's last cell (user, 2026-10-10: "맨오른쪽에 공유도").
+ * one row of text cells — 복사 · 형광펜 · (colour dot) · 메모 · 검색 · ⋮ (over an existing highlight, under its colour
+ * row: 복사 · 메모 · 삭제 · 검색 · ⋮) — and the ⋮ menu in the order 공유 · 사전·번역 · 문단 선택 · 책에서 검색 · 웹 검색 ·
+ * 여기부터 듣기 · 문구 지우기 (TXT only). The user (2026-10-10) asked for 공유 at the row's right end, then for it in the
+ * ⋮ there: it heads the menu.
  */
 internal object SelectionActions {
     /**
@@ -37,13 +38,10 @@ internal object SelectionActions {
         DELETE_PHRASE("문구 지우기"),
     }
 
-    /** Cells of the row, the ⋯ and 공유 cells included. */
-    const val CELLS = 7
+    /** Cells of the row, the ⋮ cell included. */
+    const val CELLS = 6
 
     private val PRIMARY = setOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.EDIT_NOTE, Id.DELETE_QUOTE, Id.WORD_SEARCH)
-
-    /** The row's actions before ⋯ and 공유. */
-    private const val MAX_PRIMARY = CELLS - 2
 
     /**
      * Every action that applies, row actions first, then the ⋯ menu's in its order (⋯ itself not included).
@@ -73,23 +71,17 @@ internal object SelectionActions {
     }
 
     /**
-     * Splits [list] into the row (the row actions in their order, at most [CELLS] − 2, then ⋯ when anything is left
-     * over, then 공유 last when [list] has it) and the ⋯ menu (the rest, in order).
+     * Splits [list] into the row (the row actions in their order, at most [CELLS] − 1, then ⋮ when anything is left
+     * over) and the ⋮ menu (the rest, in order).
      */
     fun split(list: List<Id>): Pair<List<Id>, List<Id>> {
         val primary = ArrayList<Id>(CELLS)
         val overflow = ArrayList<Id>(list.size)
-        var share = false
         for (id in list) {
-            when {
-                id == Id.MORE -> {}
-                id == Id.SHARE -> share = true
-                id in PRIMARY && primary.size < MAX_PRIMARY -> primary += id
-                else -> overflow += id
-            }
+            if (id == Id.MORE) continue
+            if (id in PRIMARY && primary.size < CELLS - 1) primary += id else overflow += id
         }
         if (overflow.isNotEmpty()) primary += Id.MORE
-        if (share) primary += Id.SHARE
         return primary to overflow
     }
 }
