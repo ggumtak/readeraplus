@@ -416,12 +416,12 @@ reader_more() { # reader_more "item": the reader's ⋮ (content description 더�
   tap_label "$1" || { back; return 1; }
   sleep 3
 }
-open_popup() { # the quick reading options (⚙, content description 읽기 설정): since 68aa271 a top bar "전체 읽기 설정 ›"
+open_popup() { # the quick reading options (the bottom bar's 보기 설정 button since abc78df): a top bar "전체 읽기 설정 ›"
   # · 닫기, the 글자 크기 · 굵기 · 줄 간격 · 문단 간격 · 좌우 여백 · 상하 여백 steppers and 글꼴 (384 dp: no 더보기, no
   # scrolling). A 설정 a failed step left in front is left first.
   if on_top SettingsActivity; then log "open_popup: 설정 is still in front, leaving it first"; leave_settings; fi
   show_chrome || return 1
-  tap_label "읽기 설정" contains || return 1
+  tap_label "보기 설정" || return 1
   sleep 2; dump || return 1
   has "글자 크기" contains && has "전체 읽기 설정" || { log "the quick options popup is not the active window"; return 1; }
 }
@@ -548,13 +548,15 @@ open_reading_page() { # ⚙ → 전체 읽기 설정: 설정 → 읽기 설정 o
 reading_page_shown() { # 설정 → 읽기 설정 in front: its toolbar title and its first section, 스타일 (the main list has neither)
   on_top SettingsActivity && dump && has "읽기 설정" && has "스타일"
 }
-open_page_over_reader() { # open_page_over_reader "page" "row": the reader's ⋮ → 설정 → that page of the 읽기 group over the
+open_page_over_reader() { # open_page_over_reader "page" "row": the bottom bar's 뷰어 설정 (was ⋮ → 설정) → that page of the 읽기 group over the
   # open book, checked by its toolbar title and one of its own rows (neither is an exact text of the main list): two pages
   # in 설정's stack, two BACKs to the book. (읽기 설정 opened from ⚙ links 모든 설정 too, but at its end: a page of swipes
   # on every trip.)
   if on_top SettingsActivity; then log "open_page_over_reader: 설정 is still in front, leaving it first"; leave_settings; fi
-  reader_more "설정" || return 1
-  on_top SettingsActivity || { log "⋮ → 설정 did not bring 설정 to the front"; return 1; }
+  show_chrome || return 1
+  tap_label "뷰어 설정" || return 1
+  sleep 3
+  on_top SettingsActivity || { log "뷰어 설정 did not bring 설정 to the front"; return 1; }
   scroll_find "$1" || { leave_settings; return 1; }
   tap_xy "$XY"; sleep 3
   dump && has "$1" && has "$2" && return 0
@@ -946,7 +948,7 @@ reading_settings() { # 14 the quick options (⚙) and 14q their margins; 14s the
   local label0 label1 miss t top first l v
   show_chrome || return 1
   label0=$(page_label); perf_mark 14s_a
-  tap_label "읽기 설정" contains || return 1
+  tap_label "보기 설정" || return 1
   shot 14_reading_settings 2
   # 14: the quick options since 68aa271: one top bar "전체 읽기 설정 ›" · 닫기 over six steppers (글자 크기 · 굵기 ·
   # 줄 간격 · 문단 간격 · 좌우 여백 · 상하 여백) and 글꼴; no 더보기 / 접기, and no "읽기 설정 · 모든 책에 적용" bar any more
@@ -1133,11 +1135,11 @@ PY
   volume_default || return 1
   [ "${result%% *}" = PASS ]
 }
-selection_shot() { # 17: one row of 5 (복사 · 인용 · 메모 · 사전·번역 · ⋮); the bar is read from an all-windows dump
+selection_shot() { # 17: RIDI's row (형광펜 · colour dot · 메모 · 검색 · 복사); the bar is read from an all-windows dump
   hide_chrome
   select_at 300 700
   shot 17_selection 1
-  dump_all; if has "복사" && has "인용" contains && has "메모" && has "사전·번역"; then check 17 0 "selection row with 복사 · 인용 · 메모 · 사전·번역"
+  dump_all; if has "형광펜" && has "메모" && has "검색" && has "복사"; then check 17 0 "selection row with 형광펜 · 메모 · 검색 · 복사"
   else check 17 1 "selection actions missing"; fi
   if has "복사"; then back; fi # BACK clears the selection; without one, BACK would leave the book
 }
