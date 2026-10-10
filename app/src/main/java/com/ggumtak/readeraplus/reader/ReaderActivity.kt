@@ -1146,6 +1146,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (QuoteLook.generation != before) refreshDecor()
         if (eink != einkClass) {
             einkClass = eink
+            // A late device verdict changes only the body box, anchored after this frame; chrome keeps its size.
+            handler.removeCallbacks(bandRelayout)
+            handler.post(bandRelayout)
             pushChromeLook()
         }
     }

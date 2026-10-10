@@ -411,7 +411,8 @@ class SelectionController(private val host: ReaderHost) {
         val h = dragHandle
         val allowNext = (h == null || !h.start) && SelectionSpan.canTurn(true, page.start, page.end, len)
         val allowPrev = (h == null || h.start) && SelectionSpan.canTurn(false, page.start, page.end, len)
-        return EdgeZone.of(dragY, g.contentTop.toFloat(), (g.contentTop + g.contentHeight).toFloat(),
+        // Use the visible layout's actual height (including the e-ink body-only bottom reserve).
+        return EdgeZone.of(dragY, g.contentTop.toFloat(), (g.contentTop + page.layout.config.height).toFloat(),
             ctx.dpF(EDGE_ZONE_DP.toFloat()), allowNext, allowPrev)
     }
 
