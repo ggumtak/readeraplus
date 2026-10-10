@@ -33,7 +33,6 @@ import com.ggumtak.readeraplus.engine.RectPx
 import com.ggumtak.readeraplus.engine.SectionLayout
 import com.ggumtak.readeraplus.engine.clusterEnd
 import com.ggumtak.readeraplus.engine.clusterStart
-import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.LayoutKeys
 import com.ggumtak.readeraplus.reader.ReaderHost
@@ -71,8 +70,7 @@ import kotlin.math.hypot
  * Long-press text selection with two draggable handles and an action popup in RIDI's layout: one row of text cells,
  * 복사 · 형광펜 · (colour dot) · 메모 · 검색 · ⋯ ([SelectionActions]; over an existing highlight a colour row above 복사 ·
  * 메모 · 삭제 · 검색 · ⋯). The colour dot swaps the row for the palette (a pick highlights in that colour), 검색 opens
- * the [WordSearchPanel], and the ⋯ menu holds 사전·번역 · 공유 · 문단 선택 · 책에서 검색 · 웹 검색 · 여기부터 듣기 and, in
- * a TXT book, 문구 지우기.
+ * the [WordSearchPanel], and the ⋯ menu holds 공유 · 스크린샷.
  * The selection is (section, start, end) in the section's text, whatever page shows: only its part on the page shown
  * is drawn and gets handles ([SelectionSpan]); highlight owner "selection". It grows over pages of ONE section: a
  * handle (or the long press's finger) held in the top / bottom zone of the text area for [EDGE_DWELL_MS] turns one
@@ -659,6 +657,7 @@ class SelectionController(private val host: ReaderHost) {
             SelectionActions.Id.LOOKUP -> lookUp()
             SelectionActions.Id.MORE -> if (anchor != null) showOverflow(anchor)
             SelectionActions.Id.SHARE -> share()
+            SelectionActions.Id.SCREENSHOT -> screenshot()
             SelectionActions.Id.PARAGRAPH -> selectParagraph()
             SelectionActions.Id.SEARCH -> searchInBook()
             SelectionActions.Id.WEB_SEARCH -> webSearch()
@@ -669,11 +668,7 @@ class SelectionController(private val host: ReaderHost) {
         }
     }
 
-    private fun actionIds(): List<SelectionActions.Id> = SelectionActions.ids(
-        existingQuote = editingQuote != null,
-        readAloud = onReadAloud != null || TtsRegistry.get(host) != null,
-        txt = host is TxtOverrideHost && runCatching { host.book.format }.getOrNull() == BookFormat.TXT,
-    )
+    private fun actionIds(): List<SelectionActions.Id> = SelectionActions.ids(existingQuote = editingQuote != null)
 
     /** A row's cells measured as they are, then given the side padding that fills the room ([PaletteGeometry.cellPad]). */
     private class ActionRow(val view: LinearLayout, val width: Int)
@@ -910,6 +905,22 @@ class SelectionController(private val host: ReaderHost) {
         if (t.isEmpty()) return
         val by = host.book.author.takeIf { it.isNotBlank() }?.let { ", $it" } ?: ""
         TextActions.share(ctx, "“$t”\n— ${host.book.title}$by", host.book.title)
+    }
+
+    /**
+     * 스크린샷: closes the selection (highlight, handles and popup go), then captures the reader window once the page
+     * has redrawn without them: one message later for the redraw to be posted, then [SCREENSHOT_DELAY_MS] for it to
+     * reach the screen (e-ink panels draw late).
+     */
+    private fun screenshot() {
+        val activity = ctx
+        clear()
+        val decor = activity.window?.decorView ?: return
+        decor.post {
+            main.postDelayed({
+                if (!activity.isFinishing && !activity.isDestroyed) ScreenCapture.capture(activity) { }
+            }, SCREENSHOT_DELAY_MS)
+        }
     }
 
     private fun searchInBook() {
@@ -1238,6 +1249,8 @@ class SelectionController(private val host: ReaderHost) {
     private companion object {
         /** How long an edge turn may take to show before the dwell starts over (a section or picture being loaded). */
         const val EDGE_TURN_WAIT_MS = 1500L
+        /** Wait after closing the selection before the screenshot, so the page is redrawn without it. */
+        const val SCREENSHOT_DELAY_MS = 150L
         const val DEFAULT_LONG_PRESS_MS = 500
         const val MIN_LONG_PRESS_MS = 200
         const val MAX_LONG_PRESS_MS = 2000

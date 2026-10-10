@@ -23,6 +23,8 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -38,6 +40,7 @@ import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.reader.KeyMap
+import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.settings.Settings
@@ -720,7 +723,29 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
                 if (i == WordSearchQuery.TAB_KO) view.post { preloadAi() }
             }
         }
+        if (localAi) web.webChromeClient = object : WebChromeClient() {
+            // The page's 사진 button: the picture reaches the page as a downscaled JPEG through readerAttach, so the
+            // file input itself gets no file (file and content access stay off in this key-bearing WebView).
+            override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                callback.onReceiveValue(null)
+                pickAiImage(view)
+                return true
+            }
+        }
         return web
+    }
+
+    private fun pickAiImage(web: WebView) {
+        val reader = ctx as? ReaderActivity ?: return
+        reader.pickImage { uri ->
+            if (uri == null || closed) return@pickImage
+            scope.launch {
+                val image = withContext(Dispatchers.IO) { runCatching { AiImage.encode(ctx.contentResolver, uri) }.getOrNull() }
+                if (closed) return@launch
+                if (image == null) ctx.toast("사진을 불러오지 못했습니다")
+                else web.evaluateJavascript(AiImage.attachScript(image), null)
+            }
+        }
     }
 
     // ------------------------------------------------------------------ closing

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-orQt5uYPm/1I+L7abKzuDrRw48oKBjBLx0eM6SiIl40='; style-src 'unsafe-inline'; connect-src https://api.anthropic.com/v1/messages; img-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-eMlCaie3+jSAc/NPOq/zzNMT7VYFHps13/7cByAdDBw='; style-src 'unsafe-inline'; connect-src https://api.anthropic.com/v1/messages; img-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="description" content="책을 읽다가 궁금한 뜻을 바로 묻는 가벼운 Claude AI 사전.">
 <title>AI 사전 · ReaderaPlus</title>
@@ -24,7 +24,7 @@ button{touch-action:manipulation}button,textarea{-webkit-tap-highlight-color:tra
 textarea:focus-visible{outline:2px solid #333!important}
 textarea{display:block;width:100%;height:62px;min-height:42px;max-height:130px;resize:none;border:0;outline:0!important;background:transparent;color:#181818;padding:0 6px;font-size:20px;line-height:1.45}textarea::placeholder{color:#888680}
 .compose-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px}.model-pill{border-radius:24px;background:#f0efeb;padding:11px 16px;font-size:15px;max-width:calc(100% - 60px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.send{width:44px;height:44px;border-radius:50%;background:#181818;color:white;display:grid;place-items:center;flex-shrink:0}.send:disabled{background:#b5b4ae;opacity:1}
-.compose-input{display:flex;align-items:flex-start;gap:10px}.compose-input textarea{flex:1;min-width:0}.search-toggle{width:44px;height:44px;flex-shrink:0;display:grid;place-items:center;border:1.5px solid #777;border-radius:12px;background:#fff;color:#181818}.search-toggle[aria-pressed="true"]{background:#242424;border-color:#242424;color:#fff}.search-toggle:disabled{opacity:1}.sources{border-top:1px solid #dedcd4;margin-top:16px;padding-top:10px;font-size:14px;line-height:1.6}.sources a{display:block;color:inherit;text-decoration:underline;padding:7px 0;overflow-wrap:anywhere}
+.compose-input{display:flex;align-items:flex-start;gap:10px}.attach{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;padding:8px 12px;border:1px solid #bdbab1;border-radius:10px;font-size:15px}.attach button{min-height:40px;padding:0 10px;border:1px solid #888;border-radius:8px}.compose-input textarea{flex:1;min-width:0}.search-toggle{width:44px;height:44px;flex-shrink:0;display:grid;place-items:center;border:1.5px solid #777;border-radius:12px;background:#fff;color:#181818}.search-toggle[aria-pressed="true"]{background:#242424;border-color:#242424;color:#fff}.search-toggle:disabled{opacity:1}.sources{border-top:1px solid #dedcd4;margin-top:16px;padding-top:10px;font-size:14px;line-height:1.6}.sources a{display:block;color:inherit;text-decoration:underline;padding:7px 0;overflow-wrap:anywhere}
 .hint{font-size:12px;color:#797770;text-align:center;margin:9px 0 0;min-height:16px;line-height:1.5}
 .jump{position:absolute;bottom:calc(100% + 12px);left:calc(50% - 21px);background:#fff;border:1px solid #dddcd6;border-radius:50%;width:42px;height:42px;display:grid;place-items:center}
 .overlay{position:fixed;inset:0;background:#00000035;display:flex;align-items:center;justify-content:center;padding:20px;z-index:5}
@@ -57,7 +57,8 @@ textarea{display:block;width:100%;height:62px;min-height:42px;max-height:130px;r
 <footer class="bottom">
 <button class="jump" id="jump" aria-label="최근 답변으로 이동" hidden><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v15M5 12l7 7 7-7"/></svg></button>
 <form class="composer" id="form">
-<div class="compose-input"><button class="search-toggle" id="web-search" type="button" aria-label="웹 검색" aria-pressed="true" title="웹 검색 켜짐 · 필요할 때 자동 검색해요. 누르면 꺼요."><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button><textarea id="input" rows="2" maxlength="2000" aria-label="질문" placeholder="Claude에게 질문하세요…" enterkeyhint="send"></textarea></div>
+<p class="attach" id="attach" hidden><span>사진 1장을 함께 보내요</span><button type="button" id="attach-clear">빼기</button></p>
+<div class="compose-input"><button class="search-toggle" id="web-search" type="button" aria-label="웹 검색" aria-pressed="true" title="웹 검색 켜짐 · 필요할 때 자동 검색해요. 누르면 꺼요."><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button><button class="search-toggle" id="photo" type="button" aria-label="사진 첨부" title="사진 첨부"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 8"/></svg></button><input id="photo-input" type="file" accept="image/*" hidden><textarea id="input" rows="2" maxlength="2000" aria-label="질문" placeholder="Claude에게 질문하세요…" enterkeyhint="send"></textarea></div>
 <div class="compose-row"><button class="model-pill" id="model" type="button" aria-haspopup="dialog">Haiku 5.5 낮음</button><button class="send" id="send" type="submit" aria-label="질문 보내기" disabled><svg id="send-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg><svg id="stop-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" hidden><rect x="2" y="2" width="12" height="12" rx="2"/></svg></button></div>
 </form>
 <p class="hint" id="hint">답변의 정확성은 필요한 경우 확인해 주세요.</p>
@@ -115,6 +116,9 @@ function errorCode(status,type){
  if(status===400||type==="invalid_request_error")return "invalid_request";
  return "api_request_failed";
 }
+function imageTurn(c){var s=c&&c[0]&&c[0].source,t=c&&c[1];return Array.isArray(c)&&c.length===2&&c[0].type==="image"&&!!s&&s.type==="base64"&&s.media_type==="image/jpeg"&&typeof s.data==="string"&&/^[A-Za-z0-9+\/=]{1,4000000}$/.test(s.data)&&!!t&&t.type==="text"&&typeof t.text==="string"&&!!t.text.trim()&&t.text.length<=2010;}
+// A picture counts as a fixed size, so it never pushes text history out of the request limits.
+function weight(c){return typeof c==="string"?c.length:c.reduce(function(n,b){return n+(b.type==="image"?1500:JSON.stringify(b).length);},0);}
 function payload(options,stream){
  if(MODELS.indexOf(options.model)<0||EFFORTS.indexOf(options.effort)<0)throw new Error("invalid_request");
  var messages=options.messages,total=0,textTotal=0;
@@ -125,9 +129,10 @@ function payload(options,stream){
   else if(m.role==="assistant"&&Array.isArray(m.content)&&m.content.length&&m.content.length<=128){
    m.content.forEach(function(b){if(!b||["text","thinking","redacted_thinking","server_tool_use","web_search_tool_result"].indexOf(b.type)<0)throw new Error("invalid_request");if(b.type==="text"&&typeof b.text==="string")textTotal+=b.text.length;});
    total+=JSON.stringify(m.content).length;
-  }else throw new Error("invalid_request");
+  }else if(m.role==="user"&&imageTurn(m.content)){total+=weight(m.content);textTotal+=m.content[1].text.length;}
+  else throw new Error("invalid_request");
  });
- if(messages.length%2===0||total>300000||textTotal>30000||messages[messages.length-1].content.length>2000)throw new Error("invalid_request");
+ if(messages.length%2===0||total>300000||textTotal>30000||(typeof messages[messages.length-1].content==="string"&&messages[messages.length-1].content.length>2000))throw new Error("invalid_request");
  if(options.instructions!==undefined&&(typeof options.instructions!=="string"||options.instructions.length>4000))throw new Error("invalid_request");
  if(options.answerLength!==undefined&&["short","normal","long"].indexOf(options.answerLength)<0)throw new Error("invalid_request");
  var body={model:options.model,messages:messages,system:SYSTEM,max_tokens:options.effort==="low"?2048:options.effort==="medium"?4096:8192,thinking:{type:"adaptive"},output_config:{effort:options.effort},stream:stream};
@@ -212,7 +217,7 @@ async function request(key,options,onText,signal,onMeta){
   body.messages=original.concat([{role:"assistant",content:all}]);meta("search");
  }
 }
-return {validKey:validKey,loadKey:loadKey,saveKey:saveKey,forgetKey:forgetKey,sourceUrl:sourceUrl,request:request};
+return {validKey:validKey,loadKey:loadKey,saveKey:saveKey,forgetKey:forgetKey,sourceUrl:sourceUrl,request:request,weight:weight};
 })();
 // The small title index and one selected session are loaded independently.
 var ReaderSessions=(function(){
@@ -279,7 +284,7 @@ var $=function(id){return document.getElementById(id);};
 var input=$("input"),chat=$("chat"),send=$("send"),welcome=$("welcome");
 var model="claude-haiku-5-5",effort="high",webSearch=true,active=null,configured=false,apiKey="";
 var DEFAULT_INSTRUCTIONS="무협·선협(수선)·판타지 소설을 읽다가 낯선 한자어나 용어를 자주 물어봐요. 단어나 용어를 물으면:\n- 한자 표기를 먼저 밝히고, 글자마다 훈과 음을 풀어 주세요. 예: 경공(輕功) = 輕(가벼울 경) + 功(공 공)\n- 글자 뜻이 합쳐져 어떤 뜻이 되는지, 소설 속에서는 어떤 의미와 뉘앙스로 쓰이는지 설명해 주세요.\n- 고사·유래나 무공·경지·문파 같은 장르 맥락이 있으면 짧게 덧붙여 주세요.\n- 한자 표기가 여러 가지로 가능하거나 작가가 만든 말이라 확실하지 않으면, 추측이라고 밝히고 가능한 후보를 알려 주세요.\n단어가 아닌 질문에는 평소처럼 자연스럽게 답해 주세요.";
-var instructions=DEFAULT_INSTRUCTIONS,answerLength="normal",textSize=20,rememberHistory=true,index=ReaderSessions.empty(),session=null;
+var photo=null,instructions=DEFAULT_INSTRUCTIONS,answerLength="normal",textSize=20,rememberHistory=true,index=ReaderSessions.empty(),session=null;
 try{apiKey=ReaderAi.loadKey(localStorage);}catch(e){}configured=!!apiKey;
 var pending="",lastUrl="",following=true,dialog=null,dialogs=[],generation=0,deleting=null;
 var labels={low:"낮음",medium:"중간",high:"높음",xhigh:"엑스트라"};
@@ -307,7 +312,7 @@ function prefs(){
  Array.prototype.forEach.call(document.querySelectorAll("[data-effort]"),function(b){b.setAttribute("aria-checked",String(b.getAttribute("data-effort")===effort));});
  try{localStorage.setItem("reader-ai-preferences",JSON.stringify({model:model,effort:effort,webSearch:webSearch,defaultsVersion:4,instructions:instructions,answerLength:answerLength,textSize:textSize,rememberHistory:rememberHistory}));return true;}catch(e){$("hint").textContent="설정을 저장하지 못해 현재 창에서만 적용해요.";return false;}
 }
-function controls(){send.disabled=!active&&!input.value.trim();$("web-search").disabled=!!active;send.setAttribute("aria-label",active?"답변 중지":"질문 보내기");$("send-icon").hidden=!!active;$("stop-icon").hidden=!active;}
+function controls(){send.disabled=!active&&!input.value.trim()&&!photo;$("web-search").disabled=!!active;$("photo").disabled=!!active;$("attach").hidden=!photo;send.setAttribute("aria-label",active?"답변 중지":"질문 보내기");$("send-icon").hidden=!!active;$("stop-icon").hidden=!active;}
 function toBottom(){chat.scrollTop=chat.scrollHeight;}
 chat.addEventListener("scroll",function(){following=chat.scrollHeight-chat.scrollTop-chat.clientHeight<60;$("jump").hidden=following||!session||!session.turns.length;},{passive:true});
 $("jump").addEventListener("click",function(){following=true;toBottom();});
@@ -411,7 +416,7 @@ $("key-form").addEventListener("submit",function(e){
  try{ReaderAi.saveKey(localStorage,key,remember);}catch(err){saved=false;}
  apiKey=key;configured=true;keyState();$("api-key").value="";closeDialog(true);
  $("hint").textContent=!saved?"키를 저장할 수 없어 이 창에서만 사용해요.":remember?"API 키를 이 기기에 저장했어요.":"API 키는 이 창에서만 사용해요.";
- if(pending){var q=pending;pending="";ask(q);}
+ if(pending){var q=pending.trim();pending="";ask(q);}
 });
 $("delete-key").addEventListener("click",function(){
  stop();apiKey="";configured=false;var removed=true;
@@ -471,15 +476,16 @@ function markdown(target,text){
  });
  paragraph();if(code!==null){var pre=document.createElement("pre");pre.textContent=code.join("\n");frag.appendChild(pre);}target.appendChild(frag);
 }
-function context(question){
- function size(m){return typeof m.content==="string"?m.content.length:JSON.stringify(m.content).length;}
+function userContent(q,img){return img?[{type:"image",source:{type:"base64",media_type:"image/jpeg",data:img}},{type:"text",text:q}]:q;}
+function context(question,image){
+ function size(m){return ReaderAi.weight(m.content);}
  function textSize(m){return typeof m.content==="string"?m.content.length:m.content.reduce(function(n,b){return n+(b.type==="text"&&b.text?b.text.length:0);},0);}
  var turns=session?session.turns.filter(function(t){return t.complete&&t.a;}).slice(-5):[],messages=[];
- turns.forEach(function(t){messages.push({role:"user",content:t.q},{role:"assistant",content:t.content&&t.model===model?t.content:t.a});});
+ turns.forEach(function(t){messages.push({role:"user",content:userContent(t.q,t.img)},{role:"assistant",content:t.content&&t.model===model?t.content:t.a});});
  var chars=question.length,text=question.length;
  messages.forEach(function(m){chars+=size(m);text+=textSize(m);});
  while(messages.length&&(chars>260000||text>17000)){chars-=size(messages[0])+size(messages[1]);text-=textSize(messages[0])+textSize(messages[1]);messages=messages.slice(2);}
- return messages.concat([{role:"user",content:question}]);
+ return messages.concat([{role:"user",content:userContent(question,image)}]);
 }
 function renderSources(target,sources){
  if(!sources.length)return;
@@ -498,14 +504,15 @@ function addGroup(question,append){
  var answer=document.createElement("div");answer.className="answer live";group.appendChild(wrap);group.appendChild(status);group.appendChild(answer);if(append!==false){chat.appendChild(group);following=true;toBottom();}
  return {group:group,status:status,answer:answer};
 }
-async function ask(question){
- question=question.trim();if(!question||active)return;
+async function ask(question,image){
+ question=question.trim();if(image===undefined)image=photo;if((!question&&!image)||active)return;
  if(typeof fetch!=="function"||typeof AbortController!=="function"){$("hint").textContent="AI 사전은 최신 Android System WebView가 필요해요.";return;}
  if(question.length>2000){$("hint").textContent="질문은 2,000자 안으로 입력해 주세요.";return;}
- if(!configured){pending=question;input.value=question;controls();openKey();return;}
- pending="";input.value="";input.blur();
+ if(!configured){pending=question||" ";input.value=question;controls();openKey();return;}
+ if(image&&question.slice(0,5)!=="[사진] ")question="[사진] "+(question||"이 사진을 설명해 주세요.");
+ pending="";input.value="";input.blur();photo=null;
  if(!session)session=makeSession();
- var messages=context(question),turn={q:question,a:"",sources:[],status:"답변 준비가 끝나지 않았어요.",complete:false,model:model};
+ var messages=context(question,image),turn={q:question,img:image||undefined,a:"",sources:[],status:"답변 준비가 끝나지 않았어요.",complete:false,model:model};
  if(!session.turns.length)session.title=question.replace(/\s+/g," ").slice(0,60);session.updated=Date.now();session.turns.push(turn);persist();
  var ui=addGroup(question),run={turn:turn,model:model,controller:new AbortController(),stopped:false,text:"",sources:[],timer:null,first:true,timedOut:false,generation:generation};active=run;controls();
  function flush(){
@@ -536,7 +543,7 @@ async function ask(question){
    var code=run.timedOut?"timeout":err.name==="TypeError"?"connection_lost":err.message;
    ui.status.textContent=errorText(code);ui.status.className="error";
    var retry=document.createElement("button");retry.className="small-button";retry.textContent="다시 시도";
-   retry.addEventListener("click",function(){if(active)return;var n=session.turns.indexOf(turn);if(n>=0)session.turns.splice(n,1);ui.group.remove();ask(question);});ui.group.appendChild(retry);
+   retry.addEventListener("click",function(){if(active)return;var n=session.turns.indexOf(turn);if(n>=0)session.turns.splice(n,1);ui.group.remove();ask(question,turn.img||null);});ui.group.appendChild(retry);
    if(code==="invalid_key"||code==="key_required"||code==="permission_denied"){
     var connect=document.createElement("button");connect.className="small-button";connect.textContent="API 연결";connect.addEventListener("click",openKey);ui.group.appendChild(connect);
    }
@@ -563,6 +570,10 @@ async function ask(question){
 }
 $("form").addEventListener("submit",function(e){e.preventDefault();if(active)stop();else ask(input.value);});
 input.addEventListener("input",controls);
+// The reader app answers the file input with a downscaled JPEG through readerAttach (null = none).
+window.readerAttach=function(data){photo=typeof data==="string"&&/^[A-Za-z0-9+\/=]{1,4000000}$/.test(data)?data:null;controls();};
+$("photo").addEventListener("click",function(){if(!active)$("photo-input").click();});
+$("attach-clear").addEventListener("click",function(){photo=null;controls();});
 input.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();if(!active)ask(input.value);}});
 function urlQuery(){
  var p=new URLSearchParams(location.hash.slice(1)),q=(p.get("q")||"").slice(0,2000);

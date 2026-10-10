@@ -504,3 +504,32 @@ test('version 4 defaults to Haiku high with editable hanja instructions, migrati
   assert.equal(chosen.nodes.model.textContent,'Haiku 5.5 낮음');
   click(chosen.nodes.settings);assert.equal(chosen.nodes.instructions.value,'');
 });
+
+test('a picture from the reader is sent once as a JPEG block, kept for follow-ups in memory, never stored',async()=>{
+  const calls=[];const app=ui({savedKey:key,fetch:async(u,i)=>{calls.push(JSON.parse(i.body));return reply();}});
+  assert.equal(app.nodes.attach.hidden,true);
+  app.window.readerAttach('not base64!');assert.equal(app.nodes.attach.hidden,true);
+  app.window.readerAttach('QUJDRA==');
+  assert.equal(app.nodes.attach.hidden,false);assert.equal(app.nodes.send.disabled,false);
+  await askUi(app,'');
+  const first=calls[0].messages[0].content;
+  assert.deepEqual(first[0],{type:'image',source:{type:'base64',media_type:'image/jpeg',data:'QUJDRA=='}});
+  assert.deepEqual(first[1],{type:'text',text:'[사진] 이 사진을 설명해 주세요.'});
+  assert.equal(app.nodes.attach.hidden,true);
+  await askUi(app,'두 번째 글자는?');
+  assert.equal(calls[1].messages[0].content[0].source.data,'QUJDRA==');assert.equal(calls[1].messages[2].content,'두 번째 글자는?');
+  const index=JSON.parse(app.storage.getItem('reader-ai-sessions-v1'));
+  const record=app.storage.getItem('reader-ai-session-'+index.current);
+  assert.equal(record.includes('QUJDRA=='),false);assert.match(record,/\[사진\] 이 사진을 설명해 주세요/);
+  app.window.readerAttach('QUJDRA==');click(app.nodes['attach-clear']);assert.equal(app.nodes.attach.hidden,true);
+});
+
+test('picture blocks are validated before the network',async()=>{
+  let n=0;const api=runtime(async()=>{n++;return reply();});
+  const img=data=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data}});
+  await api.request(key,{...options,messages:[{role:'user',content:[img('QUJD'),{type:'text',text:'이 글자?'}]}]},()=>{});
+  assert.equal(n,1);
+  for(const content of [[img('QUJD')],[img('a b'),{type:'text',text:'x'}],[{...img('QUJD'),source:{type:'url',url:'https://example.com/a.jpg'}},{type:'text',text:'x'}],[img('QUJD'),{type:'text',text:' '}],[img('QUJD'),{type:'text',text:'x'.repeat(2011)}]])
+    await assert.rejects(api.request(key,{...options,messages:[{role:'user',content}]},()=>{}),/invalid_request/);
+  assert.equal(n,1);
+});

@@ -15,24 +15,21 @@ import org.junit.Test
 class SelectionActionsTest {
 
     @Test
-    fun newSelection_ridiRow_thenOverflowInOrder() {
-        val (row, more) = SelectionActions.split(SelectionActions.ids(existingQuote = false, readAloud = true, txt = true))
-        // 복사 · 형광펜 · (colour dot) · 메모 · 검색 · ⋮, and 공유 heading the ⋮ menu (user, 2026-10-10: "거기에 공유도")
+    fun newSelection_ridiRow_thenOnlyShareAndScreenshotInTheMenu() {
+        val (row, more) = SelectionActions.split(SelectionActions.ids(existingQuote = false))
+        // 복사 · 형광펜 · (colour dot) · 메모 · 검색 · ⋮, and the ⋮ menu holds only 공유 · 스크린샷 (user, 2026-10-10)
         assertEquals(listOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.WORD_SEARCH, Id.MORE), row)
-        assertEquals(
-            listOf(Id.SHARE, Id.LOOKUP, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH, Id.READ_ALOUD, Id.DELETE_PHRASE),
-            more,
-        )
+        assertEquals(listOf(Id.SHARE, Id.SCREENSHOT), more)
         assertEquals(SelectionActions.CELLS, row.size)
         assertEquals(6, SelectionActions.CELLS)
     }
 
     @Test
     fun existingQuote_rowSwapsQuoteAndNote_noColourDot() {
-        val (row, more) = SelectionActions.split(SelectionActions.ids(existingQuote = true, readAloud = true, txt = false))
+        val (row, more) = SelectionActions.split(SelectionActions.ids(existingQuote = true))
         // The colour row sits above it; the row is 복사 · 메모 · 삭제 · 검색 · ⋮.
         assertEquals(listOf(Id.COPY, Id.EDIT_NOTE, Id.DELETE_QUOTE, Id.WORD_SEARCH, Id.MORE), row)
-        assertEquals(listOf(Id.SHARE, Id.LOOKUP, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH, Id.READ_ALOUD), more)
+        assertEquals(listOf(Id.SHARE, Id.SCREENSHOT), more)
         assertFalse(Id.PICK_STYLE in row + more)
         assertEquals("메모", Id.EDIT_NOTE.label)
         // The cell says 삭제; the action (and its description) stays 형광펜 삭제.
@@ -41,30 +38,18 @@ class SelectionActionsTest {
     }
 
     @Test
-    fun deletePhrase_onlyForTxt_readAloudOnlyWithTts() {
-        val epub = SelectionActions.ids(existingQuote = false, readAloud = false, txt = false)
-        assertFalse(Id.DELETE_PHRASE in epub)
-        assertFalse(Id.READ_ALOUD in epub)
-        assertTrue(Id.DELETE_PHRASE in SelectionActions.ids(existingQuote = false, readAloud = false, txt = true))
-        val (row, more) = SelectionActions.split(epub)
-        assertEquals(6, row.size)
-        assertEquals(listOf(Id.SHARE, Id.LOOKUP, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH), more)
-    }
-
-    @Test
-    fun lookupMovesToTheMenu_andBookSearchStaysThereToo() {
+    fun menuListsNoDroppedAction() {
         for (existing in listOf(false, true)) {
-            val (row, more) = SelectionActions.split(SelectionActions.ids(existing, readAloud = true, txt = true))
-            assertFalse(Id.LOOKUP in row)
-            assertEquals(Id.LOOKUP, more[1])
-            assertTrue(Id.SEARCH in more)
-            assertTrue(Id.WEB_SEARCH in more)
-            assertTrue(Id.WORD_SEARCH in row)
-            assertFalse(Id.SEARCH in row)
-            // ⋮ at the far right, 공유 first in its menu.
+            val ids = SelectionActions.ids(existing)
+            for (dropped in listOf(Id.LOOKUP, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH, Id.READ_ALOUD, Id.DELETE_PHRASE)) {
+                assertFalse(dropped in ids)
+            }
+            val (row, more) = SelectionActions.split(ids)
             assertEquals(Id.MORE, row.last())
-            assertEquals(Id.SHARE, more.first())
             assertFalse(Id.SHARE in row)
+            assertFalse(Id.SCREENSHOT in row)
+            assertTrue(Id.WORD_SEARCH in row)
+            assertEquals(listOf(Id.SHARE, Id.SCREENSHOT), more)
         }
     }
 
@@ -90,9 +75,9 @@ class SelectionActionsTest {
     fun labels_areTheSpecStrings() {
         assertEquals(
             listOf("복사", "형광펜", "형광펜 색 고르기", "메모", "검색", "더보기", "사전·번역", "공유", "문단 선택", "책에서 검색", "웹 검색",
-                "여기부터 듣기", "문구 지우기"),
+                "여기부터 듣기", "문구 지우기", "스크린샷"),
             listOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.WORD_SEARCH, Id.MORE, Id.LOOKUP, Id.SHARE, Id.PARAGRAPH, Id.SEARCH,
-                Id.WEB_SEARCH, Id.READ_ALOUD, Id.DELETE_PHRASE).map { it.label },
+                Id.WEB_SEARCH, Id.READ_ALOUD, Id.DELETE_PHRASE, Id.SCREENSHOT).map { it.label },
         )
         // What the row's text cells show: the label, but 삭제 for 형광펜 삭제.
         assertEquals(listOf("복사", "형광펜", "메모", "검색"), listOf(Id.COPY, Id.QUOTE, Id.NOTE, Id.WORD_SEARCH).map { it.short })

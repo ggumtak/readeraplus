@@ -126,6 +126,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     StatusSampleHost, NotePlaceHost, QuotePlaceHost, NoteJumpHost, PageThumbsHost {
     companion object {
         const val EXTRA_BOOK_ID = "book_id"
+        /** The AI dictionary's 사진 button ([pickImage]). */
+        private const val REQ_PICK_IMAGE = 7301
         private const val STATE_BOOK = "rp.book"
         private const val STATE_SECTION = "rp.section"
         private const val STATE_OFFSET = "rp.offset"
@@ -651,6 +653,38 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         setIntent(intent)
         closeCurrentBook()
         startOpen(intent)
+    }
+
+    /** Who waits for the picture [pickImage] asked for; null when no pick is pending. */
+    private var imagePicked: ((Uri?) -> Unit)? = null
+
+    /**
+     * Opens the system picture picker for the AI dictionary; [onResult] gets the picked picture, or null when the pick
+     * was cancelled or no picker exists. A newer request replaces a pending one (which gets null).
+     */
+    internal fun pickImage(onResult: (Uri?) -> Unit) {
+        imagePicked?.invoke(null)
+        imagePicked = onResult
+        val pick = Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*")
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(Intent.createChooser(pick, "사진 선택"), REQ_PICK_IMAGE)
+        } catch (_: Exception) {
+            imagePicked = null
+            onResult(null)
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == REQ_PICK_IMAGE) {
+            val done = imagePicked
+            imagePicked = null
+            done?.invoke(if (resultCode == RESULT_OK) data?.data else null)
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     /** S §3.2: a pending auto backup waits while the reader is visible again. */
