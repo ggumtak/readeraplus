@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-uVNiFbGEnEysj9GKmt8rjek3G6LBQ8XgA5aoEjuwHV8='; style-src 'unsafe-inline'; connect-src https://api.anthropic.com/v1/messages; img-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-T1UF0H1dmrcAwru09MDqiVnZTPa4UW5v88b+K0kO/Qg='; style-src 'unsafe-inline'; connect-src https://api.anthropic.com/v1/messages; img-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="description" content="책을 읽다가 궁금한 뜻을 바로 묻는 가벼운 Claude AI 사전.">
 <title>AI 사전 · ReaderaPlus</title>
@@ -23,7 +23,7 @@ button{touch-action:manipulation}button,textarea{-webkit-tap-highlight-color:tra
 .bottom{position:relative;flex-shrink:0;padding:8px 16px 14px;padding-bottom:max(14px,env(safe-area-inset-bottom))}.composer{border:1px solid #d9d7d0;border-radius:25px;background:#fff;padding:15px 15px 12px;box-shadow:0 3px 13px #00000006}
 textarea{display:block;width:100%;height:62px;min-height:42px;max-height:130px;resize:none;border:0;outline:0!important;background:transparent;color:#181818;padding:0 6px;font-size:20px;line-height:1.45}textarea::placeholder{color:#888680}
 .compose-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px}.model-pill{border-radius:24px;background:#f0efeb;padding:11px 16px;font-size:15px;max-width:calc(100% - 60px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.send{width:44px;height:44px;border-radius:50%;background:#181818;color:white;display:grid;place-items:center;flex-shrink:0}.send:disabled{background:#b5b4ae;opacity:1}
-.search-row{margin-top:10px}.search-toggle{border:1px solid #cbc8bf;border-radius:16px;padding:7px 12px;font-size:13px}.search-toggle[aria-pressed="true"]{background:#eeede7;border-color:#333}.sources{border-top:1px solid #dedcd4;margin-top:16px;padding-top:10px;font-size:14px;line-height:1.6}.sources a{display:block;color:inherit;text-decoration:underline;padding:7px 0;overflow-wrap:anywhere}
+.compose-input{display:flex;align-items:flex-start;gap:10px}.compose-input textarea{flex:1;min-width:0}.search-toggle{width:44px;height:44px;flex-shrink:0;display:grid;place-items:center;border:1.5px solid #777;border-radius:12px;background:#fff;color:#181818}.search-toggle[aria-pressed="true"]{background:#242424;border-color:#242424;color:#fff}.search-toggle:disabled{opacity:1}.sources{border-top:1px solid #dedcd4;margin-top:16px;padding-top:10px;font-size:14px;line-height:1.6}.sources a{display:block;color:inherit;text-decoration:underline;padding:7px 0;overflow-wrap:anywhere}
 .hint{font-size:12px;color:#797770;text-align:center;margin:9px 0 0;min-height:16px;line-height:1.5}
 .jump{position:absolute;bottom:calc(100% + 12px);left:calc(50% - 21px);background:#fff;border:1px solid #dddcd6;border-radius:50%;width:42px;height:42px;display:grid;place-items:center}
 .overlay{position:fixed;inset:0;background:#00000035;display:flex;align-items:center;justify-content:center;padding:20px;z-index:5}
@@ -54,9 +54,8 @@ textarea{display:block;width:100%;height:62px;min-height:42px;max-height:130px;r
 <footer class="bottom">
 <button class="jump" id="jump" aria-label="최근 답변으로 이동" hidden><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v15M5 12l7 7 7-7"/></svg></button>
 <form class="composer" id="form">
-<textarea id="input" rows="2" maxlength="2000" aria-label="질문" placeholder="Claude에게 질문하세요…" enterkeyhint="send"></textarea>
+<div class="compose-input"><button class="search-toggle" id="web-search" type="button" aria-label="웹 검색" aria-pressed="true" title="웹 검색 켜짐 · 필요할 때 자동 검색해요. 누르면 꺼요."><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button><textarea id="input" rows="2" maxlength="2000" aria-label="질문" placeholder="Claude에게 질문하세요…" enterkeyhint="send"></textarea></div>
 <div class="compose-row"><button class="model-pill" id="model" type="button" aria-haspopup="dialog">Sonnet 5.5 중간</button><button class="send" id="send" type="submit" aria-label="질문 보내기" disabled><svg id="send-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg><svg id="stop-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" hidden><rect x="2" y="2" width="12" height="12" rx="2"/></svg></button></div>
-<div class="search-row"><button class="search-toggle" id="web-search" type="button" aria-pressed="true" title="켜두면 필요할 때만 자동으로 검색해요. 클릭하면 검색을 꺼요.">웹 검색 · 자동</button></div>
 </form>
 <p class="hint" id="hint">답변의 정확성은 필요한 경우 확인해 주세요.</p>
 </footer>
@@ -215,7 +214,7 @@ try{
 }catch(e){}
 function prefs(){
  $("model").textContent=models[model]+" "+labels[effort];
- $("web-search").textContent=webSearch?"웹 검색 · 자동":"웹 검색 · 끔";
+ $("web-search").setAttribute("title",webSearch?"웹 검색 켜짐 · 필요할 때 자동 검색해요. 누르면 꺼요.":"웹 검색 꺼짐 · 누르면 자동 검색을 켜요.");
  $("web-search").setAttribute("aria-pressed",String(webSearch));
  Array.prototype.forEach.call(document.querySelectorAll("[data-model]"),function(b){b.setAttribute("aria-checked",String(b.getAttribute("data-model")===model));});
  Array.prototype.forEach.call(document.querySelectorAll("[data-effort]"),function(b){b.setAttribute("aria-checked",String(b.getAttribute("data-effort")===effort));});

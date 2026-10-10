@@ -149,6 +149,7 @@ test('opening the dictionary needs no login or configuration request',()=>{
     const app=ui({savedKey,fetch:async()=>{calls++;return reply();}});
     assert.equal(calls,0);assert.equal(app.nodes.model.textContent,'Sonnet 5.5 중간');
     assert.equal(app.nodes['web-search'].attributes['aria-pressed'],'true');
+    assert.match(app.nodes['web-search'].attributes.title,/켜짐/);
   }
 });
 
@@ -285,7 +286,10 @@ test('existing defaults migrate once, manual choices and the search switch persi
   app.nodes['web-search'].events.click();
   assert.equal(app.nodes['web-search'].attributes['aria-pressed'],'false');
   const prefs=JSON.parse(app.storage.getItem('reader-ai-preferences'));
-  assert.equal(prefs.webSearch,false);assert.equal(ui({savedPrefs:prefs}).nodes['web-search'].textContent,'웹 검색 · 끔');
+  assert.equal(prefs.webSearch,false);
+  const reopened=ui({savedPrefs:prefs});
+  assert.equal(reopened.nodes['web-search'].attributes['aria-pressed'],'false');
+  assert.match(reopened.nodes['web-search'].attributes.title,/꺼짐/);
   app.nodes.input.value='더 설명해 줘';app.nodes.form.events.submit({preventDefault(){}});
   await new Promise(r=>setTimeout(r,15));
   assert.equal(calls[1].tools,undefined);assert.deepEqual(calls[1].messages[1].content,[...searchContent,searchAnswer]);
