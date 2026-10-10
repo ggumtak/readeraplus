@@ -174,7 +174,7 @@ test('opening the dictionary needs no login or configuration request',()=>{
   let calls=0;
   for(const savedKey of ['',key]) {
     const app=ui({savedKey,fetch:async()=>{calls++;return reply();}});
-    assert.equal(calls,0);assert.equal(app.nodes.model.textContent,'Haiku 5.5 낮음');
+    assert.equal(calls,0);assert.equal(app.nodes.model.textContent,'Haiku 5.5 높음');
     assert.equal(app.nodes['web-search'].attributes['aria-pressed'],'true');
     assert.match(app.nodes['web-search'].attributes.title,/켜짐/);
   }
@@ -190,7 +190,7 @@ test('selection waits for the first key, then auto-sends and persists for reopen
   assert.equal(calls.length,1);
   const sent=JSON.parse(calls[0].init.body);
   assert.equal(sent.messages[0].content,'귀접 뜻');
-  assert.equal(sent.model,'claude-haiku-5-5');assert.equal(sent.output_config.effort,'low');
+  assert.equal(sent.model,'claude-haiku-5-5');assert.equal(sent.output_config.effort,'high');assert.equal(sent.max_tokens,8192);
   assert.equal(sent.tool_choice.type,'auto');
   assert.equal(app.nodes['api-key'].value,'');
   assert.equal(runtime(()=>{}).loadKey(app.storage),key);
@@ -298,7 +298,7 @@ test('non-streaming search displays deduplicated sources and rejects unsafe sour
 
 test('existing defaults migrate once, manual choices and the search switch persist',async()=>{
   const migrated=ui({savedPrefs:{model:'claude-haiku-5-5',effort:'medium'}});
-  assert.equal(migrated.nodes.model.textContent,'Haiku 5.5 낮음');
+  assert.equal(migrated.nodes.model.textContent,'Haiku 5.5 높음');
   const manual=ui({savedPrefs:{model:'claude-haiku-5-5',effort:'medium',defaultsVersion:2,webSearch:false}});
   assert.equal(manual.nodes.model.textContent,'Haiku 5.5 중간');
   assert.equal(manual.nodes['web-search'].attributes['aria-pressed'],'false');
@@ -456,7 +456,7 @@ test('session index and bounded records load lazily and reject corrupt or unsafe
 });
 
 test('default migration preserves explicit version 3 model choices',()=>{
-  assert.equal(ui({savedPrefs:{model:'claude-sonnet-5-5',effort:'medium',defaultsVersion:2}}).nodes.model.textContent,'Haiku 5.5 낮음');
+  assert.equal(ui({savedPrefs:{model:'claude-sonnet-5-5',effort:'medium',defaultsVersion:2}}).nodes.model.textContent,'Haiku 5.5 높음');
   assert.equal(ui({savedPrefs:{model:'claude-sonnet-5-5',effort:'medium',defaultsVersion:3}}).nodes.model.textContent,'Sonnet 5.5 중간');
   assert.equal(ui({savedPrefs:{model:'claude-opus-5-5',effort:'high',defaultsVersion:2}}).nodes.model.textContent,'Opus 5.5 높음');
 });
@@ -484,4 +484,23 @@ test('default instructions allow ordinary conversation without dictionary role o
   assert.equal(body.messages[0].content,'오늘 하루를 어떻게 보내면 좋을까?');
   assert.doesNotMatch(body.system,/AI 사전|독서|2~6|핵심만|뜻을 묻는 질문/);
   assert.match(body.system,/사용자의 질문과 요청/);
+});
+
+test('version 4 defaults to Haiku high with editable hanja instructions, migrating the old defaults once',async()=>{
+  const calls=[];const fresh=ui({savedKey:key,fetch:async(u,i)=>{calls.push(JSON.parse(i.body));return reply();}});
+  assert.equal(fresh.nodes.model.textContent,'Haiku 5.5 높음');
+  await askUi(fresh,'붕조');
+  assert.equal(calls[0].model,'claude-haiku-5-5');assert.equal(calls[0].output_config.effort,'high');
+  assert.match(calls[0].system,/사용자 지침:\n[\s\S]*한자 표기[\s\S]*훈과 음[\s\S]*추측이라고 밝히고/);
+  assert.match(calls[0].system,/단어가 아닌 질문에는 평소처럼/);
+  click(fresh.nodes.settings);assert.match(fresh.nodes.instructions.value,/한자 표기/);
+  const v3=ui({savedPrefs:{model:'claude-haiku-5-5',effort:'low',defaultsVersion:3,instructions:''}});
+  assert.equal(v3.nodes.model.textContent,'Haiku 5.5 높음');
+  click(v3.nodes.settings);assert.match(v3.nodes.instructions.value,/한자 표기/);
+  const custom=ui({savedPrefs:{model:'claude-opus-5-5',effort:'medium',defaultsVersion:3,instructions:'짧게 답해 줘.'}});
+  assert.equal(custom.nodes.model.textContent,'Opus 5.5 중간');
+  click(custom.nodes.settings);assert.equal(custom.nodes.instructions.value,'짧게 답해 줘.');
+  const chosen=ui({savedPrefs:{model:'claude-haiku-5-5',effort:'low',defaultsVersion:4,instructions:''}});
+  assert.equal(chosen.nodes.model.textContent,'Haiku 5.5 낮음');
+  click(chosen.nodes.settings);assert.equal(chosen.nodes.instructions.value,'');
 });

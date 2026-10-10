@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-P8T9/U5QTgHOBtcvNswJ5Zuoyhl/hlVL4KoIVlDOp5k='; style-src 'unsafe-inline'; connect-src https://api.anthropic.com/v1/messages; img-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-orQt5uYPm/1I+L7abKzuDrRw48oKBjBLx0eM6SiIl40='; style-src 'unsafe-inline'; connect-src https://api.anthropic.com/v1/messages; img-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="description" content="책을 읽다가 궁금한 뜻을 바로 묻는 가벼운 Claude AI 사전.">
 <title>AI 사전 · ReaderaPlus</title>
@@ -130,7 +130,7 @@ function payload(options,stream){
  if(messages.length%2===0||total>300000||textTotal>30000||messages[messages.length-1].content.length>2000)throw new Error("invalid_request");
  if(options.instructions!==undefined&&(typeof options.instructions!=="string"||options.instructions.length>4000))throw new Error("invalid_request");
  if(options.answerLength!==undefined&&["short","normal","long"].indexOf(options.answerLength)<0)throw new Error("invalid_request");
- var body={model:options.model,messages:messages,system:SYSTEM,max_tokens:options.effort==="low"?2048:options.effort==="xhigh"?8192:4096,thinking:{type:"adaptive"},output_config:{effort:options.effort},stream:stream};
+ var body={model:options.model,messages:messages,system:SYSTEM,max_tokens:options.effort==="low"?2048:options.effort==="medium"?4096:8192,thinking:{type:"adaptive"},output_config:{effort:options.effort},stream:stream};
  if(options.answerLength==="short")body.system+=" 답변은 핵심만 1~3문장으로 설명하세요.";
  if(options.answerLength==="long")body.system+=" 필요한 배경과 근거, 예시를 곁들여 충분히 설명하세요.";
  if(options.instructions)body.system+="\n사용자 지침:\n"+options.instructions;
@@ -277,18 +277,21 @@ return {load:load,read:read,write:write,drop:drop,clear:clear,clean:clean,empty:
 "use strict";
 var $=function(id){return document.getElementById(id);};
 var input=$("input"),chat=$("chat"),send=$("send"),welcome=$("welcome");
-var model="claude-haiku-5-5",effort="low",webSearch=true,active=null,configured=false,apiKey="";
-var instructions="",answerLength="normal",textSize=20,rememberHistory=true,index=ReaderSessions.empty(),session=null;
+var model="claude-haiku-5-5",effort="high",webSearch=true,active=null,configured=false,apiKey="";
+var DEFAULT_INSTRUCTIONS="무협·선협(수선)·판타지 소설을 읽다가 낯선 한자어나 용어를 자주 물어봐요. 단어나 용어를 물으면:\n- 한자 표기를 먼저 밝히고, 글자마다 훈과 음을 풀어 주세요. 예: 경공(輕功) = 輕(가벼울 경) + 功(공 공)\n- 글자 뜻이 합쳐져 어떤 뜻이 되는지, 소설 속에서는 어떤 의미와 뉘앙스로 쓰이는지 설명해 주세요.\n- 고사·유래나 무공·경지·문파 같은 장르 맥락이 있으면 짧게 덧붙여 주세요.\n- 한자 표기가 여러 가지로 가능하거나 작가가 만든 말이라 확실하지 않으면, 추측이라고 밝히고 가능한 후보를 알려 주세요.\n단어가 아닌 질문에는 평소처럼 자연스럽게 답해 주세요.";
+var instructions=DEFAULT_INSTRUCTIONS,answerLength="normal",textSize=20,rememberHistory=true,index=ReaderSessions.empty(),session=null;
 try{apiKey=ReaderAi.loadKey(localStorage);}catch(e){}configured=!!apiKey;
 var pending="",lastUrl="",following=true,dialog=null,dialogs=[],generation=0,deleting=null;
 var labels={low:"낮음",medium:"중간",high:"높음",xhigh:"엑스트라"};
 var models={"claude-haiku-5-5":"Haiku 5.5","claude-sonnet-5-5":"Sonnet 5.5","claude-opus-5-5":"Opus 5.5"};
 try{
  var saved=JSON.parse(localStorage.getItem("reader-ai-preferences")||"{}");
- var oldDefault=saved.defaultsVersion!==3&&((saved.model==="claude-sonnet-5-5"&&saved.effort==="medium")||(saved.model==="claude-haiku-5-5"&&saved.effort==="medium"&&!saved.defaultsVersion));
+ // Version 4: Haiku 높음 and the hanja instructions replace the earlier defaults once; later choices persist.
+ var current=saved.defaultsVersion===4;
+ var oldDefault=!current&&((saved.model==="claude-haiku-5-5"&&saved.effort==="low")||(saved.defaultsVersion!==3&&saved.model==="claude-sonnet-5-5"&&saved.effort==="medium")||(saved.model==="claude-haiku-5-5"&&saved.effort==="medium"&&!saved.defaultsVersion));
  if(!oldDefault){if(models[saved.model])model=saved.model;if(labels[saved.effort])effort=saved.effort;}
  if(typeof saved.webSearch==="boolean")webSearch=saved.webSearch;
- if(typeof saved.instructions==="string")instructions=saved.instructions.slice(0,4000);
+ if(typeof saved.instructions==="string"&&(current||saved.instructions.trim()))instructions=saved.instructions.slice(0,4000);
  if(["short","normal","long"].indexOf(saved.answerLength)>=0)answerLength=saved.answerLength;
  if([18,20,22].indexOf(saved.textSize)>=0)textSize=saved.textSize;
  if(typeof saved.rememberHistory==="boolean")rememberHistory=saved.rememberHistory;
@@ -302,7 +305,7 @@ function prefs(){
  $("web-search").setAttribute("aria-pressed",String(webSearch));
  Array.prototype.forEach.call(document.querySelectorAll("[data-model]"),function(b){b.setAttribute("aria-checked",String(b.getAttribute("data-model")===model));});
  Array.prototype.forEach.call(document.querySelectorAll("[data-effort]"),function(b){b.setAttribute("aria-checked",String(b.getAttribute("data-effort")===effort));});
- try{localStorage.setItem("reader-ai-preferences",JSON.stringify({model:model,effort:effort,webSearch:webSearch,defaultsVersion:3,instructions:instructions,answerLength:answerLength,textSize:textSize,rememberHistory:rememberHistory}));return true;}catch(e){$("hint").textContent="설정을 저장하지 못해 현재 창에서만 적용해요.";return false;}
+ try{localStorage.setItem("reader-ai-preferences",JSON.stringify({model:model,effort:effort,webSearch:webSearch,defaultsVersion:4,instructions:instructions,answerLength:answerLength,textSize:textSize,rememberHistory:rememberHistory}));return true;}catch(e){$("hint").textContent="설정을 저장하지 못해 현재 창에서만 적용해요.";return false;}
 }
 function controls(){send.disabled=!active&&!input.value.trim();$("web-search").disabled=!!active;send.setAttribute("aria-label",active?"답변 중지":"질문 보내기");$("send-icon").hidden=!!active;$("stop-icon").hidden=!active;}
 function toBottom(){chat.scrollTop=chat.scrollHeight;}
