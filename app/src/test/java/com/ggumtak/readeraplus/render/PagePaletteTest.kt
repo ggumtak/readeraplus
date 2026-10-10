@@ -33,7 +33,8 @@ class PagePaletteTest {
         assertSame(PagePalette.NIGHT, PagePalette.of(ReaderSettings(invert = true, pageTheme = PageTheme.BLACK)))
         assertEquals(0xFF000000.toInt(), b.background)
         assertEquals(PagePalette.MARU.text, b.text)
-        // its own quiet status grey (theQuietStatusLineIsAGreyOfThePage)
+        // MaruViewer's gold status line, as on its grey page (theQuietStatusLineIsAGreyOfThePage)
+        assertEquals(PagePalette.MARU.status, b.status)
         assertTrue(b.hasShadow)
         assertEquals(
             listOf(PagePalette.MARU.shadowDxDp, PagePalette.MARU.shadowDyDp, PagePalette.MARU.shadowSigmaDp),
@@ -220,27 +221,31 @@ class PagePaletteTest {
 
     @Test
     fun theQuietStatusLineIsAGreyOfThePage() {
-        // User (2026-10-10): "상태바도 리디처럼 … 배경색에 따라서 다 은은하게 … 튀지 않게 있는 듯 없는 듯": 40 % of the way
-        // from the page to the text, a neutral grey on one of the e-ink panel's 16 levels, on every look (no more gold).
+        // User (2026-10-10): "상태바도 리디처럼 … 배경색에 따라서 다 은은하게 … 튀지 않게 있는 듯 없는 듯": on 흰 바탕 and
+        // 흑백 반전 40 % of the way from the page to the text, a neutral grey on one of the e-ink panel's 16 levels.
         assertEquals(rgb(0x99), PagePalette.PAPER.status)
-        assertEquals(rgb(0x77), PagePalette.MARU.status)
-        assertEquals(rgb(0x55), PagePalette.BLACK.status)
         assertEquals(rgb(0x66), PagePalette.NIGHT.status)
-        for (p in listOf(PagePalette.PAPER, PagePalette.MARU, PagePalette.BLACK, PagePalette.NIGHT)) {
+        for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT)) {
             val c = contrast(p.status, p.background)
             assertTrue("$c", c in 2.5..4.0)
             assertTrue(contrast(p.text, p.background) > 2 * c)
             assertEquals(0, (p.status and 0xFF) % 17)
         }
+        // The same day: "회색하고 검은색배경은 상태표시줄 원래색으로": MaruViewer's gold on its grey page and on black.
+        assertEquals(0xFFFFD387.toInt(), PagePalette.MARU_GOLD)
+        assertEquals(PagePalette.MARU_GOLD, PagePalette.MARU.status)
+        assertEquals(PagePalette.MARU_GOLD, PagePalette.BLACK.status)
+        assertEquals(9.1, contrast(PagePalette.MARU.status, PagePalette.MARU.background), 0.05)
     }
 
     @Test
     fun theLowBatteryIsTheStatusColourOnlyRedder() {
         // User (2026-10-05): "25때는 약간 빨간색으로 바뀌고". The status colour 65 % of the way to #E53935 on each look.
-        // (The status colour is the quiet grey since 2026-10-10, so the red is a quiet one too.)
+        // (On 흰 바탕 and 흑백 반전 the status colour is the quiet grey since 2026-10-10, so the red is a quiet one too.)
         assertEquals(0xFFCA5B58.toInt(), PagePalette.PAPER.batteryLow)
         assertEquals(0xFFB94946.toInt(), PagePalette.NIGHT.batteryLow)
-        assertEquals(0xFFBF4F4C.toInt(), PagePalette.MARU.batteryLow)
+        assertEquals(0xFFEE6F52.toInt(), PagePalette.MARU.batteryLow)
+        assertEquals(PagePalette.MARU.batteryLow, PagePalette.BLACK.batteryLow)
         for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT, PagePalette.MARU, PagePalette.BLACK)) {
             val low = p.batteryLow
             // Redder than the status colour: more red than green and blue, and at least as clear on the page.

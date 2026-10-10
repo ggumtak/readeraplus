@@ -88,11 +88,11 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     /** E-ink (or not probed yet): greys only, no blue ribbon and no red battery. */
     private val eink = DeviceClass.cached(context) != false
     private val bandCache = arrayOf(StatusDrawCache(), StatusDrawCache())
-    /** The header's side insets ([StatusFit.sideInset]) and the corners and glyph middle they were computed for. */
+    /** The header's side insets ([StatusFit.sideInset]) and the corners and glyphs' ink top they were computed for. */
     private var headerInsetLeft = 0f
     private var headerInsetRight = 0f
     private val insetsCorners = IntArray(6) { Int.MIN_VALUE }
-    private var insetsMiddle = Float.NaN
+    private var insetsInkTop = Float.NaN
     private val slotGeometry = FloatArray(12)
     private val slotNatural = FloatArray(3)
     private val slotWidths = FloatArray(3)
@@ -410,7 +410,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         if (!st.header.isEmpty) {
             val baseline = StatusFit.headerBaseline(st.top.toFloat(), statusAscent, statusInkTop, statusInkBottom,
                 statusGlyphPx, density)
-            updateHeaderInsets(st, baseline + (statusInkTop + statusInkBottom) / 2f)
+            updateHeaderInsets(st, baseline + statusInkTop)
             val x = headerInsetLeft
             val w = StatusFit.headerWidth(viewWidth, headerInsetLeft, headerInsetRight)
             // The ribbon's place at the header's right end is kept on every page (bookmarked or not), so toggling the
@@ -426,23 +426,24 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     }
 
     /**
-     * The header's side insets for the display's top corners in [st] and the glyphs' vertical [middle]; computed again
-     * only when those change (the window's insets, the renderer's font), never per frame.
+     * The header's side insets for the display's top corners in [st] and the top row of the glyphs' ink [inkTop]
+     * ([StatusFit.sideInset]); computed again only when those change (the window's insets, the renderer's font), never
+     * per frame.
      */
-    private fun updateHeaderInsets(st: StatusDecor, middle: Float) {
+    private fun updateHeaderInsets(st: StatusDecor, inkTop: Float) {
         val l = st.cornerLeft
         val r = st.cornerRight
         val k = insetsCorners
-        if (middle == insetsMiddle && k[0] == l.radius && k[1] == l.centreIn && k[2] == l.centreY &&
+        if (inkTop == insetsInkTop && k[0] == l.radius && k[1] == l.centreIn && k[2] == l.centreY &&
             k[3] == r.radius && k[4] == r.centreIn && k[5] == r.centreY) return
         k[0] = l.radius; k[1] = l.centreIn; k[2] = l.centreY; k[3] = r.radius; k[4] = r.centreIn; k[5] = r.centreY
-        insetsMiddle = middle
-        headerInsetLeft = sideInset(l, middle)
-        headerInsetRight = sideInset(r, middle)
+        insetsInkTop = inkTop
+        headerInsetLeft = sideInset(l, inkTop)
+        headerInsetRight = sideInset(r, inkTop)
     }
 
-    private fun sideInset(c: StatusCorner, middle: Float): Float =
-        StatusFit.sideInset(c.radius.toFloat(), c.centreIn.toFloat(), c.centreY.toFloat(), middle, density)
+    private fun sideInset(c: StatusCorner, inkTop: Float): Float =
+        StatusFit.sideInset(c.radius.toFloat(), c.centreIn.toFloat(), c.centreY.toFloat(), inkTop, density)
 
     private fun slot(b: StatusBand, i: Int): StatusSlot = when (i) { 0 -> b.left; 1 -> b.center; else -> b.right }
 

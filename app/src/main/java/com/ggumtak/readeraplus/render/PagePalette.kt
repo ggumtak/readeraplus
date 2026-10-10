@@ -15,9 +15,10 @@ internal class PagePalette private constructor(
     val text: Int,
     /**
      * Status lines: their texts and the battery icon (the progress line has its own greys: [progressLine]). Drawn flat,
-     * without the text shadow on every look: MaruViewer's own status line has none (measured 2026-10-05, [MARU]). A
-     * quiet grey of the page itself on every look since 2026-10-10 ([quietStatus]; user: "상태바도 리디처럼 … 배경색에
-     * 따라서 다 은은하게 배경색과 어울리게 … 튀지 않게 있는 듯 없는 듯"): no more black on white or MaruViewer's gold.
+     * without the text shadow on every look: MaruViewer's own status line has none (measured 2026-10-05, [MARU]). On
+     * 흰 바탕 and 흑백 반전 a quiet grey of the page itself since 2026-10-10 ([quietStatus]; user: "상태바도 리디처럼 …
+     * 배경색에 따라서 다 은은하게 … 있는 듯 없는 듯"); 마루뷰어 and 검은 바탕 keep MaruViewer's gold #FFD387 (user, the same
+     * day: "회색하고 검은색배경은 상태표시줄 원래색으로").
      */
     val status: Int,
     /**
@@ -104,13 +105,16 @@ internal class PagePalette private constructor(
         private const val LOW_RED = 0xFFE53935.toInt()
         private const val LOW_SHARE = 0.65f
 
+        /** MaruViewer's status gold (measured 2026-10-05, [MARU]): the status line of [MARU] and [BLACK]. */
+        const val MARU_GOLD = 0xFFFFD387.toInt()
+
         /** How far the status grey sits from the page toward the text (of 1): [quietStatus]. */
         private const val STATUS_SHARE = 0.4f
 
         /**
          * The status lines' colour on a page of [background] with [text]: a neutral grey [STATUS_SHARE] of the way from
          * the page to the text by luma, on the nearest of an e-ink panel's 16 levels (so a Comet shows it flat, never
-         * dithered). 흰 바탕 #999999, MaruViewer's page #777777, 검은 바탕 #555555, 흑백 반전 #666666.
+         * dithered). 흰 바탕 #999999, 흑백 반전 #666666 ([MARU] and [BLACK] keep their gold).
          */
         fun quietStatus(background: Int, text: Int): Int {
             val b = luma(background)
@@ -210,7 +214,7 @@ internal class PagePalette private constructor(
          * (1.333 px, radius 1.44 px; was 0.49 dp, 1.378 px). On the Comet 0.95 px.
          */
         val MARU = PagePalette(
-            background = 0xFF323232.toInt(), text = 0xFFDDDDDD.toInt(), status = quietStatus(0xFF323232.toInt(), 0xFFDDDDDD.toInt()),
+            background = 0xFF323232.toInt(), text = 0xFFDDDDDD.toInt(), status = MARU_GOLD,
             shadowDxDp = 0.71f, shadowDyDp = 0.36f, shadowSigmaDp = 0.474f, shadowColor = 0xFF000000.toInt(),
             dark = true, invertImages = false,
         )
@@ -221,7 +225,7 @@ internal class PagePalette private constructor(
          * Pictures keep their colours.
          */
         val BLACK = PagePalette(
-            background = OPAQUE, text = 0xFFDDDDDD.toInt(), status = quietStatus(OPAQUE, 0xFFDDDDDD.toInt()),
+            background = OPAQUE, text = 0xFFDDDDDD.toInt(), status = MARU_GOLD,
             shadowDxDp = 0.71f, shadowDyDp = 0.36f, shadowSigmaDp = 0.474f, shadowColor = 0xFF000000.toInt(),
             dark = true, invertImages = false,
         )

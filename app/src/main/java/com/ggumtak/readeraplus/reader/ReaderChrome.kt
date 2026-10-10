@@ -553,11 +553,11 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     /**
      * A state that stays (bookmark, pin, rotation lock): shown by the icon swap ([setBookmarked], [setPinned],
      * [setRotationLocked]: outline / filled or locked), never by a colour that would redraw more than the icon. The
-     * [soft] ones (pin, rotation lock: secondary controls of the label row) read in the secondary tone while off and in
-     * the strongest while on; the bookmark stays in the icon tone.
+     * [soft] ones (pin, rotation lock: secondary controls of the label row) read in the secondary tone while off; on, every
+     * one is in [ChromePalette.accent] (the icon tone, or MaruViewer's gold on 마루뷰어 and 검은 바탕).
      */
     private fun paintToggle(b: ImageButton, on: Boolean, soft: Boolean) {
-        b.imageTintList = ColorStateList.valueOf(if (soft && !on) look.text2 else look.text)
+        b.imageTintList = ColorStateList.valueOf(if (on) look.accent else if (soft) look.text2 else look.text)
         b.background = ctx.chromeIconBackground(look, on)
     }
 

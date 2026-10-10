@@ -11,12 +11,16 @@ import kotlin.math.abs
 import kotlin.math.pow
 
 /**
- * The reader chrome's colours: one formula (the page's background mixed toward its text colour) for every theme, the
- * greys of the RIDI book app on 흰 바탕, the panel's 16 grey levels on e-ink.
+ * The reader chrome's colours: one formula (the page's background mixed toward its text colour) on a phone's 흰 바탕 and
+ * 흑백 반전 (the greys of the RIDI book app on 흰 바탕), the earlier chrome with MaruViewer's gold on 마루뷰어 and 검은 바탕,
+ * the reader's ink on e-ink.
  */
 class ChromePaletteTest {
 
     private val pages = listOf(PagePalette.PAPER, PagePalette.MARU, PagePalette.NIGHT, PagePalette.BLACK)
+
+    /** The pages whose phone chrome is the RIDI formula; 마루뷰어 and 검은 바탕 keep their earlier chrome. */
+    private val formula = listOf(PagePalette.PAPER, PagePalette.NIGHT)
 
     private fun all(): List<ChromePalette> =
         pages.flatMap { listOf(ChromePalette.of(it, false), ChromePalette.of(it, true)) }
@@ -51,7 +55,7 @@ class ChromePaletteTest {
 
     @Test
     fun everyPhoneToneIsTheBackgroundMixedTowardTheText() {
-        for (p in pages) {
+        for (p in formula) {
             val k = ChromePalette.of(p, false)
             assertEquals(mix(p, 0.06f), k.surface)
             assertEquals(mix(p, 0.13f), k.topEdge)
@@ -78,10 +82,10 @@ class ChromePaletteTest {
     }
 
     @Test
-    fun theOtherThemesGetTheSameTreatment() {
-        // 마루뷰어 (#323232 / #DDDDDD) and 검은 바탕 (#000000 / #DDDDDD): the tones lie between the page and its text, in
-        // the order surface < edges < thumb < secondary < primary, measured from the page.
-        for (p in pages) {
+    fun theInvertedPageGetsTheSameTreatment() {
+        // 흑백 반전 (#000000 / #FFFFFF): the tones lie between the page and its text, in the order surface < edges <
+        // thumb < secondary < primary, measured from the page.
+        for (p in formula) {
             val k = ChromePalette.of(p, false)
             val d = { c: Int -> abs(grey(c) - grey(p.background)) }
             assertTrue(name(k), d(k.surface) < d(k.topEdge))
@@ -92,18 +96,52 @@ class ChromePaletteTest {
             assertTrue(name(k), d(k.text2) < d(k.text))
             assertTrue(name(k), d(k.text) < abs(grey(p.text) - grey(p.background)))
         }
+    }
+
+    @Test
+    fun greyAndBlackKeepTheirEarlierChrome() {
+        // User (2026-10-10): "회색하고 검은색배경은 상태표시줄 원래색으로 … 탭 했을 때 나오던 것도 색 똑같이".
+        val gold = PagePalette.MARU_GOLD
         val maru = ChromePalette.of(PagePalette.MARU, false)
+        assertEquals(PagePalette.MARU.background, maru.page)
         assertEquals(0xFF3C3C3C.toInt(), maru.surface)
-        assertEquals(0xFF9C9C9C.toInt(), maru.text)
+        assertEquals(0xFFDDDDDD.toInt(), maru.text)
+        assertEquals(0xFFA8A8A8.toInt(), maru.text2)
+        assertEquals(0xFFA8A8A8.toInt(), maru.hist)
+        assertEquals(0xFF4E4E4E.toInt(), maru.divider)
+        assertEquals(0xFF606060.toInt(), maru.track)
+        assertEquals(0x80000000.toInt(), maru.shadow)
+        assertEquals(0, maru.topEdge)
+        assertEquals(0, maru.bottomEdge)
         val black = ChromePalette.of(PagePalette.BLACK, false)
-        assertEquals(0xFF0D0D0D.toInt(), black.surface)
-        assertEquals(0xFF898989.toInt(), black.text)
+        assertEquals(PagePalette.BLACK.background, black.page)
+        assertEquals(0xFF1A1A1A.toInt(), black.surface)
+        assertEquals(0xFFDDDDDD.toInt(), black.text)
+        assertEquals(0xFF333333.toInt(), black.topEdge)
+        assertEquals(0xFF333333.toInt(), black.bottomEdge)
+        assertEquals(0xFF4A4A4A.toInt(), black.track)
+        assertEquals(0, black.shadow)
+        for (k in listOf(maru, black)) {
+            // What is on is MaruViewer's gold, the status line's colour on these pages.
+            assertEquals(gold, k.accent)
+            assertEquals(gold, k.thumb)
+            assertEquals(PagePalette.MARU.status, k.accent)
+            assertEquals(0x4DFFD387, k.active)
+            assertEquals(0x1AFFFFFF, k.pressed)
+            assertTrue(k.motion)
+            assertTrue(k.dark)
+            assertFalse(k.eink)
+        }
+        // E-ink keeps the reader's ink on every page.
+        for (p in listOf(PagePalette.MARU, PagePalette.BLACK)) assertEquals(ChromePalette.of(p, true).text, ChromePalette.of(p, true).accent)
     }
 
     @Test
     fun noThemeKeepsAnAccentColour() {
-        // The chrome is grey on every theme: the gold of 마루뷰어's status line is the page's, never the bars'.
+        // The formula's chrome and the e-ink chrome are grey: the gold is 마루뷰어's and 검은 바탕's alone.
+        val gold = setOf(ChromePalette.of(PagePalette.MARU, false), ChromePalette.of(PagePalette.BLACK, false))
         for (k in all()) {
+            if (k in gold) continue
             assertEquals(name(k), k.text, k.accent)
             for (c in listOf(k.surface, k.text, k.text2, k.accent, k.divider, k.rule, k.edge, k.topEdge, k.bottomEdge,
                 k.track, k.thumb, k.hist)) {
@@ -133,7 +171,7 @@ class ChromePaletteTest {
 
     @Test
     fun lineAndSliderFloors() {
-        for (p in pages) {
+        for (p in formula) {
             val k = ChromePalette.of(p, false)
             val n = name(k)
             // Hairlines and the track stay quiet against the panel, the thumb stands out of the track.
@@ -152,7 +190,7 @@ class ChromePaletteTest {
 
     @Test
     fun phonesMoveAndPressButShowNoShadowOrCircle() {
-        for (p in pages) {
+        for (p in formula) {
             val k = ChromePalette.of(p, false)
             assertTrue(k.motion)
             assertFalse(k.eink)

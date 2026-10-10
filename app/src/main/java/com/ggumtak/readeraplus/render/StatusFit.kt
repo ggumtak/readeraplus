@@ -114,14 +114,24 @@ internal object StatusFit {
     }
 
     /**
-     * The header's side inset in px at [density]: [SIDE_DP], or the [cornerClearance] of that side's display corner at
-     * [y] (the glyphs' vertical middle) where that is more; [SIDE_UNKNOWN_DP] when the corner is unknown ([radius] < 0).
-     * With the bars shown the header is far below the corner (base only); in split screen a window corner that is no
-     * display corner reports none.
+     * Room kept between a display corner's arc and the header's nearest glyph (user, 2026-10-10: "맨 위에 상태표시줄 …
+     * 좌우가 좀 짤리거든? 화면이 동그래서"): the reported corner is a circle, the panel's own a little rounder.
      */
-    fun sideInset(radius: Float, centreIn: Float, centreY: Float, y: Float, density: Float): Float =
-        if (radius < 0f) px(SIDE_UNKNOWN_DP, density).toFloat()
-        else maxOf(px(SIDE_DP, density).toFloat(), cornerClearance(radius, centreIn, centreY, y))
+    const val CORNER_GAP_DP = 2
+
+    /**
+     * The header's side inset in px at [density]: [SIDE_DP], or the [cornerClearance] of that side's display corner at
+     * [y] plus [CORNER_GAP_DP] where that is more; [SIDE_UNKNOWN_DP] when the corner is unknown ([radius] < 0). [y] is
+     * the top row of the glyphs' ink (the renderer's): the arc cuts deepest into the topmost row, so every row below it
+     * is clear too (it was the glyphs' middle, which left their tops under the corner). With the bars shown the header
+     * is far below the corner (base only); in split screen a window corner that is no display corner reports none.
+     */
+    fun sideInset(radius: Float, centreIn: Float, centreY: Float, y: Float, density: Float): Float {
+        if (radius < 0f) return px(SIDE_UNKNOWN_DP, density).toFloat()
+        val corner = cornerClearance(radius, centreIn, centreY, y)
+        val clear = if (corner > 0f) corner + px(CORNER_GAP_DP, density) else 0f
+        return maxOf(px(SIDE_DP, density).toFloat(), clear)
+    }
 
     /**
      * The header's width in a page view [viewWidth] px wide, from x = [insetLeft] ([sideInset] of each side): the view

@@ -70,7 +70,9 @@ object QuotePalette {
         val gap = ctx.dp(4)
         val x = PaletteGeometry.popupX(a[0] - p[0] + anchor.width / 2f, w, parent.width.takeIf { it > 0 } ?: dm.widthPixels, margin)
         val y = PaletteGeometry.anchoredY(a[1] - p[1], a[1] - p[1] + anchor.height, h, gap, margin, parent.height.takeIf { it > 0 } ?: dm.heightPixels)
-        val pw = PopupWindow(built.window, WRAP_CONTENT, WRAP_CONTENT, true).apply {
+        // Its own width, not WRAP_CONTENT: a wrapped window is first laid out at the platform's preferred dialog width
+        // (360 dp on the S25) and its cells squeezed to fit ([PopupCard.width]).
+        val pw = PopupWindow(built.window, PopupCard.width(built), WRAP_CONTENT, true).apply {
             animationStyle = 0
             elevation = 0f
             isOutsideTouchable = true
@@ -155,9 +157,20 @@ internal object PopupCard {
     /** The shadow room a window keeps around the card, px. */
     fun shadowRoom(ctx: Context, eink: Boolean): Int = if (eink) 0 else ctx.dp(SHADOW_ROOM_DP)
 
+    /** The card's frame, px: the stroke on every side its content stays inside. */
+    fun frame(ctx: Context): Int = ctx.dp(1f).coerceAtLeast(1)
+
+    /**
+     * The width a PopupWindow of [built] gets: its window's measured width (measure it first). Never WRAP_CONTENT: the
+     * platform lays a wrapped window out at its preferred dialog width first (`config_prefDialogWidth`, 360 dp on the
+     * S25) and widens it only for content that says it is too small, which a row of wrapped cells never does, so the
+     * row's last cells were squeezed out of sight (user, 2026-10-10: the selection card's right side looked empty).
+     */
+    fun width(built: Built): Int = built.window.measuredWidth.coerceAtLeast(1)
+
     fun build(ctx: Context, eink: Boolean, content: View): Built {
         val pad = shadowRoom(ctx, eink)
-        val stroke = ctx.dp(1f).coerceAtLeast(1)
+        val stroke = frame(ctx)
         val card = FrameLayout(ctx)
         if (eink) {
             card.background = ctx.borderBox(radiusDp = 0f)
@@ -204,7 +217,8 @@ internal object LastQuoteStyle {
 internal object PaletteGeometry {
     /** Total side gap of a full-width popup row: 8 dp on each side. */
     const val SIDE_GAP_DP = 16
-    const val CELL_HEIGHT_DP = 56
+    /** A popup row's height (was 56 dp; user, 2026-10-10: "사각형 위아래 살짝만 줄여주고"). */
+    const val CELL_HEIGHT_DP = 48
     const val MIN_CELL_DP = 48
     const val PALETTE_COLS = 6
     /** The ink sample's size parameter (a 30 × 20 dp sample, see [QuoteSwatch]). */

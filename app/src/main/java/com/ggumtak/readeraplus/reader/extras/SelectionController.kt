@@ -700,7 +700,9 @@ class SelectionController(private val host: ReaderHost) {
         val margin = maxOf(ctx.dp(8), shadow)
         val (primary, overflow) = SelectionActions.split(actionIds())
         overflowIds = overflow
-        val actionRow = buildActionRow(primary, dm.widthPixels - 2 * margin)
+        // The row and the card's frame within the margins: the card then sits centred with equal room on both sides,
+        // its first and last labels as far from its edges.
+        val actionRow = buildActionRow(primary, dm.widthPixels - 2 * margin - 2 * PopupCard.frame(ctx))
         val content = ctx.vertical()
         val q = editingQuote
         if (q != null) {
@@ -736,7 +738,7 @@ class SelectionController(private val host: ReaderHost) {
         val x = ((dm.widthPixels - w) / 2).coerceAtLeast(0)
         val y = PaletteGeometry.selectionY(loc[1] + originY + top, loc[1] + originY + bottom, h, ctx.dp(10),
             startHandle?.sizePx ?: ctx.dp(40), margin, dm.heightPixels)
-        val pw = PopupWindow(built.window, WRAP_CONTENT, WRAP_CONTENT, false).apply {
+        val pw = PopupWindow(built.window, PopupCard.width(built), WRAP_CONTENT, false).apply {
             animationStyle = 0
             elevation = 0f
             isTouchable = true
@@ -858,7 +860,7 @@ class SelectionController(private val host: ReaderHost) {
         val ay = at[1] - (pv[1] - pw[1])
         val x = PaletteGeometry.popupX(ax + anchor.width - w / 2f, w, dm.widthPixels, margin)
         val y = PaletteGeometry.belowY(ay, ay + anchor.height, h, ctx.dp(4), margin, dm.heightPixels)
-        val popup = PopupWindow(built.window, WRAP_CONTENT, h + 2 * built.pad, true).apply {
+        val popup = PopupWindow(built.window, PopupCard.width(built), h + 2 * built.pad, true).apply {
             animationStyle = 0
             elevation = 0f
             isOutsideTouchable = true

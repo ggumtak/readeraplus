@@ -17,22 +17,22 @@ class SelectionActionsTest {
     @Test
     fun newSelection_ridiRow_thenOverflowInOrder() {
         val (row, more) = SelectionActions.split(SelectionActions.ids(existingQuote = false, readAloud = true, txt = true))
-        // 복사 · 형광펜 · (colour dot) · 메모 · 검색 · ⋯
-        assertEquals(listOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.WORD_SEARCH, Id.MORE), row)
+        // 복사 · 형광펜 · (colour dot) · 메모 · 검색 · ⋯ · 공유 (user, 2026-10-10: "맨오른쪽에 공유도")
+        assertEquals(listOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.WORD_SEARCH, Id.MORE, Id.SHARE), row)
         assertEquals(
-            listOf(Id.LOOKUP, Id.SHARE, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH, Id.READ_ALOUD, Id.DELETE_PHRASE),
+            listOf(Id.LOOKUP, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH, Id.READ_ALOUD, Id.DELETE_PHRASE),
             more,
         )
         assertEquals(SelectionActions.CELLS, row.size)
-        assertEquals(6, SelectionActions.CELLS)
+        assertEquals(7, SelectionActions.CELLS)
     }
 
     @Test
     fun existingQuote_rowSwapsQuoteAndNote_noColourDot() {
         val (row, more) = SelectionActions.split(SelectionActions.ids(existingQuote = true, readAloud = true, txt = false))
-        // The colour row sits above it; the row is 복사 · 메모 · 삭제 · 검색 · ⋯.
-        assertEquals(listOf(Id.COPY, Id.EDIT_NOTE, Id.DELETE_QUOTE, Id.WORD_SEARCH, Id.MORE), row)
-        assertEquals(listOf(Id.LOOKUP, Id.SHARE, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH, Id.READ_ALOUD), more)
+        // The colour row sits above it; the row is 복사 · 메모 · 삭제 · 검색 · ⋯ · 공유.
+        assertEquals(listOf(Id.COPY, Id.EDIT_NOTE, Id.DELETE_QUOTE, Id.WORD_SEARCH, Id.MORE, Id.SHARE), row)
+        assertEquals(listOf(Id.LOOKUP, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH, Id.READ_ALOUD), more)
         assertFalse(Id.PICK_STYLE in row + more)
         assertEquals("메모", Id.EDIT_NOTE.label)
         // The cell says 삭제; the action (and its description) stays 형광펜 삭제.
@@ -47,8 +47,8 @@ class SelectionActionsTest {
         assertFalse(Id.READ_ALOUD in epub)
         assertTrue(Id.DELETE_PHRASE in SelectionActions.ids(existingQuote = false, readAloud = false, txt = true))
         val (row, more) = SelectionActions.split(epub)
-        assertEquals(6, row.size)
-        assertEquals(listOf(Id.LOOKUP, Id.SHARE, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH), more)
+        assertEquals(7, row.size)
+        assertEquals(listOf(Id.LOOKUP, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH), more)
     }
 
     @Test
@@ -61,7 +61,10 @@ class SelectionActionsTest {
             assertTrue(Id.WEB_SEARCH in more)
             assertTrue(Id.WORD_SEARCH in row)
             assertFalse(Id.SEARCH in row)
-            assertEquals(Id.MORE, row.last())
+            // 공유 at the far right, ⋯ just before it.
+            assertEquals(Id.SHARE, row.last())
+            assertEquals(Id.MORE, row[row.size - 2])
+            assertFalse(Id.SHARE in more)
         }
     }
 
@@ -70,6 +73,8 @@ class SelectionActionsTest {
         val (row, more) = SelectionActions.split(listOf(Id.COPY, Id.MORE, Id.QUOTE))
         assertEquals(listOf(Id.COPY, Id.QUOTE), row)
         assertTrue(more.isEmpty())
+        // 공유 is last wherever the list has it, with no ⋯ when nothing is left over.
+        assertEquals(listOf(Id.COPY, Id.QUOTE, Id.SHARE) to emptyList<Id>(), SelectionActions.split(listOf(Id.SHARE, Id.COPY, Id.QUOTE)))
     }
 
     @Test
@@ -77,8 +82,8 @@ class SelectionActionsTest {
         val (row, more) = SelectionActions.split(
             listOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.WORD_SEARCH, Id.DELETE_QUOTE, Id.SHARE),
         )
-        assertEquals(listOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.WORD_SEARCH, Id.MORE), row)
-        assertEquals(listOf(Id.DELETE_QUOTE, Id.SHARE), more)
+        assertEquals(listOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.WORD_SEARCH, Id.MORE, Id.SHARE), row)
+        assertEquals(listOf(Id.DELETE_QUOTE), more)
     }
 
     @Test

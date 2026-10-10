@@ -167,17 +167,30 @@ class StatusFitTest {
 
     @Test
     fun theHeadersSideInsetsClearOnlyTheDisplaysCorners() {
-        // The glyphs' middle on the S25 over its camera band: baseline 47.5 + (−32.5 + 7.7) / 2 ≈ 35 px.
+        // The top row of the glyphs' ink on the S25 over its camera band: baseline 47.5 − 32.5 = 15 px (their middle,
+        // which the inset used to clear, ≈ 35 px: the glyphs' tops stayed under a rounded corner; user, 2026-10-10:
+        // "상태표시줄 … 좌우가 좀 짤리거든? 화면이 동그래서").
+        val inkTop = 47.5f - 32.5f
         val middle = 47.5f + (-32.5f + 7.7f) / 2f
         // MaruViewer's own inset, 15 dp: 45 px on the S25 (its status ink from x 46, to 1032 of 1080), 30 px on the Comet.
-        assertEquals(45f, StatusFit.sideInset(0f, 0f, 0f, middle, s25), 0f)
+        assertEquals(45f, StatusFit.sideInset(0f, 0f, 0f, inkTop, s25), 0f)
         assertEquals(30f, StatusFit.sideInset(0f, 0f, 0f, 23f, comet), 0f)
-        // A 44 dp corner (132 px, its centre at 132, 132 in the fullscreen view) leaves 43 px at the glyphs' middle: the
-        // 15 dp inset wins. A 50 dp one needs 54 px; a 60 dp one 74.
+        // A 44 dp corner (132 px, its centre at 132, 132 in the fullscreen view) takes 71 px of the ink's top row (43 at
+        // the middle): 71 + 2 dp = 77 px, the glyphs ≈ 11 dp further in than before. A 50 dp corner 91, a 60 dp one 115.
         assertEquals(43f, StatusFit.cornerClearance(132f, 132f, 132f, middle), 0f)
-        assertEquals(45f, StatusFit.sideInset(132f, 132f, 132f, middle, s25), 0f)
-        assertEquals(54f, StatusFit.sideInset(150f, 150f, 150f, middle, s25), 0f)
-        assertEquals(74f, StatusFit.sideInset(180f, 180f, 180f, middle, s25), 0f)
+        assertEquals(71f, StatusFit.cornerClearance(132f, 132f, 132f, inkTop), 0f)
+        assertEquals(77f, StatusFit.sideInset(132f, 132f, 132f, inkTop, s25), 0f)
+        assertEquals(91f, StatusFit.sideInset(150f, 150f, 150f, inkTop, s25), 0f)
+        assertEquals(115f, StatusFit.sideInset(180f, 180f, 180f, inkTop, s25), 0f)
+        // Every glyph row below the ink's top needs less: clearing the top row clears them all.
+        var y = inkTop
+        while (y < 60f) {
+            assertTrue(StatusFit.cornerClearance(132f, 132f, 132f, y) <= StatusFit.cornerClearance(132f, 132f, 132f, inkTop))
+            y += 1f
+        }
+        // A small corner that the 15 dp inset already clears keeps it (no gap added to a corner that is not there).
+        assertEquals(0f, StatusFit.cornerClearance(12f, 12f, 12f, inkTop), 0f)
+        assertEquals(45f, StatusFit.sideInset(12f, 12f, 12f, inkTop, s25), 0f)
         // Bars shown: the view starts 110 px down, the corner's centre 22 px below its top, the glyphs below that: no
         // corner at their row, the base only.
         assertEquals(0f, StatusFit.cornerClearance(132f, 132f, 22f, 40f), 0f)
@@ -189,13 +202,13 @@ class StatusFitTest {
         // A row above the arc (inside the corner's square) needs the whole corner; a square corner needs nothing.
         assertEquals(132f, StatusFit.cornerClearance(132f, 132f, 132f, -1f), 0f)
         assertEquals(0f, StatusFit.cornerClearance(0f, 132f, 132f, middle), 0f)
-        // Unknown corners (before API 31): 18 dp, room for a corner of up to ≈ 50 dp at the glyphs' middle.
-        assertEquals(54f, StatusFit.sideInset(-1f, 0f, 0f, middle, s25), 0f)
+        assertEquals(45f, StatusFit.sideInset(0f, 132f, 132f, inkTop, s25), 0f)
+        // Unknown corners (before API 31): 18 dp.
+        assertEquals(54f, StatusFit.sideInset(-1f, 0f, 0f, inkTop, s25), 0f)
         assertEquals(36f, StatusFit.sideInset(-1f, 0f, 0f, 23f, comet), 0f)
-        assertTrue(StatusFit.cornerClearance(150f, 150f, 150f, middle) <= 54f)
         // Whole px, never negative, and never more than the corner's centre.
-        for (r in 0..200 step 7) for (y in -10..120 step 3) {
-            val c = StatusFit.cornerClearance(r.toFloat(), r.toFloat(), r.toFloat(), y.toFloat())
+        for (r in 0..200 step 7) for (yy in -10..120 step 3) {
+            val c = StatusFit.cornerClearance(r.toFloat(), r.toFloat(), r.toFloat(), yy.toFloat())
             assertEquals(Math.round(c).toFloat(), c, 0f)
             assertTrue(c >= 0f && c <= r.toFloat())
         }

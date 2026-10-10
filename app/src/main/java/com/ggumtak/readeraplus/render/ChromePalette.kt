@@ -5,11 +5,13 @@ package com.ggumtak.readeraplus.render
  * the seek preview, the return chip) for a page palette and the device class. Pure (Ints only, unit-tested); eight
  * shared instances, so asking for one allocates nothing.
  *
- * One formula for every theme, so the bars blend with the page: each tone is the page's background [PagePalette.background]
- * moved a share of the way to its text colour ([PagePalette.text]), see [Share]. On 흰 바탕 that is the greys of the RIDI
- * book app's bars (≈ #F0F0F0 surface, #DEDEDE and #CCCCCC lines, #919191 thumb, #8A8A8A and #616161 for secondary and
- * primary glyphs), and 마루뷰어, 흑백 반전 and 검은 바탕 get the same treatment on their own colours; no theme keeps an
- * accent of its own in the chrome (the status gold stays on the page's status line).
+ * On a phone's 흰 바탕 and 흑백 반전 one formula, so the bars blend with the page: each tone is the page's background
+ * [PagePalette.background] moved a share of the way to its text colour ([PagePalette.text]), see [Share]. On 흰 바탕 that
+ * is the greys of the RIDI book app's bars (≈ #F0F0F0 surface, #DEDEDE and #CCCCCC lines, #919191 thumb, #8A8A8A and
+ * #616161 for secondary and primary glyphs). 마루뷰어 and 검은 바탕 keep the chrome they had before (user, 2026-10-10:
+ * "회색하고 검은색배경은 상태표시줄 원래색으로 … 탭 했을 때 나오던 것도 색 똑같이"): #DDDDDD glyphs on a bar a step off
+ * the page, MaruViewer's gold ([PagePalette.MARU_GOLD]) for what is on, a shadow (마루뷰어) or a #333333 line (검은 바탕)
+ * where a bar meets the page.
  *
  * Phones: the surface is that faint tone, bars meet the page with a 1 px line ([topEdge], [bottomEdge]), buttons show a
  * pressed overlay and the bars fade and slide in and out ([motion]). E-ink: every action stays one screen update, so the
@@ -28,7 +30,7 @@ internal class ChromePalette private constructor(
     val text: Int,
     /** Secondary text and glyphs: the page label's total, the back arrow, subtitles, a disabled title. */
     val text2: Int,
-    /** An active switch: the strongest tone ([text]); the chrome has no colour accent. */
+    /** What is on (a switch, a toggled icon): [text] on the formula's looks, MaruViewer's gold on 마루뷰어 and 검은 바탕. */
     val accent: Int,
     /** Low-contrast lines inside a panel (between option rows). */
     val divider: Int,
@@ -52,11 +54,11 @@ internal class ChromePalette private constructor(
     val thumb: Int,
     /** The history row's text and the brightness row's icons on the page colour: the same tone as [text]. */
     val hist: Int,
-    /** ARGB at a bar's edge, fading linearly to nothing over [SHADOW_DP] toward the page; 0 = no shadow (every look now). */
+    /** ARGB at a bar's edge, fading linearly to nothing over [SHADOW_DP] toward the page; 0 = no shadow (all but 마루뷰어). */
     val shadow: Int,
     /** The pressed overlay of buttons and rows; 0 = no pressed state. */
     val pressed: Int,
-    /** The 40 dp circle behind an active toggle; 0 = none (a state is shown by swapping icons, on every look now). */
+    /** The 40 dp circle behind an active toggle (마루뷰어 and 검은 바탕: gold); 0 = none (the icon swap alone shows it). */
     val active: Int,
     /** The bars may fade and slide in and out (150–200 ms): phones only. */
     val motion: Boolean,
@@ -151,10 +153,28 @@ internal class ChromePalette private constructor(
             )
         }
 
+        private fun rgb(v: Int): Int = OPAQUE or v
+
         private val PAPER = build(PagePalette.PAPER, false)
-        private val MARU = build(PagePalette.MARU, false)
         private val NIGHT = build(PagePalette.NIGHT, false)
-        private val BLACK = build(PagePalette.BLACK, false)
+
+        /** 마루뷰어 on a phone: its chrome before the RIDI bars (#3C3C3C bars with a shadow, gold for what is on). */
+        private val MARU = ChromePalette(
+            page = PagePalette.MARU.background, surface = rgb(0x3C3C3C), text = rgb(0xDDDDDD), text2 = rgb(0xA8A8A8),
+            accent = PagePalette.MARU_GOLD, divider = rgb(0x4E4E4E), rule = rgb(0x4E4E4E), edge = 0, topEdge = 0,
+            bottomEdge = 0, track = rgb(0x606060), thumb = PagePalette.MARU_GOLD, hist = rgb(0xA8A8A8),
+            shadow = 0x80000000.toInt(), pressed = 0x1AFFFFFF, active = 0x4DFFD387, motion = true, eink = false,
+            dark = true,
+        )
+
+        /** 검은 바탕 on a phone: [MARU]'s glyphs and gold on black, a #333333 line instead of the shadow. */
+        private val BLACK = ChromePalette(
+            page = PagePalette.BLACK.background, surface = rgb(0x1A1A1A), text = rgb(0xDDDDDD), text2 = rgb(0xA8A8A8),
+            accent = PagePalette.MARU_GOLD, divider = rgb(0x333333), rule = rgb(0x333333), edge = rgb(0x333333),
+            topEdge = rgb(0x333333), bottomEdge = rgb(0x333333), track = rgb(0x4A4A4A), thumb = PagePalette.MARU_GOLD,
+            hist = rgb(0xA8A8A8), shadow = 0, pressed = 0x1AFFFFFF, active = 0x4DFFD387, motion = true, eink = false,
+            dark = true,
+        )
         private val EINK_PAPER = build(PagePalette.PAPER, true)
         private val EINK_MARU = build(PagePalette.MARU, true)
         private val EINK_NIGHT = build(PagePalette.NIGHT, true)
