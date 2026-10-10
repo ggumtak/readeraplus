@@ -8,9 +8,9 @@ import com.ggumtak.readeraplus.render.HighlightKind
 /**
  * The selection popup's actions (UI_SPEC polish 13, NOTES_SPEC §7.1, PLAN C26; RIDI's layout), pure and unit-tested:
  * one row of text cells — 복사 · 형광펜 · (colour dot) · 메모 · 검색 · ⋮ (over an existing highlight, under its colour
- * row: 복사 · 메모 · 삭제 · 검색 · ⋮) — and the ⋮ menu in the order 공유 · 사전·번역 · 문단 선택 · 책에서 검색 · 웹 검색 ·
- * 여기부터 듣기 · 문구 지우기 (TXT only). The user (2026-10-10) asked for 공유 at the row's right end, then for it in the
- * ⋮ there: it heads the menu.
+ * row: 복사 · 메모 · 삭제 · 검색 · ⋮) — and the ⋮ menu, which holds only 공유 · 스크린샷
+ * (the user, 2026-10-10, asked to keep only 공유 there and add 스크린샷). The other menu actions (사전·번역, 문단 선택,
+ * 책에서 검색, 웹 검색, 여기부터 듣기, 문구 지우기) stay defined and handled, just not listed, so they can be restored.
  */
 internal object SelectionActions {
     /**
@@ -36,6 +36,8 @@ internal object SelectionActions {
         WEB_SEARCH("웹 검색"),
         READ_ALOUD("여기부터 듣기"),
         DELETE_PHRASE("문구 지우기"),
+        /** Saves the reader window as a picture (Pictures/ReaderaPlus), after the selection is closed. */
+        SCREENSHOT("스크린샷"),
     }
 
     /** Cells of the row, the ⋮ cell included. */
@@ -44,12 +46,11 @@ internal object SelectionActions {
     private val PRIMARY = setOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.EDIT_NOTE, Id.DELETE_QUOTE, Id.WORD_SEARCH)
 
     /**
-     * Every action that applies, row actions first, then the ⋯ menu's in its order (⋯ itself not included).
-     * [existingQuote]: the selection is a saved quote (its colour row replaces the colour dot); [readAloud]: TTS is
-     * available; [txt]: a TXT book whose host can take a per-book replace rule ("문구 지우기").
+     * Every action that is listed, row actions first, then the ⋯ menu's (공유, 스크린샷; ⋯ itself not included).
+     * [existingQuote]: the selection is a saved quote (its colour row replaces the colour dot).
      */
-    fun ids(existingQuote: Boolean, readAloud: Boolean, txt: Boolean): List<Id> {
-        val list = ArrayList<Id>(14)
+    fun ids(existingQuote: Boolean): List<Id> {
+        val list = ArrayList<Id>(8)
         list += Id.COPY
         if (existingQuote) {
             list += Id.EDIT_NOTE
@@ -61,12 +62,7 @@ internal object SelectionActions {
         }
         list += Id.WORD_SEARCH
         list += Id.SHARE
-        list += Id.LOOKUP
-        list += Id.PARAGRAPH
-        list += Id.SEARCH
-        list += Id.WEB_SEARCH
-        if (readAloud) list += Id.READ_ALOUD
-        if (txt) list += Id.DELETE_PHRASE
+        list += Id.SCREENSHOT
         return list
     }
 

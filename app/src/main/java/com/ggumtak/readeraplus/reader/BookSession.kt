@@ -25,6 +25,7 @@ import com.ggumtak.readeraplus.format.SectionInfo
 import com.ggumtak.readeraplus.format.epub.EpubBook
 import com.ggumtak.readeraplus.reader.extras.Episodes
 import com.ggumtak.readeraplus.render.AndroidTextMeasurer
+import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.FontCatalog
 import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.render.FontSource
@@ -167,6 +168,8 @@ class BookSession(
     private var viewH = 0
     /** The cutout band at the page view's top ([LayoutKeys.geometry]'s extraTop). */
     private var viewCutoutTop = 0
+    /** Cached at viewport changes, never probed from drawing, typesetting or counting. */
+    private var viewEink = false
     /** Uptime when the current generation was created (partial counts are saved only for settled layouts). */
     private var generationBornAt = 0L
 
@@ -232,10 +235,12 @@ class BookSession(
      */
     fun setViewport(width: Int, height: Int, cutoutTop: Int, anchor: AnchorSpec? = null): Boolean {
         if (width <= 0 || height <= 0) return false
-        if (width == viewW && height == viewH && cutoutTop == viewCutoutTop && generation != null) return false
+        val eink = DeviceClass.cached(context) == true
+        if (width == viewW && height == viewH && cutoutTop == viewCutoutTop && eink == viewEink && generation != null) return false
         viewW = width
         viewH = height
         viewCutoutTop = cutoutTop
+        viewEink = eink
         rebuild(anchor)
         return true
     }
@@ -280,7 +285,7 @@ class BookSession(
         val dm = context.resources.displayMetrics
         val cols = LayoutKeys.columnsFor(settings.landscapePages, viewW, viewH, paged())
         return LayoutKeys.geometry(settings, viewW, viewH, dm.density, viewCutoutTop, cols, AndroidTextMeasurer.emPxFor(context, settings.fontSizeSp),
-            AndroidTextMeasurer.naturalLinePxFor(context, settings))
+            AndroidTextMeasurer.naturalLinePxFor(context, settings), eink = viewEink)
     }
 
     /** True when the current generation's page columns are not the ones the view and settings make now. */

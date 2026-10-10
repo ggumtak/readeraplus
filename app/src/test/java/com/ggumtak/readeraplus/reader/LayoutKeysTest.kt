@@ -23,6 +23,57 @@ class LayoutKeysTest {
     private val density = 2f
 
     @Test
+    fun theBodyOnlyBottomReserveBalancesTheCometWithoutMovingStatusOrProgress() {
+        val before = LayoutKeys.geometry(s, 720, 1440, density, emPx = 40f)
+        val after = LayoutKeys.geometry(s, 720, 1440, density, emPx = 40f, eink = true)
+        assertEquals(before.viewHeight, after.viewHeight) // status/progress still draw against the full page view
+        assertEquals(1440, after.viewHeight)
+        assertEquals(75, after.contentTop)
+        assertEquals(before.contentTop, after.contentTop)
+        assertEquals(before.contentWidth, after.contentWidth)
+        assertEquals(before.contentHeight - 14, after.contentHeight)
+        assertEquals(1365, after.contentTop + after.contentHeight)
+        assertEquals(after.contentTop, 1440 - after.contentTop - after.contentHeight)
+        assertEquals(16, LayoutKeys.linesIn(after.contentHeight, LayoutKeys.config(s, after).lineHeightEm * 40f))
+    }
+
+    @Test
+    fun theEinkReserveIsFourteenPhysicalPixelsAtEveryDensityAndPhonesKeepTheirBox() {
+        for (d in listOf(1f, 2f, 3f)) {
+            val phone = LayoutKeys.geometry(s, 720, 1440, d)
+            assertEquals(phone, LayoutKeys.geometry(s, 720, 1440, d, eink = false))
+            val ink = LayoutKeys.geometry(s, 720, 1440, d, eink = true)
+            assertEquals(phone.contentTop, ink.contentTop)
+            assertEquals(phone.contentHeight - 14, ink.contentHeight)
+            assertEquals(phone.viewHeight, ink.viewHeight)
+        }
+    }
+
+    @Test
+    fun theBodyCannotConsumeTheBottomReserveWhenBandsAreOffOrMarginsDoNotFit() {
+        val bare = s.copy(marginTopDp = 0, marginBottomDp = 0, headerLeft = StatusItem.NONE,
+            headerCenter = StatusItem.NONE, headerRight = StatusItem.NONE, progressBar = false)
+        val g = LayoutKeys.geometry(bare, 720, 1440, density, eink = true)
+        assertEquals(1426, g.contentTop + g.contentHeight)
+        for (height in listOf(30, 100, 1440)) {
+            val huge = LayoutKeys.geometry(s.copy(marginTopDp = 9999, marginBottomDp = 9999),
+                720, height, density, extraTop = height, eink = true)
+            assertTrue(huge.contentHeight >= 1)
+            assertTrue(huge.contentTop + huge.contentHeight <= height - 14)
+        }
+    }
+
+    @Test
+    fun theSmallerEinkBodyHasItsOwnTxtAndEpubPageCounts() {
+        val phone = LayoutKeys.geometry(s, 720, 1440, density, emPx = 40f)
+        val ink = LayoutKeys.geometry(s, 720, 1440, density, emPx = 40f, eink = true)
+        for (format in listOf(BookFormat.TXT, BookFormat.EPUB)) {
+            assertNotEquals(LayoutKeys.keyFor(s, format, "", phone, density, "font"),
+                LayoutKeys.keyFor(s, format, "", ink, density, "font"))
+        }
+    }
+
+    @Test
     fun geometryWithMarginsHeaderFooter() {
         val g = LayoutKeys.geometry(s, 720, 1440, density)
         // MaruViewer's 20 dp at the sides; the header's band (25 dp) at the top, the progress line's (18 dp) at the bottom,

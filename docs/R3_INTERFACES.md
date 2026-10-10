@@ -11,6 +11,11 @@ This is an intermediate contract commit: named stubs are replaced in W1, then W2
   `startScroll` interpolation for taps, page keys or auto paging. Live finger scrolling is a separate gesture.
 - `PageGeometry` is view minus the status bands and the margins (since 2026-10-05; before, minus margins only). Chrome,
   return chip and transient dialogs are overlays; the status bands are not: each has its own place at its screen edge.
+  Since 2026-10-10 e-ink reserves another 14 physical px below the body only (`LayoutKeys.geometry`, `eink`). The page
+  view keeps its full size, and the progress lane, footer and return chip keep their positions; those UI elements may
+  occupy the bottom 14 px. Comet defaults keep the body top at row 75 and end at 1365: 75 px from each physical edge.
+  Phones keep their existing box. The reduced body height enters the normal page-count key and anchored layout;
+  `BookSession.setViewport` also notices a late device-class verdict without changing the view size.
 - Default margins are 40 dp (`0` in controls). Marked deliberate 18/16 dp values stay unchanged. Since 2026-10-05 the
   side margins' `0` is MaruViewer's 20 dp (`SideMargin.ZERO_DP`; untouched R3 40/40 and R2 18/18 become 20/20 once).
   Since 2026-10-05 (user: "위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지") top/bottom count from the

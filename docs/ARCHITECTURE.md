@@ -812,6 +812,8 @@ launch).
 
 - **Chrome / insets:** reader bars and the return chip overlay the page. Pinned chrome is removed; page view size
   depends only on InsetsGate-approved system insets. Popups/dialogs preserve the underlying geometry.
+  Since 2026-10-10 e-ink reserves another 14 physical px below the body only (`LayoutKeys.geometry`, `eink`);
+  the page view, progress lane, footer and return chip keep their original size and position. Phones keep their box.
 - **Status / margins:** six `StatusItem` slots and a progress lane. Until 2026-10-05 they drew inside the margins
   (text box = view minus margins). Since then (user: "위 여백은 위 아래 애들을 제외하고 본문영역에서만 계산해야지")
   each band has its own place at its screen edge (`StatusBands`: whole dp from the settings only, never from what is

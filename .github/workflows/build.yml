@@ -101,6 +101,9 @@ jobs:
       - name: Unit tests
         run: ./gradlew --stacktrace testDebugUnitTest
 
+      - name: AI dictionary client tests
+        run: node --test tools/ai-dictionary/test.mjs
+
       - name: Build release APK
         run: ./gradlew --stacktrace assembleRelease
 
@@ -125,7 +128,7 @@ jobs:
           path: dist/*.apk
 
       - name: Publish rolling release
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.ref_name == 'ccr-d67f66cc-r93yro' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -141,8 +144,9 @@ jobs:
       # keeps only the newest ReaderaPlus-<build>.apk in its folder (tools/gdrive/upload.gs, steps in its header).
       # Secrets: GDRIVE_UPLOAD_URL (the web app URL) and GDRIVE_UPLOAD_KEY (the same password as in the script).
       # A Drive failure never fails the build.
+      # The integration and AI dictionary branches share the user's existing Drive delivery folder.
       - name: Upload APK to Google Drive
-        if: env.GDRIVE_ON == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: env.GDRIVE_ON == 'true' && (github.ref_name == 'ccr-d67f66cc-r93yro' || github.ref_name == 'codex/eink-ai-dictionary') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         continue-on-error: true
         env:
           GDRIVE_UPLOAD_URL: ${{ secrets.GDRIVE_UPLOAD_URL }}

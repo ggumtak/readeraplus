@@ -58,6 +58,9 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         body.addView(ctx.row("검색해 보기", null) { testSearch() })
         updateRadios()
 
+        body.section("이북 AI 사전")
+        body.addView(ctx.note("이북의 검색 → AI 탭은 앱 안의 Claude 사전을 바로 엽니다. 로그인 없이 API 키를 한 번 등록하면 됩니다. 키는 이 기기에만 저장하며, AI 사전 메뉴에서 삭제할 수 있습니다. 일반 폰은 기존 ChatGPT를 사용합니다."))
+
         body.section("사전·번역 목록")
         body.addView(ctx.note("선택 메뉴의 ‘사전·번역’에 보일 항목입니다. 순서는 이름순으로 고정됩니다. ‘웹 검색’은 항상 맨 아래에 있습니다."))
         appsText = ctx.note("불러오는 중…").also(body::addView)
