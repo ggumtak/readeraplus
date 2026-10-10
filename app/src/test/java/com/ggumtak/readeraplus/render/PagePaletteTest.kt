@@ -33,7 +33,7 @@ class PagePaletteTest {
         assertSame(PagePalette.NIGHT, PagePalette.of(ReaderSettings(invert = true, pageTheme = PageTheme.BLACK)))
         assertEquals(0xFF000000.toInt(), b.background)
         assertEquals(PagePalette.MARU.text, b.text)
-        assertEquals(PagePalette.MARU.status, b.status)
+        // its own quiet status grey (theQuietStatusLineIsAGreyOfThePage)
         assertTrue(b.hasShadow)
         assertEquals(
             listOf(PagePalette.MARU.shadowDxDp, PagePalette.MARU.shadowDyDp, PagePalette.MARU.shadowSigmaDp),
@@ -46,18 +46,17 @@ class PagePaletteTest {
 
     @Test
     fun paperAndNightAreTheColoursOfBefore() {
-        // Nobody who never picks a theme sees a change: black on white, white on black, no shadow.
+        // Nobody who never picks a theme sees a change: black on white, white on black, no shadow (the status line is a
+        // quiet grey on every look since 2026-10-10: theQuietStatusLineIsAGreyOfThePage).
         val p = PagePalette.PAPER
         assertEquals(rgb(255), p.background)
         assertEquals(rgb(0), p.text)
-        assertEquals(rgb(0), p.status)
         assertFalse(p.hasShadow)
         assertFalse(p.dark)
         assertFalse(p.invertImages)
         val n = PagePalette.NIGHT
         assertEquals(rgb(0), n.background)
         assertEquals(rgb(255), n.text)
-        assertEquals(rgb(255), n.status)
         assertFalse(n.hasShadow)
         assertTrue(n.dark)
         assertTrue(n.invertImages)
@@ -73,13 +72,6 @@ class PagePaletteTest {
         val m = PagePalette.MARU
         assertEquals(0xFF323232.toInt(), m.background)
         assertEquals(0xFFDDDDDD.toInt(), m.text)
-        // The status gold of MaruViewer's original PNG screenshots (2026-10-05; was ≈ #F0D096 from a JPEG copy),
-        // for the texts and the battery icon alike: ≈ 9.1 : 1 on the page, a gold (red > green > blue).
-        assertEquals(0xFFFFD387.toInt(), m.status)
-        assertEquals(9.1, contrast(m.status, m.background), 0.05)
-        val r = m.status shr 16 and 0xFF
-        val g = m.status shr 8 and 0xFF
-        assertTrue(r > g && g > (m.status and 0xFF))
         // A short, opaque black shadow toward the lower right: MaruViewer's (2, 1) px, sigma ≈ 1.33 px on the S25 (2.8125 px
         // per dp; re-fitted 2026-10-10 against MaruViewer on the same page, glyphs drawn alike); MaruViewer's darkest shadow
         // pixels are darker than our 88 % black gave.
@@ -104,10 +96,7 @@ class PagePaletteTest {
 
     @Test
     fun onlyTheMaruViewerPageChangedWithItsPngColours() {
-        // 흰 바탕 and 흑백 반전 keep their status colour and stay shadowless (MaruViewer's white page has a #323232 status
-        // line; ours stays the black of before). The shadow is only ever the body text's: no look has another one.
-        assertEquals(rgb(0), PagePalette.PAPER.status)
-        assertEquals(rgb(255), PagePalette.NIGHT.status)
+        // 흰 바탕 and 흑백 반전 stay shadowless. The shadow is only ever the body text's: no look has another one.
         for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT)) {
             assertEquals(0, p.shadowColor)
             assertEquals(0f, p.shadowRadiusPx(3f), 0f)
@@ -230,22 +219,36 @@ class PagePaletteTest {
     }
 
     @Test
+    fun theQuietStatusLineIsAGreyOfThePage() {
+        // User (2026-10-10): "상태바도 리디처럼 … 배경색에 따라서 다 은은하게 … 튀지 않게 있는 듯 없는 듯": 40 % of the way
+        // from the page to the text, a neutral grey on one of the e-ink panel's 16 levels, on every look (no more gold).
+        assertEquals(rgb(0x99), PagePalette.PAPER.status)
+        assertEquals(rgb(0x77), PagePalette.MARU.status)
+        assertEquals(rgb(0x55), PagePalette.BLACK.status)
+        assertEquals(rgb(0x66), PagePalette.NIGHT.status)
+        for (p in listOf(PagePalette.PAPER, PagePalette.MARU, PagePalette.BLACK, PagePalette.NIGHT)) {
+            val c = contrast(p.status, p.background)
+            assertTrue("$c", c in 2.5..4.0)
+            assertTrue(contrast(p.text, p.background) > 2 * c)
+            assertEquals(0, (p.status and 0xFF) % 17)
+        }
+    }
+
+    @Test
     fun theLowBatteryIsTheStatusColourOnlyRedder() {
         // User (2026-10-05): "25때는 약간 빨간색으로 바뀌고". The status colour 65 % of the way to #E53935 on each look.
-        assertEquals(0xFF952522.toInt(), PagePalette.PAPER.batteryLow)
-        assertEquals(0xFFEE7E7C.toInt(), PagePalette.NIGHT.batteryLow)
-        assertEquals(0xFFEE6F52.toInt(), PagePalette.MARU.batteryLow)
-        for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT, PagePalette.MARU)) {
+        // (The status colour is the quiet grey since 2026-10-10, so the red is a quiet one too.)
+        assertEquals(0xFFCA5B58.toInt(), PagePalette.PAPER.batteryLow)
+        assertEquals(0xFFB94946.toInt(), PagePalette.NIGHT.batteryLow)
+        assertEquals(0xFFBF4F4C.toInt(), PagePalette.MARU.batteryLow)
+        for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT, PagePalette.MARU, PagePalette.BLACK)) {
             val low = p.batteryLow
-            // Redder than the status colour: more red than green and blue, and still clear on the page (a graphic at
-            // least 3:1; 흰 바탕 and 흑백 반전 well past 7:1).
+            // Redder than the status colour: more red than green and blue, and at least as clear on the page.
             assertTrue((low shr 16 and 0xFF) > (low shr 8 and 0xFF) + 60)
             assertTrue((low shr 16 and 0xFF) > (low and 0xFF) + 60)
-            assertTrue(contrast(low, p.background) >= 4.0)
+            assertTrue(contrast(low, p.background) >= 2.5)
             assertTrue(low != p.status)
         }
-        assertTrue(contrast(PagePalette.PAPER.batteryLow, PagePalette.PAPER.background) >= 7.0)
-        assertTrue(contrast(PagePalette.NIGHT.batteryLow, PagePalette.NIGHT.background) >= 7.0)
         // ReadEra's blue bookmark ribbon on phones is a clear graphic on every look too.
         for (p in listOf(PagePalette.PAPER, PagePalette.NIGHT, PagePalette.MARU))
             assertTrue(contrast(RibbonMath.COLOR, p.background) >= 3.0)

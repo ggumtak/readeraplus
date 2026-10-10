@@ -70,7 +70,8 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         themeRow = ctx.valueRow("화면 색", r.pageTheme.label) {
             val opts = R3Rows.PAGE_THEMES
             ctx.chooser("화면 색", opts.map { R3Rows.pageThemeChoice(it) }, opts.indexOf(Settings.reader.pageTheme)) { i ->
-                edit { it.copy(pageTheme = opts[i]) }
+                // 흰색 also picks 리디바탕 (QuickFields.withTheme), as in the reader's 배경 row: the font rows change too.
+                applyStyle { com.ggumtak.readeraplus.reader.extras.QuickFields.withTheme(it, opts[i]).copy(invert = it.invert) }
             }
         }.also(body::addView)
         body.addView(ctx.toggleRow("흑백 반전", "검은 바탕에 흰 글자 · 화면 색보다 우선", r.invert) { v -> edit { it.copy(invert = v) } })

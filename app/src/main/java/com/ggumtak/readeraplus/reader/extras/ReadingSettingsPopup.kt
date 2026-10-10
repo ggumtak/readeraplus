@@ -68,6 +68,8 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     private var dirty = false
     private val applyRunnable = Runnable { flush() }
     private var popup: PopupWindow? = null
+    /** The rows' scroller, so a pick that changes other rows (흰색 → 리디바탕) can lay them out again. */
+    private var rows: FrameLayout? = null
     private var popupWidth = 0
 
     fun show() {
@@ -86,6 +88,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         // Scrolls only in a window too short for the seven rows (landscape phones, split screen); never on the Comet.
         val scroll = MaxHeightScrollView(ctx, place.height).apply { isVerticalScrollBarEnabled = true }
         scroll.addView(buildContent(), FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        rows = scroll
         val frame = FrameLayout(ctx).apply {
             background = ctx.borderBox()
             setPadding(1, 1, 1, 1)
@@ -271,8 +274,8 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
     /**
      * 배경: 흰색 · 회색 · 검은색 ([PageTheme.PAPER] · [PageTheme.MARU] · [PageTheme.BLACK]), the chosen one framed.
-     * Applied at once (a repaint, never a relayout) with 흑백 반전 off, so the pick is what the page shows; while 흑백
-     * 반전 is on none is framed.
+     * Applied at once with 흑백 반전 off, so the pick is what the page shows; while 흑백 반전 is on none is framed. 흰색
+     * also picks RIDI's 리디바탕 at its own weight ([QuickFields.withTheme]): the rows are built again for the font.
      */
     private fun themeRow(): LinearLayout {
         val row = ctx.compactRow()
@@ -294,9 +297,17 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                     if (!cur.invert && cur.pageTheme == theme) return@setOnClickListener
                     // A pending stepper change first, then the colour on the saved settings (one repaint).
                     flush()
-                    cur = cur.copy(pageTheme = theme, invert = false)
-                    host.applySettings(Settings.reader.copy(pageTheme = theme, invert = false))
-                    refresh()
+                    val next = QuickFields.withTheme(cur, theme)
+                    val fontChanged = next.fontId != cur.fontId || next.fontWeight != cur.fontWeight
+                    cur = next
+                    host.applySettings(QuickFields.withTheme(Settings.reader, theme))
+                    val scroller = rows
+                    if (fontChanged && scroller != null) {
+                        scroller.removeAllViews()
+                        scroller.addView(buildContent(), FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+                    } else {
+                        refresh()
+                    }
                 }
             }
             views += v
@@ -448,6 +459,20 @@ internal object QuickFields {
         pageMargins = src.pageMargins,
         fontId = src.fontId,
     )
+
+    /** RIDI's font, which 흰색 picks with it (user, 2026-10-10: "흰색 화면은 이 앱(리디)을 참고로 … 글씨체, 굵기"). */
+    const val RIDI_FONT = "ridibatang"
+    /** 리디바탕 is one Regular file: RIDI draws it as it is. */
+    const val RIDI_WEIGHT = 400
+
+    /**
+     * [s] on page colour [theme], 흑백 반전 off. 흰색 ([PageTheme.PAPER]) also takes RIDI's look on a white page: 리디바탕 at
+     * its own weight (line spacing and margins stay the user's: "줄 간격과 여백은 안 따라해도 돼"). The other colours keep
+     * the font. Choosing another font afterwards keeps it.
+     */
+    fun withTheme(s: ReaderSettings, theme: PageTheme): ReaderSettings =
+        if (theme == PageTheme.PAPER) s.copy(pageTheme = theme, invert = false, fontId = RIDI_FONT, fontWeight = RIDI_WEIGHT)
+        else s.copy(pageTheme = theme, invert = false)
 
     /**
      * The 좌우 여백 stepper's value: the margin the page has, so while "여백 사용" is off the minimal margin

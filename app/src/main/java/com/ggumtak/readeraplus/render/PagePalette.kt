@@ -15,7 +15,9 @@ internal class PagePalette private constructor(
     val text: Int,
     /**
      * Status lines: their texts and the battery icon (the progress line has its own greys: [progressLine]). Drawn flat,
-     * without the text shadow on every look: MaruViewer's own status line has none (measured 2026-10-05, [MARU]).
+     * without the text shadow on every look: MaruViewer's own status line has none (measured 2026-10-05, [MARU]). A
+     * quiet grey of the page itself on every look since 2026-10-10 ([quietStatus]; user: "상태바도 리디처럼 … 배경색에
+     * 따라서 다 은은하게 배경색과 어울리게 … 튀지 않게 있는 듯 없는 듯"): no more black on white or MaruViewer's gold.
      */
     val status: Int,
     /**
@@ -102,6 +104,20 @@ internal class PagePalette private constructor(
         private const val LOW_RED = 0xFFE53935.toInt()
         private const val LOW_SHARE = 0.65f
 
+        /** How far the status grey sits from the page toward the text (of 1): [quietStatus]. */
+        private const val STATUS_SHARE = 0.4f
+
+        /**
+         * The status lines' colour on a page of [background] with [text]: a neutral grey [STATUS_SHARE] of the way from
+         * the page to the text by luma, on the nearest of an e-ink panel's 16 levels (so a Comet shows it flat, never
+         * dithered). 흰 바탕 #999999, MaruViewer's page #777777, 검은 바탕 #555555, 흑백 반전 #666666.
+         */
+        fun quietStatus(background: Int, text: Int): Int {
+            val b = luma(background)
+            val v = b + (luma(text) - b) * STATUS_SHARE
+            return rgb((Math.round(v / INK_STEP) * INK_STEP).coerceIn(0, 255))
+        }
+
         /** [a] moved [share] (0..1) of the way to [b], per channel, opaque. */
         fun blend(a: Int, b: Int, share: Float): Int {
             fun ch(shift: Int): Int {
@@ -145,13 +161,13 @@ internal class PagePalette private constructor(
 
         /** Black on white (the default). */
         val PAPER = PagePalette(
-            background = 0xFFFFFFFF.toInt(), text = OPAQUE, status = OPAQUE,
+            background = 0xFFFFFFFF.toInt(), text = OPAQUE, status = quietStatus(0xFFFFFFFF.toInt(), OPAQUE),
             shadowDxDp = 0f, shadowDyDp = 0f, shadowSigmaDp = 0f, shadowColor = 0, dark = false, invertImages = false,
         )
 
         /** 흑백 반전: white on black, pictures inverted, no shadow (whatever the theme). */
         val NIGHT = PagePalette(
-            background = OPAQUE, text = 0xFFFFFFFF.toInt(), status = 0xFFFFFFFF.toInt(),
+            background = OPAQUE, text = 0xFFFFFFFF.toInt(), status = quietStatus(OPAQUE, 0xFFFFFFFF.toInt()),
             shadowDxDp = 0f, shadowDyDp = 0f, shadowSigmaDp = 0f, shadowColor = 0, dark = true, invertImages = true,
         )
 
@@ -194,7 +210,7 @@ internal class PagePalette private constructor(
          * (1.333 px, radius 1.44 px; was 0.49 dp, 1.378 px). On the Comet 0.95 px.
          */
         val MARU = PagePalette(
-            background = 0xFF323232.toInt(), text = 0xFFDDDDDD.toInt(), status = 0xFFFFD387.toInt(),
+            background = 0xFF323232.toInt(), text = 0xFFDDDDDD.toInt(), status = quietStatus(0xFF323232.toInt(), 0xFFDDDDDD.toInt()),
             shadowDxDp = 0.71f, shadowDyDp = 0.36f, shadowSigmaDp = 0.474f, shadowColor = 0xFF000000.toInt(),
             dark = true, invertImages = false,
         )
@@ -205,7 +221,7 @@ internal class PagePalette private constructor(
          * Pictures keep their colours.
          */
         val BLACK = PagePalette(
-            background = OPAQUE, text = 0xFFDDDDDD.toInt(), status = 0xFFFFD387.toInt(),
+            background = OPAQUE, text = 0xFFDDDDDD.toInt(), status = quietStatus(OPAQUE, 0xFFDDDDDD.toInt()),
             shadowDxDp = 0.71f, shadowDyDp = 0.36f, shadowSigmaDp = 0.474f, shadowColor = 0xFF000000.toInt(),
             dark = true, invertImages = false,
         )
