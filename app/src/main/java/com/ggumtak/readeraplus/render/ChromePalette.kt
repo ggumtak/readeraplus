@@ -2,47 +2,59 @@ package com.ggumtak.readeraplus.render
 
 /**
  * The reader chrome's colours (the bars, the history row above the bottom panel, the brightness row and its options,
- * the seek preview, the return chip) for a page palette and the device class: the design tokens of UI_SPEC §2.1
- * (2026-10-05).
- * Pure (Ints only, unit-tested); six shared instances, so asking for one allocates nothing.
+ * the seek preview, the return chip) for a page palette and the device class. Pure (Ints only, unit-tested); eight
+ * shared instances, so asking for one allocates nothing.
  *
- * The bars follow the page: a surface close to the page colour (light on 흰 바탕, dark on 마루뷰어 and 흑백 반전),
- * never a white bar over a dark page. The accent is the page's own status colour (black, MaruViewer's gold, white), so
- * every theme keeps one accent of its own. Phones get low-contrast lines, a short shadow where a bar meets the page, a
- * pressed overlay and the short show/hide transition ([motion]). On e-ink every action stays one screen update: the
- * surface is the page itself, lines are solid 1 px, and nothing changes over time (no shadow, no pressed flash, no
- * fade); its 흰 바탕 set is exactly the black-on-white chrome of before, and the dark pages get that set's greys on
- * their colours ([PagePalette.grey]).
+ * One formula for every theme, so the bars blend with the page: each tone is the page's background [PagePalette.background]
+ * moved a share of the way to its text colour ([PagePalette.text]), see [Share]. On 흰 바탕 that is the greys of the RIDI
+ * book app's bars (≈ #F0F0F0 surface, #DEDEDE and #CCCCCC lines, #919191 thumb, #8A8A8A and #616161 for secondary and
+ * primary glyphs), and 마루뷰어, 흑백 반전 and 검은 바탕 get the same treatment on their own colours; no theme keeps an
+ * accent of its own in the chrome (the status gold stays on the page's status line).
+ *
+ * Phones: the surface is that faint tone, bars meet the page with a 1 px line ([topEdge], [bottomEdge]), buttons show a
+ * pressed overlay and the bars fade and slide in and out ([motion]). E-ink: every action stays one screen update, so the
+ * surface is the page itself, lines are solid 1 px, nothing changes over time (no shadow, no pressed flash, no fade);
+ * the tones are snapped to the panel's 16 grey levels ([PagePalette.inkGrey]) and kept at least [MIN_INK_STEPS] levels
+ * from the page, so no element rounds into its background.
  */
 internal class ChromePalette private constructor(
     /** The page colour, [PagePalette.background] itself: the history row and the brightness row sit on it. */
     val page: Int,
-    /** The bars' fill. */
+    /** The bars' fill: a faint tone of the page on a phone, the page itself on e-ink. */
     val surface: Int,
-    /** Primary text and icons. */
+    /** Icons, labels, the book title and the current page: the strongest tone. */
     val text: Int,
-    /** Secondary text: the page label's total, subtitles, a disabled title. */
+    /** Secondary text and glyphs: the page label's total, the back arrow, subtitles, a disabled title. */
     val text2: Int,
-    /** Active toggles, the slider's progress and thumb. */
+    /** An active switch: the strongest tone ([text]); the chrome has no colour accent. */
     val accent: Int,
     /** Low-contrast lines inside a panel (between option rows). */
     val divider: Int,
-    /** The line above the brightness options: [divider] on phones, the old black rule on e-ink. */
+    /** The line above the brightness options: [divider] on phones, a firmer grey on e-ink. */
     val rule: Int,
-    /** A 1 px line where a bar meets the page when there is no [shadow]; 0 = none. */
+    /**
+     * A 1 px outline of the boxes that float over the page on e-ink (the return chip, the seek preview): a firm grey
+     * there; on a phone they use [track] instead, and this is [bottomEdge].
+     */
     val edge: Int,
+    /** The top bar's 1 px line where it meets the page: the faintest line. */
+    val topEdge: Int,
+    /** The bottom bar's 1 px line where it meets the page. */
+    val bottomEdge: Int,
     /**
      * A slider's inactive track (and the progress of the automatic brightness look); on a phone also the 1 px border
      * of the boxes that float over the page text (the return chip and its inner line, the seek preview).
      */
     val track: Int,
-    /** The history row's text and the brightness row's icons on the page colour, below the page label's emphasis. */
+    /** A slider's thumb and the progress laid over its [track]. */
+    val thumb: Int,
+    /** The history row's text and the brightness row's icons on the page colour: the same tone as [text]. */
     val hist: Int,
-    /** ARGB at a bar's edge, fading linearly to nothing over [SHADOW_DP] toward the page; 0 = no shadow. */
+    /** ARGB at a bar's edge, fading linearly to nothing over [SHADOW_DP] toward the page; 0 = no shadow (every look now). */
     val shadow: Int,
     /** The pressed overlay of buttons and rows; 0 = no pressed state. */
     val pressed: Int,
-    /** The 40 dp circle behind an active toggle (bookmark, pin, rotation lock), set apart from [pressed]; 0 = none. */
+    /** The 40 dp circle behind an active toggle; 0 = none (a state is shown by swapping icons, on every look now). */
     val active: Int,
     /** The bars may fade and slide in and out (150–200 ms): phones only. */
     val motion: Boolean,
@@ -50,59 +62,85 @@ internal class ChromePalette private constructor(
     val eink: Boolean,
     val dark: Boolean,
 ) {
+    /**
+     * The shares of the way from the page's background to its text colour that make each tone (measured on RIDI's
+     * 1080 × 2340 white page, where background #FFFFFF and text #000000 give its greys).
+     */
+    object Share {
+        const val SURFACE = 0.06f
+        const val TOP_EDGE = 0.13f
+        const val BOTTOM_EDGE = 0.20f
+        const val TRACK = 0.20f
+        const val THUMB = 0.43f
+        const val SECONDARY = 0.46f
+        const val PRIMARY = 0.62f
+    }
+
     companion object {
-        /** Height of the shadow band where a bar meets the page (ReadEra's ≈ 3.5 dp, measured on the user's screen). */
+        /** Height of the shadow band where a bar meets the page, were a look to ask for one ([ChromePalette.shadow]). */
         const val SHADOW_DP = 4
 
+        /** E-ink: least distance, in the panel's 16 grey levels, of any element from the page colour. */
+        const val MIN_INK_STEPS = 2
+
+        /** Alpha of the pressed overlay on a phone (of 255): the text colour at 10 %. */
+        private const val PRESSED_ALPHA = 0x1A
+
         private const val OPAQUE = 0xFF000000.toInt()
-        private fun rgb(v: Int): Int = OPAQUE or v
 
-        private val PAPER = ChromePalette(
-            page = rgb(0xFFFFFF), surface = rgb(0xF5F5F5), text = rgb(0x1A1A1A), text2 = rgb(0x5E5E5E),
-            accent = rgb(0x000000), divider = rgb(0xDDDDDD), rule = rgb(0xDDDDDD), edge = 0, track = rgb(0xC8C8C8),
-            hist = rgb(0x5E5E5E), shadow = 0x33000000, pressed = 0x14000000,
-            active = 0x38000000, motion = true, eink = false, dark = false,
-        )
-
-        private val MARU = ChromePalette(
-            page = rgb(0x323232), surface = rgb(0x3C3C3C), text = rgb(0xDDDDDD), text2 = rgb(0xA8A8A8),
-            accent = rgb(0xFFD387), divider = rgb(0x4E4E4E), rule = rgb(0x4E4E4E), edge = 0, track = rgb(0x606060),
-            hist = rgb(0xA8A8A8), shadow = 0x80000000.toInt(), pressed = 0x1AFFFFFF,
-            active = 0x4DFFD387, motion = true, eink = false, dark = true,
-        )
-
-        /** 흑백 반전: a shadow is invisible on black, so the bars get a 1 px line instead. */
-        private val NIGHT = ChromePalette(
-            page = rgb(0x000000), surface = rgb(0x1A1A1A), text = rgb(0xFFFFFF), text2 = rgb(0xB3B3B3),
-            accent = rgb(0xFFFFFF), divider = rgb(0x333333), rule = rgb(0x333333), edge = rgb(0x333333),
-            track = rgb(0x4A4A4A), hist = rgb(0xB3B3B3), shadow = 0, pressed = 0x1AFFFFFF,
-            active = 0x42FFFFFF, motion = true, eink = false, dark = true,
-        )
-
-        /** 검은 바탕: MARU's text and gold on black; a 1 px line instead of the shadow, as [NIGHT]. */
-        private val BLACK = ChromePalette(
-            page = rgb(0x000000), surface = rgb(0x1A1A1A), text = rgb(0xDDDDDD), text2 = rgb(0xA8A8A8),
-            accent = rgb(0xFFD387), divider = rgb(0x333333), rule = rgb(0x333333), edge = rgb(0x333333),
-            track = rgb(0x4A4A4A), hist = rgb(0xA8A8A8), shadow = 0, pressed = 0x1AFFFFFF,
-            active = 0x4DFFD387, motion = true, eink = false, dark = true,
-        )
+        /** The grey an e-ink panel shows for [c] (0..255): its luma. */
+        private fun luma(c: Int): Int =
+            ((c shr 16 and 0xFF) * 299 + (c shr 8 and 0xFF) * 587 + (c and 0xFF) * 114 + 500) / 1000
 
         /**
-         * The e-ink set of page [p]: the old chrome's colours (black, `Ink.GRAY` #555, `Ink.LINE_LIGHT` #CCC,
-         * `Ink.DISABLED` #999 on white) as [p]'s greys, so 흰 바탕 is exactly the chrome of before; solid colours only.
+         * [share] of the way from [p]'s background to its text colour; on e-ink the nearest of the panel's 16 levels
+         * that is at least [MIN_INK_STEPS] from the page ([PagePalette.inkGrey]).
          */
-        private fun eink(p: PagePalette) = ChromePalette(
-            page = p.background, surface = p.background, text = p.grey(0), text2 = p.grey(0x55), accent = p.status,
-            divider = p.grey(0xCC), rule = p.grey(0), edge = p.grey(0), track = p.grey(0x99), hist = p.grey(0),
-            shadow = 0, pressed = 0, active = 0, motion = false, eink = true, dark = p.dark,
-        )
+        internal fun tone(p: PagePalette, share: Float, eink: Boolean): Int {
+            val c = PagePalette.blend(p.background, p.text, share)
+            if (!eink) return c
+            val g = PagePalette.inkGrey(luma(c), luma(p.background), darker = !p.dark, steps = MIN_INK_STEPS)
+            return OPAQUE or (g shl 16) or (g shl 8) or g
+        }
 
-        private val EINK_PAPER = eink(PagePalette.PAPER)
-        private val EINK_MARU = eink(PagePalette.MARU)
-        private val EINK_NIGHT = eink(PagePalette.NIGHT)
-        private val EINK_BLACK = eink(PagePalette.BLACK)
+        private fun build(p: PagePalette, eink: Boolean): ChromePalette {
+            val primary = tone(p, Share.PRIMARY, eink)
+            val secondary = tone(p, Share.SECONDARY, eink)
+            val bottomEdge = tone(p, Share.BOTTOM_EDGE, eink)
+            val divider = tone(p, Share.TOP_EDGE, eink)
+            return ChromePalette(
+                page = p.background,
+                surface = if (eink) p.background else tone(p, Share.SURFACE, false),
+                text = primary,
+                text2 = secondary,
+                accent = primary,
+                divider = divider,
+                rule = if (eink) secondary else divider,
+                edge = if (eink) secondary else bottomEdge,
+                topEdge = tone(p, Share.TOP_EDGE, eink),
+                bottomEdge = bottomEdge,
+                track = tone(p, Share.TRACK, eink),
+                thumb = tone(p, Share.THUMB, eink),
+                hist = primary,
+                shadow = 0,
+                pressed = if (eink) 0 else (PRESSED_ALPHA shl 24) or (p.text and 0xFFFFFF),
+                active = 0,
+                motion = !eink,
+                eink = eink,
+                dark = p.dark,
+            )
+        }
 
-        /** The chrome of before (black on white, no motion): the look until the reader pushes its own. */
+        private val PAPER = build(PagePalette.PAPER, false)
+        private val MARU = build(PagePalette.MARU, false)
+        private val NIGHT = build(PagePalette.NIGHT, false)
+        private val BLACK = build(PagePalette.BLACK, false)
+        private val EINK_PAPER = build(PagePalette.PAPER, true)
+        private val EINK_MARU = build(PagePalette.MARU, true)
+        private val EINK_NIGHT = build(PagePalette.NIGHT, true)
+        private val EINK_BLACK = build(PagePalette.BLACK, true)
+
+        /** The e-ink chrome on 흰 바탕 (no motion): the look until the reader pushes its own. */
         val DEFAULT: ChromePalette get() = EINK_PAPER
 
         /**

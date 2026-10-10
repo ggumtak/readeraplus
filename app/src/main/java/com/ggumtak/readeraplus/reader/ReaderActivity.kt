@@ -4622,8 +4622,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         override fun onTts() = startTts()
         override fun onSearch() = openSearch()
         override fun onToc() = openContents()
+        override fun onNotes() {
+            if (session != null) safely { openBookNotes() }
+        }
+
         override fun onSettings(anchor: View) {
             if (session != null) safely { ReaderPanels.showReadingSettings(this@ReaderActivity, anchor) }
+        }
+
+        override fun onViewerSettings() {
+            safely { openAppSettings() }
         }
 
         override fun onMore(anchor: View) {

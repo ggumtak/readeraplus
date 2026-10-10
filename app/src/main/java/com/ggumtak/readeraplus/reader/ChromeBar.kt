@@ -24,9 +24,9 @@ import com.ggumtak.readeraplus.ui.kit.dpF
  * One of the reader's two bars (U §2.1): a vertical LinearLayout that paints its own panel and the edge where the
  * panel meets the page, so neither needs a view of its own. The panel is filled with the surface colour up to the
  * screen edge (the top bar through its inset padding, the bottom bar through the gesture strip). The edge is a band
- * of [edgeArea] px drawn over the page side after the children: a short shadow fading into the page
- * ([ChromePalette.shadow], phones) or a solid 1 px line ([ChromePalette.edge]: e-ink, and 흑백 반전, where a shadow
- * would not show). Rows outside the panel sit on the page colour, as in ReadEra. The bottom bar's history row is above
+ * of [edgeArea] px drawn over the page side after the children: a solid 1 px hairline in the bar's own tone
+ * ([ChromePalette.topEdge] for the top bar, [ChromePalette.bottomEdge] for the bottom one) or, were a look to set
+ * [ChromePalette.shadow], a short shadow fading into the page. Rows outside the panel sit on the page colour. The bottom bar's history row is above
  * its first panel child ([panelFrom]): it starts over the bar's top padding, where the band lies without it
  * ([fitLead]), and the band covers its foot. The top bar's rows from [pageFrom] on (the brightness row and its options)
  * are filled with the page colour ([ChromePalette.page], the very pixels of the page): the band covers their head, and
@@ -76,17 +76,19 @@ internal class ChromeBar(ctx: Context, private val edgeAtTop: Boolean) : LinearL
 
     /** The bar's colours; true when [edgeArea] changed (the owner then pads the bar again). */
     fun setLook(look: ChromePalette): Boolean {
+        // The bottom bar's edge is at its top (edgeAtTop); the top bar's at its foot.
+        val line = if (edgeAtTop) look.bottomEdge else look.topEdge
         val area = when {
             look.shadow != 0 -> context.dp(ChromePalette.SHADOW_DP)
-            look.edge != 0 -> 1
+            line != 0 -> 1
             else -> 0
         }
-        if (look.surface == surface && look.page == page && look.shadow == shadow && look.edge == edge &&
+        if (look.surface == surface && look.page == page && look.shadow == shadow && line == edge &&
             area == edgeArea) return false
         surface = look.surface
         page = look.page
         shadow = look.shadow
-        edge = look.edge
+        edge = line
         fill.color = surface
         pageFill.color = page
         // A shader is drawn with the paint's alpha: opaque for the shadow, the line's own colour otherwise.
@@ -194,8 +196,8 @@ private const val PRESS_FADE_MS = 120
 
 /**
  * An icon button's background in [look]: on a phone a 40 dp circle of the pressed colour while pressed, over the
- * accent's circle while [active] (a state that stays: bookmark, pin, rotation lock); on e-ink none, so a press is never
- * a second screen update.
+ * active circle while [active] and the look has one (none now: bookmark, pin and rotation lock swap their icons); on
+ * e-ink none, so a press is never a second screen update.
  */
 internal fun Context.chromeIconBackground(look: ChromePalette, active: Boolean): Drawable? {
     val on = if (active && look.active != 0) circle(look.active) else null

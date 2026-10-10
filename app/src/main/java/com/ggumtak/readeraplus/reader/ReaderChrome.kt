@@ -11,6 +11,7 @@ import android.graphics.drawable.LayerDrawable
 import android.os.SystemClock
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
@@ -44,16 +45,18 @@ import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 
 /**
- * Reader chrome (hidden by default, U §2): an overlay that never resizes the page. The top bar holds the actions
- * (back, bookmark, TTS, search, TOC, settings, more) and the one-line book title on its panel, then, on the page colour
- * below the panel's edge as in ReadEra, the brightness row with its lazily built options panel; the bottom bar holds
- * the history row ([ReturnNav.dock], on the page colour right above the panel), the page label centred on the full
- * width with [rotation][pin] on the right, and the seek row ([이전 챕터] seek bar [다음 챕터]), as low as ReadEra's
- * ([ChromeMath.PANEL_DP], then the bottom gap). Both bars are [ChromeBar]s in the page's theme ([setLook] →
- * [ChromePalette]: a surface close to the page, never a white bar over a dark one; the theme's accent for states that
- * stay and for progress). On a phone they meet the page with a short shadow, buttons show a pressed state, and the
+ * Reader chrome (hidden by default, U §2): an overlay that never resizes the page, restyled after the RIDI book app.
+ * The top bar holds the action row (back at the left; 듣기, 목차, 검색, 독서 노트, 북마크 and ⋮ at the right: thin
+ * outline icons) and, on its own row below, the book title in one line with the ellipsis in the middle; then, on the
+ * page colour below the bar's edge, the brightness row with its lazily built options panel. The bottom bar holds the
+ * history row ([ReturnNav.dock], on the page colour right above the panel) and the panel's three rows: the seek row
+ * ([이전 챕터] seek bar [다음 챕터]), the page label centred on the full width with [rotation][pin] on the right, and two
+ * big buttons, 보기 설정 (the reading-settings popup) and 뷰어 설정 (the app's settings), then the bottom gap
+ * ([ChromeMath.PANEL_DP], [ChromeMath.bottomGap]). Both bars are [ChromeBar]s in the page's theme ([setLook] →
+ * [ChromePalette]: one formula mixes the page's background toward its text for the surface, the hairlines, the slider
+ * and the glyphs, so the bars blend with every theme; no accent colour). On a phone buttons show a pressed state and the
  * bars fade and slide in and out (150–200 ms, at once when the system's animations are off; the top bar, brightness
- * row included, moves as one view). On e-ink every action stays one update: solid 1 px
+ * row included, moves as one view). On e-ink every action stays one update: the surface is the page, solid 1 px
  * edges, no pressed state, no fade, state shown by swapping icons (never `isSelected`). Only alpha and translation
  * move, so the page never re-lays out. Both bars swallow touches so taps never fall through to the page (except a new
  * touch while one fades out). While the seek bar is dragged a full-width preview box floats just above the bottom bar
@@ -67,7 +70,12 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         fun onTts()
         fun onSearch()
         fun onToc()
+        /** 독서 노트 (top bar): this book's notes in the hub, what the ⋮ menu's row of that name did. */
+        fun onNotes()
+        /** 보기 설정 (bottom bar, the left button): the reading-settings popup; [anchor] is that button. */
         fun onSettings(anchor: View)
+        /** 뷰어 설정 (bottom bar, the right button): the app's settings, what the ⋮ menu's 설정 row did. */
+        fun onViewerSettings()
         fun onMore(anchor: View)
         fun onPageLabel()
         /** [이전 챕터] / [다음 챕터] beside the seek bar (T1-5): the previous / next chapter start, no return chip. */
@@ -89,11 +97,18 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
 
     val top: ChromeBar
     val bottom: ChromeBar
-    val gear: ImageButton
+    /** The 보기 설정 button (the old top bar gear's job; [ReaderActivity] anchors the reading-settings popup to it). */
+    val gear: View
     val more: ImageButton
     private val bookmark: ImageButton
     /** Icon buttons in the text colour (the toggles bookmark, pin and rotation are painted by [paintToggle]). */
-    private val icons = ArrayList<ImageButton>(10)
+    private val icons = ArrayList<ImageButton>(8)
+    /** Icon buttons in the secondary colour: the back arrow and the chapter buttons. */
+    private val softIcons = ArrayList<ImageButton>(3)
+    /** The two big buttons of the bottom bar, their glyphs and their labels (all in the text colour). */
+    private val bigButtons = ArrayList<View>(2)
+    private val bigIcons = ArrayList<ImageView>(2)
+    private val bigLabels = ArrayList<TextView>(2)
     /** The brightness row's icons, on the page colour: painted like the history row's glyphs ([ChromePalette.hist]). */
     private val pageIcons = ArrayList<ImageButton>(2)
     private val title: TextView
@@ -165,8 +180,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
 
     /** The device class the sliders' drawables are sized for ([sizeSliders]); the default look is the e-ink one. */
     private var slidersEink = look.eink
-    // Slider thumbs (U §2.2), coloured in place on a look change: manual = a solid accent dot; auto = a hollow ring
-    // over a track-coloured progress. Each bar has its own drawable (a drawable has one callback).
+    // Slider thumbs (U §2.2), coloured in place on a look change: manual = a solid dot in the thumb tone; auto = a
+    // hollow ring over a track-coloured progress. Each bar has its own drawable (a drawable has one callback).
     private var seekThumb = dot(hollow = false)
     private var manualThumb = dot(hollow = false)
     private var autoDot: GradientDrawable? = null
@@ -177,37 +192,38 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             minimumHeight = ctx.dp(ChromeMath.ACTIONS_ROW_DP)
             setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
         }
-        actionsRow.addView(plainIcon(R.drawable.ic_arrow_back, "뒤로") { actions.onBack() })
+        actionsRow.addView(softIcon(R.drawable.ic_ridi_back, "뒤로") { actions.onBack() })
         actionsRow.addView(View(ctx), lp(0, 1, 1f))
-        bookmark = ctx.iconButton(R.drawable.ic_bookmark, "북마크 추가") { actions.onBookmark() }
+        actionsRow.addView(plainIcon(R.drawable.ic_ridi_tts, "듣기") { actions.onTts() })
+        actionsRow.addView(plainIcon(R.drawable.ic_ridi_toc, "목차") { actions.onToc() })
+        actionsRow.addView(plainIcon(R.drawable.ic_ridi_search, "검색") { actions.onSearch() })
+        actionsRow.addView(plainIcon(R.drawable.ic_ridi_note, "독서 노트") { actions.onNotes() })
+        bookmark = ctx.iconButton(R.drawable.ic_ridi_bookmark, "북마크 추가") { actions.onBookmark() }
         bookmark.setOnLongClickListener { v -> ctx.toast(v.contentDescription); true }   // the current description
         actionsRow.addView(bookmark)
-        actionsRow.addView(plainIcon(R.drawable.ic_volume_up, "듣기") { actions.onTts() })
-        actionsRow.addView(plainIcon(R.drawable.ic_search, "검색") { actions.onSearch() })
-        actionsRow.addView(plainIcon(R.drawable.ic_toc, "목차") { actions.onToc() })
-        gear = plainIcon(R.drawable.ic_settings, "읽기 설정") { v -> actions.onSettings(v) }
-        actionsRow.addView(gear)
-        more = plainIcon(R.drawable.ic_more_vert, "더보기") { v -> actions.onMore(v) }
+        more = plainIcon(R.drawable.ic_ridi_more, "더보기") { v -> actions.onMore(v) }
         actionsRow.addView(more)
         top.addView(actionsRow, lp())
 
-        // One line, so the bar height never depends on the title; text on the 20 dp keyline (polish 10). The top of the
-        // type scale (U §2.1): 18 sp bold, above the page label's 17 and the history row's 14, as in ReadEra. Its box
-        // starts inside the action row's empty foot (ChromeMath.TITLE_LIFT_DP): the title block as short as ReadEra's.
-        // Not clickable, so a tap there still reaches the buttons.
-        title = ctx.label("", 18f, bold = true, maxLines = 1).apply {
-            setPadding(ctx.dp(20), 0, ctx.dp(16), ctx.dp(12))
+        // The book title on its own row (RIDI): 15 sp regular, one line, the ellipsis in the middle (a title's end,
+        // "2권" or "(완결)", is as telling as its start), on the 19 dp keyline. A fixed height, so the bar height never
+        // depends on the title; a little more room below than above lifts the line towards the icons. Not clickable,
+        // so a tap there still reaches the buttons.
+        title = ctx.label("", 15f, maxLines = 1).apply {
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(ctx.dp(ChromeMath.TITLE_START_DP), 0, ctx.dp(ChromeMath.TITLE_START_DP), ctx.dp(5))
         }
-        top.addView(title, lp().apply { topMargin = -ctx.dp(ChromeMath.TITLE_LIFT_DP) })
+        top.addView(title, lp(MATCH_PARENT, ctx.dp(ChromeMath.TITLE_ROW_DP)))
 
-        // The panel ends under the title (its edge there, no rule): the brightness row and its options sit on the page
-        // colour itself, with nothing under the row, as in ReadEra (the user, 2026-10-05: "밝기 부분도 … 색을 아예 똑같이").
+        // The panel ends under the title (its hairline there): the brightness row and its options sit on the page
+        // colour itself, with nothing under the row (the user, 2026-10-05: "밝기 부분도 … 색을 아예 똑같이").
         top.pageFrom = top.childCount
         brightnessRow = ctx.horizontal {
             minimumHeight = ctx.dp(48)
             setPadding(ctx.dp(4), 0, ctx.dp(4), 0)
         }
-        brightnessAuto = pageIcon(R.drawable.ic_brightness_medium, AUTO_FOLLOW) { light.onAuto() }
+        brightnessAuto = pageIcon(R.drawable.ic_ridi_sun, AUTO_FOLLOW) { light.onAuto() }
         brightnessAuto.setOnLongClickListener(null)
         brightnessRow.addView(brightnessAuto)
         brightnessBar = chromeSeekBar(manualThumb).apply {
@@ -235,48 +251,20 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             })
         }
         brightnessRow.addView(brightnessBar, lp(0, ctx.dp(48), 1f))
-        optionsButton = pageIcon(R.drawable.ic_expand_more, OPTIONS) { setBrightnessOptionsOpen(!optionsOpen) }
+        optionsButton = pageIcon(R.drawable.ic_ridi_expand_more, OPTIONS) { setBrightnessOptionsOpen(!optionsOpen) }
         brightnessRow.addView(optionsButton)
         top.addView(brightnessRow, lp())
         optionsLine = ruleLine().apply { visibility = View.GONE }
         top.addView(optionsLine)
         optionsPanel = ctx.vertical { visibility = View.GONE }
         top.addView(optionsPanel, lp())
-        // The edges are drawn by ChromeBar (a shadow on phones, a 1 px line on e-ink): under the title, and under the
-        // options while they are open (padTop).
+        // The edges are drawn by ChromeBar (a 1 px hairline): under the title, and under the options while they are open
+        // (padTop).
 
         bottom = ChromeBar(ctx, edgeAtTop = true)
-        // The history row sits on the page colour directly above the panel, which starts at the label row.
+        // The history row sits on the page colour directly above the panel, which starts at the seek row.
         bottom.addView(returnDock, lp())
         bottom.panelFrom = 1
-        // The panel's two rows as low as ReadEra's (ChromeMath.PANEL_DP): the seek row starts 12 dp inside the label row,
-        // so their 48 dp touch areas overlap in the empty space between the glyphs, and the label row, added last, takes
-        // the touch there (a near miss of the pin or the label never jumps to another chapter or page).
-        val panelRows = FrameLayout(ctx)
-        val labelRow = FrameLayout(ctx)
-        // Centred on the FULL width with a fixed width (rowW − 2·108 dp, set in setVisible): autosize is unreliable
-        // with wrap_content, and the fixed box can never run under the right cluster. No underline (polish 1). The
-        // current page reads first (17 sp bold, below the 18 sp title), the total after it smaller and in the
-        // secondary colour.
-        pageLabel = ctx.label("", 17f, maxLines = 1).apply {
-            gravity = Gravity.CENTER
-            setPadding(ctx.dp(12), 0, ctx.dp(12), 0)
-            fontFeatureSettings = "tnum"
-            setAutoSizeTextTypeUniformWithConfiguration(14, 17, 1, TypedValue.COMPLEX_UNIT_SP)
-            contentDescription = PAGE_LABEL
-            setOnClickListener { actions.onPageLabel() }
-        }
-        labelRow.addView(pageLabel, FrameLayout.LayoutParams(ctx.dp(144), ctx.dp(ChromeMath.TOUCH_DP), Gravity.CENTER))
-        val cluster = ctx.horizontal()
-        rotation = ctx.iconButton(R.drawable.ic_screen_rotation, ROTATION_LOCK) { actions.onRotation() }
-        rotation.setOnLongClickListener { actions.onRotationChooser(); true }
-        cluster.addView(rotation)
-        pin = ctx.iconButton(R.drawable.ic_push_pin, PIN_SET) { actions.onPinHere() }
-        pin.setOnLongClickListener { v -> ctx.toast(v.contentDescription); true }
-        cluster.addView(pin)
-        labelRow.addView(cluster, FrameLayout.LayoutParams(WRAP_CONTENT, ctx.dp(ChromeMath.TOUCH_DP), Gravity.END or Gravity.CENTER_VERTICAL).apply {
-            marginEnd = ctx.dp(4)
-        })
         seekInfo = ctx.label("", 16f, bold = true, maxLines = 2).apply {
             gravity = Gravity.CENTER
             setPadding(ctx.dp(16), ctx.dp(10), ctx.dp(16), ctx.dp(10))
@@ -309,15 +297,46 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
                 }
             })
         }
+        // Row 1: the seek bar between the chapter buttons (the secondary colour).
         val seekRow = ctx.horizontal { setPadding(ctx.dp(4), 0, ctx.dp(4), 0) }
-        seekRow.addView(plainIcon(R.drawable.ic_skip_previous, "이전 챕터") { actions.onChapter(false) })
-        seekRow.addView(seek, lp(0, ctx.dp(48), 1f))
-        seekRow.addView(plainIcon(R.drawable.ic_skip_next, "다음 챕터") { actions.onChapter(true) })
-        panelRows.addView(seekRow, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
-            topMargin = ctx.dp(ChromeMath.SEEK_TOP_DP)
+        seekRow.addView(softIcon(R.drawable.ic_ridi_prev, "이전 챕터") { actions.onChapter(false) })
+        seekRow.addView(seek, lp(0, ctx.dp(ChromeMath.TOUCH_DP), 1f))
+        seekRow.addView(softIcon(R.drawable.ic_ridi_next, "다음 챕터") { actions.onChapter(true) })
+        bottom.addView(seekRow, lp(MATCH_PARENT, ctx.dp(ChromeMath.SEEK_ROW_DP)))
+
+        // Row 2: the page label centred on the FULL width with a fixed width (rowW − 2·108 dp, set in setVisible:
+        // autosize is unreliable with wrap_content, and the fixed box can never run under the right cluster). No
+        // underline (polish 1). The current page reads first (bold), the total after it smaller and in the secondary
+        // colour. The rotation lock and the pin are at the right.
+        val labelRow = FrameLayout(ctx)
+        pageLabel = ctx.label("", 17f, maxLines = 1).apply {
+            gravity = Gravity.CENTER
+            setPadding(ctx.dp(12), 0, ctx.dp(12), 0)
+            fontFeatureSettings = "tnum"
+            setAutoSizeTextTypeUniformWithConfiguration(14, 17, 1, TypedValue.COMPLEX_UNIT_SP)
+            contentDescription = PAGE_LABEL
+            setOnClickListener { actions.onPageLabel() }
+        }
+        labelRow.addView(pageLabel, FrameLayout.LayoutParams(ctx.dp(144), ctx.dp(ChromeMath.TOUCH_DP), Gravity.CENTER))
+        val cluster = ctx.horizontal()
+        rotation = ctx.iconButton(R.drawable.ic_ridi_rotate, ROTATION_LOCK) { actions.onRotation() }
+        rotation.setOnLongClickListener { actions.onRotationChooser(); true }
+        cluster.addView(rotation)
+        pin = ctx.iconButton(R.drawable.ic_ridi_pin, PIN_SET) { actions.onPinHere() }
+        pin.setOnLongClickListener { v -> ctx.toast(v.contentDescription); true }
+        cluster.addView(pin)
+        labelRow.addView(cluster, FrameLayout.LayoutParams(WRAP_CONTENT, ctx.dp(ChromeMath.TOUCH_DP), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+            marginEnd = ctx.dp(4)
         })
-        panelRows.addView(labelRow, FrameLayout.LayoutParams(MATCH_PARENT, ctx.dp(ChromeMath.LABEL_ROW_DP)))
-        bottom.addView(panelRows, lp())
+        bottom.addView(labelRow, lp(MATCH_PARENT, ctx.dp(ChromeMath.LABEL_ROW_DP)))
+
+        // Row 3: two big buttons, each half the width: 보기 설정 (the reading-settings popup, anchored to the button)
+        // and 뷰어 설정 (the app's settings).
+        val buttonsRow = ctx.horizontal()
+        gear = bigButton(R.drawable.ic_ridi_text, "보기 설정") { v -> actions.onSettings(v) }
+        buttonsRow.addView(gear, lp(0, MATCH_PARENT, 1f))
+        buttonsRow.addView(bigButton(R.drawable.ic_ridi_gear, "뷰어 설정") { actions.onViewerSettings() }, lp(0, MATCH_PARENT, 1f))
+        bottom.addView(buttonsRow, lp(MATCH_PARENT, ctx.dp(ChromeMath.BUTTONS_ROW_DP)))
         top.visibility = View.GONE
         bottom.visibility = View.GONE
         paint()
@@ -329,13 +348,46 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     private fun plainIcon(res: Int, description: String, onClick: (View) -> Unit): ImageButton =
         ctx.iconButton(res, description, onClick = onClick).also { icons.add(it) }
 
+    /** The same in the secondary colour (the back arrow, the chapter buttons). */
+    private fun softIcon(res: Int, description: String, onClick: (View) -> Unit): ImageButton =
+        ctx.iconButton(res, description, onClick = onClick).also { softIcons.add(it) }
+
+    /**
+     * One of the bottom bar's big buttons: the 24 dp glyph above a 14 sp bold label, centred. The button is the
+     * accessibility unit (its description is the label); the glyph and the label are painted by [paint].
+     */
+    private fun bigButton(res: Int, text: String, onClick: (View) -> Unit): LinearLayout {
+        val glyph = ImageView(ctx).apply {
+            setImageResource(res)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val name = ctx.label(text, 14f, bold = true, maxLines = 1).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, ctx.dp(3), 0, 0)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val button = ctx.vertical {
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            contentDescription = text
+            setOnClickListener(onClick)
+        }
+        button.addView(glyph, LinearLayout.LayoutParams(ctx.dp(ChromeMath.GLYPH_DP), ctx.dp(ChromeMath.GLYPH_DP)))
+        button.addView(name, lp(WRAP_CONTENT, WRAP_CONTENT))
+        bigButtons.add(button)
+        bigIcons.add(glyph)
+        bigLabels.add(name)
+        return button
+    }
+
     /** An icon button of the brightness row, on the page colour (the history row's colour for its glyph). */
     private fun pageIcon(res: Int, description: String, onClick: (View) -> Unit): ImageButton =
         ctx.iconButton(res, description, onClick = onClick).also { pageIcons.add(it) }
 
     /**
      * Brightness and page bars alike (U §2.2): a rounded track (inactive part in the track colour, progress in the
-     * accent) and a dot ([sizeSliders]: 2 / 16 dp on a phone, 3 / 18 dp on e-ink), in a 48 dp tall touch area (its row
+     * thumb tone) and a dot ([sizeSliders]: 2 / 13 dp on a phone, 3 / 16 dp on e-ink), in a 48 dp tall touch area (its row
      * gives it exactly 48 dp: the platform measure would add the theme's minimum track height). The platform thumb is
      * an animated selector (it grows on press: several e-ink updates), so the thumb is a plain dot. Vertical swipes
      * over the bars belong to the system (home, recents, notifications): [SwipeSafeSeekBar].
@@ -375,8 +427,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     }
 
     /**
-     * A [THUMB_DP] thumb (e-ink [THUMB_DP_EINK]): a solid accent dot, or ([hollow], the brightness bar's auto look) a
-     * ring of the text colour filled with the page colour its row sits on ([paintDot]).
+     * A [THUMB_DP] thumb (e-ink [THUMB_DP_EINK]): a solid dot in the thumb tone, or ([hollow], the brightness bar's auto
+     * look) a ring of the text colour filled with the page colour its row sits on ([paintDot]).
      */
     private fun dot(hollow: Boolean): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
@@ -386,8 +438,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     }
 
     /**
-     * The sliders' sizes for the device class (U §2.2): ReadEra's lighter 2 dp track and 16 dp thumb on a phone, 3 / 18
-     * dp on e-ink; the drag area stays the 48 dp row. New drawables only when the class changes (once, when the probe
+     * The sliders' sizes for the device class (U §2.2): RIDI's thin 2 dp track and 13 dp thumb on a phone, 3 / 16 dp on
+     * e-ink; the drag area stays the 48 dp row. New drawables only when the class changes (once, when the probe
      * says phone, in the update that shows the bars); [paint] colours them next.
      */
     private fun sizeSliders(eink: Boolean) {
@@ -407,7 +459,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             d.setColor(look.page)
             d.setStroke(ctx.dpF(1.5f).toInt().coerceAtLeast(1), look.text)
         } else {
-            d.setColor(look.accent)
+            d.setColor(look.thumb)
         }
     }
 
@@ -461,22 +513,30 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             b.imageTintList = ink
             b.background = ctx.chromeIconBackground(k, false)
         }
+        val soft = ColorStateList.valueOf(k.text2)
+        for (b in softIcons) {
+            b.imageTintList = soft
+            b.background = ctx.chromeIconBackground(k, false)
+        }
+        for (g in bigIcons) g.imageTintList = ink
+        for (l in bigLabels) l.setTextColor(k.text)
+        for (b in bigButtons) b.background = ctx.chromePressed(k, 0f)
         val onPage = ColorStateList.valueOf(k.hist)
         for (b in pageIcons) {
             b.imageTintList = onPage
             b.background = ctx.chromeIconBackground(k, false)
         }
-        paintToggle(bookmark, boundBookmarked == true)
-        paintToggle(pin, boundPinned == true)
-        paintToggle(rotation, boundRotationLocked == true)
+        paintToggle(bookmark, boundBookmarked == true, soft = false)
+        paintToggle(pin, boundPinned == true, soft = true)
+        paintToggle(rotation, boundRotationLocked == true, soft = true)
         title.setTextColor(k.text)
         paintRule(optionsLine)
         val trackTint = ColorStateList.valueOf(k.track)
-        val accentTint = ColorStateList.valueOf(k.accent)
+        val thumbTint = ColorStateList.valueOf(k.thumb)
         seek.progressBackgroundTintList = trackTint
-        seek.progressTintList = accentTint
+        seek.progressTintList = thumbTint
         brightnessBar.progressBackgroundTintList = trackTint
-        brightnessBar.progressTintList = if (boundAuto == true) trackTint else accentTint
+        brightnessBar.progressTintList = if (boundAuto == true) trackTint else thumbTint
         paintDot(seekThumb, hollow = false)
         paintDot(manualThumb, hollow = false)
         autoDot?.let { paintDot(it, hollow = true) }
@@ -490,9 +550,14 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         rows?.paint()
     }
 
-    /** A state that stays (bookmark, pin, rotation lock): the accent while on, with its circle on a phone (U §2.1). */
-    private fun paintToggle(b: ImageButton, on: Boolean) {
-        b.imageTintList = ColorStateList.valueOf(if (on) look.accent else look.text)
+    /**
+     * A state that stays (bookmark, pin, rotation lock): shown by the icon swap ([setBookmarked], [setPinned],
+     * [setRotationLocked]: outline / filled or locked), never by a colour that would redraw more than the icon. The
+     * [soft] ones (pin, rotation lock: secondary controls of the label row) read in the secondary tone while off and in
+     * the strongest while on; the bookmark stays in the icon tone.
+     */
+    private fun paintToggle(b: ImageButton, on: Boolean, soft: Boolean) {
+        b.imageTintList = ColorStateList.valueOf(if (soft && !on) look.text2 else look.text)
         b.background = ctx.chromeIconBackground(look, on)
     }
 
@@ -778,9 +843,9 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     fun setBookmarked(on: Boolean) {
         if (boundBookmarked == on) return
         boundBookmarked = on
-        bookmark.setImageResource(if (on) R.drawable.ic_bookmark_fill else R.drawable.ic_bookmark)
+        bookmark.setImageResource(if (on) R.drawable.ic_ridi_bookmark_fill else R.drawable.ic_ridi_bookmark)
         bookmark.contentDescription = if (on) "북마크 삭제" else "북마크 추가"
-        paintToggle(bookmark, on)
+        paintToggle(bookmark, on, soft = false)
     }
 
     /**
@@ -790,18 +855,18 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     fun setPinned(on: Boolean) {
         if (boundPinned == on) return
         boundPinned = on
-        pin.setImageResource(if (on) R.drawable.ic_push_pin_fill else R.drawable.ic_push_pin)
+        pin.setImageResource(if (on) R.drawable.ic_ridi_pin_fill else R.drawable.ic_ridi_pin)
         pin.contentDescription = if (on) PIN_RELEASE else PIN_SET
-        paintToggle(pin, on)
+        paintToggle(pin, on, soft = true)
     }
 
     fun setRotationLocked(locked: Boolean) {
         if (boundRotationLocked == locked) return
         boundRotationLocked = locked
-        rotation.setImageResource(if (locked) R.drawable.ic_screen_lock_rotation else R.drawable.ic_screen_rotation)
+        rotation.setImageResource(if (locked) R.drawable.ic_ridi_rotate_lock else R.drawable.ic_ridi_rotate)
         // What a tap does: unlock while locked.
         rotation.contentDescription = if (locked) ROTATION_UNLOCK else ROTATION_LOCK
-        paintToggle(rotation, locked)
+        paintToggle(rotation, locked, soft = true)
     }
 
     // ------------------------------------------------------------------ brightness (bound by LightController only)
@@ -819,9 +884,9 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
 
     private fun applyBrightnessLook(auto: Boolean) {
         boundAuto = auto
-        brightnessAuto.setImageResource(if (auto) R.drawable.ic_brightness_auto else R.drawable.ic_brightness_medium)
+        brightnessAuto.setImageResource(if (auto) R.drawable.ic_ridi_sun_auto else R.drawable.ic_ridi_sun)
         brightnessAuto.contentDescription = if (auto) AUTO_MANUAL else AUTO_FOLLOW
-        brightnessBar.progressTintList = ColorStateList.valueOf(if (auto) look.track else look.accent)
+        brightnessBar.progressTintList = ColorStateList.valueOf(if (auto) look.track else look.thumb)
         brightnessBar.thumb = if (auto) autoThumb() else manualThumb
     }
 
@@ -837,7 +902,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         val v = if (open) View.VISIBLE else View.GONE
         optionsLine.visibility = v
         optionsPanel.visibility = v
-        optionsButton.setImageResource(if (open) R.drawable.ic_expand_less else R.drawable.ic_expand_more)
+        optionsButton.setImageResource(if (open) R.drawable.ic_ridi_expand_less else R.drawable.ic_ridi_expand_more)
         padTop()
     }
 
@@ -900,7 +965,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     /** The NONE link on the page colour, in the history row's colour like the row's icons. */
     private fun paintLink(link: TextView) {
         link.setTextColor(look.hist)
-        val start = tinted(R.drawable.ic_brightness_medium, 24)
+        val start = tinted(R.drawable.ic_ridi_sun, 24)
         link.setCompoundDrawablesRelative(start, null, tinted(R.drawable.ic_chevron_right, 18), null)
         link.background = ctx.chromePressed(look, 8f)
     }
@@ -1122,12 +1187,12 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         const val ROTATION_UNLOCK = "화면 회전 잠금 해제"
         const val ASK_WINDOW_TEXT = "조명 밝기가 바뀌었나요?"
         const val ASK_DEVICE_TEXT = "막대를 움직여 보세요. 조명이 바뀌나요?"
-        /** Slider track and thumb on a phone (U §2.2): ReadEra's 2 dp track, the spec's smallest thumb. */
+        /** Slider track and thumb on a phone (U §2.2): RIDI's thin 2 dp track and 13 dp thumb. */
         const val TRACK_DP = 2
-        const val THUMB_DP = 16
-        /** The same on e-ink: a heavier line survives every waveform. */
+        const val THUMB_DP = 13
+        /** The same on e-ink: a heavier line and a larger dot survive every waveform. */
         const val TRACK_DP_EINK = 3
-        const val THUMB_DP_EINK = 18
+        const val THUMB_DP_EINK = 16
         /** The page label's total ("/ 183") against the current page: 17 sp → ≈ 14 sp, regular, in text2. */
         const val TOTAL_SCALE = 0.82f
         /** Decelerate in, accelerate out (Material's standard curves); built on the first fade (never on e-ink). */

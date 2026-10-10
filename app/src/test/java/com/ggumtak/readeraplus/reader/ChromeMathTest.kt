@@ -53,64 +53,57 @@ class ChromeMathTest {
     }
 
     /**
-     * The px helpers mirror the views' arithmetic; ReaderChrome builds the label and seek rows' LayoutParams from the
-     * same constants (LABEL_ROW_DP, SEEK_TOP_DP, TOUCH_DP), ReturnNav the history labels' padding from
-     * HISTORY_TEXT_TOP_DP, and the title's margin from TITLE_LIFT_DP. The views themselves are checked by CI 13t / 13u
-     * and the device checklist (11f-14 to 11f-18).
+     * The px helpers mirror the views' arithmetic; ReaderChrome builds the three rows' LayoutParams from the same
+     * constants (SEEK_ROW_DP, LABEL_ROW_DP, BUTTONS_ROW_DP), ReturnNav the history labels' padding from
+     * HISTORY_TEXT_TOP_DP, and the title row from TITLE_ROW_DP. The views themselves are checked by CI 13t / 13u and the
+     * device checklist (11f-14 to 11f-18).
      */
     @Test
-    fun theBottomPanelIsAsLowAsReadEras() {
-        // The user's S25 split screen beside ReadEra (2026-10-05; ReadEra in the lower window, above its own navigation
-        // strip): its page label 25 dp under the panel's top, its seek track 61 dp (36 dp apart; ours were 47), 24 dp
-        // from the track to the panel's content bottom: 85 dp.
+    fun theBottomPanelStacksSeekLabelAndButtons() {
+        // Seek row 0..48 dp under the panel's top, label row 48..96, the two big buttons 96..160.
+        assertEquals(48, ChromeMath.SEEK_ROW_DP)
+        assertEquals(48, ChromeMath.LABEL_ROW_DP)
+        assertEquals(160, ChromeMath.PANEL_DP)
         for (density in listOf(2f, 3f)) {
-            assertEquals(Math.round(25 * density), ChromeMath.labelCentre(density))
-            assertEquals(Math.round(61 * density), ChromeMath.seekCentre(density))
-            assertEquals(Math.round(85 * density), ChromeMath.panelHeight(density, gap = 0))
+            assertEquals(Math.round(24 * density), ChromeMath.seekCentre(density))
+            assertEquals(Math.round(72 * density), ChromeMath.labelCentre(density))
+            assertEquals(Math.round(160 * density), ChromeMath.panelHeight(density, gap = 0))
         }
-        assertEquals(85, ChromeMath.PANEL_DP)
         // A 2.625 phone (420 dpi) truncates like the views: within a px of the same dp.
-        assertEquals(61 * 2.625f, ChromeMath.seekCentre(2.625f).toFloat(), 1f)
+        assertEquals(24 * 2.625f, ChromeMath.seekCentre(2.625f).toFloat(), 1f)
+        assertEquals(160 * 2.625f, ChromeMath.panelHeight(2.625f, gap = 0).toFloat(), 3f)
     }
 
     @Test
-    fun theTwoRowsShareOnlyTheSpaceBetweenTheirGlyphs() {
-        // Every control keeps its 48 dp target: the label row's (rotation, pin, the label) run 1..49 dp under the panel's
-        // top, the seek row's (⏮, the seek bar, ⏭) 37..85. They overlap by 12 dp, exactly the empty space between the
-        // 24 dp glyphs (the label row's end at 37, the seek row's start at 49): no glyph lies in the other row's target.
-        val half = ChromeMath.TOUCH_DP / 2
-        val glyph = ChromeMath.GLYPH_DP / 2
-        val labelTouch = ChromeMath.LABEL_CENTRE_DP - half..ChromeMath.LABEL_CENTRE_DP + half
-        val seekTouch = ChromeMath.SEEK_TOP_DP..ChromeMath.SEEK_TOP_DP + ChromeMath.TOUCH_DP
-        assertEquals(1..49, labelTouch)
-        assertEquals(37..85, seekTouch)
-        assertEquals(ChromeMath.LABEL_CENTRE_DP + glyph, seekTouch.first)
-        assertEquals(ChromeMath.SEEK_CENTRE_DP - glyph, labelTouch.last)
-        assertTrue(labelTouch.first >= 0)
-        assertEquals(ChromeMath.PANEL_DP, seekTouch.last)
-        assertTrue(ChromeMath.LABEL_ROW_DP <= ChromeMath.PANEL_DP)
+    fun theTwoControlRowsKeepTheirFull48dpTargets() {
+        // Rows one under the other: the seek row's controls (⏮, the bar, ⏭) and the label row's (the label, the rotation
+        // lock, the pin) are 48 dp tall boxes in 48 dp rows, so no touch area overlaps another's and none is clipped.
+        assertEquals(ChromeMath.TOUCH_DP, ChromeMath.SEEK_ROW_DP)
+        assertEquals(ChromeMath.TOUCH_DP, ChromeMath.LABEL_ROW_DP)
+        assertEquals(ChromeMath.PANEL_DP, ChromeMath.SEEK_ROW_DP + ChromeMath.LABEL_ROW_DP + ChromeMath.BUTTONS_ROW_DP)
+        // The big buttons hold a 24 dp glyph over a 14 sp label (≈ 17 dp line + 3 dp gap) with room to spare.
+        assertTrue(ChromeMath.BUTTONS_ROW_DP >= ChromeMath.GLYPH_DP + 3 + 17 + 12)
     }
 
     @Test
     fun s25FullScreenKeepsTheGestureStrip() {
-        // 전체 화면 with gesture navigation: no bar inset, the 48 px mandatory gesture strip (16 dp) under the panel. The
-        // seek track's centre sits 40 dp above the edge (ReadEra's ≈ 39), the panel 101 dp (ReadEra's 100).
+        // 전체 화면 with gesture navigation: no bar inset, the 48 px mandatory gesture strip (16 dp) under the panel.
         val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 48, minGap = 48, floats = false)
         assertEquals(48, gap)
-        assertEquals(120, ChromeMath.seekAboveBottom(3f, gap))   // 40 dp
-        assertEquals(303, ChromeMath.panelHeight(3f, gap))       // 101 dp
+        assertEquals(456, ChromeMath.seekAboveBottom(3f, gap))   // the track's centre 152 dp above the edge
+        assertEquals(528, ChromeMath.panelHeight(3f, gap))       // 176 dp
         // 전체 화면 off: the navigation bar's inset is the larger one; never the sum.
         assertEquals(63, ChromeMath.bottomGap(barInset = 63, gestureInset = 48, minGap = 48, floats = false))
     }
 
     @Test
     fun s25SplitScreenUpperWindowEndsAtItsEdge() {
-        // Our upper window has no bottom inset at all (the system's strip is under the lower window): no gap, 85 dp of
-        // rows (ReadEra's panel content, measured in the lower window above its own 15 dp navigation strip).
+        // Our upper window has no bottom inset at all (the system's strip is under the lower window): no gap, 160 dp of
+        // rows.
         val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 48, floats = true)
         assertEquals(0, gap)
-        assertEquals(255, ChromeMath.panelHeight(3f, gap))       // 85 dp
-        assertEquals(72, ChromeMath.seekAboveBottom(3f, gap))    // 24 dp
+        assertEquals(480, ChromeMath.panelHeight(3f, gap))       // 160 dp
+        assertEquals(408, ChromeMath.seekAboveBottom(3f, gap))   // 136 dp
         // The lower window reaches the screen's bottom: its strip stays under the panel.
         assertEquals(48, ChromeMath.bottomGap(barInset = 48, gestureInset = 48, minGap = 48, floats = false))
         // A floating window that still has a bottom inset (a pop-up over the strip) keeps it.
@@ -142,18 +135,20 @@ class ChromeMathTest {
     }
 
     @Test
-    fun theTitleStartsInTheActionRowsEmptyFoot() {
-        // ReadEra (the user's S25 split screen, 2026-10-05): the title's glyph centre ≈ 59.8 dp under the bar's top, the
-        // surface's end ≈ 83.7 dp; ours were 68.8 / 91.7 dp, the action icons at the same 28 dp. At 18 sp the title's
-        // glyphs start ≈ 4 dp (13 px) under its box's top and centre ≈ 12.7 dp (38 px) into it; the box is ≈ 36 dp.
-        val titleTop = ChromeMath.ACTIONS_ROW_DP - ChromeMath.TITLE_LIFT_DP
-        assertEquals(47, titleTop)
-        assertEquals(59.8f, titleTop + 38 / 3f, 1f)
-        assertEquals(83.7f, titleTop + 36f, 1f)
-        // The buttons' 40 dp pressed circle ends at 48 dp: the glyphs stay under it; the title takes no touch.
-        val circleBottom = (ChromeMath.ACTIONS_ROW_DP + 40) / 2
-        assertEquals(48, circleBottom)
-        assertTrue(titleTop + 4 > circleBottom)
+    fun theTopBarIsRidisHeight() {
+        // RIDI on the user's 1080 × 2340 S25 (2.8125 px per dp): the bar ≈ 93 dp, the icons' row ≈ 52 dp and the title's
+        // row ≈ 41 dp, the title's text on the 19 dp keyline.
+        assertEquals(52, ChromeMath.ACTIONS_ROW_DP)
+        assertEquals(41, ChromeMath.TITLE_ROW_DP)
+        assertEquals(93, ChromeMath.TOP_BAR_DP)
+        assertEquals(19, ChromeMath.TITLE_START_DP)
+        // The 48 dp buttons are centred in the action row, 2 dp spare over and under.
+        assertEquals(2, (ChromeMath.ACTIONS_ROW_DP - ChromeMath.TOUCH_DP) / 2)
+        // Back and six icons (듣기, 목차, 검색, 독서 노트, 북마크, ⋮) at 48 dp with 4 dp of padding on both sides: the
+        // width the bookmark guard asks for holds all of them with a spacer to spare.
+        val needed = 2 * 4 + 7 * ChromeMath.TOUCH_DP
+        assertEquals(344, needed)
+        assertTrue(ChromeMath.BOOKMARK_MIN_ROW_DP > needed)
     }
 
     @Test
@@ -162,10 +157,10 @@ class ChromeMathTest {
         // for a window that reaches the bottom.
         val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 32, floats = false)
         assertEquals(32, gap)
-        assertEquals(80, ChromeMath.seekAboveBottom(2f, gap))    // 40 dp, as on the S25
-        assertEquals(202, ChromeMath.panelHeight(2f, gap))       // 85 + 16 dp
-        assertEquals(50, ChromeMath.labelCentre(2f))
-        assertEquals(122, ChromeMath.seekCentre(2f))
+        assertEquals(304, ChromeMath.seekAboveBottom(2f, gap))   // 152 dp, as on the S25
+        assertEquals(352, ChromeMath.panelHeight(2f, gap))       // 160 + 16 dp
+        assertEquals(144, ChromeMath.labelCentre(2f))
+        assertEquals(48, ChromeMath.seekCentre(2f))
         assertEquals(16, ChromeMath.BOTTOM_GAP_DP)
     }
 
