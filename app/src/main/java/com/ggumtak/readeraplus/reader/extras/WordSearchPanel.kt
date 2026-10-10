@@ -564,7 +564,8 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
                 w.onResume()
             } else {
                 w.visibility = View.GONE
-                w.onPause()
+                // The AI page still loading ahead of its tab ([preloadAi]) is not paused: that would stall it.
+                if (!(k == WordSearchQuery.TAB_AI && webLoading[k])) w.onPause()
             }
         }
         updateLine()
@@ -574,6 +575,29 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         val show = WordSearchQuery.isWeb(tab) && webLoading[tab] && webs[tab]?.visibility == View.VISIBLE
         val v = if (show) View.VISIBLE else View.INVISIBLE
         if (loadLine.visibility != v) loadLine.visibility = v
+    }
+
+    /**
+     * Loads the AI page behind the other tabs once the 국어사전 page has finished (user, 2026-10-10: the AI tab was slow to
+     * open on the Comet): only for a query whose AI tab has not loaded yet, never while that tab is the one shown, and
+     * silently (no browser fallback, no toast). The tab then shows a page that is ready or nearly.
+     */
+    private fun preloadAi() {
+        val ai = WordSearchQuery.TAB_AI
+        if (closed || tab == ai || webQ.isEmpty() || !loads.needsLoad(ai)) return
+        loads.markLoaded(ai)
+        val existing = webs[ai]
+        if (existing != null) {
+            webFailed[ai] = false
+            clearHistoryAfter[ai] = true
+            existing.loadUrl(WordSearchQuery.url(ai, webQ))
+            return
+        }
+        val web = createWeb(ai) ?: return
+        web.visibility = View.GONE
+        webs[ai] = web
+        webFrame.addView(web, 0, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        web.loadUrl(WordSearchQuery.url(ai, webQ))
     }
 
     /** Loads [webQ] in web tab [i], creating its WebView the first time. */
@@ -634,6 +658,9 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
                     view.clearHistory()
                 }
                 updateLine()
+                // A page that was loaded ahead is paused until its tab is shown; the dictionary's end starts it.
+                if (i == WordSearchQuery.TAB_AI && tab != i) view.onPause()
+                if (i == WordSearchQuery.TAB_KO) view.post { preloadAi() }
             }
         }
         return web
