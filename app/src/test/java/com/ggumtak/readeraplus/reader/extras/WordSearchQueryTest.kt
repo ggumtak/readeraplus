@@ -81,7 +81,23 @@ class WordSearchQueryTest {
         assertEquals("https://ko.dict.naver.com/#/search?query=$enc", WordSearchQuery.url(WordSearchQuery.TAB_KO, q))
         assertEquals("https://en.dict.naver.com/#/search?query=$enc", WordSearchQuery.url(WordSearchQuery.TAB_EN, q))
         assertEquals("https://ko.m.wikipedia.org/w/index.php?search=$enc", WordSearchQuery.url(WordSearchQuery.TAB_WIKI, q))
+        assertEquals("https://hanja.dict.naver.com/#/search?query=$enc", WordSearchQuery.url(WordSearchQuery.TAB_HANJA, q))
         assertEquals("", WordSearchQuery.url(WordSearchQuery.TAB_BODY, q))
+        assertEquals("", WordSearchQuery.url(WordSearchQuery.TAB_COUNT, q))
+        // 한자 itself is sent as typed.
+        assertEquals("https://hanja.dict.naver.com/#/search?query=%E5%AD%B8", WordSearchQuery.url(WordSearchQuery.TAB_HANJA, "學"))
+    }
+
+    @Test
+    fun theAiTabAsksChatGptAboutTheWord() {
+        // chatgpt.com fills in and sends the prompt of its q parameter.
+        assertEquals("다음 단어나 구절의 뜻을 간단히 알려줘: 말이다", WordSearchQuery.aiPrompt("말이다"))
+        val url = WordSearchQuery.url(WordSearchQuery.TAB_AI, "말이다")
+        assertTrue(url.startsWith("https://chatgpt.com/?q="))
+        assertEquals(WordSearchQuery.aiPrompt("말이다"), java.net.URLDecoder.decode(url.removePrefix("https://chatgpt.com/?q="), "UTF-8"))
+        assertFalse(url.contains(' ') || url.contains('+'))
+        // Reserved characters of the word stay inside the parameter.
+        assertTrue(WordSearchQuery.url(WordSearchQuery.TAB_AI, "a&b=c#d").endsWith("a%26b%3Dc%23d"))
     }
 
     @Test
@@ -98,9 +114,17 @@ class WordSearchQueryTest {
         assertFalse(WordSearchQuery.isWeb(WordSearchQuery.TAB_BODY))
         assertTrue(WordSearchQuery.isWeb(WordSearchQuery.TAB_KO))
         assertTrue(WordSearchQuery.isWeb(WordSearchQuery.TAB_EN))
+        assertTrue(WordSearchQuery.isWeb(WordSearchQuery.TAB_HANJA))
         assertTrue(WordSearchQuery.isWeb(WordSearchQuery.TAB_WIKI))
+        assertTrue(WordSearchQuery.isWeb(WordSearchQuery.TAB_AI))
         assertFalse(WordSearchQuery.isWeb(-1))
-        assertEquals(listOf("본문", "국어사전", "영어사전", "백과사전"), (0 until WordSearchQuery.TAB_COUNT).map { WordSearchQuery.title(it) })
+        assertFalse(WordSearchQuery.isWeb(WordSearchQuery.TAB_COUNT))
+        // The dictionaries together, then the encyclopedia, AI last (past the phone's screen edge).
+        assertEquals(
+            listOf("본문", "국어사전", "영어사전", "한자사전", "백과사전", "AI"),
+            (0 until WordSearchQuery.TAB_COUNT).map { WordSearchQuery.title(it) },
+        )
+        assertEquals(WordSearchQuery.TAB_COUNT - 1, WordSearchQuery.TAB_AI)
     }
 
     // ---- 본문 rows

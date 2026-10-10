@@ -6,25 +6,29 @@ import com.ggumtak.readeraplus.reader.ReaderFormat
 import java.net.URLEncoder
 
 /**
- * Pure helpers of the selection's 검색 panel ([WordSearchPanel]): the four tabs, the query cleaned up for the web pages,
+ * Pure helpers of the selection's 검색 panel ([WordSearchPanel]): the six tabs, the query cleaned up for the web pages,
  * their addresses, and the texts of the 본문 tab's rows and status. No android.* imports: unit-tested on the JVM.
  */
 internal object WordSearchQuery {
     const val TAB_BODY = 0
     const val TAB_KO = 1
     const val TAB_EN = 2
-    const val TAB_WIKI = 3
-    const val TAB_COUNT = 4
+    /** 한자사전 (user, 2026-10-10: "검색에 한자사전도 넣어줘"). */
+    const val TAB_HANJA = 3
+    const val TAB_WIKI = 4
+    /** ChatGPT, last: on a phone the tab row scrolls and it shows once swiped to (user, 2026-10-10). */
+    const val TAB_AI = 5
+    const val TAB_COUNT = 6
 
     /** The tab shown when the panel opens: 국어사전. */
     const val DEFAULT_TAB = TAB_KO
 
-    private val TITLES = arrayOf("본문", "국어사전", "영어사전", "백과사전")
+    private val TITLES = arrayOf("본문", "국어사전", "영어사전", "한자사전", "백과사전", "AI")
 
     fun title(tab: Int): String = TITLES[tab]
 
     /** A tab that shows a web page (all but 본문). */
-    fun isWeb(tab: Int): Boolean = tab in TAB_KO..TAB_WIKI
+    fun isWeb(tab: Int): Boolean = tab in TAB_KO until TAB_COUNT
 
     /**
      * What the field starts with: the selection trimmed, every whitespace run one space, cut to [LookupQuery.MAX] chars
@@ -112,17 +116,26 @@ internal object WordSearchQuery {
 
     private const val KO_DICT = "https://ko.dict.naver.com/#/search?query="
     private const val EN_DICT = "https://en.dict.naver.com/#/search?query="
+    private const val HANJA_DICT = "https://hanja.dict.naver.com/#/search?query="
     private const val WIKI = "https://ko.m.wikipedia.org/w/index.php?search="
+
+    /** chatgpt.com with a prompt in `q`: the page fills it in and sends it. */
+    private const val AI = "https://chatgpt.com/?q="
+
+    /** What the AI tab asks about [webQuery]: a word or a short phrase from the book. */
+    fun aiPrompt(webQuery: String): String = "다음 단어나 구절의 뜻을 간단히 알려줘: $webQuery"
 
     /** The address of web tab [tab] for [webQuery] (spaces as %20); "" for the 본문 tab. */
     fun url(tab: Int, webQuery: String): String {
-        val base = when (tab) {
-            TAB_KO -> KO_DICT
-            TAB_EN -> EN_DICT
-            TAB_WIKI -> WIKI
+        val (base, q) = when (tab) {
+            TAB_KO -> KO_DICT to webQuery
+            TAB_EN -> EN_DICT to webQuery
+            TAB_HANJA -> HANJA_DICT to webQuery
+            TAB_WIKI -> WIKI to webQuery
+            TAB_AI -> AI to aiPrompt(webQuery)
             else -> return ""
         }
-        return base + URLEncoder.encode(webQuery, "UTF-8").replace("+", "%20")
+        return base + URLEncoder.encode(q, "UTF-8").replace("+", "%20")
     }
 
     // ------------------------------------------------------------------ the 본문 tab

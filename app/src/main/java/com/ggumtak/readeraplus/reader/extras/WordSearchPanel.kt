@@ -29,6 +29,7 @@ import android.webkit.WebViewClient
 import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
@@ -62,8 +63,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The selection's 검색 (RIDI's): a full-screen panel over the reader with the query on top and four tabs, 본문 (this
- * book's matches), 국어사전, 영어사전 and 백과사전 (the web pages in the panel). Opens on 국어사전.
+ * The selection's 검색 (RIDI's): a full-screen panel over the reader with the query on top and six tabs, 본문 (this
+ * book's matches), 국어사전, 영어사전, 한자사전, 백과사전 and AI (ChatGPT; the web pages in the panel). Opens on 국어사전.
+ * On a phone the tab row scrolls sideways and AI shows once it is swiped to; on e-ink all six share the width.
  */
 object WordSearchPanel {
     /** Opens the panel for [query] (a selection, as selected) over [host]'s reader. Main thread. */
@@ -122,6 +124,9 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
     private var pager: InkPager? = null
     private val tabLabels = arrayOfNulls<TextView>(WordSearchQuery.TAB_COUNT)
     private val tabBars = arrayOfNulls<View>(WordSearchQuery.TAB_COUNT)
+    private val tabCells = arrayOfNulls<View>(WordSearchQuery.TAB_COUNT)
+    /** The phone's sideways-scrolling tab row (null on e-ink, where the tabs share the width). */
+    private var tabScroll: HorizontalScrollView? = null
     private val adapter = ResultAdapter()
 
     /** The pages were counted: the rows' page numbers and percents are read again, the list stays where it is. */
@@ -209,12 +214,18 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         return bar
     }
 
+    /**
+     * The tabs. A phone's row keeps each label at its own width (RIDI's spacing) and scrolls sideways: the first five fit
+     * a 384 dp screen with AI past its edge (user, 2026-10-10: "위의 바를 오른쪽으로 밀면 보일정도로"). E-ink shares the
+     * width among all six at a smaller size, so nothing scrolls (no frames of motion).
+     */
     private fun buildTabs(): View {
         val row = ctx.horizontal { gravity = Gravity.NO_GRAVITY }
+        val sidePad = if (eink) 0 else ctx.dp(TAB_SIDE_DP)
         for (i in 0 until WordSearchQuery.TAB_COUNT) {
-            val t = ctx.label(WordSearchQuery.title(i), 15f, maxLines = 1).apply {
+            val t = ctx.label(WordSearchQuery.title(i), if (eink) TAB_SP_EINK else TAB_SP, maxLines = 1).apply {
                 gravity = Gravity.CENTER
-                setPadding(0, ctx.dp(14), 0, ctx.dp(12))
+                setPadding(sidePad, ctx.dp(14), sidePad, ctx.dp(12))
             }
             val bar = View(ctx)
             val cell = ctx.vertical {
@@ -225,9 +236,30 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
             }
             tabLabels[i] = t
             tabBars[i] = bar
-            row.addView(cell, lp(0, WRAP_CONTENT, 1f))
+            tabCells[i] = cell
+            row.addView(cell, if (eink) lp(0, WRAP_CONTENT, 1f) else lp(WRAP_CONTENT, WRAP_CONTENT))
         }
-        return row
+        if (eink) return row
+        return HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            // A screen wider than the six tabs still spreads the row across it.
+            isFillViewport = true
+            addView(row, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+            tabScroll = this
+        }
+    }
+
+    /** Scrolls the phone's tab row just far enough to show tab [i] whole. */
+    private fun revealTab(i: Int) {
+        val sv = tabScroll ?: return
+        val cell = tabCells[i] ?: return
+        if (sv.width <= 0) return
+        val x = sv.scrollX
+        when {
+            cell.left < x -> sv.scrollTo(cell.left, 0)
+            cell.right > x + sv.width -> sv.scrollTo(cell.right - sv.width, 0)
+        }
     }
 
     private fun buildBody(): View {
@@ -289,6 +321,7 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         tab = i
         styleTab(old)
         styleTab(i)
+        revealTab(i)
         showContent()
     }
 
@@ -524,7 +557,7 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         val msg = if (web) WordSearchQuery.webMessage(webQ, webFailed[visible]) else null
         setText(webMessage, msg ?: "")
         webMessage.visibility = if (msg == null) View.GONE else View.VISIBLE
-        for (k in WordSearchQuery.TAB_KO..WordSearchQuery.TAB_WIKI) {
+        for (k in WordSearchQuery.TAB_KO until WordSearchQuery.TAB_COUNT) {
             val w = webs[k] ?: continue
             if (k == visible && msg == null) {
                 w.visibility = View.VISIBLE
@@ -644,5 +677,12 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         /** RIDI's grey for the idle tabs and the grey lines of a phone; an e-ink screen takes [Ink.GRAY] and black. */
         const val PHONE_GRAY = 0xFF888888.toInt()
         const val PHONE_LINE = 0xFFE0E0E0.toInt()
+
+        /** A phone's tab labels and the room on each side of one: 본문 … 백과사전 ≈ 370 dp, AI past a 384 dp edge. */
+        const val TAB_SP = 15f
+        const val TAB_SIDE_DP = 10
+
+        /** E-ink: the six labels share the width (≈ 60 dp each on the Comet's 360 dp; 4 syllables at 14 sp ≈ 56). */
+        const val TAB_SP_EINK = 14f
     }
 }
