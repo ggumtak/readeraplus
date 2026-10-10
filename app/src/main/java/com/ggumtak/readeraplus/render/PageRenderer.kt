@@ -126,6 +126,8 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     /** The charging bolt: the page colour around it (so it reads over the bars) and its path, reused. */
     private val boltHalo = Paint().apply { style = Paint.Style.FILL_AND_STROKE }
     private val boltPath = Path()
+    /** MaruViewer's charging bolt, cut out of the filled icon in the page colour. */
+    private val boltCut = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val statusOutline = Paint().apply {
         style = Paint.Style.STROKE
         strokeWidth = onePx
@@ -193,6 +195,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         ribbonHalo.color = bg
         statusLine.color = palette.status
         boltHalo.color = palette.background
+        boltCut.color = palette.background
         statusOutline.color = palette.status
         batteryFirst.color = palette.status
         // On e-ink, greys on the panel's own levels. Unknown (no probe yet) counts as e-ink, as for the chrome
@@ -526,11 +529,13 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     /**
      * MaruViewer's icon first (it stands for the number it does not show; [BatteryMath]): the nub on the left, the body's
      * outline and its bars as whole-px rects, the bars from the far end, [level] in its 25 % steps. At one bar the whole
-     * icon turns slightly red on phones ([PagePalette.batteryLow]); e-ink keeps the status colour (greys only).
+     * icon turns slightly red on phones ([PagePalette.batteryLow]); e-ink keeps the status colour (greys only). While
+     * [charging], as MaruViewer: the whole body filled in the status colour, a bolt lying on its side cut out of it in the
+     * page colour ([BatteryMath.CHARGING_BOLT]).
      */
     private fun drawFirstBattery(canvas: Canvas, level: Int, x: Float, baseline: Float, ts: Float, charging: Boolean = false) {
         val p = batteryFirst
-        p.color = BatteryMath.firstColor(eink, level, palette.status, palette.batteryLow)
+        p.color = BatteryMath.firstColor(eink, level, palette.status, palette.batteryLow, charging)
         val s = BatteryMath.firstStroke(ts)
         val bodyH = BatteryMath.bodyHeight(ts, true)
         val nubH = BatteryMath.firstNubHeight(ts)
@@ -541,6 +546,18 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val bodyBottom = bodyTop + bodyH
         val nubTop = bodyTop + (bodyH - nubH) / 2f
         canvas.drawRect(left, nubTop, bodyLeft, nubTop + nubH, p)
+        if (charging) {
+            canvas.drawRect(bodyLeft, bodyTop, bodyRight, bodyBottom, p)
+            val b = BatteryMath.CHARGING_BOLT
+            val w = bodyRight - bodyLeft
+            val path = boltPath
+            path.rewind()
+            path.moveTo(bodyLeft + b[0] * w, bodyTop + b[1] * bodyH)
+            for (i in 2 until b.size step 2) path.lineTo(bodyLeft + b[i] * w, bodyTop + b[i + 1] * bodyH)
+            path.close()
+            canvas.drawPath(path, boltCut)
+            return
+        }
         canvas.drawRect(bodyLeft, bodyTop, bodyRight, bodyTop + s, p)
         canvas.drawRect(bodyLeft, bodyBottom - s, bodyRight, bodyBottom, p)
         canvas.drawRect(bodyLeft, bodyTop + s, bodyLeft + s, bodyBottom - s, p)
@@ -550,7 +567,6 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             val r = BatteryMath.barRight(bodyRight, ts, k)
             canvas.drawRect(r - bar, bodyTop + 2f * s, r, bodyBottom - 2f * s, p)
         }
-        if (charging) drawBolt(canvas, (bodyLeft + bodyRight) / 2f, (bodyTop + bodyBottom) / 2f, bodyH - 2f * s, s, p.color)
     }
 
     /**
@@ -980,15 +996,25 @@ internal object BatteryMath {
      */
     fun stepLevel(level: Int): Int = if (level < 0) -1 else bars(level) * (100 / BARS)
 
-    /** One bar left (≤ 25 %): on phones the first icon turns slightly red (`PagePalette.batteryLow`). */
+    /** One bar left (≤ 25 %): on phones the first icon turns slightly red (`PagePalette.batteryLow`), not while charging. */
     fun low(level: Int): Boolean = bars(level) == 1
 
     /**
      * The first icon's colour for [level]: [lowColor] at one bar on phones, else [statusColor]; e-ink panels keep the
-     * status colour (greys only: no red).
+     * status colour (greys only: no red), and so does a phone that is [charging] (MaruViewer: gold at 21 % charging).
      */
-    fun firstColor(eink: Boolean, level: Int, statusColor: Int, lowColor: Int): Int =
-        if (!eink && low(level)) lowColor else statusColor
+    fun firstColor(eink: Boolean, level: Int, statusColor: Int, lowColor: Int, charging: Boolean = false): Int =
+        if (!eink && !charging && low(level)) lowColor else statusColor
+
+    /**
+     * MaruViewer's charging bolt, lying on its side (x, y pairs as fractions of the icon's body): a block on the left,
+     * a spike from its top to a point on the right, a block down from the notch. Fitted to its icon on the S25 (65 × 30
+     * px body at 13 sp, within one level on average), where the whole body is filled while charging, at any level.
+     */
+    @JvmField
+    val CHARGING_BOLT = floatArrayOf(
+        0.177f, 0.277f, 0.365f, 0.415f, 0.365f, 0.134f, 0.853f, 0.705f, 0.496f, 0.566f, 0.496f, 0.843f, 0.172f, 0.608f,
+    )
 
     /**
      * How far the first icon's middle sits above the digits' middle, per px of text: MaruViewer's icon on the S25 (rows

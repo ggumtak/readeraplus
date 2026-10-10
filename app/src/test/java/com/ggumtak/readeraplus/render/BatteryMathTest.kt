@@ -110,7 +110,28 @@ class BatteryMathTest {
             assertEquals(status, BatteryMath.firstColor(eink = true, level = lv, statusColor = status, lowColor = low))
             assertEquals("$lv %", if (lv in 0..25) low else status,
                 BatteryMath.firstColor(eink = false, level = lv, statusColor = status, lowColor = low))
+            // Charging: MaruViewer's gold at any level (21 % on the S25).
+            assertEquals(status, BatteryMath.firstColor(eink = false, level = lv, statusColor = status, lowColor = low, charging = true))
         }
+    }
+
+    @Test
+    fun theChargingBoltLiesOnItsSideInsideTheBody() {
+        val b = BatteryMath.CHARGING_BOLT
+        assertEquals(14, b.size)
+        for (v in b) assertTrue("$v", v > 0.1f && v < 0.9f)
+        var area = 0f
+        var minX = 1f; var maxX = 0f; var minY = 1f; var maxY = 0f
+        for (i in 0 until 7) {
+            val x0 = b[2 * i]; val y0 = b[2 * i + 1]
+            val x1 = b[(2 * i + 2) % 14]; val y1 = b[(2 * i + 3) % 14]
+            area += x0 * y1 - x1 * y0
+            minX = minOf(minX, x0); maxX = maxOf(maxX, x0); minY = minOf(minY, y0); maxY = maxOf(maxY, y0)
+        }
+        // A real shape (about a fifth of the body), wider than tall in px (the body is 65 × 30), pointing right.
+        assertTrue("area $area", Math.abs(area / 2f) in 0.12f..0.3f)
+        assertTrue((maxX - minX) * 65f > (maxY - minY) * 30f)
+        assertEquals(maxX, b[6])
     }
 
     @Test
