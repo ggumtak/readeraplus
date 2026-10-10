@@ -64,7 +64,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * The selection's 검색 (RIDI's): a full-screen panel over the reader with the query on top and six tabs, 본문 (this
- * book's matches), 국어사전, 영어사전, 한자사전, 백과사전 and AI (ChatGPT; the web pages in the panel). Opens on 국어사전.
+ * book's matches), 국어사전, 영어사전, 한자사전, 백과사전 and AI (phone: ChatGPT; e-ink: lightweight Claude dictionary).
  * On a phone the tab row scrolls sideways and AI shows once it is swiped to; on e-ink all six share the width.
  */
 object WordSearchPanel {
@@ -85,6 +85,8 @@ object WordSearchPanel {
 private class WordSearchDialog(private val host: ReaderHost, initialQuery: String) {
     private val ctx = host.activity
     private val eink = DeviceClass.cached(ctx) != false
+    private var aiDeviceEink: Boolean? = DeviceClass.cached(ctx)
+    private var aiProbeStarted = false
     private val idleColor = if (eink) Ink.GRAY else PHONE_GRAY
     private val indicatorColor = if (eink) Ink.BLACK else PHONE_GRAY
     private val lineColor = if (eink) Ink.LINE else PHONE_LINE
@@ -554,7 +556,8 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
             loads.markLoaded(visible)
             if (webQ.isNotEmpty()) loadWeb(visible)
         }
-        val msg = if (web) WordSearchQuery.webMessage(webQ, webFailed[visible]) else null
+        val msg = if (visible == WordSearchQuery.TAB_AI && aiDeviceEink == null && webQ.isNotEmpty())
+            "기기 확인 중…" else if (web) WordSearchQuery.webMessage(webQ, webFailed[visible]) else null
         setText(webMessage, msg ?: "")
         webMessage.visibility = if (msg == null) View.GONE else View.VISIBLE
         for (k in WordSearchQuery.TAB_KO until WordSearchQuery.TAB_COUNT) {
@@ -583,6 +586,9 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
      * silently (no browser fallback, no toast). The tab then shows a page that is ready or nearly.
      */
     private fun preloadAi() {
+        aiDeviceEink = aiDeviceEink ?: DeviceClass.cached(ctx)
+        // Opening another dictionary must not send a paid Claude question in a hidden tab.
+        if (aiDeviceEink != false) return
         val ai = WordSearchQuery.TAB_AI
         if (closed || tab == ai || webQ.isEmpty() || !loads.needsLoad(ai)) return
         loads.markLoaded(ai)
@@ -590,19 +596,39 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         if (existing != null) {
             webFailed[ai] = false
             clearHistoryAfter[ai] = true
-            existing.loadUrl(WordSearchQuery.url(ai, webQ))
+            existing.loadUrl(webUrl(ai))
             return
         }
         val web = createWeb(ai) ?: return
         web.visibility = View.GONE
         webs[ai] = web
         webFrame.addView(web, 0, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        web.loadUrl(WordSearchQuery.url(ai, webQ))
+        web.loadUrl(webUrl(ai))
+    }
+
+    private fun webUrl(i: Int): String {
+        if (i != WordSearchQuery.TAB_AI || aiDeviceEink != true) return WordSearchQuery.url(i, webQ)
+        val address = Settings.raw().getString(EinkAiSite.PREF_KEY, EinkAiSite.DEFAULT_URL) ?: EinkAiSite.DEFAULT_URL
+        return WordSearchQuery.url(i, webQ, einkAi = true, aiSite = address)
     }
 
     /** Loads [webQ] in web tab [i], creating its WebView the first time. */
     private fun loadWeb(i: Int) {
-        val url = WordSearchQuery.url(i, webQ)
+        if (i == WordSearchQuery.TAB_AI && aiDeviceEink == null) {
+            if (!aiProbeStarted) {
+                aiProbeStarted = true
+                DeviceClass.probeAsync(ctx) { known ->
+                    if (closed) return@probeAsync
+                    aiProbeStarted = false
+                    aiDeviceEink = known
+                    loads.markStale(WordSearchQuery.TAB_AI)
+                    if (tab == WordSearchQuery.TAB_AI) showWeb(tab)
+                    else if (!known) preloadAi()
+                }
+            }
+            return
+        }
+        val url = webUrl(i)
         webFailed[i] = false
         val existing = webs[i]
         if (existing != null) {

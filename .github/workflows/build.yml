@@ -125,7 +125,7 @@ jobs:
           path: dist/*.apk
 
       - name: Publish rolling release
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.ref_name == 'ccr-d67f66cc-r93yro' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -142,7 +142,7 @@ jobs:
       # Secrets: GDRIVE_UPLOAD_URL (the web app URL) and GDRIVE_UPLOAD_KEY (the same password as in the script).
       # A Drive failure never fails the build.
       - name: Upload APK to Google Drive
-        if: env.GDRIVE_ON == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: env.GDRIVE_ON == 'true' && github.ref_name == 'ccr-d67f66cc-r93yro' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         continue-on-error: true
         env:
           GDRIVE_UPLOAD_URL: ${{ secrets.GDRIVE_UPLOAD_URL }}

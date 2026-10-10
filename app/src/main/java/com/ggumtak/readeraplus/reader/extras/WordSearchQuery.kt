@@ -16,7 +16,7 @@ internal object WordSearchQuery {
     /** 한자사전 (user, 2026-10-10: "검색에 한자사전도 넣어줘"). */
     const val TAB_HANJA = 3
     const val TAB_WIKI = 4
-    /** ChatGPT, last: on a phone the tab row scrolls and it shows once swiped to (user, 2026-10-10). */
+    /** AI, last: ChatGPT on phones, the lightweight Claude dictionary on detected e-ink devices. */
     const val TAB_AI = 5
     const val TAB_COUNT = 6
 
@@ -126,7 +126,8 @@ internal object WordSearchQuery {
     fun aiPrompt(webQuery: String): String = "$webQuery 뜻"
 
     /** The address of web tab [tab] for [webQuery] (spaces as %20); "" for the 본문 tab. */
-    fun url(tab: Int, webQuery: String): String {
+    fun url(tab: Int, webQuery: String, einkAi: Boolean = false, aiSite: String = EinkAiSite.DEFAULT_URL): String {
+        if (tab == TAB_AI && einkAi) return EinkAiSite.url(aiSite, aiPrompt(webQuery))
         val (base, q) = when (tab) {
             TAB_KO -> KO_DICT to webQuery
             TAB_EN -> EN_DICT to webQuery
@@ -248,5 +249,10 @@ internal class WordSearchTabs(private val count: Int) {
     /** [tab] shows the current query. */
     fun markLoaded(tab: Int) {
         if (tab in 0 until count) loadedFor[tab] = generation
+    }
+
+    /** Only this tab needs another load (e.g. asynchronous device classification completed). */
+    fun markStale(tab: Int) {
+        if (tab in 0 until count) loadedFor[tab] = 0
     }
 }

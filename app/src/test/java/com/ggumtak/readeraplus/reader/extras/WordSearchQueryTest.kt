@@ -102,6 +102,28 @@ class WordSearchQueryTest {
     }
 
     @Test
+    fun einkAiUsesTheLightweightSiteAndPhonesKeepChatGpt() {
+        val q = "귀접"
+        val site = "https://dictionary.example"
+        val eink = java.net.URI(WordSearchQuery.url(WordSearchQuery.TAB_AI, q, einkAi = true, aiSite = site))
+        assertEquals("dictionary.example", eink.host)
+        assertNull(eink.query)
+        assertEquals("귀접 뜻", java.net.URLDecoder.decode(eink.rawFragment.substringAfter("q=").substringBefore('&'), "UTF-8"))
+        assertTrue(WordSearchQuery.url(WordSearchQuery.TAB_AI, q, einkAi = false, aiSite = site).startsWith("https://chatgpt.com/?q="))
+        assertEquals(WordSearchQuery.url(WordSearchQuery.TAB_KO, q), WordSearchQuery.url(WordSearchQuery.TAB_KO, q, einkAi = true, aiSite = site))
+    }
+
+    @Test
+    fun classifyingTheDeviceOnlyInvalidatesTheAiTab() {
+        val tabs = WordSearchTabs(WordSearchQuery.TAB_COUNT)
+        tabs.markLoaded(WordSearchQuery.TAB_KO)
+        tabs.markLoaded(WordSearchQuery.TAB_AI)
+        tabs.markStale(WordSearchQuery.TAB_AI)
+        assertFalse(tabs.needsLoad(WordSearchQuery.TAB_KO))
+        assertTrue(tabs.needsLoad(WordSearchQuery.TAB_AI))
+    }
+
+    @Test
     fun urlEncodesSpacesAsPercent20AndReservedChars() {
         assertEquals(
             "https://en.dict.naver.com/#/search?query=a%20b%26c%3Dd",
