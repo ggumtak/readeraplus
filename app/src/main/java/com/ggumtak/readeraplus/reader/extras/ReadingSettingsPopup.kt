@@ -5,12 +5,14 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.LayerDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupWindow
@@ -44,10 +46,12 @@ import com.ggumtak.readeraplus.ui.settings.SettingsActivity
 import java.lang.ref.WeakReference
 
 /**
- * The quick reading options (⚙) for the ~6" 360×720 dp e-ink screen: only what is changed while reading, with the
- * page in view as the preview. Centred, the screen's width but 8 dp on each side (≤ 400 dp, [PopupGeometry.width]),
- * 8 dp under the status bar; the reader's bars are hidden while it opens (one e-ink update with the popup), so the
- * lower part of the page stays visible. Black on white, no animations, no scrolling, nothing that expands:
+ * The quick reading options (보기 설정) for the ~6" 360×720 dp e-ink screen: only what is changed while reading, with the
+ * page in view as the preview. A sheet on the window's bottom edge, RIDI's (user, 2026-10-10: "보기 설정 누르면 리디처럼
+ * 이렇게 아래에서 나왔으면"): the window's width (rows ≤ 480 dp, centred), a 1 px line on top, above a navigation bar
+ * that shows ([PopupGeometry.sheetHeight]); the reader's bars are hidden while it opens (one e-ink update with the
+ * sheet), so the upper part of the page stays visible. Black on white; a phone slides it up ([SLIDE_MS]), e-ink shows it
+ * at once; no scrolling, nothing that expands:
  *
  * 전체 읽기 설정 › · [닫기] / 글자 크기 / 굵기 / 줄 간격 / 문단 간격 / 좌우 여백 / 상하 여백 (− value +, 48 dp buttons
  * on 48 dp rows) / 글꼴 (drop-down list) / 배경 (흰색 · 회색 · 검은색, [PageTheme]; picking one turns 흑백 반전 off)
@@ -79,25 +83,31 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         val root = anchor.rootView
         val screenW = root.width.takeIf { it > 0 } ?: dm.widthPixels
         val screenH = root.height.takeIf { it > 0 } ?: dm.heightPixels
-        popupWidth = PopupGeometry.width(screenW, dm.density)
-        // The popup is a live preview: every change re-lays out the page, so as much of the page as possible stays
-        // in view. The reader's bars are hidden (pinned chrome is gone, U §2.6: the page never changes size for
-        // them) and the popup sits 8 dp under the status bar, leaving the lower part of the page visible.
-        val place = PopupGeometry.settings(screenH, Overlay.topInset(root), dm.density)
+        popupWidth = PopupGeometry.sheetWidth(screenW, dm.density)
+        // The sheet is a live preview: every change re-lays out the page, so as much of the page as possible stays in
+        // view. The reader's bars are hidden (pinned chrome is gone, U §2.6: the page never changes size for them).
+        val bottomInset = Overlay.bottomInset(root)
+        val maxRows = PopupGeometry.sheetHeight(screenH, Overlay.topInset(root), bottomInset, dm.density)
+        val eink = PopupCard.eink(ctx)
 
-        // Scrolls only in a window too short for the seven rows (landscape phones, split screen); never on the Comet.
-        val scroll = MaxHeightScrollView(ctx, place.height).apply { isVerticalScrollBarEnabled = true }
+        // Scrolls only in a window too short for the rows (landscape phones, split screen); never on the Comet.
+        val scroll = MaxHeightScrollView(ctx, maxRows).apply { isVerticalScrollBarEnabled = true }
         scroll.addView(buildContent(), FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         rows = scroll
-        val frame = FrameLayout(ctx).apply {
-            background = ctx.borderBox()
-            setPadding(1, 1, 1, 1)
-            addView(scroll, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        val line = 1
+        val sheet = FrameLayout(ctx).apply {
+            background = LayerDrawable(arrayOf(ColorDrawable(if (eink) Ink.LINE else PopupCard.FRAME), ColorDrawable(Ink.WHITE))).apply {
+                setLayerInset(1, 0, line, 0, 0)
+            }
+            setPadding(0, line, 0, bottomInset.coerceAtLeast(0))
+            addView(scroll, FrameLayout.LayoutParams(popupWidth, WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
         }
-        val pw = PopupWindow(frame, popupWidth, WRAP_CONTENT, true).apply {
+        val pw = PopupWindow(sheet, screenW, WRAP_CONTENT, true).apply {
             animationStyle = 0
             elevation = 0f
             isOutsideTouchable = true
+            // Placed on the window's own bottom edge, under a navigation bar that shows (the rows keep above it).
+            if (Build.VERSION.SDK_INT >= 29) setIsLaidOutInScreen(true)
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setOnDismissListener {
                 flush()
@@ -106,9 +116,18 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         }
         popup = pw
         try {
-            // Same UI message as the popup: one e-ink update for both.
+            // Same UI message as the sheet: one e-ink update for both.
             runCatching { host.setChromeVisible(false) }
-            pw.showAtLocation(root, Gravity.TOP or Gravity.CENTER_HORIZONTAL, 0, place.top)
+            if (!eink) {
+                // Starts below the edge and rises into place: the first frame never shows it in place.
+                sheet.measure(
+                    View.MeasureSpec.makeMeasureSpec(screenW, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(screenH, View.MeasureSpec.AT_MOST),
+                )
+                sheet.translationY = sheet.measuredHeight.toFloat()
+            }
+            pw.showAtLocation(root, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL, 0, 0)
+            if (!eink) sheet.animate().translationY(0f).setDuration(SLIDE_MS).setInterpolator(DecelerateInterpolator()).start()
             PanelRegistry.popup(ctx, pw)
         } catch (e: RuntimeException) {
             // BadTokenException / IllegalStateException: the reader window is going away.
@@ -396,6 +415,9 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
     companion object {
         private const val DEBOUNCE_MS = 250L
+
+        /** A phone's sheet rises from the bottom edge in this long (the chrome's own motion is 150–200 ms). */
+        private const val SLIDE_MS = 180L
         /** The 배경 row's choices, in its order, with the words the user asked for (2026-10-05). */
         val THEMES: List<Pair<PageTheme, String>> =
             listOf(PageTheme.PAPER to "흰색", PageTheme.MARU to "회색", PageTheme.BLACK to "검은색")

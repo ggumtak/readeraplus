@@ -33,25 +33,25 @@ class PopupGeometryTest {
     }
 
     @Test
-    fun topIsTheInsetPlus8dpAndHeightAtMost56Percent() {
+    fun theSettingsSheetRisesFromTheBottomEdge() {
         assertEquals(0.56f, PopupGeometry.HEIGHT_FRACTION, 0f)
         assertEquals(0.62f, PopupGeometry.SETTINGS_FRACTION, 0f)
-        // Status bar 48 px at 2.0: top 48 + 16; 62% of 1440 = 892 px.
-        val p = PopupGeometry.settings(1440, 48, 2f)
-        assertEquals(64, p.top)
-        assertEquals(892, p.height)
-        // Immersive (no inset): 8 dp from the top.
-        assertEquals(16, PopupGeometry.settings(1440, 0, 2f).top)
-        // A negative inset never puts it above the window.
-        assertEquals(16, PopupGeometry.settings(1440, -10, 2f).top)
-        // Little room (landscape / split screen): at least 160 dp, moved up to stay on screen.
-        val q = PopupGeometry.settings(600, 480, 2f)
-        assertEquals(320, q.height)
-        assertEquals(600 - 16 - 320, q.top)
-        // Tiny window: never taller than 62%.
-        val r = PopupGeometry.settings(400, 380, 2f)
-        assertTrue(r.height <= 248)
-        assertTrue(r.top >= 0 && r.top + r.height <= 400)
+        // The Comet (720 × 1440 px at 2.0), immersive: 62 % of the height, 892 px; the page's upper 548 px in view.
+        assertEquals(892, PopupGeometry.sheetHeight(1440, 0, 0, 2f))
+        // A status bar and a navigation bar that show: the same cap, the rows above the navigation bar.
+        assertEquals(892, PopupGeometry.sheetHeight(1440, 48, 96, 2f))
+        // Little room (landscape / split screen): up to 8 dp under the top inset, at least 160 dp.
+        assertEquals(372, PopupGeometry.sheetHeight(600, 40, 0, 2f))
+        assertEquals(320, PopupGeometry.sheetHeight(600, 480, 0, 2f))
+        // A window shorter than 160 dp: never taller than the window above its navigation bar.
+        assertTrue(PopupGeometry.sheetHeight(200, 0, 40, 2f) <= 160)
+        // Nonsense insets never give nothing.
+        assertTrue(PopupGeometry.sheetHeight(1440, -10, -10, 2f) > 0)
+        // Rows as wide as the window, at most 480 dp (centred on a tablet or a landscape phone).
+        assertEquals(720, PopupGeometry.sheetWidth(720, 2f))
+        assertEquals(1080, PopupGeometry.sheetWidth(1080, 2.8125f))
+        assertEquals(960, PopupGeometry.sheetWidth(2400, 2f))
+        assertEquals(1, PopupGeometry.sheetWidth(0, 2f))
     }
 
     @Test
@@ -67,10 +67,10 @@ class PopupGeometryTest {
         assertEquals(432, PopupGeometry.QUICK_HEIGHT_DP)
         // Emulator / Comet: 720×1440 px at 2.0, with and without a status bar (up to 32 dp).
         for (inset in intArrayOf(0, 48, 64)) {
-            val place = PopupGeometry.settings(1440, inset, 2f)
+            val rows = PopupGeometry.sheetHeight(1440, inset, 0, 2f)
             val whole = Math.round(PopupGeometry.QUICK_HEIGHT_DP * 2f) // 864 px
-            // The whole popup + the 1 px border on each side.
-            assertTrue("inset $inset: popup ${whole + 2} px > ${place.height} px", whole + 2 <= place.height)
+            // The whole sheet under its 1 px top line.
+            assertTrue("inset $inset: sheet $whole px > $rows px", whole <= rows)
         }
         // Every button is the 48 dp minimum touch target and fits its row.
         assertTrue(Compact.STEP_DP >= 48 && Compact.STEP_DP <= Compact.ROW_DP)

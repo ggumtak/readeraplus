@@ -409,21 +409,25 @@ internal object PopupGeometry {
     fun width(screenW: Int, density: Float): Int =
         minOf(screenW - (SIDE_GAP_DP * density).roundToInt(), (MAX_WIDTH_DP * density).roundToInt(), screenW).coerceAtLeast(1)
 
+    /** The 보기 설정 sheet's rows are at most this wide (dp), centred on a wider screen (landscape, tablets). */
+    const val SHEET_MAX_WIDTH_DP = 480
+
     /**
-     * The settings popup [TOP_GAP_DP] under [topInset] (the status bar / cutout; the reader's bars are hidden while it
-     * is open): its top and max height ([SETTINGS_FRACTION] of [screenH], and never past the bottom edge; moved up when less than
-     * [MIN_HEIGHT_DP] is left).
+     * The 보기 설정 sheet (user, 2026-10-10: "보기 설정 누르면 리디처럼 이렇게 아래에서 나왔으면"): the window's width, its
+     * bottom on the window's bottom edge (its rows above [bottomInset], a navigation bar that shows), the upper part of
+     * the page in view above it. The rows' max height: [SETTINGS_FRACTION] of [screenH], never reaching within
+     * [TOP_GAP_DP] of [topInset]; at least [MIN_HEIGHT_DP] (less only in a window shorter than that).
      */
-    fun settings(screenH: Int, topInset: Int, density: Float): Placement {
-        val edge = (EDGE_DP * density).roundToInt()
+    fun sheetHeight(screenH: Int, topInset: Int, bottomInset: Int, density: Float): Int {
         val cap = (screenH * SETTINGS_FRACTION).toInt().coerceAtLeast(1)
-        val top = (topInset.coerceAtLeast(0) + (TOP_GAP_DP * density).roundToInt()).coerceIn(0, screenH)
-        val room = screenH - top - edge
-        val min = minOf(cap, (MIN_HEIGHT_DP * density).roundToInt())
-        if (room >= min) return Placement(top, minOf(cap, room))
-        val h = min.coerceAtMost((screenH - edge).coerceAtLeast(1))
-        return Placement((screenH - edge - h).coerceAtLeast(0), h)
+        val room = screenH - topInset.coerceAtLeast(0) - (TOP_GAP_DP * density).roundToInt() - bottomInset.coerceAtLeast(0)
+        val min = minOf((MIN_HEIGHT_DP * density).roundToInt(), screenH - bottomInset.coerceAtLeast(0))
+        return maxOf(minOf(cap, room), min).coerceAtLeast(1)
     }
+
+    /** The sheet's rows' width: the window's, at most [SHEET_MAX_WIDTH_DP]. */
+    fun sheetWidth(screenW: Int, density: Float): Int =
+        minOf(screenW, (SHEET_MAX_WIDTH_DP * density).roundToInt()).coerceAtLeast(1)
 
     /**
      * A drop-down list [contentHeight] px tall for a row spanning [anchorTop]..[anchorBottom]: height capped at
