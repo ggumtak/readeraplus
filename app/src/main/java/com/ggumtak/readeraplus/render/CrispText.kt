@@ -3,7 +3,8 @@ package com.ggumtak.readeraplus.render
 import android.graphics.Paint
 
 /**
- * Body text drawn the way MaruViewer draws it: hinted, at a whole-pixel size, on whole pixels (pure, unit-tested).
+ * Body text drawn the way MaruViewer draws it: hinted, at a whole-pixel size, on whole pixels (pure, unit-tested); 리디바탕
+ * the way RIDI draws it, at its exact size ([exactSize]).
  *
  * The user's S25 pairs (2026-10-05, the same TXT page in 나눔명조 400 at 17 sp, white page and MARU page: "뭔가 아직도
  * 마루뷰어가 더 선명한 느낌이야") fit NanumMyeongjo.ttf rendered by FreeType to within 0.5 grey level: MaruViewer's glyphs
@@ -54,10 +55,28 @@ internal object CrispText {
 
     /**
      * The text size of a body paint for a run at [sizeScale] (RunStyle.sizeScale; nonsense is 1, kept to 0.3–4) of the
-     * layout's em [emPx]: [textPx] of the product. `AndroidTextMeasurer.createPaint` sets exactly this, so the tests hold
-     * the drawn size whole at the S25's fractional density ([textPx] says why it must be).
+     * layout's em [emPx]: [textPx] of the product, or the product itself when [exact] ([exactSize]: 리디바탕).
+     * `AndroidTextMeasurer.createPaint` sets exactly this, so the tests hold the drawn size whole at the S25's fractional
+     * density for every other font ([textPx] says why it must be).
      */
-    fun paintTextPx(emPx: Float, sizeScale: Float): Float = textPx(emPx * runScale(sizeScale))
+    fun paintTextPx(emPx: Float, sizeScale: Float, exact: Boolean = false): Float {
+        val px = emPx * runScale(sizeScale)
+        if (!exact) return textPx(px)
+        return if (px > 1f && px.isFinite()) px else 1f
+    }
+
+    /**
+     * 리디바탕 is drawn the way RIDI draws it (an Android text view's paint): at the size itself, its advances whole px at
+     * `(int) size` as for every body paint. The user's S25 pair (2026-10-10, the same line in both apps, 흰색 + 리디바탕)
+     * fits RIDIBatang.otf rendered by FreeType: the same hinted glyphs on whole-px origins with the same anti-aliasing,
+     * advances equal to the pixel over the line, and RIDI's glyphs at 51.2 px where ours were 51 (the em floored; 1.1 % less
+     * ink). The flooring is for TrueType fonts hinted at a rounded ppem ([textPx]); RIDIBatang is CFF, which FreeType
+     * draws at the fractional size, so its glyphs are drawn less than 1 px above the size their cells are laid out at
+     * (0.4 % at 51.2 px), as RIDI's are.
+     */
+    fun exactSize(fontId: String): Boolean = fontId == RIDI_BATANG
+
+    private const val RIDI_BATANG = "ridibatang"
 
     /** A run's size scale as the paints use it: 1 for nonsense, else kept to 0.3–4. */
     fun runScale(s: Float): Float = if (s > 0f && s.isFinite()) s.coerceIn(0.3f, 4f) else 1f

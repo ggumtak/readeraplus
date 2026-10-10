@@ -75,6 +75,33 @@ class CrispTextTest {
     }
 
     @Test
+    fun ridiBatangDrawsAtItsExactSizeLikeRidi() {
+        // The S25 pair of 2026-10-10: RIDI's RIDIBatang glyphs fit FreeType at 51.2 px on advances laid out at 51, ours
+        // at 51 (floored). Only 리디바탕 keeps the exact size; every other font stays whole (MaruViewer's NanumMyeongjo).
+        assertTrue(CrispText.exactSize("ridibatang"))
+        for (id in listOf("nanummyeongjo", "maruburi", "pretendard", "user:RIDIBatang.otf", "")) assertTrue(!CrispText.exactSize(id))
+        val em = 18.2f * 2.8125f
+        assertEquals(em, CrispText.paintTextPx(em, 1f, exact = true), 0f)
+        assertEquals(51f, CrispText.paintTextPx(em, 1f, exact = false), 0f)
+        assertEquals(51f, CrispText.paintTextPx(em, 1f), 0f)
+        assertEquals(em * 1.2f, CrispText.paintTextPx(em, 1.2f, exact = true), 0.001f)
+        // Less than 1 px above the whole size minikin lays it out at, never below it.
+        for (density in floatArrayOf(2.8125f, 2.625f, 3f, 2f)) {
+            var sp = 10f
+            while (sp <= 40f) {
+                val px = CrispText.paintTextPx(sp * density, 1f, exact = true)
+                val laidOut = Math.floor(px.toDouble()).toFloat()
+                assertTrue("$sp sp x $density", px >= laidOut && px < laidOut + 1f && px <= sp * density)
+                sp += 0.1f
+            }
+        }
+        // Nonsense still draws at 1 px.
+        assertEquals(1f, CrispText.paintTextPx(Float.NaN, 1f, exact = true), 0f)
+        assertEquals(1f, CrispText.paintTextPx(-5f, 1f, exact = true), 0f)
+        assertEquals(1f, CrispText.paintTextPx(Float.POSITIVE_INFINITY, 1f, exact = true), 0f)
+    }
+
+    @Test
     fun baselinesLandOnWholeRows() {
         // TypesetPass centres the glyphs in a 95.6 px line box (200 % of 47.81 px): fractional baselines.
         assertEquals(1132f, CrispText.baselineY(1131.6f), 0f)

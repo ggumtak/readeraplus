@@ -110,7 +110,7 @@ class AndroidTextMeasurer(
         val p = TextPaint(CrispText.PAINT_FLAGS)
         p.color = Color.BLACK
         p.textLocale = Locale.KOREAN
-        val size = CrispText.paintTextPx(emPx, style.sizeScale)
+        val size = CrispText.paintTextPx(emPx, style.sizeScale, CrispText.exactSize(fontId))
         p.textSize = size
         val weight = FontMath.runWeight(baseWeight, style.bold)
         var stroke = 0f
@@ -158,7 +158,7 @@ class AndroidTextMeasurer(
          */
         fun naturalLinePxFor(context: Context, s: ReaderSettings): Float {
             if (s.fontId.startsWith(FontFiles.USER_PREFIX)) return 0f
-            val size = CrispText.paintTextPx(emPxFor(context, s.fontSizeSp), 1f)
+            val size = CrispText.paintTextPx(emPxFor(context, s.fontSizeSp), 1f, CrispText.exactSize(s.fontId))
             lastNatural?.let { if (it.fontId == s.fontId && it.weight == s.fontWeight && it.size == size) return it.px }
             return try {
                 val base = FontMath.effectiveBase(s.fontWeight, FontManager.minWeight(s.fontId))
