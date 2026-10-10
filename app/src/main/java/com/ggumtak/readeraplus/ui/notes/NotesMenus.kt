@@ -80,33 +80,33 @@ internal class NotesMenus(private val a: NotesActivity) {
         items += MenuItem("책에서 보기", R.drawable.ic_open_in_new) { if (kind == NoteKind.REVIEW) openBook(row) else openAt(row) }
         when (kind) {
             NoteKind.QUOTE -> {
-                items += MenuItem("메모 편집") { editNote(row) }
+                items += MenuItem("메모 편집", R.drawable.ic_edit) { editNote(row) }
                 if (row.bodyCut || row.body.count { it == '\n' } >= 4 || row.body.length > 160) {
-                    items += MenuItem("전체 보기") { fullView(row) }
+                    items += MenuItem("전체 보기", R.drawable.ic_article) { fullView(row) }
                 }
-                items += MenuItem("복사") { withFull(row) { b, n -> TextActions.copy(a, NotesText.shareQuote(b, n, null, null)) } }
+                items += MenuItem("복사", R.drawable.ic_content_copy) { withFull(row) { b, n -> TextActions.copy(a, NotesText.shareQuote(b, n, null, null)) } }
             }
             NoteKind.BOOKMARK -> {
-                items += MenuItem("메모 편집") { editNote(row) }
-                items += MenuItem("복사") { withFull(row) { b, n -> TextActions.copy(a, bookmarkText(row, b, n)) } }
+                items += MenuItem("메모 편집", R.drawable.ic_edit) { editNote(row) }
+                items += MenuItem("복사", R.drawable.ic_content_copy) { withFull(row) { b, n -> TextActions.copy(a, bookmarkText(row, b, n)) } }
             }
             NoteKind.REVIEW -> {
-                items += MenuItem("리뷰 편집") { editNote(row) }
-                items += MenuItem("복사") { withFull(row) { b, _ -> TextActions.copy(a, b.trim()) } }
+                items += MenuItem("리뷰 편집", R.drawable.ic_edit) { editNote(row) }
+                items += MenuItem("복사", R.drawable.ic_content_copy) { withFull(row) { b, _ -> TextActions.copy(a, b.trim()) } }
             }
             NoteKind.LOOKUP -> {
-                items += MenuItem("뜻 메모") { editNote(row) }
+                items += MenuItem("뜻 메모", R.drawable.ic_sticky_note_2) { editNote(row) }
                 items += MenuItem("다시 찾기", R.drawable.ic_translate) { lookUp(row) }
                 items += MenuItem("웹 검색", R.drawable.ic_search) { TextActions.webSearch(a, row.word.trim()) }
                 if (a.q.wordsOnce && row.wordCount > 1) {
-                    items += MenuItem("모든 기록 보기") { a.setWordsOnce(false, text = row.word.trim()) }
+                    items += MenuItem("모든 기록 보기", R.drawable.ic_history) { a.setWordsOnce(false, text = row.word.trim()) }
                 }
-                items += MenuItem("복사") { TextActions.copy(a, row.word.trim()) }
+                items += MenuItem("복사", R.drawable.ic_content_copy) { TextActions.copy(a, row.word.trim()) }
             }
         }
         items += MenuItem("공유", R.drawable.ic_share) { share(row) }
         if (kind == NoteKind.QUOTE) items += MenuItem("색 바꾸기", R.drawable.ic_ink_highlighter) { recolour(row, anchor) }
-        items += MenuItem("선택") { a.enterSelection(row) }
+        items += MenuItem("선택", R.drawable.ic_check_box) { a.enterSelection(row) }
         items += MenuItem("삭제", R.drawable.ic_delete) { delete(row) }
         a.popupMenu(anchor, items)
     }
@@ -247,8 +247,8 @@ internal class NotesMenus(private val a: NotesActivity) {
 
     fun selectionOverflow(anchor: View) {
         a.popupMenu(anchor, listOf(
-            MenuItem("모두 선택") { a.selectAll() },
-            MenuItem("선택 해제") { a.clearSelection() },
+            MenuItem("모두 선택", R.drawable.ic_select_all) { a.selectAll() },
+            MenuItem("선택 해제", R.drawable.ic_check_box_outline_blank) { a.clearSelection() },
         ))
     }
 

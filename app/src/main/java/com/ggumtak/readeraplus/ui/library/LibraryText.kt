@@ -463,6 +463,20 @@ internal object LibraryText {
      * Empty-state message for a shelf. [flagButtons]: the list shows cards with flag buttons (목록); in the other
      * views the hint points to multi-select or the book menu instead.
      */
+    /** Which empty-state illustration to show. */
+    enum class EmptyArt { LIBRARY, READING, SEARCH, TRASH, COLLECTION, NO_ACCESS }
+
+    /** Picks the empty-state illustration; the first matching rule wins. */
+    fun emptyArt(shelf: Shelf, query: String, inGroup: Boolean, noAccess: Boolean): EmptyArt = when {
+        noAccess -> EmptyArt.NO_ACCESS
+        query.isNotBlank() -> EmptyArt.SEARCH
+        inGroup -> EmptyArt.LIBRARY
+        shelf == Shelf.READING_NOW -> EmptyArt.READING
+        shelf == Shelf.TRASH -> EmptyArt.TRASH
+        shelf == Shelf.COLLECTIONS -> EmptyArt.COLLECTION
+        else -> EmptyArt.LIBRARY
+    }
+
     fun emptyMessage(shelf: Shelf, query: String, inGroup: Boolean, flagButtons: Boolean = true): String {
         if (query.isNotBlank()) return "‘${query.trim()}’ 검색 결과가 없습니다."
         if (inGroup) return "이 항목에 책이 없습니다."

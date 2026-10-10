@@ -23,6 +23,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -181,6 +182,8 @@ class NotesActivity : Activity() {
         private set
     private lateinit var emptyBox: ScrollView
     private lateinit var emptyText: TextView
+    private lateinit var emptyArt: ImageView
+    private var emptyArtRes = 0
     private lateinit var emptyButton: TextView
     private lateinit var adapter: NotesAdapter
     private var paged = false
@@ -422,6 +425,16 @@ class NotesActivity : Activity() {
         emptyText = emptyMessage("").apply { keepAll() }
         emptyButton = outlineButton("기록 켜기") { setRecordLookups(true) }.apply { visibility = View.GONE }
         val emptyCol = vertical { gravity = Gravity.CENTER_HORIZONTAL }
+        emptyArt = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setColorFilter(Ink.GRAY)
+            contentDescription = null
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        emptyCol.addView(emptyArt, LinearLayout.LayoutParams(dp(88), dp(88)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = dp(16)
+        })
         emptyCol.addView(emptyText, lp())
         emptyCol.addView(emptyButton, lp(WRAP_CONTENT, WRAP_CONTENT))
         emptyBox = ScrollView(this).apply {
@@ -551,6 +564,14 @@ class NotesActivity : Activity() {
         val app = Settings.app
         val case = NotesText.emptyCase(q.tab, q.text, q.bookId != null, app.recordLookups)
         setText(emptyText, keepAll(NotesText.emptyText(q.tab, q.text, q.bookId != null, app.recordLookups, app.bookmarkByTouch)).toString())
+        val art = when (NotesText.emptyArt(case)) {
+            NotesText.EmptyArt.SEARCH -> R.drawable.ill_empty_search
+            NotesText.EmptyArt.NOTES -> R.drawable.ill_empty_notes
+        }
+        if (art != emptyArtRes) {
+            emptyArt.setImageResource(art)
+            emptyArtRes = art
+        }
         emptyButton.visibility = if (case == NotesText.Empty.WORDS_OFF) View.VISIBLE else View.GONE
         emptyBox.visibility = View.VISIBLE
     }

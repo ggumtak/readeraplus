@@ -540,4 +540,15 @@ class LibraryTextTest {
         assertEquals("책 3권의 기록을 복원했습니다", LibraryText.restoredMessage(3))
         assertEquals("자동 백업을 저장했습니다 · 설정의 ‘백업·복원’에서 끌 수 있습니다", LibraryText.AUTO_BACKUP_NOTICE)
     }
+
+    @Test
+    fun emptyArtRules() {
+        assertEquals(LibraryText.EmptyArt.NO_ACCESS, LibraryText.emptyArt(Shelf.ALL, "x", true, true))
+        assertEquals(LibraryText.EmptyArt.SEARCH, LibraryText.emptyArt(Shelf.TRASH, "x", true, false))
+        assertEquals(LibraryText.EmptyArt.LIBRARY, LibraryText.emptyArt(Shelf.READING_NOW, " ", true, false))
+        assertEquals(LibraryText.EmptyArt.READING, LibraryText.emptyArt(Shelf.READING_NOW, "", false, false))
+        assertEquals(LibraryText.EmptyArt.TRASH, LibraryText.emptyArt(Shelf.TRASH, "", false, false))
+        assertEquals(LibraryText.EmptyArt.COLLECTION, LibraryText.emptyArt(Shelf.COLLECTIONS, "", false, false))
+        assertEquals(LibraryText.EmptyArt.LIBRARY, LibraryText.emptyArt(Shelf.ALL, "", false, false))
+    }
 }

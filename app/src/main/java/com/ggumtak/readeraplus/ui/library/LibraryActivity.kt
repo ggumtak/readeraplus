@@ -33,6 +33,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridView
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ScrollView
@@ -250,6 +251,8 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     private lateinit var gridView: InkGridView
     private lateinit var emptyScroll: ScrollView
     private lateinit var emptyText: TextView
+    private lateinit var emptyArt: ImageView
+    private var emptyArtRes = 0
     private lateinit var emptyButtons: LinearLayout
     /** The drawer and its scrim, built on the first open (sixteen rows the start-up doesn't need). */
     private var scrim: View? = null
@@ -696,9 +699,20 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             setLineSpacing(0f, 1.25f)
         }
         emptyButtons = vertical { gravity = Gravity.CENTER_HORIZONTAL }
+        emptyArt = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setColorFilter(Ink.GRAY)
+            contentDescription = null
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            visibility = View.GONE
+        }
         val emptyCol = vertical {
             gravity = Gravity.CENTER
             setPadding(dp(24), dp(32), dp(24), dp(32))
+            addView(emptyArt, LinearLayout.LayoutParams(dp(88), dp(88)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(16)
+            })
             addView(emptyText, lp())
             addView(emptyButtons, lp().apply { topMargin = dp(20) })
         }
@@ -1420,7 +1434,15 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         }
         // The no-access message has the panel's buttons: the panel hides meanwhile (same pass, one redraw).
         setNoAccessShown(noAccess)
-        showMessage(msg, buttons)
+        val art = when (LibraryText.emptyArt(shelf, query, group != null, noAccess)) {
+            LibraryText.EmptyArt.NO_ACCESS -> R.drawable.ill_no_access
+            LibraryText.EmptyArt.SEARCH -> R.drawable.ill_empty_search
+            LibraryText.EmptyArt.READING -> R.drawable.ill_empty_reading
+            LibraryText.EmptyArt.TRASH -> R.drawable.ill_empty_trash
+            LibraryText.EmptyArt.COLLECTION -> R.drawable.ill_empty_collection
+            LibraryText.EmptyArt.LIBRARY -> R.drawable.ill_empty_library
+        }
+        showMessage(msg, buttons, art)
     }
 
     private fun hideEmptyState() {
@@ -1428,8 +1450,17 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         setNoAccessShown(false)
     }
 
-    private fun showMessage(msg: CharSequence, buttons: List<Pair<String, () -> Unit>>) {
+    private fun showMessage(msg: CharSequence, buttons: List<Pair<String, () -> Unit>>, art: Int = 0) {
         emptyText.text = msg
+        if (art == 0) {
+            if (emptyArt.visibility != View.GONE) emptyArt.visibility = View.GONE
+        } else {
+            if (art != emptyArtRes) {
+                emptyArt.setImageResource(art)
+                emptyArtRes = art
+            }
+            if (emptyArt.visibility != View.VISIBLE) emptyArt.visibility = View.VISIBLE
+        }
         emptyButtons.removeAllViews()
         buttons.forEach { (text, action) ->
             emptyButtons.addView(textButton(text) { action() }.apply { minWidth = dp(180) }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {

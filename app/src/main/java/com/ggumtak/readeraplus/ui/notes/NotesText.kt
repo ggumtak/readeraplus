@@ -141,6 +141,11 @@ object NotesText {
     /** Why the list is empty, in the order the cases are checked. */
     enum class Empty { SEARCH, ONE_BOOK, WORDS_OFF, TAB }
 
+    enum class EmptyArt { NOTES, SEARCH }
+
+    /** Illustration for an empty list: search for a search with no hits, notes otherwise. */
+    fun emptyArt(case: Empty): EmptyArt = if (case == Empty.SEARCH) EmptyArt.SEARCH else EmptyArt.NOTES
+
     fun emptyCase(tab: NotesTab, search: String, oneBook: Boolean, recordLookups: Boolean): Empty = when {
         search.isNotBlank() -> Empty.SEARCH
         oneBook -> Empty.ONE_BOOK

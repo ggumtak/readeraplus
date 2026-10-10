@@ -172,4 +172,12 @@ class NotesTextTest {
         assertEquals("a".repeat(39) + emoji, NotesText.cleanTitle("a".repeat(39) + emoji + emoji))
         assertEquals("a".repeat(40), NotesText.cleanTitle("a".repeat(40) + emoji))
     }
+
+    @Test
+    fun emptyArtMapsSearchOnly() {
+        assertEquals(NotesText.EmptyArt.SEARCH, NotesText.emptyArt(NotesText.Empty.SEARCH))
+        assertEquals(NotesText.EmptyArt.NOTES, NotesText.emptyArt(NotesText.Empty.ONE_BOOK))
+        assertEquals(NotesText.EmptyArt.NOTES, NotesText.emptyArt(NotesText.Empty.WORDS_OFF))
+        assertEquals(NotesText.EmptyArt.NOTES, NotesText.emptyArt(NotesText.Empty.TAB))
+    }
 }
