@@ -122,8 +122,8 @@ internal object WordSearchQuery {
     /** chatgpt.com with a prompt in `q`: the page fills it in and sends it. */
     private const val AI = "https://chatgpt.com/?q="
 
-    /** What the AI tab asks about [webQuery]: a word or a short phrase from the book. */
-    fun aiPrompt(webQuery: String): String = "다음 단어나 구절의 뜻을 간단히 알려줘: $webQuery"
+    /** What the AI tab asks about [webQuery]: the selection and "뜻" after it (user, 2026-10-10: "귀접 뜻"). */
+    fun aiPrompt(webQuery: String): String = "$webQuery 뜻"
 
     /** The address of web tab [tab] for [webQuery] (spaces as %20); "" for the 본문 tab. */
     fun url(tab: Int, webQuery: String): String {

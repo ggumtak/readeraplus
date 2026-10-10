@@ -91,13 +91,14 @@ class WordSearchQueryTest {
     @Test
     fun theAiTabAsksChatGptAboutTheWord() {
         // chatgpt.com fills in and sends the prompt of its q parameter.
-        assertEquals("다음 단어나 구절의 뜻을 간단히 알려줘: 말이다", WordSearchQuery.aiPrompt("말이다"))
+        assertEquals("말이다 뜻", WordSearchQuery.aiPrompt("말이다"))
+        assertEquals("귀접 뜻", WordSearchQuery.aiPrompt("귀접"))
         val url = WordSearchQuery.url(WordSearchQuery.TAB_AI, "말이다")
         assertTrue(url.startsWith("https://chatgpt.com/?q="))
         assertEquals(WordSearchQuery.aiPrompt("말이다"), java.net.URLDecoder.decode(url.removePrefix("https://chatgpt.com/?q="), "UTF-8"))
         assertFalse(url.contains(' ') || url.contains('+'))
         // Reserved characters of the word stay inside the parameter.
-        assertTrue(WordSearchQuery.url(WordSearchQuery.TAB_AI, "a&b=c#d").endsWith("a%26b%3Dc%23d"))
+        assertTrue(WordSearchQuery.url(WordSearchQuery.TAB_AI, "a&b=c#d").endsWith("a%26b%3Dc%23d%20%EB%9C%BB"))
     }
 
     @Test
