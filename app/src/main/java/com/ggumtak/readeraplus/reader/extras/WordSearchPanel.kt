@@ -24,6 +24,8 @@ import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.BaseAdapter
@@ -61,6 +63,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 
 /**
  * The selection's 검색 (RIDI's): a full-screen panel over the reader with the query on top and six tabs, 본문 (this
@@ -557,7 +560,9 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
             if (webQ.isNotEmpty()) loadWeb(visible)
         }
         val msg = if (visible == WordSearchQuery.TAB_AI && aiDeviceEink == null && webQ.isNotEmpty())
-            "기기 확인 중…" else if (web) WordSearchQuery.webMessage(webQ, webFailed[visible]) else null
+            "기기 확인 중…" else if (visible == WordSearchQuery.TAB_AI && aiDeviceEink == true && webFailed[visible])
+            "AI 창을 열 수 없습니다. Android System WebView를 확인해 주세요."
+            else if (web) WordSearchQuery.webMessage(webQ, webFailed[visible]) else null
         setText(webMessage, msg ?: "")
         webMessage.visibility = if (msg == null) View.GONE else View.VISIBLE
         for (k in WordSearchQuery.TAB_KO until WordSearchQuery.TAB_COUNT) {
@@ -606,11 +611,8 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         web.loadUrl(webUrl(ai))
     }
 
-    private fun webUrl(i: Int): String {
-        if (i != WordSearchQuery.TAB_AI || aiDeviceEink != true) return WordSearchQuery.url(i, webQ)
-        val address = Settings.raw().getString(EinkAiSite.PREF_KEY, EinkAiSite.DEFAULT_URL) ?: EinkAiSite.DEFAULT_URL
-        return WordSearchQuery.url(i, webQ, einkAi = true, aiSite = address)
-    }
+    private fun webUrl(i: Int): String = WordSearchQuery.url(i, webQ,
+        einkAi = i == WordSearchQuery.TAB_AI && aiDeviceEink == true)
 
     /** Loads [webQ] in web tab [i], creating its WebView the first time. */
     private fun loadWeb(i: Int) {
@@ -639,8 +641,12 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         val web = createWeb(i)
         if (web == null) {
             webFailed[i] = true
-            ctx.toast("웹 창을 열 수 없어 브라우저로 엽니다")
-            TextActions.start(ctx, Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            if (i == WordSearchQuery.TAB_AI && aiDeviceEink == true)
+                ctx.toast("AI 창을 열 수 없습니다. Android System WebView를 확인해 주세요")
+            else {
+                ctx.toast("웹 창을 열 수 없어 브라우저로 엽니다")
+                TextActions.start(ctx, Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            }
             return
         }
         webs[i] = web
@@ -651,6 +657,7 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
     /** Same settings and link rules as [LookupPanel]'s window; null when no WebView can be created. */
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWeb(i: Int): WebView? {
+        val localAi = i == WordSearchQuery.TAB_AI && aiDeviceEink == true
         val web = try {
             WebView(ctx)
         } catch (_: Throwable) {
@@ -661,12 +668,28 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
             domStorageEnabled = true
             allowFileAccess = false
             allowContentAccess = false
+            if (localAi) mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
         web.setBackgroundColor(Ink.WHITE)
         web.overScrollMode = View.OVER_SCROLL_NEVER
         web.isVerticalFadingEdgeEnabled = false
         web.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                if (!localAi) return null
+                val address = request.url.toString()
+                if (EinkAiSite.isDocument(address) && request.method == "GET") {
+                    // Asset IO happens on WebView's worker thread, with no hosting or sign-in request.
+                    return WebResourceResponse("text/html", "UTF-8", 200, "OK",
+                        mapOf("Cache-Control" to "no-store", "Referrer-Policy" to "no-referrer",
+                            "X-Content-Type-Options" to "nosniff"), ctx.assets.open(EinkAiSite.ASSET))
+                }
+                if (EinkAiSite.isApiRequest(address) && request.method in arrayOf("POST", "OPTIONS")) return null
+                return WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden",
+                    emptyMap(), ByteArrayInputStream(ByteArray(0)))
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                if (localAi) return !EinkAiSite.isDocument(request.url.toString())
                 val scheme = request.url.scheme?.lowercase()
                 // http(s) stays in the panel; intent://, market:// and the like are never followed.
                 return scheme != "http" && scheme != "https"

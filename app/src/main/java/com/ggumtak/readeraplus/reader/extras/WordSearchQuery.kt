@@ -126,8 +126,8 @@ internal object WordSearchQuery {
     fun aiPrompt(webQuery: String): String = "$webQuery 뜻"
 
     /** The address of web tab [tab] for [webQuery] (spaces as %20); "" for the 본문 tab. */
-    fun url(tab: Int, webQuery: String, einkAi: Boolean = false, aiSite: String = EinkAiSite.DEFAULT_URL): String {
-        if (tab == TAB_AI && einkAi) return EinkAiSite.url(aiSite, aiPrompt(webQuery))
+    fun url(tab: Int, webQuery: String, einkAi: Boolean = false): String {
+        if (tab == TAB_AI && einkAi) return EinkAiSite.url(aiPrompt(webQuery))
         val (base, q) = when (tab) {
             TAB_KO -> KO_DICT to webQuery
             TAB_EN -> EN_DICT to webQuery

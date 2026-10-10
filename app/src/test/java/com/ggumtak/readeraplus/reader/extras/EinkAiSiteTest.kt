@@ -8,22 +8,33 @@ import org.junit.Test
 class EinkAiSiteTest {
     @Test fun selectionAndReservedCharactersStayInTheFragment() {
         val prompt = "귀접 & a=b#c 뜻"
-        val uri = URI(EinkAiSite.url("https://dictionary.example/", prompt))
+        val uri = URI(EinkAiSite.url(prompt))
         assertNull(uri.rawQuery)
-        assertEquals("dictionary.example", uri.host)
+        assertEquals(EinkAiSite.HOST, uri.host)
+        assertTrue(EinkAiSite.isDocument(uri.toString()))
         assertEquals(prompt, URLDecoder.decode(uri.rawFragment.substringAfter("q=").substringBefore("&eink="), "UTF-8"))
         assertTrue(uri.rawFragment.endsWith("&eink=1"))
     }
 
-    @Test fun pastedLookupAddressesDropOldQueryAndFragment() {
-        assertEquals("https://dictionary.example/chat", EinkAiSite.normalize(" https://dictionary.example/chat/?old=word#q=old "))
-        assertEquals("https://dictionary.example", EinkAiSite.normalize("https://dictionary.example/"))
+    @Test fun onlyTheBundledDocumentCanNavigate() {
+        assertTrue(EinkAiSite.isDocument(EinkAiSite.DEFAULT_URL))
+        for (address in listOf("http://${EinkAiSite.HOST}${EinkAiSite.PATH}",
+            "https://evil.example${EinkAiSite.PATH}", "https://${EinkAiSite.HOST}.evil.example${EinkAiSite.PATH}",
+            "https://user@${EinkAiSite.HOST}${EinkAiSite.PATH}",
+            "https://${EinkAiSite.HOST}:443${EinkAiSite.PATH}",
+            "https://${EinkAiSite.HOST}/other.html", "${EinkAiSite.DEFAULT_URL}?key=secret",
+            "https://${EinkAiSite.HOST}/%72eaderaplus-ai-dictionary.html", "not a url")) {
+            assertFalse(address, EinkAiSite.isDocument(address))
+        }
     }
 
-    @Test fun unsafeOrMalformedAddressesAreRejected() {
-        for (address in listOf("javascript:alert(1)", "http://dictionary.example", "https://user:password@dictionary.example", "https://", "https://dictionary.example:70000", "not a url")) {
-            assertNull(address, EinkAiSite.normalize(address))
+    @Test fun onlyTheExactClaudeEndpointCanLeaveAsARequest() {
+        assertTrue(EinkAiSite.isApiRequest("https://api.anthropic.com/v1/messages"))
+        for (address in listOf("http://api.anthropic.com/v1/messages",
+            "https://api.anthropic.com.evil.example/v1/messages", "https://api.anthropic.com/v1/messages?key=secret",
+            "https://user@api.anthropic.com/v1/messages", "https://api.anthropic.com/v1/other",
+            "https://chatgpt.com/", "javascript:alert(1)")) {
+            assertFalse(address, EinkAiSite.isApiRequest(address))
         }
-        assertTrue(EinkAiSite.url("invalid", "말 뜻").startsWith(EinkAiSite.DEFAULT_URL + "#q="))
     }
 }

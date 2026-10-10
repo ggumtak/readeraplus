@@ -102,15 +102,15 @@ class WordSearchQueryTest {
     }
 
     @Test
-    fun einkAiUsesTheLightweightSiteAndPhonesKeepChatGpt() {
+    fun einkAiUsesTheBundledPageAndPhonesKeepChatGpt() {
         val q = "귀접"
-        val site = "https://dictionary.example"
-        val eink = java.net.URI(WordSearchQuery.url(WordSearchQuery.TAB_AI, q, einkAi = true, aiSite = site))
-        assertEquals("dictionary.example", eink.host)
+        val eink = java.net.URI(WordSearchQuery.url(WordSearchQuery.TAB_AI, q, einkAi = true))
+        assertEquals(EinkAiSite.HOST, eink.host)
+        assertTrue(EinkAiSite.isDocument(eink.toString()))
         assertNull(eink.query)
         assertEquals("귀접 뜻", java.net.URLDecoder.decode(eink.rawFragment.substringAfter("q=").substringBefore('&'), "UTF-8"))
-        assertTrue(WordSearchQuery.url(WordSearchQuery.TAB_AI, q, einkAi = false, aiSite = site).startsWith("https://chatgpt.com/?q="))
-        assertEquals(WordSearchQuery.url(WordSearchQuery.TAB_KO, q), WordSearchQuery.url(WordSearchQuery.TAB_KO, q, einkAi = true, aiSite = site))
+        assertTrue(WordSearchQuery.url(WordSearchQuery.TAB_AI, q, einkAi = false).startsWith("https://chatgpt.com/?q="))
+        assertEquals(WordSearchQuery.url(WordSearchQuery.TAB_KO, q), WordSearchQuery.url(WordSearchQuery.TAB_KO, q, einkAi = true))
     }
 
     @Test

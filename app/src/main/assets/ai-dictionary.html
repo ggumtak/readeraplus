@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-ofUoqHmxzGpDqRFZDlaisWTXbl2Q8bURtbqIrlZUaC8='; style-src 'unsafe-inline'; connect-src https://api.anthropic.com/v1/messages; img-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="description" content="책을 읽다가 궁금한 뜻을 바로 묻는 가벼운 Claude AI 사전.">
+<title>AI 사전 · ReaderaPlus</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans KR","Malgun Gothic",sans-serif;color:#181818;background:#faf9f6;font-synthesis:none}
+*{box-sizing:border-box}html,body{height:100%;margin:0}body{overflow:hidden}button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}button:disabled{cursor:default;opacity:.45}button:focus-visible,input:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid #333;outline-offset:3px}
+button{touch-action:manipulation}button,textarea{-webkit-tap-highlight-color:transparent}button{border:0;background:none}svg{display:block}button svg{pointer-events:none}[hidden]{display:none!important}
+.app{height:100%;display:flex;flex-direction:column;max-width:860px;margin:auto}
+.header{height:68px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:8px 14px}
+.icon{width:44px;height:44px;display:grid;place-items:center;border-radius:12px}.brand{font-size:15px;font-weight:500;color:#6a6965}.header-right{display:flex;gap:2px}
+.chat{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:20px 22px 30px;scrollbar-width:thin}
+.welcome{height:100%;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding-bottom:48px}
+.mark{width:66px;height:66px;color:#c87353;margin-bottom:26px}.welcome h1{font-size:27px;line-height:1.4;font-weight:500;letter-spacing:-.8px;margin:0}.welcome p{font-size:15px;color:#77756e;margin:14px 0 0;line-height:1.6}
+.group{margin-bottom:30px}.user-wrap{display:flex;justify-content:flex-end}.user{white-space:pre-wrap;overflow-wrap:anywhere;word-wrap:break-word;background:#efeee9;border:1px solid #deddd7;border-radius:20px;max-width:88%;padding:15px 20px;font-size:20px;line-height:1.55;margin:0 0 24px}
+.answer{font-size:20px;line-height:1.7;overflow-wrap:anywhere;word-wrap:break-word}.answer p{margin:0 0 18px}.answer ul,.answer ol{padding-left:1.35em;margin:0 0 18px}.answer li{padding-left:.15em;margin:9px 0}.answer h3{font-size:21px;margin:20px 0 10px}.answer pre{font-size:15px;white-space:pre-wrap;background:#f0efeb;padding:14px;border-radius:12px;line-height:1.5}.answer code{font-family:ui-monospace,monospace;font-size:.88em;background:#eeede8;padding:1px 4px;border-radius:3px}.live{white-space:pre-wrap}.status{font-size:14px;line-height:1.5;color:#76746e;margin:0 0 20px}.error{color:#333;font-size:16px;line-height:1.65}.small-button{padding:9px 13px;border:1px solid #cccac2;border-radius:9px;margin:8px 8px 0 0;font-size:14px}
+.bottom{flex-shrink:0;padding:8px 16px 14px;padding-bottom:max(14px,env(safe-area-inset-bottom))}.composer{border:1px solid #d9d7d0;border-radius:25px;background:#fff;padding:15px 15px 12px;box-shadow:0 3px 13px #00000006}
+textarea{display:block;width:100%;height:62px;min-height:42px;max-height:130px;resize:none;border:0;outline:0!important;background:transparent;color:#181818;padding:0 6px;font-size:20px;line-height:1.45}textarea::placeholder{color:#888680}
+.compose-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px}.model-pill{border-radius:24px;background:#f0efeb;padding:11px 16px;font-size:15px;max-width:calc(100% - 60px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.send{width:44px;height:44px;border-radius:50%;background:#181818;color:white;display:grid;place-items:center;flex-shrink:0}.send:disabled{background:#b5b4ae;opacity:1}
+.hint{font-size:12px;color:#797770;text-align:center;margin:9px 0 0;min-height:16px;line-height:1.5}
+.jump{position:absolute;bottom:185px;left:calc(50% - 21px);background:#fff;border:1px solid #dddcd6;border-radius:50%;width:42px;height:42px;display:grid;place-items:center}
+.overlay{position:fixed;inset:0;background:#00000035;display:flex;align-items:center;justify-content:center;padding:20px;z-index:5}
+.sheet{background:#faf9f6;border:1px solid #d2d0c7;border-radius:22px;padding:22px;width:100%;max-width:420px;max-height:90%;overflow:auto}.sheet-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.sheet h2{font-size:21px;margin:0;font-weight:600}.sheet h3{font-size:15px;margin:22px 0 10px}.close{font-size:28px;width:36px;height:36px;line-height:1}
+.option{display:block;text-align:left;width:100%;padding:13px 14px;margin:7px 0;border:1px solid #d6d4cd;border-radius:12px;font-size:17px}.option[aria-checked="true"],.effort[aria-checked="true"]{background:#e9e7df;border:2px solid #242424;padding:12px 13px}.option span{display:block;font-size:12px;color:#75736b;margin-top:4px}
+.efforts{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.effort{padding:12px 6px;border:1px solid #d6d4cd;border-radius:10px;font-size:14px}.effort[aria-checked="true"]{padding:11px 5px}
+.help{font-size:13px;color:#77746c;line-height:1.6;margin:12px 0 0}.done{display:block;width:100%;background:#222;color:#fff;border-radius:12px;padding:13px;margin-top:22px;font-size:16px}.divider{border-top:1px solid #dedcd4;margin-top:24px;padding-top:12px}.menu-row{display:block;width:100%;text-align:left;font-size:17px;padding:14px 8px}.api-input{display:block;width:100%;padding:13px;border:1px solid #c9c6bc;background:#fff;border-radius:10px;font-size:16px;margin:16px 0}.notice{font-size:14px;line-height:1.65;margin:12px 0}.key-state{font-size:13px;color:#6c6a62;margin-top:12px}.plain-link{color:inherit;text-decoration:underline}.noscript{padding:20px}
+@media(min-width:700px){.chat{padding-left:46px;padding-right:46px}.bottom{padding-left:36px;padding-right:36px}.header{padding-left:30px;padding-right:30px}}
+@media(max-width:360px){.chat{padding-left:16px;padding-right:16px}.user,.answer,textarea{font-size:18px}.model-pill{font-size:14px;padding:10px 12px}.sheet{padding:18px}.efforts{gap:4px}.effort{font-size:13px}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+<header class="header">
+<button class="icon" id="menu" aria-label="메뉴"><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 6h18M3 12h14M3 18h10"/></svg></button>
+<span class="brand">AI 사전</span>
+<div class="header-right">
+<button class="icon" id="new" aria-label="새 대화"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 1-8 8H4l-2 2v-8a8 8 0 0 1 8-8"/><path d="M17 2v8M13 6h8"/></svg></button>
+<button class="icon" id="settings" aria-label="모델과 노력 설정"><svg width="22" height="26" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg></button>
+</div>
+</header>
+<main class="chat" id="chat" aria-label="대화">
+<div class="welcome" id="welcome">
+<svg class="mark" viewBox="0 0 80 80" fill="none" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" aria-hidden="true"><path d="M40 7v66M7 40h66M17 17l46 46M17 63l46-46M27 10l26 60M10 27l60 26M10 53l60-26M27 70l26-60"/></svg>
+<h1>무엇이 궁금하세요?</h1><p>단어의 뜻부터 짧은 질문까지.</p>
+</div>
+</main>
+<button class="jump" id="jump" aria-label="최근 답변으로 이동" hidden><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v15M5 12l7 7 7-7"/></svg></button>
+<footer class="bottom">
+<form class="composer" id="form">
+<textarea id="input" rows="2" maxlength="2000" aria-label="질문" placeholder="Claude에게 질문하세요…" enterkeyhint="send"></textarea>
+<div class="compose-row"><button class="model-pill" id="model" type="button" aria-haspopup="dialog">Haiku 5.5 중간</button><button class="send" id="send" type="submit" aria-label="질문 보내기" disabled><svg id="send-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg><svg id="stop-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" hidden><rect x="2" y="2" width="12" height="12" rx="2"/></svg></button></div>
+</form>
+<p class="hint" id="hint">답변의 정확성은 필요한 경우 확인해 주세요.</p>
+</footer>
+</div>
+<div class="overlay" id="model-dialog" hidden><section class="sheet" role="dialog" aria-modal="true" aria-labelledby="model-title">
+<div class="sheet-head"><h2 id="model-title">모델과 노력 수준</h2><button class="close" data-close aria-label="닫기">×</button></div>
+<h3>모델</h3><div role="radiogroup" aria-label="모델">
+<button class="option" role="radio" data-model="claude-haiku-5-5">Haiku 5.5<span>빠르고 가벼운 질문</span></button>
+<button class="option" role="radio" data-model="claude-sonnet-5-5">Sonnet 5.5<span>균형 잡힌 설명</span></button>
+<button class="option" role="radio" data-model="claude-opus-5-5">Opus 5.5<span>깊이 있는 질문</span></button>
+</div><h3>노력 수준</h3><div class="efforts" role="radiogroup" aria-label="노력 수준">
+<button class="effort" role="radio" data-effort="low">낮음</button><button class="effort" role="radio" data-effort="medium">중간</button><button class="effort" role="radio" data-effort="high">높음</button><button class="effort" role="radio" data-effort="xhigh">엑스트라</button>
+</div><p class="help">높은 노력 수준은 답변 준비가 더 오래 걸릴 수 있어요.</p><button class="done" data-close>완료</button>
+<div class="divider"><button class="menu-row" id="connect-from-model">Claude API 연결</button><p class="key-state" id="key-state">연결 확인 중…</p></div>
+</section></div>
+<div class="overlay" id="menu-dialog" hidden><section class="sheet" role="dialog" aria-modal="true" aria-labelledby="menu-title">
+<div class="sheet-head"><h2 id="menu-title">AI 사전</h2><button class="close" data-close aria-label="닫기">×</button></div>
+<button class="menu-row" id="menu-new">새 대화</button><button class="menu-row" id="menu-model">모델과 노력 수준</button><button class="menu-row" id="menu-key">Claude API 연결</button>
+<p class="help">대화는 이 창이 열려 있는 동안 이어집니다.</p>
+</section></div>
+<div class="overlay" id="key-dialog" hidden><section class="sheet" role="dialog" aria-modal="true" aria-labelledby="key-title">
+<div class="sheet-head"><h2 id="key-title">Claude API 연결</h2><button class="close" data-close aria-label="닫기">×</button></div>
+<p class="notice">Anthropic에서 발급받은 API 키를 연결해 주세요. 로그인 없이 사용할 수 있어요. 키는 Claude API로만 전달돼요.</p>
+<form id="key-form"><label for="api-key">API 키</label><input class="api-input" id="api-key" type="password" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="300"><label class="help"><input type="checkbox" id="remember-key" checked> 이 기기에 키 저장</label><p class="help">이 앱의 localStorage에 저장해요. 암호화된 금고는 아니므로 개인 기기에서만 사용해 주세요.</p><button class="done" id="save-key" type="submit">연결</button></form>
+<p class="notice" id="key-result" role="status"></p><button class="small-button" id="delete-key" hidden>연결 해제</button>
+</section></div>
+<noscript><p class="noscript">AI 사전을 사용하려면 JavaScript를 켜 주세요.</p></noscript>
+<script>
+var ReaderAi=(function(){
+"use strict";
+var KEY="readeraplus-anthropic-key-v1",ENDPOINT="https://api.anthropic.com/v1/messages";
+var MODELS=["claude-haiku-5-5","claude-sonnet-5-5","claude-opus-5-5"],EFFORTS=["low","medium","high","xhigh"];
+var SYSTEM="한국어 독서를 돕는 AI 사전입니다. 뜻을 묻는 질문에는 핵심 의미부터 먼저 설명하고 필요할 때 짧은 예문을 하나 덧붙이세요. 인물이나 개념 질문은 핵심만 정리하세요. 기본적으로 2~6문장으로 간결하게 답하되 사용자가 자세한 설명을 요청하면 충분히 설명하세요. 확실하지 않은 사실은 추측을 사실처럼 말하지 마세요. 불필요한 인사, 반복, 긴 서론은 생략하세요.";
+function validKey(key){return typeof key==="string"&&/^sk-ant-[A-Za-z0-9_-]{13,293}$/.test(key);}
+function loadKey(storage){try{var key=storage.getItem(KEY);return validKey(key)?key:"";}catch(e){return "";}}
+function saveKey(storage,key,remember){if(!validKey(key))throw new Error("invalid_key");if(remember)storage.setItem(KEY,key);else storage.removeItem(KEY);}
+function forgetKey(storage){storage.removeItem(KEY);}
+function errorCode(status,type){
+ if(status===401||type==="authentication_error")return "invalid_key";
+ if(status===403||type==="permission_error")return "permission_denied";
+ if(status===429||type==="rate_limit_error")return "rate_limit";
+ if(status===404||type==="not_found_error")return "model_unavailable";
+ if(status===529||status>=500||type==="overloaded_error")return "upstream_busy";
+ if(status===400||type==="invalid_request_error")return "invalid_request";
+ return "api_request_failed";
+}
+function payload(options,stream){
+ if(MODELS.indexOf(options.model)<0||EFFORTS.indexOf(options.effort)<0)throw new Error("invalid_request");
+ var messages=options.messages,total=0;
+ if(!Array.isArray(messages)||!messages.length||messages.length>14)throw new Error("invalid_request");
+ messages.forEach(function(m,i){
+  if(!m||m.role!==(i%2?"assistant":"user")||typeof m.content!=="string"||!m.content.trim())throw new Error("invalid_request");
+  total+=m.content.length;
+ });
+ if(messages.length%2===0||total>30000||messages[messages.length-1].content.length>2000)throw new Error("invalid_request");
+ return {model:options.model,messages:messages,system:SYSTEM,max_tokens:options.effort==="low"?2048:options.effort==="xhigh"?8192:4096,thinking:{type:"adaptive"},output_config:{effort:options.effort},stream:stream};
+}
+async function request(key,options,onText,signal){
+ if(!validKey(key))throw new Error("invalid_key");
+ var streaming=typeof ReadableStream!=="undefined"&&typeof TextDecoder!=="undefined"&&typeof Response!=="undefined"&&"body" in Response.prototype;
+ var response=await fetch(ENDPOINT,{method:"POST",credentials:"omit",referrerPolicy:"no-referrer",headers:{"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify(payload(options,streaming)),signal:signal});
+ if(!response.ok){var type="";try{var failure=await response.json();type=failure.error&&failure.error.type;}catch(e){}throw new Error(errorCode(response.status,type));}
+ var complete=false,truncated=false;
+ if(streaming&&response.body&&response.body.getReader){
+  var reader=response.body.getReader(),decoder=new TextDecoder(),buffer="";
+  function frame(value){
+   var lines=value.split(/\r?\n/),parts=[];
+   lines.forEach(function(line){if(line.indexOf("data:")===0)parts.push(line.slice(5).replace(/^ /,""));});
+   if(!parts.length)return;
+   var data;try{data=JSON.parse(parts.join("\n"));}catch(e){throw new Error("connection_lost");}
+   if(data.type==="content_block_start"&&data.content_block&&data.content_block.type==="text"&&data.content_block.text)onText(data.content_block.text);
+   else if(data.type==="content_block_delta"&&data.delta&&data.delta.type==="text_delta"&&typeof data.delta.text==="string")onText(data.delta.text);
+   else if(data.type==="message_delta"&&data.delta)truncated=data.delta.stop_reason==="max_tokens";
+   else if(data.type==="message_stop")complete=true;
+   else if(data.type==="error")throw new Error(errorCode(0,data.error&&data.error.type));
+  }
+  try{
+   while(!complete){
+    var part=await reader.read();buffer+=decoder.decode(part.value,{stream:!part.done});var match;
+    if(buffer.length>262144)throw new Error("connection_lost");
+    while((match=/\r?\n\r?\n/.exec(buffer))){var value=buffer.slice(0,match.index);buffer=buffer.slice(match.index+match[0].length);frame(value);if(complete)break;}
+    if(part.done)break;
+   }
+  }finally{await reader.cancel().catch(function(){});reader.releaseLock();}
+ }else{
+  var body=await response.json();
+  if(!Array.isArray(body.content))throw new Error("api_request_failed");
+  body.content.forEach(function(block){if(block.type==="text"&&typeof block.text==="string")onText(block.text);});
+  complete=true;truncated=body.stop_reason==="max_tokens";
+ }
+ if(!complete)throw new Error("connection_lost");
+ return {truncated:truncated};
+}
+return {validKey:validKey,loadKey:loadKey,saveKey:saveKey,forgetKey:forgetKey,request:request};
+})();
+/* UI */
+(function(){
+"use strict";
+var $=function(id){return document.getElementById(id);};
+var input=$("input"),chat=$("chat"),send=$("send"),welcome=$("welcome");
+var model="claude-haiku-5-5",effort="medium",history=[],active=null,configured=false,apiKey="";
+try{apiKey=ReaderAi.loadKey(localStorage);}catch(e){}configured=!!apiKey;
+var pending="",lastUrl="",following=true,dialog=null,returnFocus=null,generation=0;
+var labels={low:"낮음",medium:"중간",high:"높음",xhigh:"엑스트라"};
+var models={"claude-haiku-5-5":"Haiku 5.5","claude-sonnet-5-5":"Sonnet 5.5","claude-opus-5-5":"Opus 5.5"};
+try{var saved=JSON.parse(localStorage.getItem("reader-ai-preferences")||"{}");if(models[saved.model])model=saved.model;if(labels[saved.effort])effort=saved.effort;}catch(e){}
+function prefs(){
+ $("model").textContent=models[model]+" "+labels[effort];
+ Array.prototype.forEach.call(document.querySelectorAll("[data-model]"),function(b){b.setAttribute("aria-checked",String(b.getAttribute("data-model")===model));});
+ Array.prototype.forEach.call(document.querySelectorAll("[data-effort]"),function(b){b.setAttribute("aria-checked",String(b.getAttribute("data-effort")===effort));});
+ try{localStorage.setItem("reader-ai-preferences",JSON.stringify({model:model,effort:effort}));}catch(e){}
+}
+function controls(){send.disabled=!active&&!input.value.trim();send.setAttribute("aria-label",active?"답변 중지":"질문 보내기");$("send-icon").hidden=!!active;$("stop-icon").hidden=!active;}
+function toBottom(){chat.scrollTop=chat.scrollHeight;}
+chat.addEventListener("scroll",function(){following=chat.scrollHeight-chat.scrollTop-chat.clientHeight<60;$("jump").hidden=following||!history.length&&!active;},{passive:true});
+$("jump").addEventListener("click",function(){following=true;toBottom();});
+function openDialog(id){
+ if(dialog)dialog.hidden=true;else returnFocus=document.activeElement;
+ dialog=$(id);dialog.hidden=false;
+ var focus=dialog.querySelector("button");if(focus)focus.focus();
+}
+function closeDialog(){
+ if(dialog)dialog.hidden=true;dialog=null;$("api-key").value="";
+ if(returnFocus&&returnFocus.focus)returnFocus.focus();
+}
+Array.prototype.forEach.call(document.querySelectorAll("[data-close]"),function(b){b.addEventListener("click",closeDialog);});
+Array.prototype.forEach.call(document.querySelectorAll(".overlay"),function(o){o.addEventListener("click",function(e){if(e.target===o)closeDialog();});});
+document.addEventListener("keydown",function(e){
+ if(!dialog)return;
+ if(e.key==="Escape"){e.preventDefault();closeDialog();return;}
+ if(e.key!=="Tab")return;
+ var items=Array.prototype.filter.call(dialog.querySelectorAll("button,input,a"),function(x){return !x.disabled&&x.offsetParent!==null;});
+ if(!items.length)return;
+ var first=items[0],last=items[items.length-1];
+ if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+ else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+});
+function keyState(){ $("key-state").textContent=configured?"API 연결됨":"API를 연결해 주세요";$("delete-key").hidden=!configured; }
+function openKey(){keyState();$("key-result").textContent="";openDialog("key-dialog");}
+$("menu").addEventListener("click",function(){openDialog("menu-dialog");});
+$("model").addEventListener("click",function(){openDialog("model-dialog");});
+$("settings").addEventListener("click",function(){openDialog("model-dialog");});
+$("menu-model").addEventListener("click",function(){openDialog("model-dialog");});
+$("menu-key").addEventListener("click",openKey);
+$("connect-from-model").addEventListener("click",openKey);
+Array.prototype.forEach.call(document.querySelectorAll("[data-model]"),function(b){b.addEventListener("click",function(){model=b.getAttribute("data-model");prefs();});});
+Array.prototype.forEach.call(document.querySelectorAll("[data-effort]"),function(b){b.addEventListener("click",function(){effort=b.getAttribute("data-effort");prefs();});});
+var errors={key_required:"Claude API를 연결해 주세요.",permission_denied:"이 API 키의 접근 권한을 확인해 주세요.",invalid_key:"API 키를 확인해 주세요.",rate_limit:"요청이 많아요. 잠시 후 다시 시도해 주세요.",model_unavailable:"이 API에서 선택한 모델을 사용할 수 없어요.",upstream_busy:"Claude가 잠시 혼잡해요. 다시 시도해 주세요.",timeout:"답변 준비가 길어지고 있어요. 다시 시도하거나 노력 수준을 낮춰 주세요.",connection_lost:"Claude에 연결하지 못했어요. 인터넷 연결과 브라우저 직접 호출 허용 여부를 확인해 주세요.",no_answer_budget:"답변을 준비하지 못했어요. 노력 수준을 낮춰 다시 시도해 주세요.",storage_unavailable:"지금 API 연결을 저장할 수 없어요.",invalid_request:"질문이 너무 길거나 요청을 처리할 수 없어요.",api_request_failed:"API 요청을 처리하지 못했어요. 연결과 사용 한도를 확인해 주세요."};
+function errorText(code){return errors[code]||"요청을 처리하지 못했어요. 다시 시도해 주세요.";}
+$("key-form").addEventListener("submit",function(e){
+ e.preventDefault();var key=$("api-key").value.trim();if(!ReaderAi.validKey(key)){$("key-result").textContent="sk-ant-로 시작하는 API 키를 확인해 주세요.";return;}
+ var saved=true,remember=$("remember-key").checked;
+ try{ReaderAi.saveKey(localStorage,key,remember);}catch(err){saved=false;}
+ apiKey=key;configured=true;keyState();$("api-key").value="";closeDialog();
+ $("hint").textContent=!saved?"키를 저장할 수 없어 이 창에서만 사용해요.":remember?"API 키를 이 기기에 저장했어요.":"API 키는 이 창에서만 사용해요.";
+ if(pending){var q=pending;pending="";ask(q);}
+});
+$("delete-key").addEventListener("click",function(){
+ stop();apiKey="";configured=false;var removed=true;
+ try{ReaderAi.forgetKey(localStorage);}catch(e){removed=false;}
+ keyState();$("key-result").textContent=removed?"이 기기의 키를 삭제했어요.":"저장된 키를 삭제하지 못했어요. 앱의 저장 공간을 확인해 주세요.";
+ $("hint").textContent="메뉴에서 Claude API를 연결해 주세요.";
+});
+function stop(){if(active){active.stopped=true;active.controller.abort();}}
+function reset(){
+ generation++;stop();active=null;history=[];pending="";
+ while(chat.firstChild)chat.removeChild(chat.firstChild);
+ chat.appendChild(welcome);welcome.hidden=false;input.value="";following=true;$("jump").hidden=true;controls();
+}
+$("new").addEventListener("click",reset);
+$("menu-new").addEventListener("click",function(){closeDialog();reset();});
+function inline(parent,text){
+ var tick=String.fromCharCode(96);
+ var pattern=new RegExp("(\\*\\*[^*\\n]+\\*\\*|"+tick+"[^"+tick+"\\n]+"+tick+")","g");
+ var last=0,m;
+ while((m=pattern.exec(text))){
+  parent.appendChild(document.createTextNode(text.slice(last,m.index)));
+  var bold=m[0].slice(0,2)==="**",node=document.createElement(bold?"strong":"code");
+  node.textContent=m[0].slice(bold?2:1,bold?-2:-1);parent.appendChild(node);last=pattern.lastIndex;
+ }
+ parent.appendChild(document.createTextNode(text.slice(last)));
+}
+function markdown(target,text){
+ target.classList.remove("live");target.textContent="";var frag=document.createDocumentFragment();
+ var lines=text.split("\n"),para=[],list=null,code=null,tick=String.fromCharCode(96),fence=tick+tick+tick;
+ function paragraph(){if(para.length){var p=document.createElement("p");inline(p,para.join(" "));frag.appendChild(p);para=[];}}
+ lines.forEach(function(line){
+  if(line.slice(0,3)===fence){paragraph();list=null;if(code!==null){var pre=document.createElement("pre");pre.textContent=code.join("\n");frag.appendChild(pre);code=null;}else code=[];return;}
+  if(code!==null){code.push(line);return;}
+  if(!line.trim()){paragraph();list=null;return;}
+  var bullet=line.match(/^\s*[-*•]\s+(.+)$/),number=line.match(/^\s*\d+[.)]\s+(.+)$/),heading=line.match(/^#{1,4}\s+(.+)$/);
+  if(bullet||number){paragraph();var tag=number?"ol":"ul";if(!list||list.tagName.toLowerCase()!==tag){list=document.createElement(tag);frag.appendChild(list);}var li=document.createElement("li");inline(li,(bullet||number)[1]);list.appendChild(li);}
+  else if(heading){paragraph();list=null;var h=document.createElement("h3");inline(h,heading[1]);frag.appendChild(h);}
+  else{list=null;para.push(line);}
+ });
+ paragraph();if(code!==null){var pre=document.createElement("pre");pre.textContent=code.join("\n");frag.appendChild(pre);}target.appendChild(frag);
+}
+function context(question){
+ var messages=history.slice(-10);var chars=messages.reduce(function(n,m){return n+m.content.length;},question.length);
+ while(messages.length&&chars>17000){chars-=messages[0].content.length+messages[1].content.length;messages=messages.slice(2);}
+ return messages.concat([{role:"user",content:question}]);
+}
+function addGroup(question){
+ welcome.hidden=true;var group=document.createElement("section");group.className="group";
+ var wrap=document.createElement("div");wrap.className="user-wrap";var user=document.createElement("p");user.className="user";user.textContent=question;wrap.appendChild(user);
+ var status=document.createElement("p");status.className="status";status.textContent="답변 준비 중…";status.setAttribute("role","status");
+ var answer=document.createElement("div");answer.className="answer live";group.appendChild(wrap);group.appendChild(status);group.appendChild(answer);chat.appendChild(group);following=true;toBottom();
+ return {group:group,status:status,answer:answer};
+}
+async function ask(question){
+ question=question.trim();if(!question||active)return;
+ if(typeof fetch!=="function"||typeof AbortController!=="function"){$("hint").textContent="AI 사전은 최신 Android System WebView가 필요해요.";return;}
+ if(question.length>2000){$("hint").textContent="질문은 2,000자 안으로 입력해 주세요.";return;}
+ if(!configured){pending=question;input.value=question;controls();openKey();return;}
+ pending="";input.value="";input.blur();
+ var ui=addGroup(question),run={controller:new AbortController(),stopped:false,text:"",timer:null,first:true,timedOut:false,generation:generation};active=run;controls();
+ function flush(){
+  if(run.generation!==generation)return;
+  ui.answer.textContent=run.text;run.timer=null;if(following)toBottom();
+ }
+ function delta(text){
+  run.text+=text;
+  if(run.first){run.first=false;ui.status.textContent="답변 중…";flush();}
+  else if(!run.timer)run.timer=setTimeout(flush,500);
+ }
+ var truncated=false,complete=false;
+ var timeout=setTimeout(function(){run.timedOut=true;run.controller.abort();},effort==="xhigh"?180000:120000);
+ try{
+  var result=await ReaderAi.request(apiKey,{model:model,effort:effort,messages:context(question)},delta,run.controller.signal);
+  complete=true;truncated=result.truncated;
+  if(!run.text)throw new Error(truncated?"no_answer_budget":"api_request_failed");
+ }catch(err){
+  if(run.generation!==generation)return;
+  if(run.stopped){ui.status.textContent="답변을 중지했어요.";if(run.text)complete=true;}
+  else{
+   var code=run.timedOut?"timeout":err.name==="TypeError"?"connection_lost":err.message;
+   ui.status.textContent=errorText(code);ui.status.className="error";
+   var retry=document.createElement("button");retry.className="small-button";retry.textContent="다시 시도";
+   retry.addEventListener("click",function(){if(active)return;ui.group.remove();ask(question);});ui.group.appendChild(retry);
+   if(code==="invalid_key"||code==="key_required"||code==="permission_denied"){
+    var connect=document.createElement("button");connect.className="small-button";connect.textContent="API 연결";connect.addEventListener("click",openKey);ui.group.appendChild(connect);
+   }
+  }
+ }finally{
+  clearTimeout(timeout);
+  if(run.timer)clearTimeout(run.timer);
+  if(run.generation!==generation)return;
+  markdown(ui.answer,run.text);
+  if(complete&&run.text){history.push({role:"user",content:question},{role:"assistant",content:run.text});history=history.slice(-12);if(!run.stopped){ui.status.hidden=!truncated;ui.status.textContent=truncated?"답변 길이 제한에 도달했어요. 이어서 질문할 수 있어요.":"";}}
+  if(active===run)active=null;controls();if(following)toBottom();
+ }
+}
+$("form").addEventListener("submit",function(e){e.preventDefault();if(active)stop();else ask(input.value);});
+input.addEventListener("input",controls);
+input.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();if(!active)ask(input.value);}});
+function urlQuery(){
+ var p=new URLSearchParams(location.hash.slice(1)),q=(p.get("q")||"").slice(0,2000);
+ if(q===lastUrl)return;lastUrl=q;if(!q)return;reset();pending=q;input.value=q;controls();if(configured)ask(q);else openKey();
+}
+window.addEventListener("hashchange",urlQuery);
+var lastHeight=0;function size(){var h=window.innerHeight;if(h!==lastHeight){lastHeight=h;$("app").style.height=h+"px";}}
+window.addEventListener("resize",size);size();prefs();controls();urlQuery();
+keyState();if(!configured)$("hint").textContent="메뉴에서 Claude API를 연결해 주세요.";
+window.addEventListener("pagehide",stop);
+})();
+</script>
+</body>
+</html>
+

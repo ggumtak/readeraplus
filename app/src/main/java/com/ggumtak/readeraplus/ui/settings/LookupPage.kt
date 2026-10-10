@@ -7,7 +7,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.data.Lookups
 import com.ggumtak.readeraplus.reader.extras.LookupList
-import com.ggumtak.readeraplus.reader.extras.EinkAiSite
 import com.ggumtak.readeraplus.reader.extras.TextActions
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.confirm
@@ -31,7 +30,6 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
     private lateinit var appsText: TextView
     private lateinit var appsBox: LinearLayout
     private var recordRow: View? = null
-    private var aiRow: View? = null
     private var clearing = false
     /** Left the stack: a count that arrives later shows no dialog. */
     private var destroyed = false
@@ -61,20 +59,7 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         updateRadios()
 
         body.section("이북 AI 사전")
-        body.addView(ctx.note("검색의 AI 탭에서 이북리더기는 Claude AI 사전을, 일반 폰은 기존 ChatGPT를 사용합니다."))
-        aiRow = ctx.row("AI 사전 주소", aiAddress()) {
-            ctx.prompt("AI 사전 주소", aiAddress(), "https://") { text ->
-                val url = EinkAiSite.normalize(text)
-                if (url == null) ctx.toast("https://로 시작하는 사이트 주소를 넣어 주세요")
-                else {
-                    Settings.raw().edit().putString(EinkAiSite.PREF_KEY, url).apply()
-                    aiRow?.setSummary(url)
-                }
-            }
-        }.also(body::addView)
-        body.addView(ctx.row("AI 사전 열기", "메뉴에서 Claude API를 연결할 수 있습니다") {
-            TextActions.start(ctx, Intent(Intent.ACTION_VIEW, Uri.parse(aiAddress())))
-        })
+        body.addView(ctx.note("이북의 검색 → AI 탭은 앱 안의 Claude 사전을 바로 엽니다. 로그인 없이 API 키를 한 번 등록하면 됩니다. 키는 이 기기에만 저장하며, AI 사전 메뉴에서 삭제할 수 있습니다. 일반 폰은 기존 ChatGPT를 사용합니다."))
 
         body.section("사전·번역 목록")
         body.addView(ctx.note("선택 메뉴의 ‘사전·번역’에 보일 항목입니다. 순서는 이름순으로 고정됩니다. ‘웹 검색’은 항상 맨 아래에 있습니다."))
@@ -115,12 +100,8 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
 
     override fun onShown() {
         updateRadios()
-        aiRow?.setSummary(aiAddress())
         recordRow?.setToggleChecked(Settings.app.recordLookups)
     }
-
-    private fun aiAddress(): String =
-        Settings.raw().getString(EinkAiSite.PREF_KEY, EinkAiSite.DEFAULT_URL) ?: EinkAiSite.DEFAULT_URL
 
     private fun setEngine(url: String) {
         editApp { it.copy(webSearchUrl = url) }
