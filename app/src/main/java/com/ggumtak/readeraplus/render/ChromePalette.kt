@@ -13,9 +13,11 @@ package com.ggumtak.readeraplus.render
  *
  * Phones: the surface is that faint tone, bars meet the page with a 1 px line ([topEdge], [bottomEdge]), buttons show a
  * pressed overlay and the bars fade and slide in and out ([motion]). E-ink: every action stays one screen update, so the
- * surface is the page itself, lines are solid 1 px, nothing changes over time (no shadow, no pressed flash, no fade);
- * the tones are snapped to the panel's 16 grey levels ([PagePalette.inkGrey]) and kept at least [MIN_INK_STEPS] levels
- * from the page, so no element rounds into its background.
+ * surface is the page itself, nothing changes over time (no shadow, no pressed flash, no fade), and the chrome keeps the
+ * reader's black-and-white look ([InkShare]: glyphs, thumb and the bars' 1 px lines in the page's full ink, secondary
+ * glyphs at #555, a #999 track): RIDI's light greys on a page-coloured bar would leave only a hairline between bar and
+ * page and thin grey glyphs a fast e-ink update can drop. The tones are snapped to the panel's 16 grey levels
+ * ([PagePalette.inkGrey]) and kept at least [MIN_INK_STEPS] levels from the page.
  */
 internal class ChromePalette private constructor(
     /** The page colour, [PagePalette.background] itself: the history row and the brightness row sit on it. */
@@ -30,10 +32,10 @@ internal class ChromePalette private constructor(
     val accent: Int,
     /** Low-contrast lines inside a panel (between option rows). */
     val divider: Int,
-    /** The line above the brightness options: [divider] on phones, a firmer grey on e-ink. */
+    /** The line above the brightness options: [divider] on phones, the full ink on e-ink. */
     val rule: Int,
     /**
-     * A 1 px outline of the boxes that float over the page on e-ink (the return chip, the seek preview): a firm grey
+     * A 1 px outline of the boxes that float over the page on e-ink (the return chip, the seek preview): the full ink
      * there; on a phone they use [track] instead, and this is [bottomEdge].
      */
     val edge: Int,
@@ -76,6 +78,15 @@ internal class ChromePalette private constructor(
         const val PRIMARY = 0.62f
     }
 
+    /** The same shares on e-ink: the reader's ink look (black glyphs and lines, #555, #999, #CCC on 흰 바탕). */
+    object InkShare {
+        const val PRIMARY = 1f
+        const val LINE = 1f
+        const val SECONDARY = 0.667f
+        const val TRACK = 0.4f
+        const val DIVIDER = 0.2f
+    }
+
     companion object {
         /** Height of the shadow band where a bar meets the page, were a look to ask for one ([ChromePalette.shadow]). */
         const val SHADOW_DP = 4
@@ -104,29 +115,38 @@ internal class ChromePalette private constructor(
         }
 
         private fun build(p: PagePalette, eink: Boolean): ChromePalette {
-            val primary = tone(p, Share.PRIMARY, eink)
-            val secondary = tone(p, Share.SECONDARY, eink)
-            val bottomEdge = tone(p, Share.BOTTOM_EDGE, eink)
-            val divider = tone(p, Share.TOP_EDGE, eink)
+            if (eink) {
+                val ink = tone(p, InkShare.PRIMARY, true)
+                val line = tone(p, InkShare.LINE, true)
+                return ChromePalette(
+                    page = p.background, surface = p.background, text = ink, text2 = tone(p, InkShare.SECONDARY, true),
+                    accent = ink, divider = tone(p, InkShare.DIVIDER, true), rule = line, edge = line, topEdge = line,
+                    bottomEdge = line, track = tone(p, InkShare.TRACK, true), thumb = ink, hist = ink, shadow = 0,
+                    pressed = 0, active = 0, motion = false, eink = true, dark = p.dark,
+                )
+            }
+            val primary = tone(p, Share.PRIMARY, false)
+            val divider = tone(p, Share.TOP_EDGE, false)
+            val bottomEdge = tone(p, Share.BOTTOM_EDGE, false)
             return ChromePalette(
                 page = p.background,
-                surface = if (eink) p.background else tone(p, Share.SURFACE, false),
+                surface = tone(p, Share.SURFACE, false),
                 text = primary,
-                text2 = secondary,
+                text2 = tone(p, Share.SECONDARY, false),
                 accent = primary,
                 divider = divider,
-                rule = if (eink) secondary else divider,
-                edge = if (eink) secondary else bottomEdge,
-                topEdge = tone(p, Share.TOP_EDGE, eink),
+                rule = divider,
+                edge = bottomEdge,
+                topEdge = divider,
                 bottomEdge = bottomEdge,
-                track = tone(p, Share.TRACK, eink),
-                thumb = tone(p, Share.THUMB, eink),
+                track = tone(p, Share.TRACK, false),
+                thumb = tone(p, Share.THUMB, false),
                 hist = primary,
                 shadow = 0,
-                pressed = if (eink) 0 else (PRESSED_ALPHA shl 24) or (p.text and 0xFFFFFF),
+                pressed = (PRESSED_ALPHA shl 24) or (p.text and 0xFFFFFF),
                 active = 0,
-                motion = !eink,
-                eink = eink,
+                motion = true,
+                eink = false,
                 dark = p.dark,
             )
         }

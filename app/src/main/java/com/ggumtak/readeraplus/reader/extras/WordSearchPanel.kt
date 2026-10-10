@@ -307,11 +307,15 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         job?.cancel()
         edit.setText("")
         typed = ""
+        // The web tabs drop the old word too: a tab shown next says 검색어가 없습니다 instead of loading it.
+        webQ = ""
         state = null
         docMissing = false
+        loads.invalidate()
         loads.markLoaded(WordSearchQuery.TAB_BODY)
         adapter.notifyDataSetChanged()
         updateBody()
+        if (tab != WordSearchQuery.TAB_BODY) showWeb(tab)
         showKeyboard()
     }
 

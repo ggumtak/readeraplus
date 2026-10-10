@@ -194,14 +194,13 @@ class ChromePaletteTest {
                 assertEquals("${name(k)} ${Integer.toHexString(c)}", 0, grey(c) % 17)
             }
         }
-        // 흰 바탕: the tones of the formula snapped to levels (#DD, #CC, #99, #88, #66).
+        // 흰 바탕: the reader's black-and-white chrome (black glyphs, thumb and bar lines; #555, #999, #CCC).
         val k = ChromePalette.of(PagePalette.PAPER, true)
-        assertEquals(0xFFDDDDDD.toInt(), k.topEdge)
-        assertEquals(0xFFCCCCCC.toInt(), k.bottomEdge)
-        assertEquals(0xFFCCCCCC.toInt(), k.track)
-        assertEquals(0xFF999999.toInt(), k.thumb)
-        assertEquals(0xFF888888.toInt(), k.text2)
-        assertEquals(0xFF666666.toInt(), k.text)
+        val black = 0xFF000000.toInt()
+        for (c in listOf(k.text, k.accent, k.hist, k.thumb, k.rule, k.edge, k.topEdge, k.bottomEdge)) assertEquals(black, c)
+        assertEquals(0xFF555555.toInt(), k.text2)
+        assertEquals(0xFF999999.toInt(), k.track)
+        assertEquals(0xFFCCCCCC.toInt(), k.divider)
     }
 
     @Test
@@ -226,11 +225,12 @@ class ChromePaletteTest {
             val k = ChromePalette.of(p, true)
             val page = level(p.background)
             val d = { c: Int -> abs(level(c) - page) }
-            assertTrue(name(k), d(k.topEdge) <= d(k.bottomEdge))
-            assertTrue(name(k), d(k.track) <= d(k.thumb))
-            assertTrue(name(k), d(k.thumb) <= d(k.text2))
-            assertTrue(name(k), d(k.text2) <= d(k.text))
-            assertTrue("${name(k)} text on the page", contrast(k.text, k.page) >= 3.5)
+            assertTrue(name(k), d(k.divider) < d(k.track))
+            assertTrue(name(k), d(k.track) < d(k.text2))
+            assertTrue(name(k), d(k.text2) < d(k.text))
+            // Glyphs, the thumb and the bars' lines are the page's full ink: nothing thin is left in a light grey.
+            for (c in listOf(k.thumb, k.topEdge, k.bottomEdge, k.rule, k.edge)) assertEquals(name(k), d(k.text), d(c))
+            assertTrue("${name(k)} text on the page", contrast(k.text, k.page) >= 7.0)
         }
     }
 
