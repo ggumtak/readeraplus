@@ -11,6 +11,7 @@ import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocMeta
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.format.DocumentException
+import com.ggumtak.readeraplus.format.LoadHints
 import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.format.SectionInfo
 import com.ggumtak.readeraplus.format.TocEntry
@@ -122,6 +123,12 @@ internal class EpubBook private constructor(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, SplitItem>?): Boolean =
             size > ITEM_CACHE_SIZE
     }
+    /**
+     * The last split item converted on a background thread ([LoadHints.isBackground], page counting), kept apart so
+     * bulk loads never evict what the reader uses from [itemCache]; a reader hit moves it there (guarded by [cache]).
+     */
+    private var bgItem = -1
+    private var bgSplit: SplitItem? = null
     /** Spine index → its item-wide anchors (small maps, kept for every converted item; guarded by [cache]). */
     private val anchorCache = HashMap<Int, Map<String, Int>>()
     /** Spine index → part ranges of a split item (kept for every converted split item; guarded by [cache]). */
@@ -400,7 +407,7 @@ internal class EpubBook private constructor(
                 synchronized(cache) { cache[index]?.let { return it } }
                 val content = withHeadings(item, convert(item))
                 synchronized(cache) {
-                    cache[index] = content
+                    putSection(index, content)
                     anchorCache[item] = content.anchors
                 }
                 return content
@@ -415,9 +422,18 @@ internal class EpubBook private constructor(
         }
         synchronized(cache) {
             cache[index]?.let { return it }
-            cache[index] = content
+            putSection(index, content)
         }
         return content
+    }
+
+    /**
+     * Caches a newly built section (caller holds [cache]). A background bulk load ([LoadHints.isBackground]) only
+     * fills free room: it never evicts the reader's sections.
+     */
+    private fun putSection(index: Int, content: SectionContent) {
+        if (LoadHints.isBackground && cache.size >= CACHE_SIZE && !cache.containsKey(index)) return
+        cache[index] = content
     }
 
     /** Whole-item offsets of the TOC anchors assigned to [part] of split item [item]. */
@@ -432,23 +448,43 @@ internal class EpubBook private constructor(
         return out
     }
 
-    /** Converted split item [item] with its part ranges (converted once; the last few are kept). */
+    /**
+     * Converted split item [item] with its part ranges (converted once; the last few are kept). One converted on a
+     * background thread goes to the background slot only, so page counting cannot evict the reader's items.
+     */
     private fun splitItem(item: Int): SplitItem {
-        synchronized(cache) { itemCache[item]?.let { return it } }
+        cachedSplit(item)?.let { return it }
         synchronized(itemLocks[item]) {
-            synchronized(cache) { itemCache[item]?.let { return it } }
+            cachedSplit(item)?.let { return it }
             val plain = convert(item)
             // cut first: the headings' look (heading style, page break) must not move a cut
             val cuts = cutItem(item, plain)
             val whole = withHeadings(item, plain)
             val s = SplitItem(whole, cuts)
             synchronized(cache) {
-                itemCache[item] = s
+                if (LoadHints.isBackground) {
+                    bgItem = item
+                    bgSplit = s
+                } else {
+                    itemCache[item] = s
+                }
                 anchorCache[item] = whole.anchors
                 cutCache[item] = cuts
             }
             return s
         }
+    }
+
+    /** [item] from [itemCache] or the background slot; a foreground hit on the slot moves it to [itemCache]. */
+    private fun cachedSplit(item: Int): SplitItem? = synchronized(cache) {
+        itemCache[item]?.let { return it }
+        val s = if (bgItem == item) bgSplit else null
+        if (s != null && !LoadHints.isBackground) {
+            itemCache[item] = s
+            bgItem = -1
+            bgSplit = null
+        }
+        s
     }
 
     /** [content] of [item] with its detected headings marked (the text and so every offset stay the same). */
@@ -675,6 +711,8 @@ internal class EpubBook private constructor(
         synchronized(cache) {
             cache.clear()
             itemCache.clear()
+            bgItem = -1
+            bgSplit = null
         }
     }
 

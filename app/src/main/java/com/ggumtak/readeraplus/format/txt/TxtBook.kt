@@ -6,6 +6,7 @@ import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocMeta
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.format.DocumentException
+import com.ggumtak.readeraplus.format.LoadHints
 import com.ggumtak.readeraplus.format.ParseOptions
 import com.ggumtak.readeraplus.format.SectionInfo
 import com.ggumtak.readeraplus.format.TocEntry
@@ -69,7 +70,10 @@ internal class TxtBook(
             val end = this.index.byteEnd[index]
             val bytes = readRange(start, end)
             val content = TxtParser.loadSection(bytes, bytes.size, this.index, index, decoder, options, rules)
-            synchronized(cache) { cache[index] = content }
+            synchronized(cache) {
+                // a background bulk load (page counting) only fills free room: it never evicts the reader's sections
+                if (!LoadHints.isBackground || cache.size < CACHE_SIZE || cache.containsKey(index)) cache[index] = content
+            }
             return content
         }
     }

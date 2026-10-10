@@ -21,6 +21,7 @@ import com.ggumtak.readeraplus.engine.TextMeasurer
 import com.ggumtak.readeraplus.engine.Typesetter
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.BookFormat
+import com.ggumtak.readeraplus.format.LoadHints
 import com.ggumtak.readeraplus.format.SectionInfo
 import com.ggumtak.readeraplus.format.epub.EpubBook
 import com.ggumtak.readeraplus.reader.extras.Episodes
@@ -180,7 +181,11 @@ class BookSession(
         Thread({ setPriority(Process.THREAD_PRIORITY_DEFAULT); r.run() }, "reader-layout").apply { isDaemon = true }
     }
     private val countExec: ExecutorService = Executors.newSingleThreadExecutor { r ->
-        Thread({ setPriority(Process.THREAD_PRIORITY_BACKGROUND); r.run() }, "reader-count").apply { isDaemon = true }
+        Thread({
+            LoadHints.markBackground()
+            setPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            r.run()
+        }, "reader-count").apply { isDaemon = true }
     }
     private val layoutDispatcher = layoutExec.asCoroutineDispatcher()
     private val countDispatcher = countExec.asCoroutineDispatcher()
