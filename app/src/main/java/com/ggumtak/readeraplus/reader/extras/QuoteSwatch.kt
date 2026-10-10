@@ -20,11 +20,13 @@ import com.ggumtak.readeraplus.ui.kit.Ink
  *   of the style's grey band and line around a black "가" — what the e-ink page shows.
  * - [isChecked] draws a 2 dp black ring 3 dp outside the swatch. The view always reserves that ring's room (unless
  *   [reserveRing] is false) so checking never changes its size.
+ * - [tinted] (colour mode only; the selection popup's RIDI-style dots): no grey edge, the checked ring is thin, in the
+ *   swatch's own colour and one white gap away from it, and 밑줄's line is red ([QuoteStyles.UNDERLINE_ACCENT]).
  *
  * UI swatches always use the day values: popups and lists are black on white even over an inverted page.
  */
 @SuppressLint("ViewConstructor")
-class QuoteSwatch(context: Context, style: Int, sizeDp: Int, ink: Boolean) : View(context) {
+class QuoteSwatch(context: Context, style: Int, sizeDp: Int, ink: Boolean, private val tinted: Boolean = false) : View(context) {
     var style: Int = style
         set(v) {
             if (field == v) return
@@ -53,8 +55,9 @@ class QuoteSwatch(context: Context, style: Int, sizeDp: Int, ink: Boolean) : Vie
     private val small = sizeDp < SMALL_LIMIT_DP
     private val boxW: Float = density * (if (ink) (if (small) 22 else 30) else sizeDp).toFloat()
     private val boxH: Float = density * (if (ink) (if (small) 14 else 20) else sizeDp).toFloat()
-    private val ringGap = density * PaletteGeometry.RING_GAP_DP
-    private val ringWidth = density * PaletteGeometry.RING_DP
+    private val soft = tinted && !ink
+    private val ringGap = density * (if (soft) PaletteGeometry.TINT_RING_GAP_DP else PaletteGeometry.RING_GAP_DP)
+    private val ringWidth = density * (if (soft) PaletteGeometry.TINT_RING_DP else PaletteGeometry.RING_DP)
     private val pad: Float get() = if (reserveRing) ringGap + ringWidth else 0f
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.style = Paint.Style.FILL }
@@ -92,6 +95,7 @@ class QuoteSwatch(context: Context, style: Int, sizeDp: Int, ink: Boolean) : Vie
         if (ink) drawInk(canvas, s, cx, cy) else drawColour(canvas, s, cx, cy)
         if (isChecked) {
             val out = ringGap + ringWidth / 2f
+            if (soft) ring.color = if (s == QuoteStyles.UNDERLINE) QuoteStyles.UNDERLINE_ACCENT else QuoteStyles.colorFill(s, night = false)
             if (ink) {
                 rect.inset(-out, -out)
                 canvas.drawRect(rect, ring)
@@ -103,9 +107,10 @@ class QuoteSwatch(context: Context, style: Int, sizeDp: Int, ink: Boolean) : Vie
 
     private fun drawColour(canvas: Canvas, s: Int, cx: Float, cy: Float) {
         if (s == QuoteStyles.UNDERLINE) {
-            val stroke = 2f
+            val stroke = if (soft) density * 2f else 2f
             canvas.drawText(GLYPH, cx, cy + textCenterOffset - stroke, text)
             line.strokeWidth = stroke
+            line.color = if (soft) QuoteStyles.UNDERLINE_ACCENT else Ink.BLACK
             line.pathEffect = null
             val y = rect.bottom - stroke / 2f
             canvas.drawLine(rect.left + boxW * 0.15f, y, rect.right - boxW * 0.15f, y, line)
@@ -114,7 +119,7 @@ class QuoteSwatch(context: Context, style: Int, sizeDp: Int, ink: Boolean) : Vie
         val r = minOf(rect.width(), rect.height()) / 2f
         fill.color = QuoteStyles.colorFill(s, night = false)
         canvas.drawCircle(cx, cy, r, fill)
-        canvas.drawCircle(cx, cy, r - 0.5f, edge)
+        if (!soft) canvas.drawCircle(cx, cy, r - 0.5f, edge)
     }
 
     private fun drawInk(canvas: Canvas, s: Int, cx: Float, cy: Float) {
@@ -149,5 +154,40 @@ class QuoteSwatch(context: Context, style: Int, sizeDp: Int, ink: Boolean) : Vie
         const val GLYPH = "가"
         /** Sizes below this are the list-row swatches (12 dp dot, 22 × 14 dp ink sample). */
         const val SMALL_LIMIT_DP = 16
+    }
+}
+
+/**
+ * The "more" button's three dots (⋯) of the selection popup, drawn rather than typeset so no font has to carry the
+ * glyph: three black dots, 3.5 dp wide, 4 dp apart. Static; the cell around it is the touch target.
+ */
+internal class MoreDotsView(context: Context) : View(context) {
+    private val density = context.resources.displayMetrics.density
+    private val radius = density * DOT_DP / 2f
+    private val gap = density * GAP_DP
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Ink.BLACK }
+
+    init {
+        isClickable = false
+        isFocusable = false
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension(
+            resolveSize(Math.round(3 * 2 * radius + 2 * gap), widthMeasureSpec),
+            resolveSize(Math.round(2 * radius), heightMeasureSpec),
+        )
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val cy = height / 2f
+        val step = 2 * radius + gap
+        val x0 = width / 2f - step
+        for (i in 0 until 3) canvas.drawCircle(x0 + i * step, cy, radius, paint)
+    }
+
+    private companion object {
+        const val DOT_DP = 3.5f
+        const val GAP_DP = 4f
     }
 }

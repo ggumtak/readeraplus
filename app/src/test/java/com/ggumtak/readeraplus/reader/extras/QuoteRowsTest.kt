@@ -22,6 +22,9 @@ class QuoteRowsTest {
         assertTrue(QuoteRows.showChips(counts))
         assertEquals("전체 2", QuoteRows.allChip(two.size))
         assertEquals(listOf(QuoteStyles.YELLOW to 1, QuoteStyles.BLUE to 1), QuoteRows.chips(counts))
+        // the selection palette's (RIDI's) order: purple before blue, pink after it
+        val mixed = QuoteRows.styleCounts(listOf(q(1, QuoteStyles.RED), q(2, QuoteStyles.BLUE), q(3, QuoteStyles.PURPLE)))
+        assertEquals(listOf(QuoteStyles.PURPLE, QuoteStyles.BLUE, QuoteStyles.RED), QuoteRows.chips(mixed).map { it.first })
     }
 
     @Test

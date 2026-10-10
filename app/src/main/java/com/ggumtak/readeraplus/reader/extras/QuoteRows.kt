@@ -29,9 +29,9 @@ internal object QuoteRows {
     /** The chip row shows only when the book's quotes use two or more styles. */
     fun showChips(counts: IntArray): Boolean = counts.count { it > 0 } >= 2
 
-    /** Chips in palette order after [전체 N]: the styles in use, as (style, count). */
+    /** Chips in palette order (RIDI's: [QuoteStyles.paletteStyle]) after [전체 N]: the styles in use, as (style, count). */
     fun chips(counts: IntArray): List<Pair<Int, Int>> =
-        counts.indices.filter { counts[it] > 0 }.map { it to counts[it] }
+        counts.indices.map { QuoteStyles.paletteStyle(it) }.filter { counts.getOrElse(it) { 0 } > 0 }.map { it to counts[it] }
 
     /** "전체 12". */
     fun allChip(total: Int): String = "전체 $total"

@@ -6,21 +6,29 @@ import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
 
 /**
- * The selection popup's actions (UI_SPEC polish 13, NOTES_SPEC §7.1, PLAN C26), pure and unit-tested: one row of 5
- * cells — 복사 · 인용 · 메모 · 사전·번역 · ⋮ (over an existing quote: 복사 · 메모 · 인용 삭제 · 사전·번역 · ⋮) — and the
- * ⋮ menu in the order 색 골라 인용… · 공유 · 문단 선택 · 책에서 검색 · 웹 검색 · 여기부터 듣기 · 문구 지우기 (TXT only).
+ * The selection popup's actions (UI_SPEC polish 13, NOTES_SPEC §7.1, PLAN C26; RIDI's layout), pure and unit-tested:
+ * one row of text cells — 복사 · 형광펜 · (colour dot) · 메모 · 검색 · ⋯ (over an existing highlight, under its colour
+ * row: 복사 · 메모 · 삭제 · 검색 · ⋯) — and the ⋯ menu in the order 사전·번역 · 공유 · 문단 선택 · 책에서 검색 · 웹 검색 ·
+ * 여기부터 듣기 · 문구 지우기 (TXT only).
  */
 internal object SelectionActions {
-    enum class Id(val label: String) {
+    /**
+     * [label] names the action (menus, accessibility); [short] is what its cell shows in the row (the colour dot and ⋯
+     * cells draw instead of showing text).
+     */
+    enum class Id(val label: String, val short: String = label) {
         COPY("복사"),
         QUOTE("형광펜"),
+        /** The row's colour dot: opens the palette (a pick highlights in that colour). */
+        PICK_STYLE("형광펜 색 고르기"),
         NOTE("메모"),
         /** "메모" over an existing quote: edits that quote's memo. */
         EDIT_NOTE("메모"),
-        DELETE_QUOTE("형광펜 삭제"),
-        LOOKUP("사전·번역"),
+        DELETE_QUOTE("형광펜 삭제", "삭제"),
+        /** RIDI's 검색: the word search panel (본문 and the dictionaries). */
+        WORD_SEARCH("검색"),
         MORE("더보기"),
-        PICK_STYLE("형광펜 색 고르기…"),
+        LOOKUP("사전·번역"),
         SHARE("공유"),
         PARAGRAPH("문단 선택"),
         SEARCH("책에서 검색"),
@@ -29,28 +37,29 @@ internal object SelectionActions {
         DELETE_PHRASE("문구 지우기"),
     }
 
-    /** Cells of the row, the ⋮ cell included. */
-    const val CELLS = 5
+    /** Cells of the row, the ⋯ cell included. */
+    const val CELLS = 6
 
-    private val PRIMARY = setOf(Id.COPY, Id.QUOTE, Id.NOTE, Id.EDIT_NOTE, Id.DELETE_QUOTE, Id.LOOKUP)
+    private val PRIMARY = setOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.EDIT_NOTE, Id.DELETE_QUOTE, Id.WORD_SEARCH)
 
     /**
-     * Every action that applies, row actions first, then the ⋮ menu's in its order (⋮ itself not included).
-     * [existingQuote]: the selection is a saved quote (its palette row replaces "색 골라 인용…"); [readAloud]: TTS is
+     * Every action that applies, row actions first, then the ⋯ menu's in its order (⋯ itself not included).
+     * [existingQuote]: the selection is a saved quote (its colour row replaces the colour dot); [readAloud]: TTS is
      * available; [txt]: a TXT book whose host can take a per-book replace rule ("문구 지우기").
      */
     fun ids(existingQuote: Boolean, readAloud: Boolean, txt: Boolean): List<Id> {
-        val list = ArrayList<Id>(13)
+        val list = ArrayList<Id>(14)
         list += Id.COPY
         if (existingQuote) {
             list += Id.EDIT_NOTE
             list += Id.DELETE_QUOTE
         } else {
             list += Id.QUOTE
+            list += Id.PICK_STYLE
             list += Id.NOTE
         }
+        list += Id.WORD_SEARCH
         list += Id.LOOKUP
-        if (!existingQuote) list += Id.PICK_STYLE
         list += Id.SHARE
         list += Id.PARAGRAPH
         list += Id.SEARCH
@@ -61,8 +70,8 @@ internal object SelectionActions {
     }
 
     /**
-     * Splits [list] into the row (the row actions in their order, at most [CELLS] − 1, then ⋮ when anything is left
-     * over) and the ⋮ menu (the rest, in order).
+     * Splits [list] into the row (the row actions in their order, at most [CELLS] − 1, then ⋯ when anything is left
+     * over) and the ⋯ menu (the rest, in order).
      */
     fun split(list: List<Id>): Pair<List<Id>, List<Id>> {
         val primary = ArrayList<Id>(CELLS)

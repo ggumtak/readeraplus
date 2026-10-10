@@ -218,8 +218,9 @@ internal class NotesMenus(private val a: NotesActivity) {
 
     private fun pickStyle(anchor: View, current: Int?, onPick: (Int) -> Unit) {
         if (QuotePalette.show(anchor, current, onPick) != null) return
-        val labels = (0 until QuoteStyles.COUNT).map { QuoteStyles.label(it) }
-        a.chooser("색", labels, current?.let { QuoteStyles.of(it) } ?: -1) { onPick(it) }
+        // In the selection palette's (RIDI's) order.
+        val labels = (0 until QuoteStyles.COUNT).map { QuoteStyles.label(QuoteStyles.paletteStyle(it)) }
+        a.chooser("색", labels, current?.let { QuoteStyles.palettePosition(QuoteStyles.of(it)) } ?: -1) { onPick(QuoteStyles.paletteStyle(it)) }
     }
 
     // ============================================================================================ overflow

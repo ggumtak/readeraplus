@@ -187,9 +187,11 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         if (swatchInk == ink && strip.childCount > 0) return
         swatchInk = ink
         strip.removeAllViews()
-        for (style in 0 until QuoteStyles.COUNT) {
+        // RIDI's order (the selection palette's): yellow, green, purple, blue, pink, underline.
+        for (pos in 0 until QuoteStyles.COUNT) {
+            val style = QuoteStyles.paletteStyle(pos)
             strip.addView(QuoteSwatch(ctx, style, SWATCH_W_DP, ink).apply { reserveRing = false }, LinearLayout.LayoutParams(ctx.dp(SWATCH_W_DP), ctx.dp(SWATCH_H_DP)).apply {
-                if (style > 0) leftMargin = ctx.dp(8)
+                if (pos > 0) leftMargin = ctx.dp(8)
             })
         }
     }

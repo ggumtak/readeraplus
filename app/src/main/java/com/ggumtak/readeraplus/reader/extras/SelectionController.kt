@@ -19,7 +19,7 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupWindow
-import com.ggumtak.readeraplus.R
+import android.widget.ScrollView
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.Lookups
 import com.ggumtak.readeraplus.data.NotePlace
@@ -40,25 +40,22 @@ import com.ggumtak.readeraplus.reader.ReaderHost
 import com.ggumtak.readeraplus.reader.ReaderIo
 import com.ggumtak.readeraplus.reader.ShownPage
 import com.ggumtak.readeraplus.render.AndroidTextMeasurer
+import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.Highlight
 import com.ggumtak.readeraplus.render.HighlightKind
 import com.ggumtak.readeraplus.render.PagePalette
 import com.ggumtak.readeraplus.render.QuoteLook
 import com.ggumtak.readeraplus.render.QuoteStyles
+import com.ggumtak.readeraplus.render.SelectionColors
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
-import com.ggumtak.readeraplus.ui.kit.MenuItem
 import com.ggumtak.readeraplus.ui.kit.alert
-import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.dpF
-import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
-import com.ggumtak.readeraplus.ui.kit.icon
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
-import com.ggumtak.readeraplus.ui.kit.popupMenu
 import com.ggumtak.readeraplus.ui.kit.pressableBackground
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
 import com.ggumtak.readeraplus.ui.kit.sp
@@ -71,9 +68,11 @@ import kotlinx.coroutines.withContext
 import kotlin.math.hypot
 
 /**
- * Long-press text selection with two draggable handles and an action popup: one row of 복사 · 인용 · 메모 · 사전·번역 ·
- * ⋮ ([SelectionActions]; over an existing quote a colour row above 복사 · 메모 · 인용 삭제 · 사전·번역 · ⋮), the ⋮ menu
- * holding 색 골라 인용… · 공유 · 문단 선택 · 책에서 검색 · 웹 검색 · 여기부터 듣기 and, in a TXT book, 문구 지우기.
+ * Long-press text selection with two draggable handles and an action popup in RIDI's layout: one row of text cells,
+ * 복사 · 형광펜 · (colour dot) · 메모 · 검색 · ⋯ ([SelectionActions]; over an existing highlight a colour row above 복사 ·
+ * 메모 · 삭제 · 검색 · ⋯). The colour dot swaps the row for the palette (a pick highlights in that colour), 검색 opens
+ * the [WordSearchPanel], and the ⋯ menu holds 사전·번역 · 공유 · 문단 선택 · 책에서 검색 · 웹 검색 · 여기부터 듣기 and, in
+ * a TXT book, 문구 지우기.
  * The selection is (section, start, end) in the section's text, whatever page shows: only its part on the page shown
  * is drawn and gets handles ([SelectionSpan]); highlight owner "selection". It grows over pages of ONE section: a
  * handle (or the long press's finger) held in the top / bottom zone of the text area for [EDGE_DWELL_MS] turns one
@@ -136,12 +135,12 @@ class SelectionController(private val host: ReaderHost) {
     private var startHandle: HandleView? = null
     private var endHandle: HandleView? = null
     private var actions: PopupWindow? = null
-    /** The ⋮ menu and the colour palette opened from [actions]. */
+    /** The ⋯ menu opened from [actions]. */
     private var menu: PopupWindow? = null
-    private var palette: PopupWindow? = null
-    /** The 인용 cell of [actions] (the palette's anchor) and the palette row over an existing quote. */
-    private var quoteCell: View? = null
+    /** The palette row over an existing quote (its ring follows a recolour). */
     private var paletteRow: QuotePalette.Row? = null
+    /** The popup shows the palette instead of its row (the colour dot was tapped); any new selection or range closes it. */
+    private var paletteMode = false
     private var overflowIds: List<SelectionActions.Id> = emptyList()
     private var editingQuote: Quote? = null
     /** Bumped per palette-row tap: only the latest recolour's IO result is applied. */
@@ -224,6 +223,7 @@ class SelectionController(private val host: ReaderHost) {
         anchorStart = s
         anchorEnd = e
         editingQuote = q
+        paletteMode = false
         active = true
         fromLongPress = true
         pressX = x
@@ -296,6 +296,7 @@ class SelectionController(private val host: ReaderHost) {
         cancelDwell()
         main.removeCallbacks(reselect)
         editingQuote = null
+        paletteMode = false
         hideActions()
         startHandle?.let { (it.parent as? ViewGroup)?.removeView(it) }
         endHandle?.let { (it.parent as? ViewGroup)?.removeView(it) }
@@ -489,6 +490,7 @@ class SelectionController(private val host: ReaderHost) {
         if (e <= s) return
         selStart = s
         selEnd = e
+        paletteMode = false
         if (editingQuote != null && (s != editingQuote?.start || e != editingQuote?.end)) editingQuote = null
         updateHighlight()
         showHandles()
@@ -643,17 +645,18 @@ class SelectionController(private val host: ReaderHost) {
 
     // ------------------------------------------------------------------ action popup
 
-    /** Runs the action [id] of the popup ([SelectionActions]); [anchor] is its cell (⋮ anchors its menu there). */
+    /** Runs the action [id] of the popup ([SelectionActions]); [anchor] is its cell (⋯ anchors its menu there). */
     private fun perform(id: SelectionActions.Id, anchor: View?) {
         when (id) {
             SelectionActions.Id.COPY -> copy()
             SelectionActions.Id.QUOTE -> quoteNow(LastQuoteStyle.get())
+            SelectionActions.Id.PICK_STYLE -> openPalette()
             SelectionActions.Id.NOTE -> noteThenQuote()
             SelectionActions.Id.EDIT_NOTE -> editingQuote?.let { editQuoteNote(it) }
             SelectionActions.Id.DELETE_QUOTE -> editingQuote?.let { deleteQuote(it) }
+            SelectionActions.Id.WORD_SEARCH -> wordSearch()
             SelectionActions.Id.LOOKUP -> lookUp()
             SelectionActions.Id.MORE -> if (anchor != null) showOverflow(anchor)
-            SelectionActions.Id.PICK_STYLE -> pickStyleThenQuote()
             SelectionActions.Id.SHARE -> share()
             SelectionActions.Id.PARAGRAPH -> selectParagraph()
             SelectionActions.Id.SEARCH -> searchInBook()
@@ -665,32 +668,20 @@ class SelectionController(private val host: ReaderHost) {
         }
     }
 
-    private fun iconOf(id: SelectionActions.Id): Int = when (id) {
-        SelectionActions.Id.COPY -> R.drawable.ic_content_copy
-        SelectionActions.Id.QUOTE -> R.drawable.ic_format_quote
-        SelectionActions.Id.NOTE, SelectionActions.Id.EDIT_NOTE -> R.drawable.ic_sticky_note_2
-        SelectionActions.Id.DELETE_QUOTE -> R.drawable.ic_delete
-        SelectionActions.Id.LOOKUP -> R.drawable.ic_translate
-        SelectionActions.Id.MORE -> R.drawable.ic_more_vert
-        SelectionActions.Id.PICK_STYLE -> R.drawable.ic_ink_highlighter
-        SelectionActions.Id.SHARE -> R.drawable.ic_share
-        SelectionActions.Id.PARAGRAPH -> R.drawable.ic_select_all
-        SelectionActions.Id.SEARCH -> R.drawable.ic_search
-        SelectionActions.Id.WEB_SEARCH -> R.drawable.ic_travel_explore
-        SelectionActions.Id.READ_ALOUD -> R.drawable.ic_volume_up
-        SelectionActions.Id.DELETE_PHRASE -> R.drawable.ic_delete_forever
-    }
-
     private fun actionIds(): List<SelectionActions.Id> = SelectionActions.ids(
         existingQuote = editingQuote != null,
         readAloud = onReadAloud != null || TtsRegistry.get(host) != null,
         txt = host is TxtOverrideHost && runCatching { host.book.format }.getOrNull() == BookFormat.TXT,
     )
 
+    /** A row's cells measured as they are, then given the side padding that fills the room ([PaletteGeometry.cellPad]). */
+    private class ActionRow(val view: LinearLayout, val width: Int)
+
     /**
-     * The popup (UI_SPEC polish 13, NOTES_SPEC §7.1): one row of 5 cells, (W − 16 dp) / 5 wide and 56 dp tall with
-     * 13 sp labels, in a square [borderBox]; the 인용 cell shows the last style's swatch with a "▾" (long press: the
-     * palette). Over an existing quote a palette row (current style ringed) sits above the row.
+     * The popup (RIDI's, UI_SPEC polish 13, NOTES_SPEC §7.1): a [PopupCard] holding one row of 56 dp cells with 15 sp
+     * text labels (the colour dot and ⋯ are drawn), padded to fill the screen's room up to 16 dp a side. The colour dot
+     * shows the last colour; tapping it (or long-pressing 형광펜) swaps the row for the palette. Over an existing
+     * highlight a palette row (current colour ringed) sits above the row.
      */
     private fun showActions() {
         if (!active) return
@@ -704,50 +695,36 @@ class SelectionController(private val host: ReaderHost) {
         hideActions()
 
         val dm = ctx.resources.displayMetrics
-        val cellW = PaletteGeometry.selectionCell(dm.widthPixels, dm.density)
-        val box = ctx.vertical { background = ctx.borderBox(radiusDp = 0f) }
-        val q = editingQuote
-        if (q != null) {
-            val row = QuotePalette.paletteRow(ctx, PaletteGeometry.inlinePaletteCell(dm.widthPixels, dm.density), q.style) { s, _ -> recolour(s) }
-            paletteRow = row
-            box.addView(row.view, lp())
-            box.addView(ctx.hairline(), lp(MATCH_PARENT, 1))
-        }
+        val eink = PopupCard.eink(ctx)
+        val shadow = PopupCard.shadowRoom(ctx, eink)
+        val margin = maxOf(ctx.dp(8), shadow)
         val (primary, overflow) = SelectionActions.split(actionIds())
         overflowIds = overflow
-        val row = ctx.horizontal()
-        for (id in primary) {
-            val cell = ctx.vertical {
-                gravity = Gravity.CENTER
-                background = pressableBackground()
-                contentDescription = id.label
-            }
-            cell.setOnClickListener { perform(id, cell) }
-            if (id == SelectionActions.Id.QUOTE) {
-                quoteCell = cell
-                cell.setOnLongClickListener { pickStyleThenQuote(); true }
-                cell.addView(quoteIcon(), LinearLayout.LayoutParams(ctx.dp(ICON_BOX_DP), ctx.dp(ICON_BOX_DP)))
-            } else {
-                cell.addView(FrameLayout(ctx).apply {
-                    addView(ctx.icon(iconOf(id), 24), FrameLayout.LayoutParams(ctx.dp(24), ctx.dp(24), Gravity.CENTER))
-                }, LinearLayout.LayoutParams(ctx.dp(ICON_BOX_DP), ctx.dp(ICON_BOX_DP)))
-            }
-            cell.addView(ctx.label(id.label, LABEL_SP, maxLines = 1).apply {
-                gravity = Gravity.CENTER
-                setPadding(ctx.dp(2), ctx.dp(2), ctx.dp(2), 0)
-                // A longer label shrinks to the cell instead of being cut ("사전·번역" on a narrow phone).
-                setAutoSizeTextTypeUniformWithConfiguration(10, LABEL_SP.toInt(), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
-            }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-            row.addView(cell, LinearLayout.LayoutParams(cellW, ctx.dp(PaletteGeometry.CELL_HEIGHT_DP)))
+        val actionRow = buildActionRow(primary, dm.widthPixels - 2 * margin)
+        val content = ctx.vertical()
+        val q = editingQuote
+        if (q != null) {
+            val row = QuotePalette.paletteRow(ctx, 0, q.style) { s, _ -> recolour(s) }
+            paletteRow = row
+            content.addView(row.view, lp())
+            content.addView(PopupCard.divider(ctx, eink))
+            content.addView(actionRow.view, lp(WRAP_CONTENT, WRAP_CONTENT))
+        } else if (paletteMode) {
+            // The same card, as wide as the row it replaces.
+            val row = QuotePalette.paletteRow(ctx, 0, LastQuoteStyle.get()) { s, _ -> pickStyleThenQuote(s) }
+            content.minimumWidth = actionRow.width
+            content.addView(row.view, lp())
+        } else {
+            content.addView(actionRow.view, lp(WRAP_CONTENT, WRAP_CONTENT))
         }
-        box.addView(row, lp())
 
-        box.measure(
+        val built = PopupCard.build(ctx, eink, content)
+        built.window.measure(
             View.MeasureSpec.makeMeasureSpec(dm.widthPixels, View.MeasureSpec.AT_MOST),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
-        val w = box.measuredWidth
-        val h = box.measuredHeight
+        val w = built.window.measuredWidth - 2 * built.pad
+        val h = built.window.measuredHeight - 2 * built.pad
         val loc = IntArray(2)
         host.pageView.getLocationInWindow(loc)
         var top = Float.MAX_VALUE
@@ -756,52 +733,152 @@ class SelectionController(private val host: ReaderHost) {
             top = minOf(top, r.top)
             bottom = maxOf(bottom, r.bottom)
         }
-        val margin = ctx.dp(8)
         val x = ((dm.widthPixels - w) / 2).coerceAtLeast(0)
         val y = PaletteGeometry.selectionY(loc[1] + originY + top, loc[1] + originY + bottom, h, ctx.dp(10),
             startHandle?.sizePx ?: ctx.dp(40), margin, dm.heightPixels)
-        val pw = PopupWindow(box, WRAP_CONTENT, WRAP_CONTENT, false).apply {
+        val pw = PopupWindow(built.window, WRAP_CONTENT, WRAP_CONTENT, false).apply {
             animationStyle = 0
             elevation = 0f
             isTouchable = true
             isOutsideTouchable = false
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         }
-        runCatching { pw.showAtLocation(host.pageView, Gravity.NO_GRAVITY, x, y) }
+        runCatching { pw.showAtLocation(host.pageView, Gravity.NO_GRAVITY, x - built.pad, y - built.pad) }
         actions = pw
     }
 
-    /** The 인용 cell's icon: the last style's swatch with a 9 sp "▾" at its lower right (long press = colours). */
-    private fun quoteIcon(): View = FrameLayout(ctx).apply {
-        addView(QuoteSwatch(ctx, LastQuoteStyle.get(), PaletteGeometry.POPUP_SWATCH_DP, QuoteLook.ink()).apply { reserveRing = false },
-            FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER))
-        addView(ctx.label("▾", 9f, maxLines = 1).apply { includeFontPadding = false },
-            FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.END or Gravity.BOTTOM))
+    private fun buildActionRow(ids: List<SelectionActions.Id>, avail: Int): ActionRow {
+        val cells = ArrayList<View>(ids.size)
+        val widths = IntArray(ids.size)
+        for (i in ids.indices) {
+            val cell = cellOf(ids[i])
+            cell.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec(ctx.dp(PaletteGeometry.CELL_HEIGHT_DP), View.MeasureSpec.EXACTLY))
+            widths[i] = cell.measuredWidth
+            cells += cell
+        }
+        val pad = PaletteGeometry.cellPad(widths, avail, ctx.dp(PaletteGeometry.CELL_PAD_MAX_DP))
+        val row = ctx.horizontal()
+        var total = 0
+        for (i in cells.indices) {
+            cells[i].setPadding(pad, 0, pad, 0)
+            row.addView(cells[i], LinearLayout.LayoutParams(WRAP_CONTENT, ctx.dp(PaletteGeometry.CELL_HEIGHT_DP)))
+            total += widths[i] + 2 * pad
+        }
+        return ActionRow(row, total)
     }
 
-    /** ⋮: the rest of the actions in a [popupMenu] under the cell. */
+    /** The cell of [id]: a text label, the colour dot or the ⋯ dots. Its description is the action's name. */
+    private fun cellOf(id: SelectionActions.Id): View {
+        val cell: View = when (id) {
+            SelectionActions.Id.PICK_STYLE -> FrameLayout(ctx).apply { addView(colourDot(), centered()) }
+            SelectionActions.Id.MORE -> FrameLayout(ctx).apply { addView(MoreDotsView(ctx), centered()) }
+            else -> ctx.label(id.short, CELL_SP, maxLines = 1).apply { gravity = Gravity.CENTER }
+        }
+        cell.background = pressableBackground()
+        cell.contentDescription = if (id == SelectionActions.Id.PICK_STYLE) "${id.label}, 현재 ${QuoteStyles.label(LastQuoteStyle.get())}" else id.label
+        cell.setOnClickListener { perform(id, cell) }
+        if (id == SelectionActions.Id.QUOTE) cell.setOnLongClickListener { openPalette(); true }
+        return cell
+    }
+
+    private fun centered() = FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER)
+
+    /**
+     * The last colour as RIDI's dot (a ringed circle; "가" with a red line for 밑줄). In the ink look the grey sample
+     * with a "▾" at its lower right instead.
+     */
+    private fun colourDot(): View {
+        val ink = QuoteLook.ink()
+        val last = LastQuoteStyle.get()
+        return FrameLayout(ctx).apply {
+            if (ink) {
+                addView(QuoteSwatch(ctx, last, PaletteGeometry.POPUP_SWATCH_DP, true).apply { reserveRing = false }, centered())
+                addView(ctx.label("▾", 9f, maxLines = 1).apply { includeFontPadding = false },
+                    FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.END or Gravity.BOTTOM))
+            } else {
+                addView(QuoteSwatch(ctx, last, PaletteGeometry.DOT_DP, false, tinted = true).apply { isChecked = true }, centered())
+            }
+        }
+    }
+
+    /** The colour dot (or a long press on 형광펜): the popup shows the palette in place of its row. */
+    private fun openPalette() {
+        if (!active || editingQuote != null) return
+        paletteMode = true
+        showActions()
+    }
+
+    /**
+     * ⋯: the rest of the actions in a card of 48 dp text rows under the cell (right edges aligned), above it when
+     * there is no room below.
+     */
     private fun showOverflow(anchor: View) {
         val ids = overflowIds
         if (ids.isEmpty()) return
         hideMenus()
-        val items = ids.map { id -> MenuItem(id.label, iconOf(id)) { if (active) perform(id, null) } }
-        menu = PanelRegistry.popup(ctx, ctx.popupMenu(anchor, items, widthDp = 220))
+        val dm = ctx.resources.displayMetrics
+        val eink = PopupCard.eink(ctx)
+        val margin = maxOf(ctx.dp(8), PopupCard.shadowRoom(ctx, eink))
+        val list = ctx.vertical { minimumWidth = ctx.dp(MENU_MIN_WIDTH_DP) }
+        for (id in ids) {
+            val item = ctx.label(id.label, CELL_SP, maxLines = 1).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(ctx.dp(16), 0, ctx.dp(16), 0)
+                background = pressableBackground()
+                contentDescription = id.label
+                setOnClickListener {
+                    menu?.dismiss()
+                    if (active) perform(id, null)
+                }
+            }
+            list.addView(item, lp(MATCH_PARENT, ctx.dp(MENU_ROW_DP)))
+        }
+        val scroll = ScrollView(ctx).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(list, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        }
+        val built = PopupCard.build(ctx, eink, scroll)
+        built.window.measure(
+            View.MeasureSpec.makeMeasureSpec(dm.widthPixels, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        val w = built.window.measuredWidth - 2 * built.pad
+        // A menu taller than the screen scrolls inside its card.
+        val h = minOf(built.window.measuredHeight - 2 * built.pad, dm.heightPixels - 2 * margin)
+        // Window coordinates of the cell: the popup's x / y are relative to the window, not the screen.
+        val at = IntArray(2)
+        val pv = IntArray(2)
+        val pw = IntArray(2)
+        anchor.getLocationOnScreen(at)
+        host.pageView.getLocationOnScreen(pv)
+        host.pageView.getLocationInWindow(pw)
+        val ax = at[0] - (pv[0] - pw[0])
+        val ay = at[1] - (pv[1] - pw[1])
+        val x = PaletteGeometry.popupX(ax + anchor.width - w / 2f, w, dm.widthPixels, margin)
+        val y = PaletteGeometry.belowY(ay, ay + anchor.height, h, ctx.dp(4), margin, dm.heightPixels)
+        val popup = PopupWindow(built.window, WRAP_CONTENT, h + 2 * built.pad, true).apply {
+            animationStyle = 0
+            elevation = 0f
+            isOutsideTouchable = true
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        }
+        val shown = runCatching { popup.showAtLocation(host.pageView, Gravity.NO_GRAVITY, x - built.pad, y - built.pad) }.isSuccess
+        if (shown) menu = PanelRegistry.popup(ctx, popup)
     }
 
     private fun hideActions() {
         hideMenus()
         actions?.let { runCatching { it.dismiss() } }
         actions = null
-        quoteCell = null
         paletteRow = null
     }
 
-    /** Closes the ⋮ menu and the colour palette opened from the popup. */
+    /** Closes the ⋯ menu opened from the popup. */
     private fun hideMenus() {
         menu?.let { runCatching { it.dismiss() } }
         menu = null
-        palette?.let { runCatching { it.dismiss() } }
-        palette = null
     }
 
     // ------------------------------------------------------------------ actions
@@ -836,6 +913,16 @@ class SelectionController(private val host: ReaderHost) {
         val t = selectedText().replace('\n', ' ')
         clear()
         if (t.isNotEmpty()) ReaderPanels.showSearch(host, t.take(100))
+    }
+
+    /** 검색 (RIDI's): the word search panel for the selection; the 단어장 records it like any other lookup. */
+    private fun wordSearch() {
+        val t = selectedText().replace('\n', ' ')
+        val snap = lookupSnapshot(t)
+        clear()
+        if (t.isEmpty()) return
+        WordSearchPanel.show(host, t.take(200))
+        recordLookup(snap, Lookups.VIA_WEB, WORD_SEARCH_APP)
     }
 
     private fun lookUp() {
@@ -956,23 +1043,17 @@ class SelectionController(private val host: ReaderHost) {
         return QuoteSnapshot(bookId, section, selStart, selEnd, t, placeOf(selStart))
     }
 
-    /** 인용 (tap, or a palette pick): the selection becomes a quote in [style]; no success toast. */
+    /** 형광펜 (tap, or a palette pick): the selection becomes a quote in [style]; no success toast. */
     private fun quoteNow(style: Int) {
         val snap = snapshot()
         clear()
         if (snap != null) saveQuote(snap, "", style)
     }
 
-    /** Long-press 인용 / ⋮ "색 골라 인용…": the palette at the 인용 cell; a pick quotes in that style and remembers it. */
-    private fun pickStyleThenQuote() {
-        val anchor = quoteCell ?: return
-        if (!active) return
-        hideMenus()
-        palette = QuotePalette.show(anchor, LastQuoteStyle.get()) { s ->
-            palette = null
-            LastQuoteStyle.set(s)
-            if (active) quoteNow(s)
-        }
+    /** A colour picked in the popup's palette: remembered as the last one, and the selection becomes a highlight in it. */
+    private fun pickStyleThenQuote(style: Int) {
+        LastQuoteStyle.set(style)
+        if (active) quoteNow(style)
     }
 
     /**
@@ -1159,15 +1240,18 @@ class SelectionController(private val host: ReaderHost) {
         const val MAX_LONG_PRESS_MS = 2000
         /** Longest phrase quoted in the "이 문구 지우기" dialog (the rule holds all of it). */
         const val PHRASE_SHOWN = 40
-        /** The icon area of a popup cell (fits the 인용 cell's swatch and its "▾"). */
-        const val ICON_BOX_DP = 30
-        const val LABEL_SP = 13f
+        /** RIDI's cell label size. */
+        const val CELL_SP = 15f
+        const val MENU_ROW_DP = 48
+        const val MENU_MIN_WIDTH_DP = 150
+        /** What the 단어장 shows as the "app" of a lookup made in the word search panel. */
+        const val WORD_SEARCH_APP = "검색"
     }
 }
 
 /**
- * Selection handle: a teardrop in the page's text colour ([PagePalette]: black, or white on the inverted page) whose
- * sharp corner ([anchorX], [anchorY], parent coordinates) touches the selection's start (bottom-left) or end
+ * Selection handle: a teardrop in the page's text colour ([PagePalette]: black, or white on the inverted page; blue on
+ * a phone, [HandleColors.fill]) whose sharp corner ([anchorX], [anchorY], parent coordinates) touches the selection's start (bottom-left) or end
  * (bottom-right) corner, at the bottom of the letters ([HandleAnchor]). The view is larger than the drawing (touch
  * target).
  */
@@ -1177,6 +1261,8 @@ internal class HandleView(context: Context, val start: Boolean) : View(context) 
     private val r = context.dpF(10f)
     private val ax = if (start) sizePx / 2f + r / 2f else sizePx / 2f - r / 2f
     private val ay = context.dpF(1f)
+    /** The e-ink look keeps the page-coloured handles; a phone gets RIDI's blue ([SelectionColors.handle]). */
+    private val eink = DeviceClass.cached(context) != false
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ink.BLACK; style = Paint.Style.FILL }
     private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ink.WHITE; style = Paint.Style.STROKE; strokeWidth = context.dpF(1.5f) }
     private val path = Path()
@@ -1206,10 +1292,10 @@ internal class HandleView(context: Context, val start: Boolean) : View(context) 
     }
 
     override fun onDraw(canvas: Canvas) {
-        // Page colours: black handles on the white page, white handles (black outline) on the inverted page, light
-        // grey ones (dark grey outline) on the 마루뷰어 page.
+        // E-ink, page colours: black handles on the white page, white handles (black outline) on the inverted page,
+        // light grey ones (dark grey outline) on the 마루뷰어 page. A phone: blue handles, lighter on a dark page.
         val palette = runCatching { PagePalette.of(Settings.reader) }.getOrDefault(PagePalette.PAPER)
-        paint.color = HandleColors.fill(palette)
+        paint.color = HandleColors.fill(palette, eink)
         outline.color = HandleColors.outline(palette)
         canvas.drawPath(path, outline)
         canvas.drawPath(path, paint)
@@ -1249,8 +1335,11 @@ internal object HandleAnchor {
 
 /** Selection handle colours for the page's colour scheme (pure; unit-tested). */
 internal object HandleColors {
-    /** Fill: the page's text colour (what PageRenderer draws the text in). */
+    /** Fill on e-ink: the page's text colour (what PageRenderer draws the text in). */
     fun fill(palette: PagePalette): Int = palette.text
+
+    /** Fill by the device: [fill] on e-ink, RIDI's blue on a phone ([SelectionColors.handle], lighter on a dark page). */
+    fun fill(palette: PagePalette, eink: Boolean): Int = if (eink) fill(palette) else SelectionColors.handle(palette.dark)
 
     /** Outline: the page's background colour, so the handle stands out over text. */
     fun outline(palette: PagePalette): Int = palette.background

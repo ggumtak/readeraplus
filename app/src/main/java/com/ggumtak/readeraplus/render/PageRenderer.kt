@@ -105,6 +105,9 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
     private val quoteFill = Array(QuoteStyles.COUNT) { Paint().apply { style = Paint.Style.FILL } }
     private val quoteHasFill = BooleanArray(QuoteStyles.COUNT)
     private val quoteLine = IntArray(QuoteStyles.COUNT)
+    /** Colour quotes (phones): 밑줄 is drawn in RIDI's red, as its swatch shows ([QuoteStyles.UNDERLINE_ACCENT]). */
+    private val quoteAccent = BooleanArray(QuoteStyles.COUNT)
+    private val accentLine = Paint().apply { style = Paint.Style.FILL; color = QuoteStyles.UNDERLINE_ACCENT }
     private var lookGen = Int.MIN_VALUE
     private var lookThumb = false
     /** Dedicated thumbnail renderers suppress quote strokes that disappear at small scales. */
@@ -626,11 +629,13 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
                 quoteHasFill[s] = value >= 0
                 if (value >= 0) quoteFill[s].color = grey(value)
                 quoteLine[s] = if (thumbnail) QuoteStyles.LINE_NONE else QuoteStyles.inkLine(s)
+                quoteAccent[s] = false
             } else {
                 val color = QuoteStyles.colorFill(s, palette.dark)
                 quoteHasFill[s] = color != 0
                 if (color != 0) quoteFill[s].color = color
                 quoteLine[s] = if (thumbnail) QuoteStyles.LINE_NONE else QuoteStyles.colorLine(s)
+                quoteAccent[s] = s == QuoteStyles.UNDERLINE
             }
         }
     }
@@ -683,12 +688,15 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
                             val style = QuoteStyles.of(h.style)
                             if (quoteHasFill[style]) canvas.drawRect(l, t, r, bt, quoteFill[style])
                         }
-                        HighlightKind.SELECTION -> fillRect(canvas, l, t, r, bt, grey(0xAA))
+                        HighlightKind.SELECTION -> fillRect(canvas, l, t, r, bt, if (eink) grey(0xAA) else SelectionColors.fill(palette.dark))
                         HighlightKind.SEARCH -> fillRect(canvas, l, t, r, bt, grey(0xBB))
                         HighlightKind.TTS -> fillRect(canvas, l, t, r, bt, grey(0xEE))
                     }
                 } else when (h.kind) {
-                    HighlightKind.QUOTE -> drawQuoteLine(canvas, quoteLine[QuoteStyles.of(h.style)], l, t, r, bt, uy)
+                    HighlightKind.QUOTE -> {
+                        val style = QuoteStyles.of(h.style)
+                        drawQuoteLine(canvas, quoteLine[style], l, t, r, bt, uy, if (quoteAccent[style]) accentLine else line)
+                    }
                     HighlightKind.SEARCH -> {
                         rect.set(l + 0.5f, t + 0.5f, r - 0.5f, bt - 0.5f)
                         canvas.drawRect(rect, outline)
@@ -700,16 +708,16 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         }
     }
 
-    private fun drawQuoteLine(canvas: Canvas, kind: Int, l: Float, t: Float, r: Float, b: Float, uy: Float) {
+    private fun drawQuoteLine(canvas: Canvas, kind: Int, l: Float, t: Float, r: Float, b: Float, uy: Float, paint: Paint) {
         when (kind) {
-            QuoteStyles.LINE_THIN -> canvas.drawRect(l, uy, r, uy + t1, line)
-            QuoteStyles.LINE_THICK -> canvas.drawRect(l, uy, r, uy + t2, line)
+            QuoteStyles.LINE_THIN -> canvas.drawRect(l, uy, r, uy + t1, paint)
+            QuoteStyles.LINE_THICK -> canvas.drawRect(l, uy, r, uy + t2, paint)
             QuoteStyles.LINE_DASHED -> {
                 var x = DashMath.firstDash(l, dashPeriod)
                 while (x < r) {
                     val a = maxOf(x, l)
                     val end = minOf(x + dashOn, r)
-                    if (end > a) canvas.drawRect(a, uy, end, uy + t2, line)
+                    if (end > a) canvas.drawRect(a, uy, end, uy + t2, paint)
                     x += dashPeriod
                 }
             }

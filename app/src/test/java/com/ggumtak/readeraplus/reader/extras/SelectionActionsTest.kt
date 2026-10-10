@@ -4,6 +4,7 @@ import com.ggumtak.readeraplus.data.Quote
 import com.ggumtak.readeraplus.reader.LayoutKeys
 import com.ggumtak.readeraplus.reader.extras.SelectionActions.Id
 import com.ggumtak.readeraplus.render.HighlightKind
+import com.ggumtak.readeraplus.render.PagePalette
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.StatusItem
 import org.junit.Assert.assertEquals
@@ -14,22 +15,28 @@ import org.junit.Test
 class SelectionActionsTest {
 
     @Test
-    fun newSelection_rowOfFive_thenOverflowInOrder() {
+    fun newSelection_ridiRow_thenOverflowInOrder() {
         val (row, more) = SelectionActions.split(SelectionActions.ids(existingQuote = false, readAloud = true, txt = true))
-        assertEquals(listOf(Id.COPY, Id.QUOTE, Id.NOTE, Id.LOOKUP, Id.MORE), row)
+        // 복사 · 형광펜 · (colour dot) · 메모 · 검색 · ⋯
+        assertEquals(listOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.WORD_SEARCH, Id.MORE), row)
         assertEquals(
-            listOf(Id.PICK_STYLE, Id.SHARE, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH, Id.READ_ALOUD, Id.DELETE_PHRASE),
+            listOf(Id.LOOKUP, Id.SHARE, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH, Id.READ_ALOUD, Id.DELETE_PHRASE),
             more,
         )
         assertEquals(SelectionActions.CELLS, row.size)
+        assertEquals(6, SelectionActions.CELLS)
     }
 
     @Test
-    fun existingQuote_rowSwapsQuoteAndNote_noColourPickInMenu() {
+    fun existingQuote_rowSwapsQuoteAndNote_noColourDot() {
         val (row, more) = SelectionActions.split(SelectionActions.ids(existingQuote = true, readAloud = true, txt = false))
-        assertEquals(listOf(Id.COPY, Id.EDIT_NOTE, Id.DELETE_QUOTE, Id.LOOKUP, Id.MORE), row)
-        assertEquals(listOf(Id.SHARE, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH, Id.READ_ALOUD), more)
+        // The colour row sits above it; the row is 복사 · 메모 · 삭제 · 검색 · ⋯.
+        assertEquals(listOf(Id.COPY, Id.EDIT_NOTE, Id.DELETE_QUOTE, Id.WORD_SEARCH, Id.MORE), row)
+        assertEquals(listOf(Id.LOOKUP, Id.SHARE, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH, Id.READ_ALOUD), more)
+        assertFalse(Id.PICK_STYLE in row + more)
         assertEquals("메모", Id.EDIT_NOTE.label)
+        // The cell says 삭제; the action (and its description) stays 형광펜 삭제.
+        assertEquals("삭제", Id.DELETE_QUOTE.short)
         assertEquals("형광펜 삭제", Id.DELETE_QUOTE.label)
     }
 
@@ -40,8 +47,22 @@ class SelectionActionsTest {
         assertFalse(Id.READ_ALOUD in epub)
         assertTrue(Id.DELETE_PHRASE in SelectionActions.ids(existingQuote = false, readAloud = false, txt = true))
         val (row, more) = SelectionActions.split(epub)
-        assertEquals(5, row.size)
-        assertEquals(listOf(Id.PICK_STYLE, Id.SHARE, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH), more)
+        assertEquals(6, row.size)
+        assertEquals(listOf(Id.LOOKUP, Id.SHARE, Id.PARAGRAPH, Id.SEARCH, Id.WEB_SEARCH), more)
+    }
+
+    @Test
+    fun lookupMovesToTheMenu_andBookSearchStaysThereToo() {
+        for (existing in listOf(false, true)) {
+            val (row, more) = SelectionActions.split(SelectionActions.ids(existing, readAloud = true, txt = true))
+            assertFalse(Id.LOOKUP in row)
+            assertEquals(Id.LOOKUP, more.first())
+            assertTrue(Id.SEARCH in more)
+            assertTrue(Id.WEB_SEARCH in more)
+            assertTrue(Id.WORD_SEARCH in row)
+            assertFalse(Id.SEARCH in row)
+            assertEquals(Id.MORE, row.last())
+        }
     }
 
     @Test
@@ -52,12 +73,36 @@ class SelectionActionsTest {
     }
 
     @Test
+    fun split_rowHoldsAtMostFivePrimaryCells_extrasGoToTheMenu() {
+        val (row, more) = SelectionActions.split(
+            listOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.WORD_SEARCH, Id.DELETE_QUOTE, Id.SHARE),
+        )
+        assertEquals(listOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.WORD_SEARCH, Id.MORE), row)
+        assertEquals(listOf(Id.DELETE_QUOTE, Id.SHARE), more)
+    }
+
+    @Test
     fun labels_areTheSpecStrings() {
         assertEquals(
-            listOf("복사", "형광펜", "메모", "사전·번역", "더보기", "형광펜 색 고르기…", "공유", "문단 선택", "책에서 검색", "웹 검색", "여기부터 듣기", "문구 지우기"),
-            listOf(Id.COPY, Id.QUOTE, Id.NOTE, Id.LOOKUP, Id.MORE, Id.PICK_STYLE, Id.SHARE, Id.PARAGRAPH, Id.SEARCH,
+            listOf("복사", "형광펜", "형광펜 색 고르기", "메모", "검색", "더보기", "사전·번역", "공유", "문단 선택", "책에서 검색", "웹 검색",
+                "여기부터 듣기", "문구 지우기"),
+            listOf(Id.COPY, Id.QUOTE, Id.PICK_STYLE, Id.NOTE, Id.WORD_SEARCH, Id.MORE, Id.LOOKUP, Id.SHARE, Id.PARAGRAPH, Id.SEARCH,
                 Id.WEB_SEARCH, Id.READ_ALOUD, Id.DELETE_PHRASE).map { it.label },
         )
+        // What the row's text cells show: the label, but 삭제 for 형광펜 삭제.
+        assertEquals(listOf("복사", "형광펜", "메모", "검색"), listOf(Id.COPY, Id.QUOTE, Id.NOTE, Id.WORD_SEARCH).map { it.short })
+    }
+
+    @Test
+    fun handles_areBlueOnAPhone_andPageColouredOnEink() {
+        // E-ink (and the one-argument form old callers use): the page's text colour.
+        assertEquals(PagePalette.PAPER.text, HandleColors.fill(PagePalette.PAPER, eink = true))
+        assertEquals(PagePalette.NIGHT.text, HandleColors.fill(PagePalette.NIGHT, eink = true))
+        assertEquals(HandleColors.fill(PagePalette.MARU), HandleColors.fill(PagePalette.MARU, eink = true))
+        // A phone: RIDI's #1F8CE6, a lighter blue on a dark page.
+        assertEquals(0xFF1F8CE6.toInt(), HandleColors.fill(PagePalette.PAPER, eink = false))
+        assertEquals(0xFF4DA3EE.toInt(), HandleColors.fill(PagePalette.NIGHT, eink = false))
+        assertEquals(0xFF4DA3EE.toInt(), HandleColors.fill(PagePalette.MARU, eink = false))
     }
 
     private fun q(id: Long, sec: Int, s: Int, e: Int, style: Int = 0) =
