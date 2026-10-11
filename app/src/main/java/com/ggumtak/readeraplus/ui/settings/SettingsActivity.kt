@@ -31,9 +31,11 @@ class SettingsActivity : Activity() {
         const val EXTRA_PAGE = "page"
         /** "넘기기·터치·키": the read mode, tap zones, swipes, auto turn and the keys. */
         const val PAGE_PAGE_TURNING = "page_turning"
-        /** "화면·밝기": the status bar, the screen (전체 화면, 화면 방향, 인용문 색 표시) and the brightness. */
+        /** "화면·밝기": the screen (전체 화면, 화면 켜짐 유지, 화면 방향) and the brightness. */
         const val PAGE_SCREEN = "screen"
-        /** "e-ink 새로고침": refresh cadence, chapter / picture refreshes, the page mode and the 고급 group. */
+        /** "상태 표시줄" (under 읽기 설정): the two status bands, 진행 막대 and 상태 글자 크기. */
+        const val PAGE_STATUS = "status"
+        /** "e-ink 화면": refresh cadence, chapter / picture refreshes, the page mode and the 고급 group. */
         const val PAGE_EINK = "eink"
         const val PAGE_FONTS = "fonts"
         const val PAGE_TTS = "tts"
@@ -49,7 +51,7 @@ class SettingsActivity : Activity() {
         const val PAGE_WIFI = "wifi"
         /** "읽기 기록" (T1-6): reading statistics, heatmap, finished books. */
         const val PAGE_STATS = "stats"
-        /** "TXT 정리 기본값" (T1-9): the global TXT options every book without its own override uses. */
+        /** "TXT 정리 (모든 책)" (T1-9): the global TXT options every book without its own override uses. */
         const val PAGE_TXT_DEFAULTS = "txt_defaults"
         /**
          * "읽기 설정": every reading setting (style, letters, paragraphs, page, file options); the quick options' "전체
@@ -132,6 +134,7 @@ class SettingsActivity : Activity() {
     private fun createPage(id: String): SettingsPage = when (id) {
         PAGE_PAGE_TURNING -> PageTurningPage(this)
         PAGE_SCREEN -> ScreenPage(this)
+        PAGE_STATUS -> StatusBarPage(this)
         PAGE_EINK -> EinkPage(this)
         PAGE_FONTS -> FontsPage(this)
         PAGE_TTS -> TtsPage(this)

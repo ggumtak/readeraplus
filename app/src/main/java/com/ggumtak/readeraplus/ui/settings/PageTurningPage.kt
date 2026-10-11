@@ -22,7 +22,9 @@ import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
+import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.icon
+import com.ggumtak.readeraplus.ui.kit.keepAll
 import com.ggumtak.readeraplus.ui.kit.label
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.row
@@ -34,7 +36,7 @@ import com.ggumtak.readeraplus.ui.kit.vertical
  * the auto-turn interval), 화면 터치 (the tap-zone mode with a visual preview, a 3×3 editor in 직접 지정, and the two
  * corner switches), 스와이프·길게 누르기 (swipes and the long-press time) and 버튼·키 (the volume keys, key hold, key →
  * action bindings with the "이 키로 할 동작" chooser, the key test). Every row is an app setting; the reading settings
- * live on 읽기 설정, the status bar and brightness on 화면·밝기, the refreshes on e-ink 새로고침.
+ * live on 읽기 설정 (which links here), the brightness on 화면·밝기, the refreshes on e-ink 화면.
  */
 internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_PAGE_TURNING, "넘기기·터치·키") {
     private val modeRows = LinkedHashMap<TapZoneMode, View>()
@@ -46,8 +48,6 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     private var volumeRow: View? = null
     private var readModeRow: View? = null
     private var scrollStyleRow: View? = null
-    private var scrollNote: View? = null
-    private var swipeRow: View? = null
     private var verticalSwipeRow: View? = null
     private var pressRow: View? = null
     private var liveDialog: AlertDialog? = null
@@ -87,14 +87,21 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
                 updateReadModeUi()
             }
         }.also(body::addView)
-        scrollNote = ctx.note(R3Rows.READ_MODE_NOTE).also(body::addView)
-        body.addView(ctx.toggleRow("끝까지 읽으면 ‘다 읽은 책’으로", "끝 화면에서 되돌릴 수 있음", app.autoMarkFinished) { v ->
-            editApp { it.copy(autoMarkFinished = v) }
-        })
+        // The value shows in the stepper itself: the summary says only where auto-turn starts.
         body.addView(ctx.stepperRow("자동 넘김 간격", app.autoTurnSeconds.coerceIn(5, 300).toFloat(), 5f, 300f, 5f, { SettingsFormat.seconds(it.toInt()) }) { v ->
             editApp { it.copy(autoTurnSeconds = v.toInt()) }
-        }.liveStepperValue())
-        body.addView(ctx.note("자동 넘김은 읽는 화면의 ⋮ 메뉴에서 시작하고, 화면을 누르면 멈춥니다."))
+        }.liveStepperValue().withSummary("⋮ 메뉴에서 시작"))
+        body.addView(ctx.toggleRow("끝까지 읽으면 ‘다 읽은 책’으로", null, app.autoMarkFinished) { v ->
+            editApp { it.copy(autoMarkFinished = v) }
+        })
+    }
+
+    /** Adds a grey summary line under the title of a [stepperRow] (which has none of its own). */
+    private fun LinearLayout.withSummary(text: String): LinearLayout {
+        (getChildAt(0) as? LinearLayout)?.addView(
+            ctx.label(keepAll(text), 14f, color = Ink.GRAY).apply { tag = "summary"; setPadding(0, ctx.dp(3), 0, 0) },
+        )
+        return this
     }
 
     private fun setReadMode(m: ReadMode) {
@@ -107,8 +114,8 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     }
 
     /**
-     * Rows that depend on the read mode: 스크롤 움직임 and its note (SCROLL only), the swipe summaries, 위아래 스와이프로
-     * 넘김 (disabled in SCROLL, with the reason).
+     * Rows that depend on the read mode: 스크롤 움직임 (SCROLL only), 위아래 스와이프로 넘김 (disabled in SCROLL, and
+     * only then it says why).
      */
     private fun updateReadModeUi() {
         val app = Settings.app
@@ -118,11 +125,9 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
             row.setShown(scroll)
             if (scroll) row.setSummary(R3Rows.scrollStyle(app.scrollStyle))
         }
-        scrollNote?.setShown(scroll)
-        swipeRow?.setSummary(if (scroll) R3Rows.SWIPE_TURN_SCROLL else R3Rows.SWIPE_TURN)
         verticalSwipeRow?.let { row ->
             row.setRowEnabled(!scroll)
-            row.setSummary(if (scroll) R3Rows.VERTICAL_SWIPE_SCROLL else R3Rows.VERTICAL_SWIPE)
+            row.findViewWithTag<View>("summary")?.setShown(scroll)
         }
     }
 
@@ -131,7 +136,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     private fun addTaps(body: LinearLayout, app: AppSettings) {
         body.section("화면 터치")
         for (m in TapZoneMode.entries) {
-            val r = ctx.radioRow(TapZoneModel.modeName(m), TapZoneModel.modeDescription(m), m == app.tapZoneMode) { setMode(m) }
+            val r = ctx.radioRow(TapZoneModel.modeName(m), null, m == app.tapZoneMode) { setMode(m) }
             modeRows[m] = r
             body.addView(r)
         }
@@ -171,7 +176,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
             editApp { it.copy(bookmarkByTouch = v) }
             preview.bookmarkCorner = v
         })
-        body.addView(ctx.toggleRow("다음·이전 바꾸기", "터치만 (키는 그대로)", app.invertTaps) { v ->
+        body.addView(ctx.toggleRow("터치 방향 반대로", null, app.invertTaps) { v ->
             editApp { it.copy(invertTaps = v) }
             preview.inverted = v
         })
@@ -211,11 +216,12 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
 
     private fun addGestures(body: LinearLayout, app: AppSettings) {
         body.section("스와이프·길게 누르기")
-        swipeRow = ctx.toggleRow("좌우 스와이프로 넘김", R3Rows.SWIPE_TURN, app.swipeToTurn) { v -> editApp { it.copy(swipeToTurn = v) } }
-            .also(body::addView)
-        verticalSwipeRow = ctx.toggleRow("위아래 스와이프로 넘김", R3Rows.VERTICAL_SWIPE, app.verticalSwipe) { v -> editApp { it.copy(verticalSwipe = v) } }
-            .also(body::addView)
-        body.addView(ctx.toggleRow("길게 눌러 선택", "복사 · 형광펜 · 사전 · 검색", app.longPressSelect) { v ->
+        body.addView(ctx.toggleRow("좌우 스와이프로 넘김", null, app.swipeToTurn) { v -> editApp { it.copy(swipeToTurn = v) } })
+        // The summary exists for the one case it explains (scroll mode); updateReadModeUi shows it only then.
+        verticalSwipeRow = ctx.toggleRow("위아래 스와이프로 넘김", R3Rows.VERTICAL_SWIPE_SCROLL, app.verticalSwipe) { v ->
+            editApp { it.copy(verticalSwipe = v) }
+        }.also(body::addView)
+        body.addView(ctx.toggleRow("길게 눌러 선택", null, app.longPressSelect) { v ->
             editApp { it.copy(longPressSelect = v) }
             pressRow?.setShown(v)
         })

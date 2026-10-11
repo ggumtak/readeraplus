@@ -26,7 +26,7 @@ import android.provider.Settings as SystemSettings
  * chosen voice); it is released when the page closes and when the activity comes back from the system TTS settings.
  * The line under the preview shows failures only, and goes at the next tap.
  */
-internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_TTS, "듣기 설정") {
+internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_TTS, "듣기") {
     private var sleepRow: View? = null
     private var voiceRow: View? = null
     private var engineRow: View? = null
@@ -60,7 +60,7 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
         if (app.ttsVoice.isNotEmpty()) nameVoice()
 
         body.section("읽는 동안")
-        body.addView(ctx.toggleRow("읽는 문장 표시", "읽는 문장에 밑줄 · 끄면 화면 갱신이 줄어듭니다", app.ttsHighlight) { v ->
+        body.addView(ctx.toggleRow("읽는 문장 표시", null, app.ttsHighlight) { v ->
             editApp { it.copy(ttsHighlight = v) }
         })
         sleepRow = ctx.valueRow("멈춤 예약", SettingsFormat.sleepChoice(app.ttsSleepMinutes, app.ttsSleepChapters)) {
@@ -73,9 +73,8 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
                 sleepRow?.setSummary(SettingsFormat.sleepChoice(m, c))
             }
         }.also(body::addView)
-        body.addView(ctx.note("화면을 꺼도 계속 읽고, 알림에서 멈출 수 있습니다."))
 
-        body.section("음성 엔진")
+        body.section("엔진")
         engineRow = ctx.navRow("음성 엔진 설정", "…") { openEngineSettings() }.also(body::addView)
         engineHint = ctx.note("한국어 음성이 없으면 음성 엔진 설정에서 받으세요.").apply { visibility = View.GONE }.also(body::addView)
         loadEngines()

@@ -54,7 +54,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         ScanState.sink = sink
 
         body.section("스캔할 폴더")
-        body.addView(ctx.note("추가한 폴더(하위 폴더 포함)만 찾습니다. 없으면 아래 기본 위치를 찾습니다."))
+        body.addView(ctx.note("추가한 폴더만 찾습니다. 없으면 기본 위치를 찾습니다."))
         foldersBox = ctx.vertical().also(body::addView)
         accessNote = ctx.note("모든 파일 접근을 허용해야 이 폴더를 읽을 수 있습니다.").apply { visibility = View.GONE }.also(body::addView)
         body.addView(ctx.buttonBar(
@@ -68,7 +68,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             ctx.textButton("폴더 추가") { pickFolder(SettingsActivity.REQ_ADD_EXCLUDED_FOLDER) },
             ctx.textButton("경로 입력") { typePath(excluded = true) },
         ))
-        body.addView(ctx.note("숨김 폴더와 Android/data · obb는 늘 건너뜁니다."))
+        body.addView(ctx.note("숨김 폴더와 Android/data · obb는 건너뜁니다."))
 
         updateAccess()
         fillFolders()

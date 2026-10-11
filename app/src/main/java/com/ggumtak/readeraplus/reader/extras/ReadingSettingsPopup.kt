@@ -312,7 +312,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         all.addView(ctx.label(ALL_SETTINGS, Compact.LABEL_SP, bold = true, maxLines = 1))
         all.addView(ctx.icon(R.drawable.ic_chevron_right, 24))
         row.addView(all, lp(WRAP_CONTENT, ctx.dp(Compact.BAR_DP)))
-        // 상태 표시줄 (설정 → 화면·밝기, whose first sections are the two bands) beside it: no extra row, the popup
+        // 상태 표시줄 (설정 → 읽기 설정 → 상태 표시줄) beside it: no extra row, the popup
         // keeps its height.
         val status = ctx.horizontal {
             setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
@@ -321,7 +321,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             setOnClickListener {
                 flush()
                 popup?.dismiss()
-                openSettings(SettingsActivity.PAGE_SCREEN)
+                openSettings(SettingsActivity.PAGE_STATUS)
             }
         }
         status.addView(ctx.label(STATUS_SETTINGS, Compact.LABEL_SP, bold = true, maxLines = 1))

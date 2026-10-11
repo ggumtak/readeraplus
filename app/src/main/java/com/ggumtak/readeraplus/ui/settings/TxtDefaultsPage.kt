@@ -10,7 +10,7 @@ import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.chooser
 
 /**
- * "TXT 정리 기본값" (T1-9): the global TXT options ([com.ggumtak.readeraplus.settings.ReaderSettings] `txt*`) that
+ * "TXT 정리 (모든 책)" (T1-9): the global TXT options ([com.ggumtak.readeraplus.settings.ReaderSettings] `txt*`) that
  * every TXT book without its own settings uses: 본문 (blank lines, leading spaces, broken lines, the replacement rules
  * in the shared manager [RulesDialog]) and 챕터 (detection; the heading look and the rule only while it is on). The
  * rows and their wording are those of "이 책의 TXT 정리" ([BookTxtPage], the labels of [ReadingSettingsPopup]'s
@@ -39,7 +39,7 @@ internal class TxtDefaultsPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
                 blankRow?.setSummary(ReadingSettingsPopup.blankLabel(BLANK_MODES[i]))
             }
         }.also(body::addView)
-        stripRow = ctx.toggleRow("줄 앞 공백 지우기", "읽기 설정의 들여쓰기를 씁니다", r.txtStripIndent) { v ->
+        stripRow = ctx.toggleRow("줄 앞 공백 지우기", null, r.txtStripIndent) { v ->
             editReader { it.copy(txtStripIndent = v) }
         }.also(body::addView)
         joinRow = ctx.valueRow("끊어진 줄 합치기", ReadingSettingsPopup.joinLabel(r.txtJoinWrappedLines)) {
@@ -52,12 +52,12 @@ internal class TxtDefaultsPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
         rulesRow = ctx.navRow("바꾸기 규칙", Fmt.rulesLabel(r.txtReplaceRules)) { editRules() }.also(body::addView)
 
         body.section("챕터")
-        detectRow = ctx.toggleRow("챕터 자동 인식", "목차 만들기 (1화, 제1장, 프롤로그 …)", r.txtDetectChapters) { v ->
+        detectRow = ctx.toggleRow("챕터 자동 인식", null, r.txtDetectChapters) { v ->
             editReader { it.copy(txtDetectChapters = v) }
             updateChapterUi()
         }.also(body::addView)
         // The parser uses the heading look and the rule only while detection is on: hidden otherwise.
-        headingsRow = ctx.toggleRow("챕터 제목 강조", "굵게 · 크게 · 가운데", r.txtEmphasizeHeadings) { v ->
+        headingsRow = ctx.toggleRow("챕터 제목 강조", null, r.txtEmphasizeHeadings) { v ->
             editReader { it.copy(txtEmphasizeHeadings = v) }
         }.also(body::addView)
         regexRow = ctx.valueRow(HeadingRuleDialog.TITLE, regexLabel(r.txtChapterRegex)) { editRegex() }
@@ -102,7 +102,7 @@ internal class TxtDefaultsPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
     }
 
     companion object {
-        const val TITLE = "TXT 정리 기본값"
+        const val TITLE = "TXT 정리 (모든 책)"
 
         /** The 챕터 제목 규칙 row's value: the rule itself, or what applies without one. */
         fun regexLabel(regex: String): String = HeadingRule.label(regex)

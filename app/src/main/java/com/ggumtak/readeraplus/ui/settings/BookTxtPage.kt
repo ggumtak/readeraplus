@@ -69,7 +69,7 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
                 blankRow?.setSummary(ReadingSettingsPopup.blankLabel(TxtDefaultsPage.BLANK_MODES[i]))
             }
         }.also(body::addView)
-        body.addView(ctx.toggleRow("줄 앞 공백 지우기", "읽기 설정의 들여쓰기를 씁니다", txt.txtStripIndent) { v ->
+        body.addView(ctx.toggleRow("줄 앞 공백 지우기", null, txt.txtStripIndent) { v ->
             update(txt.copy(txtStripIndent = v))
         })
         var joinRow: View? = null
@@ -89,12 +89,12 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         }.also(body::addView)
 
         body.section("챕터")
-        body.addView(ctx.toggleRow("챕터 자동 인식", "목차 만들기 (1화, 제1장, 프롤로그 …)", txt.txtDetectChapters) { v ->
+        body.addView(ctx.toggleRow("챕터 자동 인식", null, txt.txtDetectChapters) { v ->
             update(txt.copy(txtDetectChapters = v))
             updateChapterUi()
         })
         // The parser uses the heading look and the rule only while detection is on: hidden otherwise.
-        headingsRow = ctx.toggleRow("챕터 제목 강조", "굵게 · 크게 · 가운데", txt.txtEmphasizeHeadings) { v ->
+        headingsRow = ctx.toggleRow("챕터 제목 강조", null, txt.txtEmphasizeHeadings) { v ->
             update(txt.copy(txtEmphasizeHeadings = v))
         }.also(body::addView)
         regexRow = ctx.valueRow(HeadingRuleDialog.TITLE, TxtDefaultsPage.regexLabel(txt.txtChapterRegex)) { editRegex() }
@@ -104,9 +104,9 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         // Both rows are about the defaults: the section shows only while the book has options of its own.
         ownViews.clear()
         ownViews += body.section("기본값")
-        ownViews += ctx.row(SAVE_DEFAULTS, "이 설정을 TXT 정리 기본값으로 저장") { saveAsDefaults() }.also(body::addView)
+        ownViews += ctx.row(SAVE_DEFAULTS, "이 설정을 TXT 정리 (모든 책)로 저장") { saveAsDefaults() }.also(body::addView)
         ownViews += ctx.row(CLEAR_OWN, "바꾸기 규칙 포함 · 기본값을 따릅니다") { clearOwn() }.also(body::addView)
-        followsNote = ctx.note("이 책은 TXT 정리 기본값을 따릅니다.").also(body::addView)
+        followsNote = ctx.note("이 책은 TXT 정리 (모든 책)를 따릅니다.").also(body::addView)
         refreshActions()
         return ctx.pageScroll(body)
     }
@@ -166,7 +166,7 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     private fun saveAsDefaults() {
         ctx.confirm(
             SAVE_DEFAULTS,
-            "이 책의 TXT 정리를 TXT 정리 기본값으로 저장할까요? 다른 TXT 책은 다음에 열 때 다시 정리합니다.",
+            "이 책의 TXT 정리를 TXT 정리 (모든 책)로 저장할까요? 다른 TXT 책은 다음에 열 때 다시 정리합니다.",
             "저장",
         ) {
             val global = Settings.reader.withTxt(override)

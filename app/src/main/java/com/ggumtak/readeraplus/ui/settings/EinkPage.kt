@@ -23,7 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * "e-ink 새로고침" (T1-3; "e-ink 화면" until 2026-10-04, too close to 화면·밝기 above it): 자동 새로고침 (the full refresh
+ * "e-ink 화면" (T1-3; "e-ink 새로고침" 2026-10-04 to 2026-10-11): 자동 새로고침 (the full refresh
  * cadence by day and on dark pages, chapter and picture refreshes, the device's own ghost clearing and the double-flash
  * warning) and 화면 모드 (the reader page's e-ink mode, and a folded "고급" group with the refresh method, the flash
  * length, the refresh test and the diagnostics). The device probe runs once on IO when the page is built; its result
@@ -72,7 +72,7 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             }
         }.also(body::addView)
         body.addView(ctx.toggleRow("새 챕터에서 새로고침", null, app.einkRefreshOnChapter) { v -> editApp { it.copy(einkRefreshOnChapter = v) } })
-        body.addView(ctx.toggleRow("그림 페이지에서 새로고침", "들어갈 때 · 나올 때 한 번씩", app.einkFlashImages) { v ->
+        body.addView(ctx.toggleRow("그림 페이지에서 새로고침", null, app.einkFlashImages) { v ->
             editApp { it.copy(einkFlashImages = v) }
         })
         cleanText = ctx.note("").apply { visibility = View.GONE }.also(body::addView)
@@ -88,7 +88,7 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
     // ---------------------------------------------------------------- 화면 모드 · 고급
 
     private fun addMode(body: LinearLayout, app: AppSettings) {
-        body.section("화면 모드")
+        body.section("모드")
         modeRow = ctx.valueRow("화면 모드", SettingsFormat.einkMode(app.einkMode)) {
             val opts = SettingsFormat.EINK_MODES
             val sel = opts.indexOfFirst { it.second == Settings.app.einkMode }.coerceAtLeast(0)
@@ -183,7 +183,7 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
 
     companion object {
         /** The page's title and the main list's row. */
-        const val TITLE = "e-ink 새로고침"
+        const val TITLE = "e-ink 화면"
         private const val MODE_NOTE = "‘기기 설정 따름’은 책을 다시 열 때 적용됩니다."
         private const val MODE_UNAVAILABLE = "이 기기에서는 바꿀 수 없습니다 · 기기 e-ink 설정을 쓰세요"
     }

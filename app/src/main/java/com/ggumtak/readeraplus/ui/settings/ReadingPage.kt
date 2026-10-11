@@ -8,11 +8,15 @@ import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.reader.extras.FontChooser
 import com.ggumtak.readeraplus.reader.extras.Fmt
 import com.ggumtak.readeraplus.reader.extras.ReadingSettingsPopup
-import com.ggumtak.readeraplus.reader.extras.StatusUi
 import com.ggumtak.readeraplus.reader.extras.StyleChoice
 import com.ggumtak.readeraplus.reader.extras.TxtEdits
+import com.ggumtak.readeraplus.reader.extras.QuoteSwatch
+import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.FontManager
 import com.ggumtak.readeraplus.render.FontMath
+import com.ggumtak.readeraplus.render.QuoteStyles
+import com.ggumtak.readeraplus.settings.AppSettings
+import com.ggumtak.readeraplus.settings.ReadMode
 import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.settings.SideMargin
@@ -23,6 +27,8 @@ import com.ggumtak.readeraplus.settings.VerticalMargin
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.confirm
+import com.ggumtak.readeraplus.ui.kit.dp
+import com.ggumtak.readeraplus.ui.kit.horizontal
 import com.ggumtak.readeraplus.ui.kit.prompt
 import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
@@ -34,15 +40,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * "읽기 설정": every reading setting of the page in one place (the quick options' "전체 읽기 설정" opens it). 스타일
- * (추천 스타일, 내 스타일, 화면 색, 흑백 반전), 글자 (글꼴, 글자 크기, 굵기, 글자 간격), 문단 (줄 간격, 문단 간격, 들여쓰기,
- * 정렬, 줄바꿈), 여백·페이지 (여백 사용 and the margins, 페이지 나눔, 외톨이 줄 방지), 파일 (this book's TXT options, the
- * TXT defaults, EPUB 출판사 스타일) and 기타 (기본값으로 되돌리기; opened straight from the quick options, also the way on
- * to 넘기기·터치·키 and 화면·밝기). A 화면 색 or 흑백 반전 change is a repaint only (no re-layout).
+ * "읽기 설정": everything that changes how the page reads, in one place (the quick options' "전체 읽기 설정" opens it).
+ * 스타일 (추천 스타일, 내 스타일), 글자 (글꼴, 글꼴 관리, 글자 크기, 굵기, 글자 간격), 문단 (줄 간격, 문단 간격, 들여쓰기, 정렬,
+ * 줄바꿈), 여백 (여백 사용 and the margins), 색 (배경 색, 흑백 반전, 형광펜 색 표시), 페이지 (페이지 나눔, 외톨이 줄 방지, 가로
+ * 화면), 화면 구성 (상태 표시줄, 넘기기·터치·키) and 책 형식 (this book's TXT options, the TXT defaults, the two EPUB
+ * switches), then 기본값으로 되돌리기 (opened straight from the quick options, also the way on to every other page). A
+ * 배경 색 or 흑백 반전 change is a repaint only (no re-layout).
  *
- * Every row edits the GLOBAL [ReaderSettings] (all books): the quick options' seven rows edit the same fields with the
- * same steps and ranges. The reader applies what changed once, when it comes back to the front (one re-layout, the
- * first character of the page kept).
+ * Every row edits the GLOBAL [ReaderSettings] (all books) but 형광펜 색 표시, an [AppSettings] choice: the quick options'
+ * seven rows edit the same fields with the same steps and ranges. The reader applies what changed once, when it comes
+ * back to the front (one re-layout, the first character of the page kept).
  */
 internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_READING, "읽기 설정") {
     /** The settings this page's rows show: a change made elsewhere (글꼴 관리, a restore) rebuilds it in [onShown]. */
@@ -51,8 +58,10 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     private var userRow: View? = null
     private var themeRow: View? = null
     private var marginViews: Array<View> = emptyArray()
-    private var widowRow: View? = null
     private var bookTxtRow: View? = null
+    private var turnRow: View? = null
+    private var swatches: LinearLayout? = null
+    private var swatchInk: Boolean? = null
     /** Holds the 굵기 stepper: swapped when the font's own weight is known ([showWeight]). */
     private var weightHolder: LinearLayout? = null
     private var weightNatural = DEFAULT_NATURAL_WEIGHT
@@ -62,24 +71,16 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         val r = Settings.reader
         shown = r
         val body = ctx.pageBody()
-        body.addView(ctx.note(SCOPE_NOTE))
 
         body.section("스타일")
         styleRow = ctx.valueRow("추천 스타일", styleLabel(r)) { chooseStyle() }.also(body::addView)
         userRow = ctx.valueRow(StyleChoice.USER_LABEL, userLabel(r)) { userStylesMenu() }.also(body::addView)
-        themeRow = ctx.valueRow("화면 색", r.pageTheme.label) {
-            val opts = R3Rows.PAGE_THEMES
-            ctx.chooser("화면 색", opts.map { R3Rows.pageThemeChoice(it) }, opts.indexOf(Settings.reader.pageTheme)) { i ->
-                // 흰색 also picks 리디바탕 (QuickFields.withTheme), as in the reader's 배경 row: the font rows change too.
-                applyStyle { com.ggumtak.readeraplus.reader.extras.QuickFields.withTheme(it, opts[i]).copy(invert = it.invert) }
-            }
-        }.also(body::addView)
-        body.addView(ctx.toggleRow("흑백 반전", "검은 바탕에 흰 글자 · 화면 색보다 우선", r.invert) { v -> edit { it.copy(invert = v) } })
 
         body.section("글자")
         // The font's name and weights are read off the main thread (a user font is a file read in a cold process; the
         // weights scan /sdcard/Fonts and parse a font file). 굵기 shows "기본" for a regular font until they arrive.
         val fontRow = ctx.valueRow("글꼴", "…") { v -> chooseFont(v) }.also(body::addView)
+        body.addView(ctx.navRow("글꼴 관리", null) { activity.push(SettingsActivity.PAGE_FONTS) })
         weightNatural = DEFAULT_NATURAL_WEIGHT
         weightMin = DEFAULT_MIN_WEIGHT
         body.addView(stepper("글자 크기", r.fontSizeSp, ReaderSettings.MIN_FONT_SP, ReaderSettings.MAX_FONT_SP, 0.5f, Fmt::number) { v ->
@@ -93,9 +94,6 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         loadFont(r.fontId, fontRow)
         body.addView(stepper("글자 간격", r.letterSpacingPm.toFloat(), -100f, 200f, 10f, { Fmt.letterSpacing(it.toInt()) }) { v ->
             edit { it.copy(letterSpacingPm = v.toInt()) }
-        })
-        body.addView(ctx.toggleRow("책의 글자 크기 무시", "EPUB 본문은 모든 책에서 같은 크기 · 제목은 그대로", r.epubIgnoreBookSizes) { v ->
-            edit { it.copy(epubIgnoreBookSizes = v) }
         })
 
         body.section("문단")
@@ -123,10 +121,10 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
             }
         }.also(body::addView)
 
+        addMargins(body, r)
+        addColors(body, r)
         addPage(body, r)
-        // The status bands live on 화면·밝기: reachable from here too, where the reading look is set.
-        body.section("상태 표시줄")
-        body.addView(ctx.navRow("상태 표시줄", "위·아래 표시 항목 · 진행 막대 · 글자 크기") { activity.push(SettingsActivity.PAGE_SCREEN) })
+        addLayout(body)
         addFiles(body, r)
 
         // Opened straight from the quick options (no main list below it): one way on to every other page (the main
@@ -147,14 +145,16 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
             activity.rebuildTop()
             return
         }
+        // 넘기기·터치·키 may have changed what its row says.
+        turnRow?.setSummary(turnSummary(Settings.app))
         // 이 책의 TXT 정리 may have given the book its own options, or cleared them.
         OpenBook.info?.let { book -> bookTxtRow?.setSummary(bookTxtSummary(book)) }
     }
 
-    // ---------------------------------------------------------------- 여백·페이지 (scroll SPEC §2.4, anchor §3.3 / §4.4)
+    // ---------------------------------------------------------------- 여백 · 색 · 페이지 (scroll SPEC §2.4, anchor §3.3 / §4.4)
 
-    private fun addPage(body: LinearLayout, r: ReaderSettings) {
-        body.section("여백·페이지")
+    private fun addMargins(body: LinearLayout, r: ReaderSettings) {
+        body.section("여백")
         // The switch comes first: hiding the margins below it never moves it under the finger.
         body.addView(ctx.toggleRow("여백 사용", "끄면 여백을 최소로", r.pageMargins) { v ->
             edit { it.copy(pageMargins = v) }
@@ -184,22 +184,72 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
             verticalUi = to
             edit { val tb = VerticalMargin.step(it.marginTopDp, it.marginBottomDp, from, to); it.copy(marginTopDp = tb[0], marginBottomDp = tb[1]) }
         }
-        val note = ctx.note(R3Rows.MARGIN_NOTE)
-        marginViews = arrayOf(side, vertical, note)
+        marginViews = arrayOf(side, vertical)
         for (v in marginViews) body.addView(v)
         updateMarginUi()
+    }
+
+    private fun addColors(body: LinearLayout, r: ReaderSettings) {
+        body.section("색")
+        themeRow = ctx.valueRow("배경 색", r.pageTheme.label) {
+            val opts = R3Rows.PAGE_THEMES
+            ctx.chooser("배경 색", opts.map { R3Rows.pageThemeChoice(it) }, opts.indexOf(Settings.reader.pageTheme)) { i ->
+                // 흰색 also picks 리디바탕 (QuickFields.withTheme), as in the reader's 배경 row: the font rows change too.
+                applyStyle { com.ggumtak.readeraplus.reader.extras.QuickFields.withTheme(it, opts[i]).copy(invert = it.invert) }
+            }
+        }.also(body::addView)
+        body.addView(ctx.toggleRow("흑백 반전", null, r.invert) { v -> edit { it.copy(invert = v) } })
+        addHighlightLook(body, Settings.app)
+    }
+
+    /** 형광펜 색 표시 (an app setting, NOTES §11): the choice and a strip of the six looks as drawn. */
+    private fun addHighlightLook(body: LinearLayout, app: AppSettings) {
+        val eink = DeviceClass.cached(ctx)
+        var lookRow: View? = null
+        lookRow = ctx.valueRow("형광펜 색 표시", R3Rows.highlightLook(app.highlightLook, eink)) {
+            val opts = R3Rows.HL_LOOKS
+            val e = DeviceClass.cached(ctx)
+            ctx.chooser("형광펜 색 표시", opts.map { R3Rows.highlightLook(it, e) }, opts.indexOf(Settings.app.highlightLook)) { i ->
+                if (Settings.app.highlightLook != opts[i]) editApp { it.copy(highlightLook = opts[i]) }
+                lookRow?.setSummary(R3Rows.highlightLook(opts[i], e))
+                fillSwatches(R3Rows.inkLook(opts[i], e))
+            }
+        }.also(body::addView)
+        swatches = ctx.horizontal {
+            setPadding(ctx.dp(16), 0, ctx.dp(16), ctx.dp(8))
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        }.also(body::addView)
+        fillSwatches(R3Rows.inkLook(app.highlightLook, eink))
+    }
+
+    /** A static strip of the six quote looks (22 x 14 dp each) as they are drawn on the page. */
+    private fun fillSwatches(ink: Boolean) {
+        val strip = swatches ?: return
+        if (swatchInk == ink && strip.childCount > 0) return
+        swatchInk = ink
+        strip.removeAllViews()
+        // RIDI's order (the selection palette's): yellow, green, purple, blue, pink, underline.
+        for (pos in 0 until QuoteStyles.COUNT) {
+            val style = QuoteStyles.paletteStyle(pos)
+            strip.addView(QuoteSwatch(ctx, style, SWATCH_W_DP, ink).apply { reserveRing = false }, LinearLayout.LayoutParams(ctx.dp(SWATCH_W_DP), ctx.dp(SWATCH_H_DP)).apply {
+                if (pos > 0) leftMargin = ctx.dp(8)
+            })
+        }
+    }
+
+    private fun addPage(body: LinearLayout, r: ReaderSettings) {
+        body.section("페이지")
         var breakRow: View? = null
         breakRow = ctx.valueRow("페이지 나눔", R3Rows.pageBreak(r.pageBreak)) {
             val opts = R3Rows.PAGE_BREAKS
             ctx.chooser("페이지 나눔", opts.map { R3Rows.pageBreakChoice(it) }, opts.indexOf(Settings.reader.pageBreak)) { i ->
                 edit { it.copy(pageBreak = opts[i]) }
                 breakRow?.setSummary(R3Rows.pageBreak(opts[i]))
-                widowRow?.setSummary(StatusUi.widowSummary(opts[i]))
             }
         }.also(body::addView)
-        widowRow = ctx.toggleRow("외톨이 줄 방지", StatusUi.widowSummary(r.pageBreak), r.widowOrphanControl) { v ->
+        body.addView(ctx.toggleRow("외톨이 줄 방지", null, r.widowOrphanControl) { v ->
             edit { it.copy(widowOrphanControl = v) }
-        }.also(body::addView)
+        })
         // Two pages side by side on a landscape screen (the reader lays out again from the first character shown).
         var landscapeRow: View? = null
         landscapeRow = ctx.valueRow("가로 화면", R3Rows.landscapePages(r.landscapePages)) {
@@ -209,28 +259,50 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
                 landscapeRow?.setSummary(R3Rows.landscapePages(opts[i]))
             }
         }.also(body::addView)
-        body.addView(ctx.note(R3Rows.LANDSCAPE_NOTE))
     }
 
-    /** The two margin steppers and their note show only while "여백 사용" is on (one update with the switch). */
+    /** "화면 구성": the pages that set up the rest of the reading screen. */
+    private fun addLayout(body: LinearLayout) {
+        body.section("화면 구성")
+        body.addView(ctx.navRow("상태 표시줄", "위·아래 표시 항목 · 진행 막대") { activity.push(SettingsActivity.PAGE_STATUS) })
+        turnRow = ctx.navRow("넘기기·터치·키", turnSummary(Settings.app)) { activity.push(SettingsActivity.PAGE_PAGE_TURNING) }
+            .also(body::addView)
+    }
+
+    /**
+     * "터치: 좌우 넘김 · 볼륨 키 · 지정 키 2개", with "스크롤" first in scroll mode (paged is the default: not named, so
+     * "넘김" is never said twice; the e-ink cadence has its own row).
+     */
+    private fun turnSummary(app: AppSettings): String {
+        val parts = ArrayList<String>()
+        if (app.readMode == ReadMode.SCROLL) parts += R3Rows.readMode(app.readMode)
+        parts += "터치: " + TapZoneModel.modeName(app.tapZoneMode)
+        if (app.volumeKeysTurn) parts += "볼륨 키"
+        val keys = KeyAssign.entries(app).size
+        if (keys > 0) parts += "지정 키 ${keys}개"
+        return parts.joinToString(" · ")
+    }
+
+    /** The two margin steppers show only while "여백 사용" is on (one update with the switch). */
     private fun updateMarginUi() {
         val on = Settings.reader.pageMargins
         for (v in marginViews) v.setShown(on)
     }
 
-    // ---------------------------------------------------------------- 파일
+    // ---------------------------------------------------------------- 책 형식
 
     private fun addFiles(body: LinearLayout, r: ReaderSettings) {
-        body.section("파일")
+        body.section("책 형식")
         val book = OpenBook.info?.takeIf { it.format == BookFormat.TXT }
         if (book != null) {
             bookTxtRow = ctx.navRow(BookTxtPage.TITLE, bookTxtSummary(book)) { activity.push(SettingsActivity.PAGE_BOOK_TXT) }
                 .also(body::addView)
         }
-        body.addView(ctx.navRow(TxtDefaultsPage.TITLE, "따로 정하지 않은 모든 TXT 책") {
-            activity.push(SettingsActivity.PAGE_TXT_DEFAULTS)
+        body.addView(ctx.navRow(TxtDefaultsPage.TITLE, null) { activity.push(SettingsActivity.PAGE_TXT_DEFAULTS) })
+        body.addView(ctx.toggleRow("EPUB 글자 크기 통일", null, r.epubIgnoreBookSizes) { v ->
+            edit { it.copy(epubIgnoreBookSizes = v) }
         })
-        body.addView(ctx.toggleRow("EPUB 출판사 스타일", "책에 지정된 정렬 · 여백 · 제목 크기", r.epubPublisherStyles) { v ->
+        body.addView(ctx.toggleRow("EPUB 원래 서식 따르기", null, r.epubPublisherStyles) { v ->
             edit { it.copy(epubPublisherStyles = v) }
         })
     }
@@ -415,7 +487,6 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         ctx.stepperRow(title, value.coerceIn(min, max), min, max, step, format, onChange).liveStepperValue()
 
     companion object {
-        const val SCOPE_NOTE = "모든 책에 적용됩니다."
         const val CUSTOM_STYLE = "직접 설정"
         /** The 추천 스타일 row for the defaults' own look, which no preset matches since 웹소설 became the 마루뷰어 page. */
         const val DEFAULT_STYLE = "기본"
@@ -424,7 +495,9 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         private const val DEFAULT_MIN_WEIGHT = 100
         const val RESET_TITLE = "기본값으로 되돌리기"
         const val RESET_SUMMARY = "흑백 반전 · TXT 정리는 그대로"
-        const val RESET_MESSAGE = "글꼴 · 글자 크기 · 간격 · 여백 · 가로 화면 · 화면 색을 기본값으로 되돌릴까요?\n흑백 반전과 TXT 정리는 그대로 둡니다."
+        const val RESET_MESSAGE = "글꼴 · 글자 크기 · 간격 · 여백 · 가로 화면 · 배경 색을 기본값으로 되돌릴까요?\n흑백 반전과 TXT 정리는 그대로 둡니다."
+        private const val SWATCH_W_DP = 22
+        private const val SWATCH_H_DP = 14
         private val ALIGNS = listOf(Align.LEFT, Align.JUSTIFY)
         private val BREAKS = listOf(LineBreakMode.WORD, LineBreakMode.CHAR)
     }
@@ -433,7 +506,7 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
 /** 읽기 설정's 기본값으로 되돌리기. Pure, unit-tested. */
 internal object ReadingDefaults {
     /**
-     * [s] with this page's settings back to the defaults (화면 색 back to 흰 바탕 too). Kept: the TXT options (resetting
+     * [s] with this page's settings back to the defaults (배경 색 back to 흰 바탕 too). Kept: the TXT options (resetting
      * them would re-parse every TXT book on its next open), 흑백 반전 (읽기 설정 → 스타일, kept on purpose: the message
      * says so) and what lives on 화면·밝기 (the status slots, 진행 막대, 상태 글자 크기).
      */

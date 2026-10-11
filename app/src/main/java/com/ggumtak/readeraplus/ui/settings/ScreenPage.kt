@@ -8,23 +8,13 @@ import android.net.Uri
 import android.view.View
 import android.widget.LinearLayout
 import com.ggumtak.readeraplus.reader.DeviceLight
-import com.ggumtak.readeraplus.reader.extras.Fmt
-import com.ggumtak.readeraplus.reader.extras.QuoteSwatch
-import com.ggumtak.readeraplus.reader.extras.StatusUi
-import com.ggumtak.readeraplus.render.DeviceClass
-import com.ggumtak.readeraplus.render.QuoteStyles
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.ReadMode
-import com.ggumtak.readeraplus.settings.ReaderSettings
 import com.ggumtak.readeraplus.settings.Settings
-import com.ggumtak.readeraplus.settings.StatusItem
 import com.ggumtak.readeraplus.ui.kit.alert
 import com.ggumtak.readeraplus.ui.kit.chooser
-import com.ggumtak.readeraplus.ui.kit.dp
-import com.ggumtak.readeraplus.ui.kit.horizontal
-import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.showNoAnim
-import com.ggumtak.readeraplus.ui.kit.stepperRow
+import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -32,53 +22,37 @@ import kotlinx.coroutines.withContext
 import android.provider.Settings as SystemSettings
 
 /**
- * "화면·밝기": 위쪽 상태 표시줄 and 아래쪽 상태 표시줄 (three slots each, titled by their place only, then 진행 막대 and
- * 상태 글자 크기 with the bottom band; UI_SPEC §5.5, anchor §2.7), 화면 (전체 화면, 화면 켜짐 유지, 화면 방향, 인용문 색
- * 표시 with its swatches; NOTES §11) and 밝기 (UI_SPEC §4.6, brightness.md §5.6: 스와이프로
- * 밝기 조절, 기기 밝기 직접 조절 and its permission flow, 나갈 때 원래 밝기로, 밝기 방식 다시 묻기, the device's own
- * light settings). The status bands have their own places (`StatusBands`): another item in a slot only repaints the
- * page; a band that comes, goes or changes height (진행 막대, 상태 글자 크기) re-lays it at the same first character.
+ * "화면·밝기": 화면 (전체 화면, 화면 켜짐 유지, 화면 방향) and 밝기 (UI_SPEC §4.6, brightness.md §5.6: 스와이프로 밝기
+ * 조절, 기기 밝기 직접 조절 and its permission flow, 나갈 때 원래 밝기로, the device's own light settings). The status
+ * bar moved to [StatusBarPage] and 형광펜 색 표시 to 읽기 설정 (2026-10-11).
  */
 internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_SCREEN, "화면·밝기") {
-    /** The reading settings the status rows show (읽기 설정's margins or a reset rebuild the page in [onShown]). */
-    private var seenReader: ReaderSettings? = null
-    /** The six slot rows, index band * 3 + pos. */
-    private val slotRows = arrayOfNulls<View>(6)
-    private var statusSizeRow: View? = null
-
-    private var swatches: LinearLayout? = null
-    private var swatchInk: Boolean? = null
-
     private var swipeLightRow: View? = null
     private var deviceRow: View? = null
     private var restoreRow: View? = null
+    /** Shown only while the device light was judged unusable (the two rows above are off then): the way back. */
+    private var verdictRow: View? = null
     /** "시스템 설정 수정" as last read on IO; null until the first read (the subtitle then assumes it is granted). */
     private var canWrite: Boolean? = null
     /** The device's original brightness mode is automatic ([DeviceLight.readOrigAuto]): the keep subtitle says so. */
     private var origAuto = false
     /** Verdict NONE: the app cannot change the front light here (the light rows are disabled, the reason shown). */
     private var lightNone = false
+    /** The device light has a verdict (asked before): "밝기 방식 다시 묻기" can undo it. */
+    private var lightJudged = false
     /** The user went to the permission page from "기기 밝기 직접 조절": turn it on when they come back granted. */
     private var pendingDevice = false
     private var lightDialog: android.app.AlertDialog? = null
 
     override fun build(): View {
-        seenReader = Settings.reader
         val app = Settings.app
         val body = ctx.pageBody()
-        addStatusBar(body)
         addScreen(body, app)
         addBrightness(body, app)
         return ctx.pageScroll(body)
     }
 
     override fun onShown() {
-        // 읽기 설정 (the margins) or a reset may have changed the reading settings the status rows show.
-        if (Settings.reader != seenReader) {
-            activity.rebuildTop()
-            return
-        }
-        updateStatusUi()
         refreshLight()
     }
 
@@ -92,60 +66,12 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         lightDialog = null
     }
 
-    /** Saves a reading setting changed on this page; [onShown] then knows the rows already show it. */
-    private inline fun editOwn(f: (ReaderSettings) -> ReaderSettings) {
-        editReader(f)
-        seenReader = Settings.reader
-    }
-
-    // ---------------------------------------------------------------- 상태 표시줄 (UI_SPEC §5.5, anchor §2.7)
-
-    /**
-     * The two bands, a section each ("위쪽 상태 표시줄" / "아래쪽 상태 표시줄"): six rows that read alike in one block
-     * hid where the top band ends. A row says only its place (왼쪽 / 가운데 / 오른쪽, its header says the band); its
-     * chooser's title says both ("아래 가운데").
-     */
-    private fun addStatusBar(body: LinearLayout) {
-        val r = Settings.reader
-        for (band in 0..1) {
-            body.section(R3Rows.bandHeader(band))
-            for (pos in 0..2) addSlotRow(body, r, band, pos)
-        }
-        body.addView(ctx.toggleRow("진행 막대", R3Rows.PROGRESS_SUMMARY, r.progressBar) { v ->
-            editOwn { it.copy(progressBar = v) }
-            updateStatusUi()
-        })
-        statusSizeRow = ctx.stepperRow("상태 글자 크기", r.statusFontSizeSp, 8f, 16f, 0.5f, Fmt::number) { v ->
-            editOwn { it.copy(statusFontSizeSp = v) }
-            updateStatusUi()
-        }.liveStepperValue().also(body::addView)
-        body.addView(ctx.note(R3Rows.STATUS_NOTE))
-        updateStatusUi()
-    }
-
-    private fun addSlotRow(body: LinearLayout, r: ReaderSettings, band: Int, pos: Int) {
-        val k = band * 3 + pos
-        slotRows[k] = ctx.valueRow(StatusUi.posWord(pos), r.slot(band, pos).label) {
-            val all = StatusItem.entries
-            ctx.chooser(R3Rows.slotTitle(band, pos), all.map { R3Rows.slotChoice(it) }, all.indexOf(Settings.reader.slot(band, pos))) { i ->
-                if (Settings.reader.slot(band, pos) != all[i]) editOwn { it.withSlot(band, pos, all[i]) }
-                slotRows[k]?.setSummary(all[i].label)
-                updateStatusUi()
-            }
-        }.also(body::addView)
-    }
-
-    /** The size row shows while a band has text. */
-    private fun updateStatusUi() {
-        statusSizeRow?.setShown(R3Rows.hasStatusText(Settings.reader))
-    }
-
     // ---------------------------------------------------------------- 화면
 
     private fun addScreen(body: LinearLayout, app: AppSettings) {
         body.section("화면")
-        body.addView(ctx.toggleRow("전체 화면", "시계 줄과 아래 버튼 줄 숨김", app.fullscreen) { v -> editApp { it.copy(fullscreen = v) } })
-        body.addView(ctx.toggleRow("화면 켜짐 유지", "기기 설정보다 10분 더 켜 둡니다", app.keepScreenOn) { v ->
+        body.addView(ctx.toggleRow("전체 화면", null, app.fullscreen) { v -> editApp { it.copy(fullscreen = v) } })
+        body.addView(ctx.toggleRow("화면 켜짐 유지", null, app.keepScreenOn) { v ->
             editApp { it.copy(keepScreenOn = v) }
         })
         var orientationRow: View? = null
@@ -157,43 +83,6 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
                 orientationRow?.setSummary(opts[i].first)
             }
         }.also(body::addView)
-        addHighlightLook(body, app)
-    }
-
-    /** 인용문 색 표시 (NOTES §11): the choice, a strip of the six looks as drawn, and the e-ink note. */
-    private fun addHighlightLook(body: LinearLayout, app: AppSettings) {
-        val eink = DeviceClass.cached(ctx)
-        var lookRow: View? = null
-        lookRow = ctx.valueRow("형광펜 색 표시", R3Rows.highlightLook(app.highlightLook, eink)) {
-            val opts = R3Rows.HL_LOOKS
-            val e = DeviceClass.cached(ctx)
-            ctx.chooser("형광펜 색 표시", opts.map { R3Rows.highlightLook(it, e) }, opts.indexOf(Settings.app.highlightLook)) { i ->
-                if (Settings.app.highlightLook != opts[i]) editApp { it.copy(highlightLook = opts[i]) }
-                lookRow?.setSummary(R3Rows.highlightLook(opts[i], e))
-                fillSwatches(R3Rows.inkLook(opts[i], e))
-            }
-        }.also(body::addView)
-        swatches = ctx.horizontal {
-            setPadding(ctx.dp(16), 0, ctx.dp(16), ctx.dp(8))
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-        }.also(body::addView)
-        fillSwatches(R3Rows.inkLook(app.highlightLook, eink))
-        body.addView(ctx.note(R3Rows.HL_LOOK_NOTE))
-    }
-
-    /** A static strip of the six quote looks (22 × 14 dp each) as they are drawn on the page. */
-    private fun fillSwatches(ink: Boolean) {
-        val strip = swatches ?: return
-        if (swatchInk == ink && strip.childCount > 0) return
-        swatchInk = ink
-        strip.removeAllViews()
-        // RIDI's order (the selection palette's): yellow, green, purple, blue, pink, underline.
-        for (pos in 0 until QuoteStyles.COUNT) {
-            val style = QuoteStyles.paletteStyle(pos)
-            strip.addView(QuoteSwatch(ctx, style, SWATCH_W_DP, ink).apply { reserveRing = false }, LinearLayout.LayoutParams(ctx.dp(SWATCH_W_DP), ctx.dp(SWATCH_H_DP)).apply {
-                if (pos > 0) leftMargin = ctx.dp(8)
-            })
-        }
     }
 
     // ---------------------------------------------------------------- 밝기 (UI_SPEC §4.6, brightness.md §5.6)
@@ -209,11 +98,11 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
             app.brightnessDevice,
         ) { on -> onDeviceSwitch(on) }.also(body::addView)
         // Only matters while the switch above is on: hidden otherwise, in the same pass.
-        restoreRow = ctx.toggleRow("나갈 때 원래 밝기로", R3Rows.BRIGHTNESS_RESTORE, app.brightnessRestore) { v ->
+        restoreRow = ctx.toggleRow("나갈 때 원래 밝기로", null, app.brightnessRestore) { v ->
             editApp { it.copy(brightnessRestore = v) }
             updateLightUi()
         }.also(body::addView)
-        body.addView(ctx.row("밝기 방식 다시 묻기", R3Rows.VERDICT_RESET) { resetVerdict() })
+        verdictRow = ctx.row("밝기 방식 다시 묻기", null) { resetVerdict() }.also(body::addView)
         body.addView(ctx.navRow("기기 조명 설정", R3Rows.LIGHT_SETTINGS) { openDisplaySettings() })
         updateLightUi()
     }
@@ -263,6 +152,7 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
             canWrite = write
             if (auto != null) origAuto = auto
             lightNone = verdict == DeviceLight.VERDICT_NONE
+            lightJudged = verdict != DeviceLight.VERDICT_UNKNOWN
             if (pendingDevice) {
                 pendingDevice = false
                 if (write && !lightNone) {
@@ -292,6 +182,19 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         restoreRow?.let { row ->
             row.setShown(app.brightnessDevice)
             row.setRowEnabled(!none)
+        }
+        verdictRow?.setShown(lightJudged)
+    }
+
+    /** "밝기 방식 다시 묻기": the reader asks again at the next brightness change. */
+    private fun resetVerdict() {
+        val appCtx = activity.applicationContext
+        activity.scope.launch {
+            withContext(Dispatchers.IO) { runCatching { DeviceLight.setVerdict(appCtx, DeviceLight.VERDICT_UNKNOWN) } }
+            lightNone = false
+            lightJudged = false
+            updateLightUi()
+            ctx.toast("다음에 밝기를 바꿀 때 다시 묻습니다")
         }
     }
 
@@ -333,27 +236,11 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
             .showNoAnim()
     }
 
-    /** "밝기 방식 다시 묻기": the reader asks again at the next brightness change. */
-    private fun resetVerdict() {
-        val appCtx = activity.applicationContext
-        activity.scope.launch {
-            withContext(Dispatchers.IO) { runCatching { DeviceLight.setVerdict(appCtx, DeviceLight.VERDICT_UNKNOWN) } }
-            lightNone = false
-            updateLightUi()
-            ctx.toast("다음에 밝기를 바꿀 때 다시 묻습니다")
-        }
-    }
-
     private fun openDisplaySettings() {
         try {
             activity.startActivity(Intent(SystemSettings.ACTION_DISPLAY_SETTINGS))
         } catch (_: Exception) {
             ctx.toast("화면 위에서 아래로 내려 기기 조명을 조절하세요")
         }
-    }
-
-    private companion object {
-        const val SWATCH_W_DP = 22
-        const val SWATCH_H_DP = 14
     }
 }
