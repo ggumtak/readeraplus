@@ -105,6 +105,9 @@ jobs:
         run: node --test tools/ai-dictionary/test.mjs
 
       - name: Build release APK
+        env:
+          # The Drive web app's URL: the app asks it for newer builds (설정 → 업데이트 확인). Empty without the secret.
+          UPDATE_URL: ${{ secrets.GDRIVE_UPLOAD_URL }}
         run: ./gradlew --stacktrace assembleRelease
 
       - name: Signing certificate

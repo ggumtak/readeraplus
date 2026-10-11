@@ -17,6 +17,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
+    <!-- In-app update (설정 → 업데이트 확인): installs a newer build of this app, after the user confirms. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+
     <!-- 기기 밝기 직접 조절 only (opt-in). -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />
 
@@ -130,6 +134,11 @@
             android:name=".reader.extras.TtsService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- The platform installer's answer for an in-app update (AppUpdater). -->
+        <receiver
+            android:name=".update.UpdateReceiver"
+            android:exported="false" />
 
         <provider
             android:name=".data.BookFileProvider"

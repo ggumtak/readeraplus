@@ -64,7 +64,7 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         })
         head.addView(ctx.label("e-ink 리더기를 위한 TXT·EPUB 리더", 15f).apply { setPadding(0, ctx.dp(10), 0, 0) })
         head.addView(ctx.label(
-            keepAll("인터넷으로 아무것도 보내지 않습니다. ‘Wi-Fi로 책 받기’ 화면이 열려 있을 때만 같은 Wi-Fi에서 파일을 받습니다."),
+            keepAll("직접 연 사전·웹 검색과 AI 사전, 업데이트 확인(내 Google Drive) 말고는 인터넷을 쓰지 않습니다. ‘Wi-Fi로 책 받기’ 화면이 열려 있을 때만 같은 Wi-Fi에서 파일을 받습니다."),
             14f,
             color = Ink.GRAY,
         ).apply { setPadding(0, ctx.dp(8), 0, 0); setLineSpacing(0f, 1.15f) })

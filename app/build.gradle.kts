@@ -18,6 +18,10 @@ android {
         versionCode = buildNumber
         // 0.2 starts at CI run 66 (2026-10-06): 0.2.0, then 0.2.1 … with every build (versionCode keeps the run number).
         versionName = "0.2.${(buildNumber - 66).coerceAtLeast(0)}"
+        // In-app update: the Drive web app (tools/gdrive/upload.gs) that lists the newest build; CI passes it.
+        val updateUrl = System.getenv("UPDATE_URL")?.trim().orEmpty()
+            .takeIf { it.startsWith("https://script.google.com/") && '"' !in it && '\\' !in it }.orEmpty()
+        buildConfigField("String", "UPDATE_URL", "\"$updateUrl\"")
     }
 
     // Release signing comes from the environment (CI: the repository secrets, or the key kept in the Actions

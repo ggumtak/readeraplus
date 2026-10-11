@@ -12,6 +12,10 @@
  *  5. github.com → the repository → Settings → Secrets and variables → Actions → New repository secret:
  *     GDRIVE_UPLOAD_URL = the URL from step 4, GDRIVE_UPLOAD_KEY = the KEY from step 2.
  * After that every build puts ReaderaPlus-<build>.apk into the Drive folder FOLDER and removes older ones.
+ *
+ * In-app update (2026-10-11): the app asks this web app `?what=latest` for the newest build and downloads it through
+ * a "anyone with the link" share of that one file. After replacing the code, keep the same URL:
+ * 배포 → 배포 관리 → (연필) 수정 → 버전: 새 버전 → 배포. No new secret is needed.
  */
 const KEY = 'CHANGE-ME-to-a-long-password';
 const FOLDER = 'ReaderaPlus';
@@ -26,6 +30,12 @@ function doPost(e) {
     const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(FOLDER);
     const blob = Utilities.newBlob(Utilities.base64Decode(req.data), 'application/vnd.android.package-archive', name);
     const file = folder.createFile(blob);
+    // The app downloads the newest build by its link (it is the only file shared, and only while it is the newest).
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (err) {
+      // doGet shares it again when the app asks; the upload itself still counts.
+    }
     // Older builds go to the trash (restorable for 30 days); the new one stays.
     const files = folder.getFiles();
     while (files.hasNext()) {
@@ -36,6 +46,40 @@ function doPost(e) {
   } catch (err) {
     return text('error ' + err);
   }
+}
+
+/** `?what=latest` → {"build":185,"id":"<Drive file id>"} for the newest ReaderaPlus-<build>.apk, or {"build":0}. */
+function doGet(e) {
+  try {
+    const p = (e && e.parameter) || {};
+    if (p.what !== 'latest') return text('ReaderaPlus');
+    let best = null;
+    let bestBuild = 0;
+    const folders = DriveApp.getFoldersByName(FOLDER);
+    if (folders.hasNext()) {
+      const files = folders.next().getFiles();
+      while (files.hasNext()) {
+        const f = files.next();
+        if (f.isTrashed()) continue;
+        const m = /^ReaderaPlus-(\d+)\.apk$/.exec(f.getName());
+        if (m && Number(m[1]) > bestBuild) {
+          bestBuild = Number(m[1]);
+          best = f;
+        }
+      }
+    }
+    if (!best) return json({ build: 0 });
+    if (best.getSharingAccess() !== DriveApp.Access.ANYONE_WITH_LINK) {
+      best.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    }
+    return json({ build: bestBuild, id: best.getId() });
+  } catch (err) {
+    return json({ build: 0, error: String(err) });
+  }
+}
+
+function json(o) {
+  return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function text(s) {
