@@ -151,6 +151,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
         private const val TAG = "ReaderActivity"
         private const val LOADING_DELAY_MS = 300L
+        /** The open lays its first page out again at most this often when the view keeps resizing meanwhile. */
+        private const val OPEN_LAYOUT_ATTEMPTS = 3
         /** Long-press selection needs the finger on a glyph's box (within this slop), not in the leading around it. */
         private const val GLYPH_SLOP_DP = 4f
         private const val SAVE_DELAY_MS = 1000L
@@ -576,7 +578,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         super.onSaveInstanceState(outState)
         val b = bookRef ?: return
         outState.putLong(STATE_BOOK, b.id)
-        if (curLayout != null) {
+        // While a re-parse holds the anchor, the shown page and the DB row may be in different parses' coordinates:
+        // no place here, so a recreation opens at the DB position (the new parse's).
+        if (curLayout != null && !anchorHeld) {
             outState.putInt(STATE_SECTION, anchor.section)
             outState.putInt(STATE_OFFSET, anchor.offset)
             outState.putLong(STATE_AT, System.currentTimeMillis())
@@ -1355,6 +1359,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 }
                 bookRef = b
                 bookOverride = opened.override
+                ReaderShortcuts.remember(this@ReaderActivity, b.id, b.title, scope)
                 // What 설정 changed for this book is in what the open just read (its writes are made at once): edits
                 // nobody took (the reader was re-created meanwhile) must not be applied over newer ones later.
                 OpenBook.take(b.id)
@@ -1400,11 +1405,25 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 openOwnsViewport = false
                 // Cached page counts load in parallel with the first layout.
                 s.startCounting(COUNT_DELAY_MS)
-                val l = s.layout(sec)
-                if (l == null) {
-                    if (session === s && !s.isClosed) showError("페이지를 나누지 못했습니다")
-                    return@launch
+                // The first layout, and again when the view's size changed while its images or the cached counts were
+                // awaited (rotation, the orientation lock, insets settling, the camera band): relayout() leaves an
+                // open alone (curLayout is null), so a layout of the old generation would be shown and marked current.
+                var laid: SectionLayout? = null
+                for (attempt in 0 until OPEN_LAYOUT_ATTEMPTS) {
+                    val got = s.layout(sec)
+                    if (got == null) {
+                        if (session === s && !s.isClosed) showError("페이지를 나누지 못했습니다")
+                        return@launch
+                    }
+                    laid = got
+                    val o = start.offset.coerceIn(0, got.content.length)
+                    preloadImages(s, got, if (target != null) got.pageForOffset(o) else AnchorMath.pageFor(got, o))
+                    // A book counted before shows its page numbers on the first page (not 쪽수 계산 중 for a moment).
+                    s.awaitCachedCounts(CACHE_WAIT_MS)
+                    if (session !== s) return@launch
+                    if (got.config == s.generation?.config) break
                 }
+                val l = laid ?: return@launch
                 val off = start.offset.coerceIn(0, l.content.length)
                 val idx = if (target != null) l.pageForOffset(off) else AnchorMath.pageFor(l, off)
                 // N §6.1 2: the stored coordinates were used and the note's text is still there (O(anchor), in memory).
@@ -1415,10 +1434,6 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     ownerHighlights[OWNER_JUMP] =
                         sec to listOf(Highlight(off, minOf(jump.end, l.content.length), HighlightKind.SEARCH))
                 }
-                preloadImages(s, l, idx)
-                // A book counted before shows its page numbers on the first page (not 쪽수 계산 중 for a moment).
-                s.awaitCachedCounts(CACHE_WAIT_MS)
-                if (session !== s) return@launch
                 // Paged: a note opens at its page start (A's JUMP rule). Scroll (attached by this show when wanted):
                 // the exact offset, with CONTEXT placement for a mid-line note (S §1.10 JUMP rule, [openedAtNote]).
                 openedAtNote = target != null
@@ -1430,6 +1445,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 // A renderer failure shows the error panel: the jump stays in the intent for [다시 시도], no return
                 // point or peek, and afterOpen waits for a page that really shows.
                 if (!shown || session !== s) return@launch
+                // Still another generation after every attempt (the view kept resizing): lay it out once more now that
+                // a page is up (relayout() needs one).
+                if (l.config != s.generation?.config) relayout()
                 if (target != null) {
                     // Same main-thread message as the page and the mark: one e-ink update (PLAN C23).
                     if (!isOnCurrentPage(saved)) safely { returnNav.onJump(saved) }
@@ -3867,10 +3885,29 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     anchor = DocPosition(sec, off)
                     relayout()
                 } else {
+                    // In the new parse's coordinates before waiting: a resize meanwhile relays out from here, not
+                    // from the old parse's place.
+                    anchor = DocPosition(sec, off)
                     s.startCounting(COUNT_DELAY_MS)
                     s.awaitCachedCounts(CACHE_WAIT_MS)
                     if (session !== s) return@launch
-                    showPage(sec, l, AnchorMath.pageFor(l, off), Nav.JUMP, anchorOffset = off)
+                    // That resize made a new generation: its relayout (from the anchor set above) shows the page, once.
+                    val stale = l.config != s.generation?.config
+                    if (stale && navJob?.isActive == true) {
+                        if (s.settings.shows(com.ggumtak.readeraplus.settings.StatusItem.EPISODE)) scheduleEpisodes()
+                        val done = ArrayList(reopenDone)
+                        reopenDone.clear()
+                        for (f in done) safely { f() }
+                        return@launch
+                    }
+                    val shown = if (!stale) l else s.layout(sec)
+                    if (session !== s) return@launch
+                    if (shown == null) {
+                        layoutFailed(s)
+                        return@launch
+                    }
+                    val o = off.coerceIn(0, shown.content.length)
+                    showPage(sec, shown, AnchorMath.pageFor(shown, o), Nav.JUMP, anchorOffset = o)
                 }
                 if (s.settings.shows(com.ggumtak.readeraplus.settings.StatusItem.EPISODE)) scheduleEpisodes()
                 val done = ArrayList(reopenDone)

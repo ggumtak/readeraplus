@@ -47,7 +47,12 @@ class AndroidTextMeasurer(
     }
     private val letterSpacingEm = (settings.letterSpacingPm / 1000f).let { if (it.isFinite()) it.coerceIn(-0.5f, 1f) else 0f }
 
+    /**
+     * Every style seen → its paint. RunStyle carries a link's href, so a footnote-heavy EPUB has thousands of styles
+     * that draw alike: they share one paint per [fontKey] ([fontPaints]), and this map is cleared past [MAX_STYLES].
+     */
     private val paints = HashMap<RunStyle, TextPaint>()
+    private val fontPaints = HashMap<RunStyle, TextPaint>()
     private val metricsCache = HashMap<RunStyle, FontMetricsPx>()
     private var lastStyle: RunStyle? = null
     private var lastPaint: TextPaint? = null
@@ -70,6 +75,8 @@ class AndroidTextMeasurer(
 
     override fun metrics(style: RunStyle): FontMetricsPx {
         metricsCache[style]?.let { return it }
+        val key = fontKey(style)
+        if (key !== style) metricsCache[key]?.let { return it }
         val p = paintFor(style)
         p.getFontMetrics(fm)
         val size = p.textSize
@@ -78,7 +85,8 @@ class AndroidTextMeasurer(
         if (!(asc > 0f) || asc.isInfinite()) asc = size * 0.8f
         if (!(desc >= 0f) || desc.isInfinite()) desc = size * 0.2f
         val m = FontMetricsPx(asc, desc)
-        metricsCache[style] = m
+        if (metricsCache.size >= MAX_STYLES) metricsCache.clear()
+        metricsCache[key] = m
         return m
     }
 
@@ -92,7 +100,9 @@ class AndroidTextMeasurer(
         if (style === lastStyle) return lastPaint!!
         var p = paints[style]
         if (p == null) {
-            p = createPaint(style)
+            val key = fontKey(style)
+            p = fontPaints[key] ?: createPaint(key).also { fontPaints[key] = it }
+            if (paints.size >= MAX_STYLES) paints.clear()
             paints[style] = p
         }
         lastStyle = style
@@ -142,6 +152,18 @@ class AndroidTextMeasurer(
     }
 
     internal companion object {
+        /** Styles remembered per measurer before [paints] / [metricsCache] start over (their paints stay shared). */
+        const val MAX_STYLES = 256
+
+        /**
+         * The part of [style] a paint depends on: a link's href, underline and strike-through are drawn by the
+         * renderer as lines, not by the paint ([PageRenderer] sets the colour on every draw). The same object when
+         * nothing is dropped (no allocation for the usual runs). Pure.
+         */
+        fun fontKey(style: RunStyle): RunStyle =
+            if (style.link == null && !style.underline && !style.strike) style
+            else style.copy(link = null, underline = false, strike = false)
+
         /** 1 em in px for [sp] (settings range is enforced by the UI; only nonsense values are clamped here). */
         fun emPxFor(context: Context, sp: Float): Float {
             val v = if (sp.isFinite()) sp.coerceIn(1f, 400f) else ReaderSettings().fontSizeSp
