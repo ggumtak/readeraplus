@@ -4,18 +4,28 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.92" android:scaleY="0.92">
-        <!-- Original artwork: a page with a folded corner and three wavy lines of text. -->
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.94" android:scaleY="0.94">
+        <!-- Original artwork: an open book on its cover, cream pages with lines of text and a red ribbon. -->
         <path
-            android:fillColor="#FFFFFFFF"
-            android:pathData="M38,28 H64 L74,38 V76 Q74,80 70,80 H38 Q34,80 34,76 V32 Q34,28 38,28 Z" />
+            android:fillColor="#FFC9B48E"
+            android:pathData="M25,40 L25,74 C36,72 46,73 54,78 C62,73 72,72 83,74 L83,40 Z" />
         <path
-            android:fillColor="#FFBDBDBD"
-            android:pathData="M64,28 V34 Q64,38 68,38 H74 Z" />
+            android:fillColor="#FFE8DDC6"
+            android:pathData="M27,38 L27,72 C37,70 47,71 54,76 C61,71 71,70 81,72 L81,38 Z" />
         <path
-            android:strokeColor="#FF1A1A1A"
-            android:strokeWidth="2.6"
+            android:fillColor="#FFFFFDF7"
+            android:pathData="M54,39 C47,34 37,33 29,35 L29,69 C37,67 47,68 54,73 Z M54,39 C61,34 71,33 79,35 L79,69 C71,67 61,68 54,73 Z" />
+        <path
+            android:strokeColor="#FFD8CFBF"
+            android:strokeWidth="0.8"
+            android:pathData="M54,39 L54,73" />
+        <path
+            android:strokeColor="#FFB8AE9C"
+            android:strokeWidth="1.6"
             android:strokeLineCap="round"
-            android:pathData="M41,47 C45,44 49,44 53,47 C57,50 61,50 67,47 M41,56 C45,53 49,53 53,56 C57,59 61,59 67,56 M41,65 C45,62 49,62 53,65 C55,66.5 57,67 59,66.6" />
+            android:pathData="M34,44 C39,43 44,43.5 49,45.5 M34,50 C39,49 44,49.5 49,51.5 M34,56 C39,55 44,55.5 49,57.5 M34,62 C38,61 41,61.3 44,62.3 M59,45.5 C62,44.3 64,43.8 66,43.6 M59,51.5 C64,49.5 69,49 74,50 M59,57.5 C64,55.5 69,55 74,56 M59,63.5 C64,61.5 69,61 74,62" />
+        <path
+            android:fillColor="#FFC8463D"
+            android:pathData="M68,34.2 L74,33.9 L74,52 L71,49 L68,52 Z" />
     </group>
 </vector>

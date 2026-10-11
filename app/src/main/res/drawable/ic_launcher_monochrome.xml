@@ -1,20 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android 13+ themed icon: one-colour line drawing of the same page (the launcher tints it). -->
+<!-- Android 13+ themed icon: one-colour silhouette of the open book (the launcher tints it), ribbon cut out. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.92" android:scaleY="0.92">
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.94" android:scaleY="0.94">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M53,39.6 C46,34.6 37,33.6 29,35.6 L29,69 C37,67 46,68 53,72.6 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M55,39.6 C62,34.6 71,33.6 79,35.6 L79,69 C71,67 62,68 55,72.6 Z M67,33 L74,33 L74,52 L70.5,48.5 L67,52 Z" />
         <path
             android:strokeColor="#FFFFFFFF"
-            android:strokeWidth="3"
-            android:strokeLineJoin="round"
-            android:pathData="M38,29.5 H63.4 L72.5,38.6 V76 Q72.5,78.5 70,78.5 H38 Q35.5,78.5 35.5,76 V32 Q35.5,29.5 38,29.5 Z M63.4,29.5 V34 Q63.4,38.6 68,38.6 H72.5" />
-        <path
-            android:strokeColor="#FFFFFFFF"
-            android:strokeWidth="2.6"
+            android:strokeWidth="2.2"
             android:strokeLineCap="round"
-            android:pathData="M41,47 C45,44 49,44 53,47 C57,50 61,50 67,47 M41,56 C45,53 49,53 53,56 C57,59 61,59 67,56 M41,65 C45,62 49,62 53,65 C55,66.5 57,67 59,66.6" />
+            android:pathData="M26,72.5 C36,70.5 46,71.5 54,76.5 C62,71.5 72,70.5 82,72.5" />
     </group>
 </vector>
