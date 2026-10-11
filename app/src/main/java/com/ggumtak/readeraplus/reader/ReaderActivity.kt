@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
@@ -4730,6 +4731,22 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         override fun onBookmark() = toggleBookmark()
 
         override fun onPinHere() = returnNav.onPinPressed()
+
+        // Phones only (the user, 2026-10-11): on e-ink each new picture is another panel update and a far section's
+        // layout costs the weak CPU while the finger is down.
+        override fun seekThumbAspect(): Float =
+            if (seekExact && thumbnailsShown && DeviceClass.cached(this@ReaderActivity) == false) thumbAspect() else 0f
+
+        override fun onSeekThumb(progress: Int, widthPx: Int, heightPx: Int, done: (Bitmap) -> Unit) {
+            // Counts redone while the finger is down (a relayout): this progress may be another page now.
+            if (!seekExact || !thumbnailsShown || session?.counts?.total() != seekTotal) return
+            val page = progress + 1
+            requestThumbs(page, 1, widthPx, heightPx, false) { batch ->
+                batch.cells.firstOrNull { it.page == page }?.bitmap?.let(done)
+            }
+        }
+
+        override fun onSeekThumbCancel() = cancelThumbs()
 
         override fun onSeekStart() {
             val c = session?.counts

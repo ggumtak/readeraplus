@@ -196,4 +196,21 @@ class ChromeMathTest {
         assertTrue(ChromeMath.bookmarkFits(1080, 3f))
         assertFalse(ChromeMath.bookmarkFits(1050, 3f))
     }
+
+    @Test
+    fun seekThumbnailTakesPartOfTheWidthCappedByHeight() {
+        // S25 portrait at 3x (1080 wide, 2200 above the panel), a 1.6 page: 42 % of the width = 453 px (< 660 px cap).
+        assertEquals(453 to 725, ChromeMath.seekThumbSize(1080, 2200, 1.6f, 3f))
+        // The Comet at 2x (720 wide): 42 % = 302 px, under the 440 px cap.
+        assertEquals(302 to 483, ChromeMath.seekThumbSize(720, 1100, 1.6f, 2f))
+        // Landscape at 2x, a 1.5 page: half of the 600 px left above the panel caps the height, the width follows.
+        assertEquals(200 to 300, ChromeMath.seekThumbSize(2200, 600, 1.5f, 2f))
+        // At 3x the same room leaves under 72 dp of width: no thumbnail.
+        assertEquals(null, ChromeMath.seekThumbSize(2200, 600, 1.5f, 3f))
+        // A wide window: the 220 dp cap.
+        assertEquals(660 to 1056, ChromeMath.seekThumbSize(4000, 4000, 1.6f, 3f))
+        // Too small, or nothing to draw for.
+        assertEquals(null, ChromeMath.seekThumbSize(300, 200, 1.6f, 3f))
+        assertEquals(null, ChromeMath.seekThumbSize(1080, 2200, 0f, 3f))
+    }
 }

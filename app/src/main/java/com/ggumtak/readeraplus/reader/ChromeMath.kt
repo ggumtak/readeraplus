@@ -54,6 +54,10 @@ internal object ChromeMath {
      * rows. It was ReadEra's 16 dp (2026-10-05); the user asked for less room under the buttons (2026-10-11).
      */
     const val BOTTOM_GAP_DP = 8
+    /** The seek preview's thumbnail: [seekThumbSize]. */
+    const val SEEK_THUMB_WIDTH = 0.42f
+    const val SEEK_THUMB_MAX_DP = 220
+    const val SEEK_THUMB_MIN_DP = 72
     /** The bars' show / hide on a phone (U §2.1 Motion): a short fade with a slide of [SLIDE_DP] toward their edge. */
     const val SHOW_MS = 180L
     const val HIDE_MS = 150L
@@ -101,6 +105,20 @@ internal object ChromeMath {
 
     /** The seek track's centre above the screen's (or the window's) bottom edge, in px. */
     fun seekAboveBottom(density: Float, gap: Int): Int = panelHeight(density, gap) - seekCentre(density)
+
+    /**
+     * The seek preview's page thumbnail in px, (width, height) for a page of [aspect] (height / width): at most
+     * [SEEK_THUMB_MAX_DP] wide and [SEEK_THUMB_WIDTH] of the window's [windowW], at most half of [availH] (the window
+     * above the bottom panel) tall. Null when that leaves less than [SEEK_THUMB_MIN_DP] of width (a tiny window).
+     */
+    fun seekThumbSize(windowW: Int, availH: Int, aspect: Float, density: Float): Pair<Int, Int>? {
+        if (windowW <= 0 || availH <= 0 || aspect <= 0f || density <= 0f) return null
+        var w = minOf(windowW * SEEK_THUMB_WIDTH, SEEK_THUMB_MAX_DP * density)
+        val maxH = availH / 2f
+        if (w * aspect > maxH) w = maxH / aspect
+        if (w < SEEK_THUMB_MIN_DP * density) return null
+        return w.toInt() to (w * aspect).toInt().coerceAtLeast(1)
+    }
 
     /** The top-row bookmark is shown only when the bar is at least [BOOKMARK_MIN_ROW_DP] wide. */
     fun bookmarkFits(rowW: Int, density: Float): Boolean = rowW >= Math.round(BOOKMARK_MIN_ROW_DP * density)

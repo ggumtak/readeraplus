@@ -2,6 +2,7 @@ package com.ggumtak.readeraplus.reader
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
@@ -94,6 +95,12 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         /** Preview text for a seek position while dragging. */
         fun onSeekPreview(progress: Int): String
         fun onSeekDone(progress: Int)
+        /** Height / width of a page thumbnail for the seek preview; 0 = no thumbnails now (pages still counted). */
+        fun seekThumbAspect(): Float = 0f
+        /** Renders seek position [progress]'s page at [widthPx] × [heightPx]; [done] on the main thread, maybe never. */
+        fun onSeekThumb(progress: Int, widthPx: Int, heightPx: Int, done: (Bitmap) -> Unit) {}
+        /** The drag ended: a thumbnail still being made is not wanted. */
+        fun onSeekThumbCancel() {}
     }
 
     /** The colours in use; [wanted] is the look [setLook] asked for, applied when the bars show (at once while up). */
@@ -136,6 +143,19 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     private val seek: SeekBar
     /** Seek preview ("1234쪽 · 제3장 …"), shown over the page just above the bottom bar while dragging. */
     private val seekInfo: TextView
+    /**
+     * The page under the finger as a thumbnail, above [seekInfo] (the user, 2026-10-11: see the other page while holding
+     * the bar). Asked for once the finger rests [THUMB_PAUSE_MS] on a position, so a sweep renders nothing; it keeps
+     * the last picture until the next one arrives. GONE until the first one does.
+     */
+    private val seekPage: ImageView
+    /** [seekPage] over [seekInfo], centred above the bottom bar while dragging. */
+    private val seekPreview: LinearLayout
+    /** The bottom bar's rows other than the seek row: see-through while the seek bar is dragged ([focusSeek]). */
+    private val seekHides = ArrayList<View>(3)
+    /** Seek position whose thumbnail is wanted (-1 = none). */
+    private var thumbWanted = -1
+    private val requestThumb = Runnable { requestSeekThumb() }
     private var root: FrameLayout? = null
 
     /** The bars are shown, also while they fade in; false from the moment a hide starts. */
@@ -275,13 +295,27 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         seekInfo = ctx.label("", 16f, bold = true, maxLines = 2).apply {
             gravity = Gravity.CENTER
             setPadding(ctx.dp(16), ctx.dp(10), ctx.dp(16), ctx.dp(10))
+        }
+        seekPage = ImageView(ctx).apply {
+            scaleType = ImageView.ScaleType.FIT_XY
+            setPadding(1, 1, 1, 1)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             visibility = View.GONE
         }
+        seekPreview = ctx.vertical {
+            gravity = Gravity.CENTER_HORIZONTAL
+            visibility = View.GONE
+        }
+        seekPreview.addView(seekPage, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { bottomMargin = ctx.dp(6) })
+        seekPreview.addView(seekInfo, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         seek = chromeSeekBar(seekThumb, seekTicks).apply {
             contentDescription = "페이지 위치"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
-                    if (fromUser && isSeeking) previewSeek(p)
+                    if (fromUser && isSeeking) {
+                        previewSeek(p)
+                        wantSeekThumb(p)
+                    }
                 }
 
                 override fun onStartTrackingTouch(s: SeekBar) {
@@ -294,13 +328,17 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
                     seekThrottle.reset()
                     setSeekInfo(actions.onSeekPreview(s.progress))
                     showSeekInfo(true)
+                    focusSeek(true)
+                    wantSeekThumb(s.progress)
                 }
 
                 override fun onStopTrackingTouch(s: SeekBar) {
                     isSeeking = false
                     dropHeldSeek()
-                    showSeekInfo(false)
+                    focusSeek(false)
                     actions.onSeekDone(s.progress)
+                    // After the jump: the thumbnails' cancel refills the neighbours of the page now shown.
+                    showSeekInfo(false)
                 }
             })
         }
@@ -336,6 +374,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             marginEnd = ctx.dp(4)
         })
         bottom.addView(labelRow, lp(MATCH_PARENT, ctx.dp(ChromeMath.LABEL_ROW_DP)))
+        seekHides += returnDock
+        seekHides += labelRow
 
         // Row 3: two big buttons, each half the width: 보기 설정 (the reading-settings popup, anchored to the button)
         // and 뷰어 설정 (the app's settings).
@@ -344,6 +384,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         buttonsRow.addView(gear, lp(0, MATCH_PARENT, 1f))
         buttonsRow.addView(bigButton(R.drawable.ic_ridi_gear, "뷰어 설정") { actions.onViewerSettings() }, lp(0, MATCH_PARENT, 1f))
         bottom.addView(buttonsRow, lp(MATCH_PARENT, ctx.dp(ChromeMath.BUTTONS_ROW_DP)))
+        seekHides += buttonsRow
         top.visibility = View.GONE
         bottom.visibility = View.GONE
         paint()
@@ -491,7 +532,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         this.root = root
         root.addView(top, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
         root.addView(bottom, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
-        root.addView(seekInfo, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM).apply {
+        root.addView(seekPreview, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM).apply {
             leftMargin = ctx.dp(16)
             rightMargin = ctx.dp(16)
         })
@@ -566,6 +607,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             ?: run { if (boundLabel.isNotEmpty()) pageLabel.text = pageLabelText(boundLabel) }
         seekInfo.setTextColor(k.text)
         seekInfo.background = previewBox()
+        seekPage.background = previewBox()
         unavailableLink?.let { paintLink(it) }
         rows?.paint()
     }
@@ -737,7 +779,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     }
 
     /** Views of the chrome itself (the host lays out other overlays around them). */
-    fun owns(v: View): Boolean = v === top || v === bottom || v === seekInfo
+    fun owns(v: View): Boolean = v === top || v === bottom || v === seekPreview || v === seekInfo
 
     /**
      * Shows the preview of seek position [p] now, or once [seekThrottle] allows (the latest held position, so the box
@@ -766,16 +808,83 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
 
     private fun showSeekInfo(show: Boolean) {
         if (!show) {
-            if (seekInfo.visibility != View.GONE) seekInfo.visibility = View.GONE
+            dropSeekThumb()
+            if (seekPreview.visibility != View.GONE) seekPreview.visibility = View.GONE
             return
         }
-        val lp = seekInfo.layoutParams as? FrameLayout.LayoutParams
+        val lp = seekPreview.layoutParams as? FrameLayout.LayoutParams
         val above = bottom.height + ctx.dp(8)
         if (lp != null && lp.bottomMargin != above) {
             lp.bottomMargin = above
-            seekInfo.layoutParams = lp
+            seekPreview.layoutParams = lp
         }
-        seekInfo.visibility = View.VISIBLE
+        seekPreview.visibility = View.VISIBLE
+    }
+
+    /**
+     * A phone while the seek bar is dragged (the user, 2026-10-11): only the page, the seek row and the preview show.
+     * The top bar and the bottom bar's other rows fade out, and the bottom bar itself turns see-through
+     * ([SEEK_FOCUS_ALPHA]), so the seek row lies over the page. E-ink keeps every bar as it is (no fades, no extra
+     * updates). A hide that starts on the finger-up takes over the bars' alpha.
+     */
+    private fun focusSeek(on: Boolean) {
+        if (look.eink) return
+        val rest = if (on) 0f else 1f
+        if (!on && !shown) {
+            // The bars started leaving meanwhile: their hide owns the bars' alpha (a new animation would cancel it
+            // before its end action makes them GONE); only the rows come back.
+            for (v in seekHides) {
+                v.animate().cancel()
+                v.alpha = 1f
+            }
+            return
+        }
+        top.animate().alpha(rest).setDuration(SEEK_FOCUS_MS).start()
+        for (v in seekHides) v.animate().alpha(rest).setDuration(SEEK_FOCUS_MS).start()
+        bottom.animate().alpha(if (on) SEEK_FOCUS_ALPHA else 1f).setDuration(SEEK_FOCUS_MS).start()
+    }
+
+    /** The thumbnail of [p] is wanted once the finger rests on it ([THUMB_PAUSE_MS]); each move restarts the wait. */
+    private fun wantSeekThumb(p: Int) {
+        if (p == thumbWanted) return
+        thumbWanted = p
+        // The picture shown is another page's now: faded until this one's arrives (the text is already right).
+        if (seekPage.visibility == View.VISIBLE) seekPage.alpha = STALE_THUMB_ALPHA
+        seekPreview.removeCallbacks(requestThumb)
+        seekPreview.postDelayed(requestThumb, THUMB_PAUSE_MS)
+    }
+
+    private fun requestSeekThumb() {
+        val p = thumbWanted
+        if (!isSeeking || p < 0) return
+        val aspect = actions.seekThumbAspect()
+        val r = root ?: return
+        if (aspect <= 0f || r.width <= 0 || r.height <= 0) return
+        val size = ChromeMath.seekThumbSize(r.width, r.height - bottom.height, aspect, ctx.resources.displayMetrics.density)
+            ?: return
+        val w = size.first
+        val h = size.second
+        actions.onSeekThumb(p, w, h) { bmp ->
+            if (!isSeeking || thumbWanted != p) return@onSeekThumb
+            val lp = seekPage.layoutParams as LinearLayout.LayoutParams
+            if (lp.width != w + 2 || lp.height != h + 2) {
+                lp.width = w + 2
+                lp.height = h + 2
+                seekPage.layoutParams = lp
+            }
+            seekPage.setImageBitmap(bmp)
+            seekPage.alpha = 1f
+            seekPage.visibility = View.VISIBLE
+        }
+    }
+
+    /** The drag ended: no thumbnail is shown or wanted any more. */
+    private fun dropSeekThumb() {
+        seekPreview.removeCallbacks(requestThumb)
+        if (thumbWanted >= 0) actions.onSeekThumbCancel()
+        thumbWanted = -1
+        seekPage.setImageDrawable(null)
+        seekPage.visibility = View.GONE
     }
 
     /** The bars are shown (or fading in); false as soon as a hide starts. */
@@ -1192,6 +1301,13 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     val bottomHeight: Int get() = bottom.height
 
     private companion object {
+        /** The finger rests this long on a seek position before its page thumbnail is made. */
+        const val THUMB_PAUSE_MS = 200L
+        /** [focusSeek]: the bottom bar's alpha while dragging, and the fade's length. */
+        const val SEEK_FOCUS_ALPHA = 0.65f
+        const val SEEK_FOCUS_MS = 120L
+        /** A thumbnail of the page the finger has left, until the new one is made. */
+        const val STALE_THUMB_ALPHA = 0.35f
         const val PAGE_LABEL = "페이지 이동"
         const val PIN_SET = "이 페이지 고정"
         const val PIN_RELEASE = "고정 해제"
