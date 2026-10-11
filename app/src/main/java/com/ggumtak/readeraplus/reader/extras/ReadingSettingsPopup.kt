@@ -64,10 +64,11 @@ import java.lang.ref.WeakReference
  * are debounced (250 ms) so repeated taps cost one re-layout, the font applies at once. A change keeps the page's
  * first character.
  *
- * 미리보기 (the user, 2026-10-11: "조정하면서도 미리 보고 싶어"): the first step of a − / + (or a typed value) folds the
- * sheet to a slim bar and that one row, so nearly the whole page shows while the value is stepped; the bar's ˄ shows
+ * 미리보기 (the user, 2026-10-11: "조정하면서도 미리 보고 싶어"): the first step of 상하 여백's − / + (or a typed value) folds
+ * the sheet to a slim bar and that one row, so nearly the whole page shows while the value is stepped; the bar's ˄ shows
  * every row again. The folded sheet is lifted so that row stays where it was, under the finger (a next tap at the old
- * place must not land on the page and close the sheet). No transparency: on e-ink a see-through sheet greys the page and its text into each other. No
+ * place must not land on the page and close the sheet). Only that row folds (the user: the preview is for what the
+ * sheet hides, the page's bottom); size, weight, spacings and side margins show in the page above the sheet. No transparency: on e-ink a see-through sheet greys the page and its text into each other. No
  * extra button in the top bar either: on the Comet's 360 dp it is full.
  */
 internal class ReadingSettingsPopup(private val host: ReaderHost, private val anchor: View) {
@@ -183,11 +184,11 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
     // ------------------------------------------------------------------ content
 
-    /** [block] for stepper row [i]; a change there folds the sheet to that row (미리보기). */
-    private fun stepper(i: Int, block: (Float) -> Unit): (Float) -> Unit = {
+    /** [block] for stepper row [i]; with [fold], a change there folds the sheet to that row (미리보기). */
+    private fun stepper(i: Int, fold: Boolean = false, block: (Float) -> Unit): (Float) -> Unit = {
         focus = i
         block(it)
-        if (folded) applyFold() else setFolded(true)
+        if (fold) { if (folded) applyFold() else setFolded(true) }
     }
 
     /** Shows what [folded] asks for: the slim bar and the [focus] row, or every row. */
@@ -268,7 +269,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             VerticalMargin.UI_MIN.toFloat(), VerticalMargin.UI_MAX.toFloat(), VerticalMargin.UI_STEP.toFloat(),
             { VerticalMargin.label(it.toInt()) },
             entry = StepperEntry(signed = true, digits = 2),
-            onChange = stepper(5) {
+            onChange = stepper(5, fold = true) {
                 val to = it.toInt()
                 update(QuickFields.withVertical(cur, vertical, to), debounce = true)
                 vertical = to
