@@ -805,10 +805,9 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     /**
      * The bottom strip the system keeps for its own swipes (home, recents: the mandatory gesture inset), and whether the
      * window [floats] above the display's bottom edge (the upper window of a split screen, a pop-up window). The bottom
-     * bar sits above the strip, and at least [ChromeMath.BOTTOM_GAP_DP] above the screen edge (ReadEra's gap, the user's
-     * reference, 2026-10-05; fullscreen hides the navigation bar, so its inset is 0 while the handle still shows): a
-     * swipe that starts at the edge never lands on the page bar or the chapter buttons. A floating window without any
-     * bottom inset ends its panel at its own edge, with ReadEra's 85 dp of rows ([ChromeMath.bottomGap]).
+     * bar sits above the navigation bar, and at least [ChromeMath.BOTTOM_GAP_DP] above the screen edge; the strip itself
+     * is no longer kept free (the user, 2026-10-11). A floating window without any bottom inset ends its panel at its own
+     * edge ([ChromeMath.bottomGap]).
      */
     fun setGestureBottom(px: Int, floats: Boolean) {
         if (gestureBottom == px && floating == floats) return
@@ -821,7 +820,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
     private var gestureBottom = 0
     private var floating = false
 
-    /** The edge band on top; below, [ChromeMath.bottomGap]: the bar inset, the gesture strip or the gap (never a sum). */
+    /** The edge band on top; below, [ChromeMath.bottomGap]: the bar inset or the gap (never a sum). */
     private fun padBottom() {
         val t = bottom.edgeArea
         val b = ChromeMath.bottomGap(barInsetBottom, gestureBottom, ctx.dp(ChromeMath.BOTTOM_GAP_DP), floating)

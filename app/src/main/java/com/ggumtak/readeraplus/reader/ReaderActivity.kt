@@ -4565,16 +4565,17 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var ticksKey = -1L
 
     /**
-     * The page bar's chapter marks: each chapter's first page (its section's start: an anchor inside a section counts
-     * from there). The check walks the chapters without allocating; the marks are made again only when a chapter's
-     * page or the total changes. [c] null (still counting) clears them.
+     * The page bar's chapter marks: each chapter's first page ([ChapterTicks.startPage]: inside its section by its share
+     * of the section's text, so the episodes of one TXT section get a mark each). More than [ChapterTicks.MAX_CHAPTERS]
+     * chapters get none. The check walks the chapters without allocating; the marks are made again only when a
+     * chapter's page or the total changes. [c] null (still counting) clears them.
      */
     private fun bindChapterTicks(s: BookSession, c: PageCounts?) {
         val ch = s.chapters
         var key = 0L
-        if (c != null && ch.size > 0) {
+        if (c != null && ch.size in 1..ChapterTicks.MAX_CHAPTERS) {
             key = c.total().toLong()
-            for (i in 0 until ch.size) key = key * 31 + c.pagesBefore(ch.section(i))
+            for (i in 0 until ch.size) key = key * 31 + chapterPage(c, ch.section(i), ch.offset(i))
             if (key == 0L) key = 1L
         }
         if (s === ticksSession && key == ticksKey) return
@@ -4584,8 +4585,11 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             chrome.setChapterStarts(null, 0)
             return
         }
-        chrome.setChapterStarts(IntArray(ch.size) { c.pagesBefore(ch.section(it)) }, c.total() - 1)
+        chrome.setChapterStarts(IntArray(ch.size) { chapterPage(c, ch.section(it), ch.offset(it)) }, c.total() - 1)
     }
+
+    private fun chapterPage(c: PageCounts, section: Int, offset: Int): Int =
+        ChapterTicks.startPage(c.pagesBefore(section), c.pages(section), offset, c.charLength(section))
 
     private fun bindChrome() {
         val s = session ?: return

@@ -46,14 +46,14 @@ internal object ChromeMath {
      */
     const val SEEK_ROW_DP = TOUCH_DP
     const val LABEL_ROW_DP = TOUCH_DP
-    const val BUTTONS_ROW_DP = 64
+    /** Just the glyph, its label and 6 dp around them (the user, 2026-10-11: less room under the two buttons). */
+    const val BUTTONS_ROW_DP = 56
     const val PANEL_DP = SEEK_ROW_DP + LABEL_ROW_DP + BUTTONS_ROW_DP
     /**
-     * Least space under the bottom panel in a window that reaches the screen's bottom (the user, 2026-10-05: ReadEra's
-     * gap): fullscreen hides the navigation bar, so its inset is 0 while the gesture handle still shows, and the
-     * Comet's bezel hides its outer rows.
+     * Least space under the bottom panel in a window that reaches the screen's bottom: the Comet's bezel hides its outer
+     * rows. It was ReadEra's 16 dp (2026-10-05); the user asked for less room under the buttons (2026-10-11).
      */
-    const val BOTTOM_GAP_DP = 16
+    const val BOTTOM_GAP_DP = 8
     /** The bars' show / hide on a phone (U §2.1 Motion): a short fade with a slide of [SLIDE_DP] toward their edge. */
     const val SHOW_MS = 180L
     const val HIDE_MS = 150L
@@ -74,16 +74,17 @@ internal object ChromeMath {
     fun stripShort(left: Float, right: Float, rowW: Float): Boolean = maxOf(left, right) > rowW / 3f
 
     /**
-     * The space under the bottom panel (one value, never a sum): the larger of the navigation bar's inset [barInset], the
-     * strip the system keeps for its swipes [gestureInset] (home, recents) and [minGap] ([BOTTOM_GAP_DP] in px), so a
-     * swipe that starts at the screen's edge never lands on the seek bar or the chapter buttons. A window that [floats]
+     * The space under the bottom panel (one value, never a sum): the larger of the navigation bar's inset [barInset] and
+     * [minGap] ([BOTTOM_GAP_DP] in px). The strip the system keeps for its swipes [gestureInset] (home, recents) is no
+     * longer kept free (the user, 2026-10-11: an edge swipe does not press the buttons); it only tells whether a
+     * floating window has anything of the system's under it. A window that [floats]
      * above the display's bottom edge (the upper window of a split screen, a pop-up window) and has no bottom inset at
      * all has nothing of the system's under it, so it gets no gap (0): its panel ends at the window's edge with
      * [PANEL_DP] of rows. A window that reaches the bottom (every full-screen one, the Comet's too, and
      * any window whose position is unknown: `ReaderWindow.floatsAboveBottom` before API 30) keeps the minimum.
      */
     fun bottomGap(barInset: Int, gestureInset: Int, minGap: Int, floats: Boolean): Int =
-        if (floats && barInset <= 0 && gestureInset <= 0) 0 else maxOf(barInset, gestureInset, minGap)
+        if (floats && barInset <= 0 && gestureInset <= 0) 0 else maxOf(barInset, minGap)
 
     /** [dp] in px as the views get it (`TypedValue.applyDimension`, truncated). */
     private fun px(dp: Int, density: Float): Int = (dp * density).toInt()

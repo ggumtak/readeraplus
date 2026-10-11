@@ -53,4 +53,27 @@ class ChapterTicksTest {
         assertEquals(0, place(intArrayOf(1), max = 100, width = 0).size)
         assertEquals(0, place(intArrayOf(0), max = 100).size)
     }
+
+    @Test
+    fun moreThanAHundredChaptersDrawNothingEvenOnAWideTrack() {
+        // 3000 px / 6 px would take 500 marks; a web novel's 101 episodes still get none.
+        assertEquals(0, place(IntArray(101) { (it + 1) * 10 }, max = 2000, width = 3000).size)
+        assertEquals(100, place(IntArray(100) { (it + 1) * 10 }, max = 2000, width = 3000).size)
+        assertEquals(100, ChapterTicks.MAX_CHAPTERS)
+    }
+
+    @Test
+    fun aChapterInsideASectionStartsByItsShareOfTheText() {
+        // A 40-page section from page 100 with 80 000 chars: an episode at char 20 000 starts on its 11th page.
+        assertEquals(110, ChapterTicks.startPage(pagesBefore = 100, pages = 40, offset = 20_000, chars = 80_000))
+        // The section's own start, and a one-page or empty section, stay on its first page.
+        assertEquals(100, ChapterTicks.startPage(100, 40, 0, 80_000))
+        assertEquals(100, ChapterTicks.startPage(100, 1, 500, 800))
+        assertEquals(100, ChapterTicks.startPage(100, 40, 500, 0))
+        // Never past the section's last page (an offset at or past the end).
+        assertEquals(139, ChapterTicks.startPage(100, 40, 80_000, 80_000))
+        assertEquals(139, ChapterTicks.startPage(100, 40, 99_999, 80_000))
+        // No overflow on a huge section.
+        assertEquals(1_999, ChapterTicks.startPage(0, 2_000, Int.MAX_VALUE, Int.MAX_VALUE))
+    }
 }

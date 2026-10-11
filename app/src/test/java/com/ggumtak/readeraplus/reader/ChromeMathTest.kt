@@ -60,18 +60,18 @@ class ChromeMathTest {
      */
     @Test
     fun theBottomPanelStacksSeekLabelAndButtons() {
-        // Seek row 0..48 dp under the panel's top, label row 48..96, the two big buttons 96..160.
+        // Seek row 0..48 dp under the panel's top, label row 48..96, the two big buttons 96..152.
         assertEquals(48, ChromeMath.SEEK_ROW_DP)
         assertEquals(48, ChromeMath.LABEL_ROW_DP)
-        assertEquals(160, ChromeMath.PANEL_DP)
+        assertEquals(152, ChromeMath.PANEL_DP)
         for (density in listOf(2f, 3f)) {
             assertEquals(Math.round(24 * density), ChromeMath.seekCentre(density))
             assertEquals(Math.round(72 * density), ChromeMath.labelCentre(density))
-            assertEquals(Math.round(160 * density), ChromeMath.panelHeight(density, gap = 0))
+            assertEquals(Math.round(152 * density), ChromeMath.panelHeight(density, gap = 0))
         }
         // A 2.625 phone (420 dpi) truncates like the views: within a px of the same dp.
         assertEquals(24 * 2.625f, ChromeMath.seekCentre(2.625f).toFloat(), 1f)
-        assertEquals(160 * 2.625f, ChromeMath.panelHeight(2.625f, gap = 0).toFloat(), 3f)
+        assertEquals(152 * 2.625f, ChromeMath.panelHeight(2.625f, gap = 0).toFloat(), 3f)
     }
 
     @Test
@@ -86,35 +86,36 @@ class ChromeMathTest {
     }
 
     @Test
-    fun s25FullScreenKeepsTheGestureStrip() {
-        // 전체 화면 with gesture navigation: no bar inset, the 48 px mandatory gesture strip (16 dp) under the panel.
-        val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 48, minGap = 48, floats = false)
-        assertEquals(48, gap)
-        assertEquals(456, ChromeMath.seekAboveBottom(3f, gap))   // the track's centre 152 dp above the edge
-        assertEquals(528, ChromeMath.panelHeight(3f, gap))       // 176 dp
-        // 전체 화면 off: the navigation bar's inset is the larger one; never the sum.
-        assertEquals(63, ChromeMath.bottomGap(barInset = 63, gestureInset = 48, minGap = 48, floats = false))
+    fun s25FullScreenNoLongerKeepsTheGestureStripFree() {
+        // 전체 화면 with gesture navigation: no bar inset; the 48 px mandatory gesture strip (16 dp) is not kept free
+        // (2026-10-11), only the 8 dp minimum.
+        val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 48, minGap = 24, floats = false)
+        assertEquals(24, gap)
+        assertEquals(408, ChromeMath.seekAboveBottom(3f, gap))   // the track's centre 136 dp above the edge
+        assertEquals(480, ChromeMath.panelHeight(3f, gap))       // 160 dp
+        // 전체 화면 off: the navigation bar's inset is kept (the panel never sits on the bar); never a sum.
+        assertEquals(63, ChromeMath.bottomGap(barInset = 63, gestureInset = 48, minGap = 24, floats = false))
     }
 
     @Test
     fun s25SplitScreenUpperWindowEndsAtItsEdge() {
-        // Our upper window has no bottom inset at all (the system's strip is under the lower window): no gap, 160 dp of
+        // Our upper window has no bottom inset at all (the system's strip is under the lower window): no gap, 152 dp of
         // rows.
-        val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 48, floats = true)
+        val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 24, floats = true)
         assertEquals(0, gap)
-        assertEquals(480, ChromeMath.panelHeight(3f, gap))       // 160 dp
-        assertEquals(408, ChromeMath.seekAboveBottom(3f, gap))   // 136 dp
-        // The lower window reaches the screen's bottom: its strip stays under the panel.
-        assertEquals(48, ChromeMath.bottomGap(barInset = 48, gestureInset = 48, minGap = 48, floats = false))
-        // A floating window that still has a bottom inset (a pop-up over the strip) keeps it.
-        assertEquals(48, ChromeMath.bottomGap(barInset = 0, gestureInset = 48, minGap = 48, floats = true))
+        assertEquals(456, ChromeMath.panelHeight(3f, gap))       // 152 dp
+        assertEquals(384, ChromeMath.seekAboveBottom(3f, gap))   // 128 dp
+        // The lower window reaches the screen's bottom: its navigation bar stays under the panel.
+        assertEquals(48, ChromeMath.bottomGap(barInset = 48, gestureInset = 48, minGap = 24, floats = false))
+        // A floating window over the strip (a pop-up) keeps the minimum, not the strip.
+        assertEquals(24, ChromeMath.bottomGap(barInset = 0, gestureInset = 48, minGap = 24, floats = true))
     }
 
     @Test
     fun aWindowOfUnknownPositionKeepsTheGap() {
         // Before API 30 ReaderWindow.floatsAboveBottom answers false for every window: a lower split window in full
         // screen reports no bottom inset there (insetsOf zeroes the bars, no gesture inset before API 29), so taken as
-        // floating it would lose the 16 dp and end its seek row on the navigation bar.
+        // floating it would lose the minimum gap and end its seek row on the screen's edge.
         assertEquals(48, ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 48, floats = false))
         assertEquals(0, ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 48, floats = true))
     }
@@ -153,15 +154,15 @@ class ChromeMathTest {
 
     @Test
     fun cometFullScreenKeepsTheMinimumGap() {
-        // No gesture navigation, no bar in full screen, a bezel over the outer rows: the 16 dp minimum, never dropped
+        // No gesture navigation, no bar in full screen, a bezel over the outer rows: the 8 dp minimum, never dropped
         // for a window that reaches the bottom.
-        val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 32, floats = false)
-        assertEquals(32, gap)
-        assertEquals(304, ChromeMath.seekAboveBottom(2f, gap))   // 152 dp, as on the S25
-        assertEquals(352, ChromeMath.panelHeight(2f, gap))       // 160 + 16 dp
+        val gap = ChromeMath.bottomGap(barInset = 0, gestureInset = 0, minGap = 16, floats = false)
+        assertEquals(16, gap)
+        assertEquals(272, ChromeMath.seekAboveBottom(2f, gap))   // 136 dp, as on the S25
+        assertEquals(320, ChromeMath.panelHeight(2f, gap))       // 152 + 8 dp
         assertEquals(144, ChromeMath.labelCentre(2f))
         assertEquals(48, ChromeMath.seekCentre(2f))
-        assertEquals(16, ChromeMath.BOTTOM_GAP_DP)
+        assertEquals(8, ChromeMath.BOTTOM_GAP_DP)
     }
 
     @Test
