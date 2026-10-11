@@ -110,12 +110,15 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         scroll.addView(buildContent(), FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         rows = scroll
         val line = 1
+        // A little white above the first row and below the last (the user: rows flush on the edges felt cramped);
+        // a navigation bar that shows gives the bottom its own room.
+        val bottomPad = bottomInset.coerceAtLeast(ctx.dp(EDGE_DP))
         val sheet = FrameLayout(ctx).apply {
             background = LayerDrawable(arrayOf(ColorDrawable(if (eink) Ink.LINE else PopupCard.FRAME), ColorDrawable(Ink.WHITE))).apply {
                 setLayerInset(1, 0, line, 0, 0)
             }
-            setPadding(0, line, 0, bottomInset.coerceAtLeast(0))
-            sheetBottomPad = bottomInset.coerceAtLeast(0)
+            setPadding(0, line + ctx.dp(EDGE_DP), 0, bottomPad)
+            sheetBottomPad = bottomPad
             addView(scroll, FrameLayout.LayoutParams(popupWidth, WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
         }
         val pw = PopupWindow(sheet, screenW, WRAP_CONTENT, true).apply {
@@ -486,6 +489,8 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
         /** A phone's sheet rises from the bottom edge in this long (the chrome's own motion is 150–200 ms). */
         private const val SLIDE_MS = 180L
+        /** White above the sheet's first row and, without a navigation bar, below its last. */
+        private const val EDGE_DP = 8
         /** The 배경 row's choices, in its order, with the words the user asked for (2026-10-05). */
         val THEMES: List<Pair<PageTheme, String>> =
             listOf(PageTheme.PAPER to "흰색", PageTheme.MARU to "회색", PageTheme.BLACK to "검은색")
