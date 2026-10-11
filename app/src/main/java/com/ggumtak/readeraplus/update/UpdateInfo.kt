@@ -5,10 +5,36 @@ import org.json.JSONObject
 import java.net.URLEncoder
 
 /**
- * The pure half of the in-app update ([AppUpdater]): what the Drive web app (tools/gdrive/upload.gs, `?what=latest`)
- * answers, whether it is newer than this build, where its APK downloads from, and the messages. Unit-tested.
+ * The pure half of the in-app update ([AppUpdater]): the newest build in the user's Drive folder (its public listing,
+ * or the Drive web app's `?what=latest` answer), whether it is newer than this build, where its APK downloads from,
+ * and the messages. Unit-tested.
  */
 internal object UpdateInfo {
+    /** The Drive folder every CI build goes to (tools/gdrive/upload.gs), shared by link (the user, 2026-10-11). */
+    const val DRIVE_FOLDER = "17HGqQJ-A0rT_OhkkvIrDrWgGPiq3DcPl"
+
+    /** The folder's public file list (no sign-in, no API key): one entry per file with its link and name. */
+    fun folderUrl(folderId: String): String =
+        "https://drive.google.com/embeddedfolderview?id=" + URLEncoder.encode(folderId, "UTF-8")
+
+    private val FILE_REF = Regex("(?:/file/d/|id=\"entry-)([A-Za-z0-9_-]{10,200})")
+    private val APK_NAME = Regex("ReaderaPlus-(\\d{1,9})\\.apk")
+
+    /**
+     * The newest ReaderaPlus-<build>.apk in a folder listing: each file's id (its link or entry id) is followed by
+     * its name before the next file's id. Null when the page lists none (not shared, a sign-in page, empty).
+     */
+    fun parseFolder(html: String): Latest? {
+        val refs = FILE_REF.findAll(html).toList()
+        var best: Latest? = null
+        for ((k, ref) in refs.withIndex()) {
+            val end = if (k + 1 < refs.size) refs[k + 1].range.first else html.length
+            val window = html.substring(ref.range.last + 1, minOf(end, ref.range.last + 1 + 4000))
+            val build = APK_NAME.find(window)?.groupValues?.get(1)?.toIntOrNull() ?: continue
+            if (build > (best?.build ?: 0)) best = Latest(build, ref.groupValues[1])
+        }
+        return best
+    }
     /** The newest build in the user's Drive folder: its CI run number and its Drive file id. */
     class Latest(val build: Int, val fileId: String)
 

@@ -26,8 +26,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * In-app update (the user, 2026-10-11: "앱 내에서 업데이트가 있습니다 … 예 누르면 업데이트"). Every CI build is in the
- * user's Google Drive (tools/gdrive/upload.gs); its web app ([BuildConfig.UPDATE_URL], baked in by CI) answers
- * `?what=latest` with the newest build and its file id. A newer build is offered in a dialog; 업데이트 downloads the
+ * user's Google Drive folder ([UpdateInfo.DRIVE_FOLDER], tools/gdrive/upload.gs), shared by link: its public listing
+ * names the newest build and its file id (or, failing that, the Drive web app [BuildConfig.UPDATE_URL] answers
+ * `?what=latest`). A newer build is offered in a dialog; 업데이트 downloads the
  * APK (cache/update) and hands it to [PackageInstaller], which asks the user once to confirm (Android never installs
  * silently on a first update; later ones may skip it, [PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED]).
  * Android only accepts an APK signed like the installed app, so nothing else can be installed this way.
@@ -47,7 +48,7 @@ internal object AppUpdater {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var busy = false
 
-    fun enabled(): Boolean = BuildConfig.UPDATE_URL.isNotEmpty()
+    fun enabled(): Boolean = UpdateInfo.DRIVE_FOLDER.isNotEmpty() || BuildConfig.UPDATE_URL.isNotEmpty()
 
     /** A library visit: checks at most every 12 h and offers a newer build unless the user said 나중에 to it. */
     fun autoCheck(activity: Activity) {
@@ -188,12 +189,32 @@ internal object AppUpdater {
 
     // ------------------------------------------------------------------ network (IO)
 
+    /** The shared Drive folder's listing first; the Drive web app (`?what=latest`) when that finds nothing. */
     private fun fetchLatest(): UpdateInfo.Latest? {
-        val conn = open(UpdateInfo.checkUrl(BuildConfig.UPDATE_URL))
+        if (UpdateInfo.DRIVE_FOLDER.isNotEmpty()) {
+            runCatching { getText(UpdateInfo.folderUrl(UpdateInfo.DRIVE_FOLDER))?.let(UpdateInfo::parseFolder) }
+                .getOrNull()?.let { return it }
+        }
+        if (BuildConfig.UPDATE_URL.isEmpty()) return null
+        return getText(UpdateInfo.checkUrl(BuildConfig.UPDATE_URL))?.let(UpdateInfo::parse)
+    }
+
+    /** A page's text (at most 2 MB), or null for anything but 200. */
+    private fun getText(url: String): String? {
+        val conn = open(url)
         try {
             if (conn.responseCode != 200) return null
-            val text = conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-            return UpdateInfo.parse(text)
+            val bytes = conn.inputStream.use { input ->
+                val out = java.io.ByteArrayOutputStream()
+                val buf = ByteArray(16 * 1024)
+                while (out.size() < 2 * 1024 * 1024) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                }
+                out.toByteArray()
+            }
+            return bytes.toString(Charsets.UTF_8)
         } finally {
             conn.disconnect()
         }

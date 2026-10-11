@@ -23,6 +23,35 @@ class UpdateInfoTest {
         assertNull(UpdateInfo.parse(""))
     }
 
+    /** The shape of drive.google.com/embeddedfolderview: entry id, then the file link, then the name. */
+    @Test
+    fun findsTheNewestApkInAFolderListing() {
+        fun entry(id: String, name: String) =
+            "<div class=\"flip-entry\" id=\"entry-$id\" tabindex=\"0\" role=\"link\"><div class=\"flip-entry-info\">" +
+                "<a href=\"https://drive.google.com/file/d/$id/view?usp=drive_web\" target=\"_blank\">" +
+                "<div class=\"flip-entry-visual\"><img src=\"https://drive-thirdparty.googleusercontent.com/16/type/x\"></div>" +
+                "<div class=\"flip-entry-title\">$name</div></a></div>" +
+                "<div class=\"flip-entry-last-modified\"><div>오후 1:00</div></div></div>"
+        val html = "<html><body><div class=\"flip-entries\">" +
+            entry("1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "ReaderaPlus-184.apk") +
+            entry("1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "ReaderaPlus-185.apk") +
+            entry("1cccccccccccccccccccccccccccccccc", "notes.txt") +
+            "</div></body></html>"
+        val l = UpdateInfo.parseFolder(html)
+        assertNotNull(l)
+        assertEquals(185, l!!.build)
+        assertEquals("1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", l.fileId)
+        // a link-only listing works too; a sign-in page or an empty folder lists nothing
+        val plain = "<a href=\"/file/d/1ddddddddddddddddddddd/view\">ReaderaPlus-190.apk</a>"
+        assertEquals(190, UpdateInfo.parseFolder(plain)!!.build)
+        assertNull(UpdateInfo.parseFolder("<html><title>Google Drive - Sign in</title></html>"))
+        assertNull(UpdateInfo.parseFolder(entry("1cccccccccccccccccccccccccccccccc", "notes.txt")))
+        assertEquals(
+            "https://drive.google.com/embeddedfolderview?id=17HGqQJ-A0rT_OhkkvIrDrWgGPiq3DcPl",
+            UpdateInfo.folderUrl(UpdateInfo.DRIVE_FOLDER),
+        )
+    }
+
     @Test
     fun newerOnlyWhenTheBuildNumberIsHigher() {
         val l = UpdateInfo.Latest(185, "1AbC-def_ghIJklmnOP")
