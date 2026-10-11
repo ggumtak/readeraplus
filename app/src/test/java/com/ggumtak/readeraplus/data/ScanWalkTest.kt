@@ -8,6 +8,7 @@ import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.io.RandomAccessFile
 import java.nio.file.Files
 
 class ScanWalkTest {
@@ -67,6 +68,20 @@ class ScanWalkTest {
         assertTrue(epub.mtime > 0)
         assertEquals(listOf(root.path), r.listedRoots)
         assertEquals(4, calls.last())
+    }
+
+    @Test
+    fun zipFilesAreCollectedNotDescended() {
+        file("Books/novels.zip", 100)
+        file("Books/MORE.ZIP", 100)
+        file("Books/.hidden.zip", 100)
+        file("Books/a.txt")
+        file("folder.zip/inner.txt") // a directory named like a zip: skipped as before
+        val huge = file("Books/huge.zip", 1)
+        RandomAccessFile(huge, "rw").use { it.setLength(ZipBooks.MAX_ZIP_BYTES + 1) }
+        val r = FileScanner.walk(listOf(root.path), emptyList()) {}
+        assertEquals(setOf("Books/novels.zip", "Books/MORE.ZIP"), rel(r.zips))
+        assertEquals(setOf("Books/a.txt"), rel(r.found.keys))
     }
 
     @Test

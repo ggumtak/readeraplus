@@ -330,6 +330,97 @@ class ScanPlanTest {
         assertTrue(plan.gone.isEmpty())
     }
 
+    // ---- renames: same size + mtime, unique on both sides ----
+
+    private fun plainPlan(k: List<FileScanner.Known>, vararg f: FileScanner.Found) = FileScanner.plan(
+        k, foundMap(*f), emptySet(), emptyList(), vanished = { true }, userDataIds = noUserData, noteIds = { emptySet() },
+    )
+
+    @Test
+    fun renameWithSameSizeAndMtimeIsRePointed() {
+        val k = listOf(known(1, "/r/A/old name.txt", size = 5000, mtime = 777))
+        val f = found("/r/A/새 이름.txt", size = 5000, mtime = 777)
+        val plan = FileScanner.plan(
+            k, foundMap(f), emptySet(), emptyList(), vanished = { true }, userDataIds = noUserData,
+            noteIds = { throw AssertionError("nothing vanished unmoved") },
+        )
+        assertSame(f, plan.todo.single().first)
+        assertEquals(1L, plan.todo.single().second!!.id)
+        assertTrue(plan.gone.isEmpty())
+        assertTrue(plan.trash.isEmpty())
+        assertTrue(plan.revive.isEmpty())
+    }
+
+    @Test
+    fun twoRenameCandidatesWithTheSameSizeAndMtimeMatchNothing() {
+        val twoOld = plainPlan(
+            listOf(known(1, "/r/a.txt", size = 5000, mtime = 9), known(2, "/r/b.txt", size = 5000, mtime = 9)),
+            found("/r/c.txt", size = 5000, mtime = 9),
+        )
+        assertNull(twoOld.todo.single().second)
+        assertEquals(setOf(1L, 2L), twoOld.gone.toSet())
+        val twoNew = plainPlan(
+            listOf(known(1, "/r/a.txt", size = 5000, mtime = 9)),
+            found("/r/c.txt", size = 5000, mtime = 9), found("/r/d.txt", size = 5000, mtime = 9),
+        )
+        assertEquals(listOf(null, null), twoNew.todo.map { it.second })
+        assertEquals(listOf(1L), twoNew.gone)
+    }
+
+    @Test
+    fun renameNeedsTheSameMtimeFormatAndAKnownMtime() {
+        val otherMtime = plainPlan(listOf(known(1, "/r/a.txt", size = 5000, mtime = 9)), found("/r/b.txt", size = 5000, mtime = 10))
+        assertNull(otherMtime.todo.single().second)
+        assertEquals(listOf(1L), otherMtime.gone)
+        val otherSize = plainPlan(listOf(known(1, "/r/a.txt", size = 5000, mtime = 9)), found("/r/b.txt", size = 5001, mtime = 9))
+        assertNull(otherSize.todo.single().second)
+        val otherFormat = plainPlan(listOf(known(1, "/r/a.epub", size = 5000, mtime = 9)), found("/r/b.txt", size = 5000, mtime = 9))
+        assertNull(otherFormat.todo.single().second)
+        assertEquals(listOf(1L), otherFormat.gone)
+        val noMtime = plainPlan(listOf(known(1, "/r/a.txt", size = 5000, mtime = 0)), found("/r/b.txt", size = 5000, mtime = 0))
+        assertNull(noMtime.todo.single().second)
+    }
+
+    @Test
+    fun nameAndSizeMoveStillComesFirst() {
+        // x.txt moved (same name + size, pass 1) even though y.txt has the same size + mtime; z.txt is y.txt renamed.
+        val k = listOf(known(1, "/r/A/x.txt", size = 5000, mtime = 9), known(2, "/r/A/y.txt", size = 5000, mtime = 9))
+        val moveOnly = plainPlan(k, found("/r/B/x.txt", size = 5000, mtime = 9))
+        assertEquals(1L, moveOnly.todo.single().second!!.id)
+        assertEquals(listOf(2L), moveOnly.gone)
+        val both = plainPlan(k, found("/r/B/x.txt", size = 5000, mtime = 9), found("/r/B/z.txt", size = 5000, mtime = 9))
+        assertEquals(listOf("/r/B/x.txt", "/r/B/z.txt"), both.todo.map { it.first.path })
+        assertEquals(listOf(1L, 2L), both.todo.map { it.second!!.id })
+        assertTrue(both.gone.isEmpty())
+        // A name + size move ignores the mtime, as before.
+        val touched = plainPlan(listOf(known(3, "/r/A/w.txt", size = 4000, mtime = 1)), found("/r/B/w.txt", size = 4000, mtime = 2))
+        assertEquals(3L, touched.todo.single().second!!.id)
+    }
+
+    @Test
+    fun missingEntryRenamedIsRePointedAndRevived() {
+        val k = listOf(known(8, "/r/old/a.txt", size = 3000, mtime = 5, trashed = true, missingAt = 50))
+        val f = found("/r/new/b.txt", size = 3000, mtime = 5)
+        val plan = FileScanner.plan(
+            k, foundMap(f), emptySet(), emptyList(), vanished = { true }, userDataIds = noUserData,
+            noteIds = { throw AssertionError("nothing vanished unmoved") },
+        )
+        assertEquals(8L, plan.todo.single().second!!.id)
+        assertEquals(listOf(8L), plan.revive)
+        assertTrue(plan.gone.isEmpty())
+        assertTrue(plan.trash.isEmpty())
+    }
+
+    @Test
+    fun untrustedAbsenceIsNoRenameSource() {
+        val plan = FileScanner.plan(
+            listOf(known(1, "/r/a.txt", size = 5000, mtime = 9)), foundMap(found("/r/b.txt", size = 5000, mtime = 9)),
+            emptySet(), emptyList(), vanished = { false }, userDataIds = noUserData,
+        )
+        assertNull(plan.todo.single().second)
+        assertTrue(plan.gone.isEmpty())
+    }
+
     @Test
     fun trashingClearsAStaleMissingMark() {
         assertEquals("UPDATE books SET trashed = 1, missing_at = 0 WHERE id = ?", LibrarySql.TRASH)

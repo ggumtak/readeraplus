@@ -44,7 +44,9 @@ object FileScanner {
      *  Calls [progress] with the number of files found so far. Returns number of books in library.
      *  [stopWhen] is checked between directories and before each metadata parse (any thread; keep it cheap);
      *  when it returns true the scan ends with [Stopped]. [synced] learns whether the scan added, moved, refreshed
-     *  or removed any book (false: the library's rows are as they were, so a list shown needs no reload). */
+     *  or removed any book (false: the library's rows are as they were, so a list shown needs no reload). It is
+     *  called once, after the books inside new / changed ZIP files were extracted ([ZipBooks]), so a scan that only
+     *  added books from a ZIP also reports a change. */
     fun scan(
         context: Context,
         stopWhen: () -> Boolean = NEVER,
@@ -63,7 +65,16 @@ object FileScanner {
         }
         val excluded = app.excludedFolders.filter { it.isNotBlank() }.map { DataPaths.normalize(it.trim(), primary) }
         val walk = walk(roots, excluded, stopWhen, progress)
-        synced(sync(context, walk, excluded, stopWhen))
+        val changed = sync(context, walk, excluded, stopWhen)
+        // Books inside ZIP files: extracted into the copy folder once per ZIP version. A failure never fails the scan.
+        val fromZips = if (walk.zips.isEmpty()) {
+            0
+        } else {
+            runCatching { ZipBooks.extractNew(context, walk.zips.map(::File), stopWhen) }
+                .onFailure { Log.w(TAG, "zip extraction failed", it) }
+                .getOrDefault(0)
+        }
+        synced(changed || fromZips > 0)
         Library.count()
     }
 
@@ -101,6 +112,8 @@ object FileScanner {
         val listedRoots: List<String>,
         /** Directories below the roots that could not be listed. */
         val unreadable: List<String>,
+        /** Regular `*.zip` files (not hidden, at most [ZipBooks.MAX_ZIP_BYTES]) that may hold books; not descended. */
+        val zips: List<String> = emptyList(),
     )
 
     /**
@@ -126,6 +139,7 @@ object FileScanner {
         private val queue = ArrayDeque<Dir>()
         private val listedRoots = ArrayList<String>()
         private val unreadable = ArrayList<String>()
+        private val zips = ArrayList<String>()
         private var lastReported = 0
 
         fun run(roots: List<String>): WalkResult {
@@ -154,7 +168,7 @@ object FileScanner {
                 }
             }
             report(force = true)
-            return WalkResult(found, listedRoots, unreadable)
+            return WalkResult(found, listedRoots, unreadable, zips)
         }
 
         private fun visitDir(dir: Dir, names: Array<String>) {
@@ -177,6 +191,12 @@ object FileScanner {
                         continue
                     }
                     // A directory named "*.epub" (unpacked book folder): fall through and descend.
+                } else if (ZipBooks.isZipName(name)) {
+                    // Checked before the "obviously not a book" rule (which skips zips). A directory named "*.zip" is
+                    // skipped as before.
+                    val f = File(childPath)
+                    if (f.isFile && f.length() <= ZipBooks.MAX_ZIP_BYTES) zips += childPath
+                    continue
                 } else if (DataPaths.obviouslyNotBookFile(name)) {
                     continue
                 }
@@ -278,6 +298,9 @@ object FileScanner {
      * - Trashed entries are kept until the trash is emptied; a user's own 휴지통 entry (`missingAt = 0`) is never
      *   revived, re-pointed or marked missing.
      * - A vanished entry whose file name and size match a new file was moved: it is re-pointed (history kept).
+     * - Then renames: a still unmatched vanished entry and a still unmatched new file with the same size and mtime
+     *   (mtime > 0) and the same format are paired when each is the only one of its side with that size + mtime;
+     *   the pair is re-pointed like a move. Any ambiguity leaves both as they are (new book / vanished entry).
      * - Other vanished entries with notes or reading history ([noteIds]) go to the trash as missing
      *   ([SyncPlan.trash]); the rest are dropped.
      * - A missing entry (`missingAt > 0`) whose file is found again at its path, or matched as moved, is revived
@@ -323,6 +346,7 @@ object FileScanner {
 
         val todo = ArrayList<Pair<Found, Known?>>()
         val moved = HashSet<Long>()
+        val unmatched = ArrayList<Found>()
         for (f in found.values) {
             if (f.path in ignored) continue
             val k = byPath[f.path]
@@ -331,6 +355,17 @@ object FileScanner {
                 continue
             }
             val from = movable[moveKey(f.name, f.size)]?.removeFirstOrNull()
+            if (from != null) {
+                moved += from.id
+                if (from.missingAt > 0) revive += from.id
+                todo += f to from
+            } else {
+                unmatched += f
+            }
+        }
+        val renamed = renames(unmatched, vanishedBooks, moved)
+        for (f in unmatched) {
+            val from = renamed[f]
             if (from != null) {
                 moved += from.id
                 if (from.missingAt > 0) revive += from.id
@@ -357,6 +392,37 @@ object FileScanner {
         val deadIgnored = ignored.filter { !found.containsKey(it) && vanished(it) }
         revive.sort()
         return SyncPlan(todo, gone, deadIgnored, trash, revive)
+    }
+
+    private data class SizeTime(val size: Long, val mtime: Long)
+
+    /**
+     * Second move pass of [plan]: renamed files. Pairs a new file of [fresh] with a vanished entry of [vanishedBooks]
+     * (not already [moved]) only when both have the same size and mtime (> 0), both are the only one of their side
+     * with that size + mtime, and the entry's format (by its file name) equals the file's. Keyed by identity.
+     */
+    private fun renames(fresh: List<Found>, vanishedBooks: List<Known>, moved: Set<Long>): Map<Found, Known> {
+        if (fresh.isEmpty()) return emptyMap()
+        val left = HashMap<SizeTime, ArrayList<Known>>()
+        for (k in vanishedBooks) {
+            if (k.id !in moved) left.getOrPut(SizeTime(k.size, k.mtime)) { ArrayList(1) }.add(k)
+        }
+        if (left.isEmpty()) return emptyMap()
+        val news = HashMap<SizeTime, ArrayList<Found>>()
+        for (f in fresh) {
+            val key = SizeTime(f.size, f.mtime)
+            if (left.containsKey(key)) news.getOrPut(key) { ArrayList(1) }.add(f)
+        }
+        val out = HashMap<Found, Known>()
+        for ((key, files) in news) {
+            val entries = left[key] ?: continue
+            if (files.size != 1 || entries.size != 1 || key.mtime <= 0) continue
+            val f = files[0]
+            val k = entries[0]
+            val format = BookFormat.forFile(k.fileName.ifEmpty { k.path.substringAfterLast('/') }) ?: continue
+            if (format == f.format) out[f] = k
+        }
+        return out
     }
 
     /** Applies the scan to the library; returns [SyncPlan.changesBooks]. */
@@ -398,8 +464,11 @@ object FileScanner {
             val batch = todo.subList(i, end)
             // A move of an unchanged file needs no parsing. Each parse (an EPUB's zip + OPF: tens of ms on the Comet)
             // checks for a stop first; nothing of this batch is written yet.
+            // A renamed TXT / PDF (title from the file name; no parse) gets its new name's title.
             val metas = batch.map { (f, k) ->
-                if (k != null && k.path != f.path && k.mtime == f.mtime) {
+                if (k != null && k.path != f.path && k.mtime == f.mtime &&
+                    (k.fileName == f.name || MetaInfo.needsParser(f.format))
+                ) {
                     null
                 } else {
                     if (stopWhen()) throw Stopped()
