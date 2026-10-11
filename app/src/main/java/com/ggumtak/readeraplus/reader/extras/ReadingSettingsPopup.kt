@@ -64,12 +64,10 @@ import java.lang.ref.WeakReference
  * are debounced (250 ms) so repeated taps cost one re-layout, the font applies at once. A change keeps the page's
  * first character.
  *
- * 미리보기 (the user, 2026-10-11: "조정하면서도 미리 보고 싶어"): the first step of 상하 여백's − / + (or a typed value) folds
- * the sheet to a slim bar and that one row, so nearly the whole page shows while the value is stepped; the bar's ˄ shows
- * every row again. The folded sheet is lifted so that row stays where it was, under the finger (a next tap at the old
- * place must not land on the page and close the sheet). Only that row folds (the user: the preview is for what the
- * sheet hides, the page's bottom); size, weight, spacings and side margins show in the page above the sheet. No transparency: on e-ink a see-through sheet greys the page and its text into each other. No
- * extra button in the top bar either: on the Comet's 360 dp it is full.
+ * See-through while adjusting (the user, 2026-10-11: "보기 설정이 투명해져서 아래가 보이게"): a step of a − / + (or a typed
+ * value) turns the whole sheet [SEE_THROUGH_ALPHA] opaque, so the page it covers shows through while the value is
+ * stepped; [OPAQUE_AFTER_MS] after the last step it is opaque again. Every row stays where it is. 굵기 does not (the
+ * user: its change shows in the page above the sheet).
  */
 internal class ReadingSettingsPopup(private val host: ReaderHost, private val anchor: View) {
     private val ctx = host.activity
@@ -82,14 +80,9 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     /** The rows' scroller, so a pick that changes other rows (흰색 → 리디바탕) can lay them out again. */
     private var rows: FrameLayout? = null
     private var popupWidth = 0
-    /** 미리보기: only [foldedBar] and the stepper row last used ([focus], an index into [steppers]) show. */
-    private var folded = false
-    private var focus = 0
-    private val steppers = ArrayList<View>(6)
-    private val unfoldedOnly = ArrayList<View>(4)
-    private var foldedBar: View? = null
-    /** The sheet's bottom padding (a navigation bar that shows), for lifting the folded sheet ([setFolded]). */
-    private var sheetBottomPad = 0
+    /** The sheet, turned see-through while a value is stepped ([showThrough]). */
+    private var sheetView: View? = null
+    private val opaqueRunnable = Runnable { sheetView?.alpha = 1f }
 
     fun show() {
         current?.get()?.dismiss()
@@ -118,9 +111,9 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                 setLayerInset(1, 0, line, 0, 0)
             }
             setPadding(0, line + ctx.dp(EDGE_DP), 0, bottomPad)
-            sheetBottomPad = bottomPad
             addView(scroll, FrameLayout.LayoutParams(popupWidth, WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
         }
+        sheetView = sheet
         val pw = PopupWindow(sheet, screenW, WRAP_CONTENT, true).apply {
             animationStyle = 0
             elevation = 0f
@@ -129,6 +122,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             if (Build.VERSION.SDK_INT >= 29) setIsLaidOutInScreen(true)
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setOnDismissListener {
+                handler.removeCallbacks(opaqueRunnable)
                 flush()
                 if (current?.get() === this@ReadingSettingsPopup) current = null
             }
@@ -187,51 +181,27 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
 
     // ------------------------------------------------------------------ content
 
-    /** [block] for stepper row [i]; with [fold], a change there folds the sheet to that row (미리보기). */
-    private fun stepper(i: Int, fold: Boolean = false, block: (Float) -> Unit): (Float) -> Unit = {
-        focus = i
+    /** [block] for a stepper row; with [seeThrough], a change there turns the sheet see-through for a moment. */
+    private fun stepper(seeThrough: Boolean = true, block: (Float) -> Unit): (Float) -> Unit = {
         block(it)
-        if (fold) { if (folded) applyFold() else setFolded(true) }
+        if (seeThrough) showThrough()
     }
 
-    /** Shows what [folded] asks for: the slim bar and the [focus] row, or every row. */
-    private fun applyFold() {
-        foldedBar?.visibility = if (folded) View.VISIBLE else View.GONE
-        for (v in unfoldedOnly) v.visibility = if (folded) View.GONE else View.VISIBLE
-        for ((i, v) in steppers.withIndex()) v.visibility = if (!folded || i == focus) View.VISIBLE else View.GONE
-    }
-
-    private fun setFolded(on: Boolean) {
-        if (folded == on) return
-        // How far the kept row's bottom is above the window's bottom, before the other rows go.
-        var lift = 0
-        val row = steppers.getOrNull(focus)
-        if (on && row != null && row.isAttachedToWindow) {
-            val at = IntArray(2)
-            row.getLocationInWindow(at)
-            val sheetH = row.rootView.height
-            lift = (sheetH - (at[1] + row.height) - sheetBottomPad).coerceAtLeast(0)
-        }
-        folded = on
-        applyFold()
-        // Gravity.BOTTOM: y is the window's distance above the screen's bottom.
-        runCatching { popup?.update(0, if (on) lift else 0, -1, -1) }
+    /** The sheet at [SEE_THROUGH_ALPHA] until [OPAQUE_AFTER_MS] after the last call. */
+    private fun showThrough() {
+        val v = sheetView ?: return
+        handler.removeCallbacks(opaqueRunnable)
+        v.alpha = SEE_THROUGH_ALPHA
+        handler.postDelayed(opaqueRunnable, OPAQUE_AFTER_MS)
     }
 
     private fun buildContent(): LinearLayout {
-        steppers.clear()
-        unfoldedOnly.clear()
         val root = ctx.vertical { setBackgroundColor(Ink.WHITE) }
-        val bar = topBar()
-        unfoldedOnly += bar
-        root.addView(bar, lp())
-        val slim = foldedTopBar()
-        foldedBar = slim
-        root.addView(slim, lp())
+        root.addView(topBar(), lp())
         root.addView(stepperRow("글자 크기", cur.fontSizeSp, ReaderSettings.MIN_FONT_SP, ReaderSettings.MAX_FONT_SP, 0.5f, Fmt::number,
-            entry = StepperEntry(decimals = 1, digits = 2), onChange = stepper(0) {
+            entry = StepperEntry(decimals = 1, digits = 2), onChange = stepper {
             update(cur.copy(fontSizeSp = it), debounce = true)
-        }).also { steppers += it })
+        }))
         // 굵기 counts steps from the font's own weight ("기본"); a static file can't get thinner than it is. Read per
         // label, so a font picked here relabels the next step.
         val minWeight = minWeightOf(cur.fontId)
@@ -245,14 +215,14 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         )
         root.addView(stepperRow("굵기", cur.fontWeight.toFloat().coerceAtLeast(minWeight), minWeight, 900f, 50f,
             { Fmt.weight(it.toInt(), FontManager.naturalWeight(cur.fontId)) }, floor = { minWeightOf(cur.fontId) }, entry = weightEntry,
-            onChange = stepper(1) { update(cur.copy(fontWeight = it.toInt()), debounce = true) },
-        ).also { steppers += it })
+            onChange = stepper(seeThrough = false) { update(cur.copy(fontWeight = it.toInt()), debounce = true) },
+        ))
         root.addView(stepperRow("줄 간격", cur.lineHeightPct.toFloat(), 100f, 300f, 5f, { Fmt.pct(it.toInt()) },
-            onChange = stepper(2) { update(cur.copy(lineHeightPct = it.toInt()), debounce = true) },
-        ).also { steppers += it })
+            onChange = stepper { update(cur.copy(lineHeightPct = it.toInt()), debounce = true) },
+        ))
         root.addView(stepperRow("문단 간격", cur.paragraphSpacingPct.toFloat(), 0f, 300f, 10f, { Fmt.pct(it.toInt()) },
-            onChange = stepper(3) { update(cur.copy(paragraphSpacingPct = it.toInt()), debounce = true) },
-        ).also { steppers += it })
+            onChange = stepper { update(cur.copy(paragraphSpacingPct = it.toInt()), debounce = true) },
+        ))
         // The margins as on 읽기 설정: "0" = the default margin (sides −20..+60 around MaruViewer's 20 dp; top and
         // bottom, from the status bands, −15..+70 around their own 15 / 10 dp), in steps of 2 (stored values stay dp).
         // While 여백 사용 is off they show the margin the page has (QuickFields.sideUi / verticalUi). 상하 여백 moves
@@ -263,8 +233,8 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             SideMargin.UI_MIN.toFloat(), SideMargin.UI_MAX.toFloat(), SideMargin.UI_STEP.toFloat(),
             { SideMargin.label(it.toInt()) },
             entry = StepperEntry(signed = true, digits = 2),
-            onChange = stepper(4) { update(QuickFields.withSide(cur, it.toInt()), debounce = true) },
-        ).also { steppers += it })
+            onChange = stepper { update(QuickFields.withSide(cur, it.toInt()), debounce = true) },
+        ))
         var vertical = QuickFields.verticalUi(cur)
         root.addView(stepperRow(
             "상하 여백",
@@ -272,27 +242,15 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             VerticalMargin.UI_MIN.toFloat(), VerticalMargin.UI_MAX.toFloat(), VerticalMargin.UI_STEP.toFloat(),
             { VerticalMargin.label(it.toInt()) },
             entry = StepperEntry(signed = true, digits = 2),
-            onChange = stepper(5, fold = true) {
+            onChange = stepper {
                 val to = it.toInt()
                 update(QuickFields.withVertical(cur, vertical, to), debounce = true)
                 vertical = to
             },
-        ).also { steppers += it })
-        root.addView(fontRow().also { unfoldedOnly += it })
-        root.addView(themeRow().also { unfoldedOnly += it })
-        applyFold()
+        ))
+        root.addView(fontRow())
+        root.addView(themeRow())
         return root
-    }
-
-    /** 미리보기's bar: what it is on the left, ˄ (back to every row) and 닫기 on the right. */
-    private fun foldedTopBar(): LinearLayout {
-        val row = ctx.compactRow(topLine = false)
-        row.minimumHeight = ctx.dp(Compact.BAR_DP)
-        row.setPadding(ctx.dp(Compact.PAD_DP), 0, ctx.dp(Compact.PAD_DP - 4), 0)
-        row.addView(ctx.label(PREVIEW, Compact.LABEL_SP, bold = true, maxLines = 1), lp(0, WRAP_CONTENT, 1f))
-        row.addView(ctx.compactIcon(R.drawable.ic_expand_less, UNFOLD) { setFolded(false) })
-        row.addView(ctx.compactIcon(R.drawable.ic_close, "닫기") { dismiss() })
-        return row
     }
 
     /**
@@ -491,6 +449,10 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         private const val SLIDE_MS = 180L
         /** White above the sheet's first row and, without a navigation bar, below its last. */
         private const val EDGE_DP = 8
+        /** The sheet's opacity while a value is stepped: the page under it shows, its rows stay readable. */
+        private const val SEE_THROUGH_ALPHA = 0.55f
+        /** How long after the last step the sheet turns opaque again. */
+        private const val OPAQUE_AFTER_MS = 2000L
         /** The 배경 row's choices, in its order, with the words the user asked for (2026-10-05). */
         val THEMES: List<Pair<PageTheme, String>> =
             listOf(PageTheme.PAPER to "흰색", PageTheme.MARU to "회색", PageTheme.BLACK to "검은색")
@@ -499,8 +461,6 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         private const val THEME_H_DP = 40
         const val ALL_SETTINGS = "전체 읽기 설정"
         const val STATUS_SETTINGS = "상태 표시줄"
-        const val PREVIEW = "미리보기"
-        const val UNFOLD = "모든 설정 보기"
         /** Weak: a popup left open when the reader is destroyed must not pin the activity. */
         private var current: WeakReference<ReadingSettingsPopup>? = null
 
