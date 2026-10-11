@@ -440,7 +440,7 @@ internal fun LibraryActivity.crashDialog(text: String) {
         .setMessage("아래 내용을 복사해 보내 주시면 원인을 찾는 데 도움이 됩니다.\n\n" + text.take(1500))
         .setPositiveButton("복사") { _, _ ->
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            cm?.setPrimaryClip(ClipData.newPlainText("ReaderaPlus crash", text))
+            cm?.setPrimaryClip(ClipData.newPlainText("글결 crash", text))
             toast("복사했습니다")
         }
         .setNegativeButton("닫기", null)

@@ -4,26 +4,18 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:translateY="-2">
-        <!-- Open book (original artwork): two pages, page-stack edge, text lines, bookmark ribbon. -->
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.92" android:scaleY="0.92">
+        <!-- 글결 (original artwork): a page with a folded corner and three lines of text drawn as the grain of the page. -->
         <path
             android:fillColor="#FFFFFFFF"
-            android:pathData="M53,38.5 C46,33.5 37,32.5 29,34.5 L29,71.5 C37,69.5 46,70.5 53,75.5 Z" />
+            android:pathData="M38,28 H64 L74,38 V76 Q74,80 70,80 H38 Q34,80 34,76 V32 Q34,28 38,28 Z" />
         <path
-            android:fillColor="#FFFFFFFF"
-            android:pathData="M55,38.5 C62,33.5 71,32.5 79,34.5 L79,71.5 C71,69.5 62,70.5 55,75.5 Z" />
+            android:fillColor="#FFBDBDBD"
+            android:pathData="M64,28 V34 Q64,38 68,38 H74 Z" />
         <path
-            android:strokeColor="#FFFFFFFF"
-            android:strokeWidth="2"
+            android:strokeColor="#FF1A1A1A"
+            android:strokeWidth="2.6"
             android:strokeLineCap="round"
-            android:pathData="M29,75.5 C37,73.5 46,74.5 54,79.5 C62,74.5 71,73.5 79,75.5" />
-        <path
-            android:strokeColor="#FF151515"
-            android:strokeWidth="1.8"
-            android:strokeLineCap="round"
-            android:pathData="M34,45 L48,45 M34,50.5 L48,50.5 M34,56 L48,56 M34,61.5 L44,61.5 M60,45 L66,45 M60,50.5 L66,50.5 M60,56 L74,56 M60,61.5 L71,61.5" />
-        <path
-            android:fillColor="#FF151515"
-            android:pathData="M69.5,33 L75,33 L75,50 L72.25,47.2 L69.5,50 Z" />
+            android:pathData="M41,47 C45,44 49,44 53,47 C57,50 61,50 67,47 M41,56 C45,53 49,53 53,56 C57,59 61,59 67,56 M41,65 C45,62 49,62 53,65 C55,66.5 57,67 59,66.6" />
     </group>
 </vector>

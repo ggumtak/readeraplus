@@ -79,7 +79,7 @@ class LightPolicyTest {
         for (t in listOf(LightPolicy.DEVICE_DIALOG, LightPolicy.NO_PERMISSION_SCREEN, LightPolicy.DEVICE_NONE)) {
             assertFalse(t, "전면광" in t || "ReaderaPlus" in t || '\'' in t)
         }
-        assertTrue(LightPolicy.DEVICE_DIALOG.contains("‘리더플러스’"))
+        assertTrue(LightPolicy.DEVICE_DIALOG.contains("‘글결’"))
         assertTrue(LightPolicy.panelRowVisible(none = true, warm = false))
         assertTrue(LightPolicy.panelRowVisible(none = false, warm = true))
         assertFalse(LightPolicy.panelRowVisible(none = false, warm = false))

@@ -432,8 +432,8 @@ object R3Rows {
     /** The "화면 색" chooser: the theme's name and what it looks like. */
     fun pageThemeChoice(t: PageTheme): String = when (t) {
         PageTheme.PAPER -> t.label + SettingsFormat.DEFAULT_MARK
-        PageTheme.MARU -> "${t.label} (어두운 회색 바탕)"
-        PageTheme.BLACK -> "${t.label} (마루뷰어 글자색)"
+        PageTheme.MARU -> t.label
+        PageTheme.BLACK -> "${t.label} (회색 글자)"
     }
 
     // ---- 상태 표시줄 (UI_SPEC §5.5, anchor §2.7)
@@ -636,7 +636,7 @@ object EinkChoices {
      * 2026-10-04 (`PagePalette.dark`). The row's title fits one line; the chooser says which pages are dark.
      */
     const val NIGHT_TITLE = "어두운 화면에서"
-    const val NIGHT_CHOOSER_TITLE = "어두운 화면(흑백 반전·마루뷰어)에서"
+    const val NIGHT_CHOOSER_TITLE = "어두운 화면(흑백 반전·회색·검은 바탕)에서"
 
     /** [NIGHT_TITLE]'s choices: -1 = same as on light pages. */
     val NIGHT: List<Int> = listOf(-1, 3, 5, 10, 20)

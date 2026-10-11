@@ -51,9 +51,9 @@ class EinkChoicesTest {
         assertTrue(AppSettings().einkFlashMs in EinkChoices.FLASH_MS)
         assertEquals(listOf("밝은 화면과 같게", "3쪽마다", "5쪽마다", "10쪽마다", "20쪽마다"), EinkChoices.NIGHT.map { EinkChoices.night(it) })
         assertEquals(AppSettings().einkRefreshEveryNight, EinkChoices.NIGHT[0])
-        // The row fits one line; the chooser names every dark page (PagePalette.dark), the 마루뷰어 화면 색 too.
+        // The row fits one line; the chooser names every dark page (PagePalette.dark), the 회색 바탕 too.
         assertEquals("어두운 화면에서", EinkChoices.NIGHT_TITLE)
-        assertEquals("어두운 화면(흑백 반전·마루뷰어)에서", EinkChoices.NIGHT_CHOOSER_TITLE)
+        assertEquals("어두운 화면(흑백 반전·회색·검은 바탕)에서", EinkChoices.NIGHT_CHOOSER_TITLE)
     }
 
     @Test

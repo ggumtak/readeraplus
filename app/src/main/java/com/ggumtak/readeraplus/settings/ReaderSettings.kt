@@ -122,7 +122,7 @@ data class ReaderSettings(
  * match no preset: the 스타일 row calls them "기본" (`StyleChoice.isDefault`).
  */
 enum class StylePreset(val label: String, val description: String) {
-    MARU("웹소설", "마루뷰어 화면 · 나눔명조"),
+    MARU("웹소설", "회색 바탕 · 나눔명조"),
     RIDI("전자책", "리디바탕 · 양쪽 정렬"),
     BOOK("종이책", "나눔명조 · 들여쓰기");
 
@@ -157,7 +157,7 @@ enum class PageTheme(val label: String) {
     /** Black on white: the e-ink default. */
     PAPER("흰 바탕"),
     /** MaruViewer's web-novel page: light grey text with a short shadow on a dark grey page (웹소설, 2026-10-04). */
-    MARU("마루뷰어"),
+    MARU("회색 바탕"),
     /** MARU's text and status colours on a black page (user, 2026-10-05: ⚙ 배경 흰색 / 회색 / 검은색). */
     BLACK("검은 바탕"),
 }
