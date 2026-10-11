@@ -1433,6 +1433,15 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     // Into the map buildDecor reads, with no redraw call: the first frame shows the mark.
                     ownerHighlights[OWNER_JUMP] =
                         sec to listOf(Highlight(off, minOf(jump.end, l.content.length), HighlightKind.SEARCH))
+                } else if (target == null && place == null &&
+                    ResumeMark.wanted(b.lastReadAt, System.currentTimeMillis(), sec, off)
+                ) {
+                    // 여기부터: where reading resumes after a break, marked like a note until the first turn.
+                    val r = ResumeMark.range(l.content.text, off)
+                    if (r != 0L) {
+                        ownerHighlights[OWNER_JUMP] =
+                            sec to listOf(Highlight(ResumeMark.start(r), ResumeMark.end(r), HighlightKind.SEARCH))
+                    }
                 }
                 // Paged: a note opens at its page start (A's JUMP rule). Scroll (attached by this show when wanted):
                 // the exact offset, with CONTEXT placement for a mid-line note (S §1.10 JUMP rule, [openedAtNote]).
@@ -4169,6 +4178,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 }
                 if (saved == null) {
                     removedTemps -= temp.id
+                    // Not saved: the ribbon goes again (a reload would otherwise keep the unsaved mark forever).
+                    if (bookmarks.any { it === temp }) {
+                        bookmarks = bookmarks.filter { it !== temp }
+                        bumpThumbDecor(sec)
+                        refreshDecor(onlyIfChanged = true)
+                    }
+                    toast("북마크를 저장하지 못했습니다")
                     return@launch
                 }
                 if (bookmarks.any { it === temp }) {

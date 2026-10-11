@@ -476,6 +476,8 @@ class TtsController(private val host: ReaderHost) {
             loadingNext = false
             lastLoadedSection = next
             if (text != null) append(next, text, ranges)
+            // Like the first section's failure: say so, instead of jumping over it in silence.
+            else ctx.toast("읽을 수 없는 부분을 건너뜁니다")
             if (playing) fill() else if (base + items.size - pos <= AHEAD + 2) prefetchNext()
         }
     }

@@ -229,7 +229,7 @@ internal object OpfParser {
             val content = m.attrs["content"]?.trim() ?: continue
             when (name) {
                 "calibre:series" -> if (series == null && content.isNotEmpty()) series = Entities.collapse(content)
-                "calibre:series_index" -> if (seriesIndex == null) seriesIndex = content.toFloatOrNull()
+                "calibre:series_index" -> if (seriesIndex == null) seriesIndex = content.toFloatOrNull()?.takeIf { it.isFinite() }
                 "cover" -> if (coverMeta == null && content.isNotEmpty()) coverMeta = content
             }
         }
@@ -241,7 +241,7 @@ internal object OpfParser {
                 val v = valueOf(pick)
                 if (v.isNotEmpty()) {
                     series = v
-                    seriesIndex = pick.id?.let { refines[it]?.get("group-position")?.trim()?.toFloatOrNull() }
+                    seriesIndex = pick.id?.let { refines[it]?.get("group-position")?.trim()?.toFloatOrNull()?.takeIf { it.isFinite() } }
                 }
             }
         }
