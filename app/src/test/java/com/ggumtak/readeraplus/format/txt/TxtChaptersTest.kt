@@ -287,6 +287,20 @@ class TxtChaptersTest {
         assertFalse(TxtChapters.rejectEnding("12) 점소이가 행패를 부림."))
     }
 
+    /** A book of "N화. 제목" where some titles end with '.' lost those chapters (the user's 광마회귀, 35화). */
+    @Test
+    fun episodeTitlesMayEndWithAPeriod() {
+        val hs = listOf("34화. 흑묘방주", "35화. 회의를 시작하겠습니다.", "36화. 취임 첫날밤에", "37화. 다시 만났다.")
+        assertEquals(hs, titles(TxtTestUtil.parse(book(hs))))
+        assertFalse(TxtChapters.rejectEnding("35화. 회의를 시작하겠습니다."))
+        assertFalse(TxtChapters.rejectEnding("제3장 - 그는 떠났다."))
+        assertFalse(TxtChapters.rejectEnding("< 38화 > : 끝."))
+        // a space alone after the unit, or no unit, is still a sentence
+        assertTrue(TxtChapters.rejectEnding("3화 보고 잤어요."))
+        assertTrue(TxtChapters.rejectEnding("35화를 보고 잤다."))
+        assertTrue(TxtChapters.rejectEnding("회의를 시작하겠습니다."))
+    }
+
     @Test
     fun scatteredNumberedSentencesAreNoChapters() {
         // numbered sentences that may end with '.' now, but whose numbers do not go up: no K4 chapters

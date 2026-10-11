@@ -47,6 +47,13 @@ internal object TxtChapters {
     private val K4: Pattern = Pattern.compile("\\d{1,4}\\s*[.)]\\s+\\S.{0,40}")
     /** Start of a numbered title ("7. 제목"), the K4 shape: such a line may end with '.'. */
     private val NUMBERED_TITLE: Pattern = Pattern.compile("\\d{1,4}\\s*[.)]\\s+\\S")
+    /**
+     * Start of an episode title with a separator ("35화. 제목", "제3장: 제목"), the K1 shape: such a line may end with
+     * '.' ("35화. 회의를 시작하겠습니다."). A space alone after the unit is not enough ("3화 보고 잤어요." stays a sentence).
+     */
+    private val EPISODE_TITLE: Pattern = Pattern.compile(
+        "$OPEN?\\s*(?:[제第]\\s*)?\\d{1,5}\\s*(?:화|장|회|편|부|권|막|절)\\s*$CLOSE?\\s*$SEP\\s*\\S"
+    )
     private val K5: Pattern = Pattern.compile("[=\\-*~#]{3,}\\s*(\\S.{0,40}?)\\s*[=\\-*~#]{3,}")
     private val K6: Pattern = Pattern.compile("\\S.{0,30}?\\s+\\d{1,5}\\s*화")
 
@@ -281,8 +288,9 @@ internal object TxtChapters {
     }
 
     /**
-     * Sentence-like endings are never headings: Hangul + '.' (except a numbered unit such as "제1화." and a numbered
-     * title such as "7. 점소이가 행패를 부림.", which chooseRule only accepts as K4 when isolated), or a
+     * Sentence-like endings are never headings: Hangul + '.' (except a numbered unit such as "제1화.", an episode
+     * title after a separator such as "35화. 회의를 시작하겠습니다." and a numbered title such as "7. 점소이가 행패를
+     * 부림.", which chooseRule only accepts as K4 when isolated), or a
      * quote closed after ? ! . … whose opening quote is not on the line (the tail of a dialogue line). A quoted
      * chapter title such as `제12화 “누구세요?”` keeps its opening quote and is accepted.
      */
@@ -292,7 +300,7 @@ internal object TxtChapters {
         val last = t[n - 1]
         val prev = t[n - 2]
         if (last == '.' && prev in '가'..'힣') {
-            if (NUMBERED_TITLE.matcher(t).lookingAt()) return false
+            if (NUMBERED_TITLE.matcher(t).lookingAt() || EPISODE_TITLE.matcher(t).lookingAt()) return false
             return !(n >= 3 && isUnit(prev) && t[n - 3] in '0'..'9')
         }
         if ((last == '”' || last == '"' || last == '’') && (prev == '?' || prev == '!' || prev == '.' || prev == '…')) {
