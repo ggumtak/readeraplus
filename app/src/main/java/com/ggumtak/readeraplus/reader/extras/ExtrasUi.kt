@@ -302,7 +302,7 @@ internal object TextActions {
      */
     fun copy(ctx: Context, text: String, confirm: Boolean = Build.VERSION.SDK_INT < 33) {
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
-        cm.setPrimaryClip(ClipData.newPlainText("ReaderaPlus", text))
+        cm.setPrimaryClip(ClipData.newPlainText("PureRead", text))
         if (confirm) ctx.toast("복사했습니다")
     }
 

@@ -483,7 +483,7 @@ internal object BackupJson {
             throw IllegalArgumentException("백업 파일이 아니거나 손상되었습니다", e)
         }
         if (!root.has("books") && !root.has("settings") && root.optString("format") != FORMAT) {
-            throw IllegalArgumentException("리더플러스 백업 파일이 아닙니다")
+            throw IllegalArgumentException("PureRead 백업 파일이 아닙니다")
         }
         val books = ArrayList<BackupBook>()
         root.optJSONArray("books")?.let { arr ->
@@ -648,7 +648,7 @@ internal object BackupJson {
      * The header of a backup file (S §3.4): `version`, `createdAt`, `origin` and `summary`, read with a streaming
      * reader — `settings` and the rest are skipped, no tree is built. The read stops at `books` once `summary` is
      * known (R3 files write it before `books`); an older file without one is counted while its `books` stream past.
-     * Throws on a malformed file or one that is not a ReaderaPlus backup.
+     * Throws on a malformed file or one that is not a PureRead backup.
      */
     fun readHeader(input: java.io.Reader): BackupHeader {
         val pr = java.io.PushbackReader(input, 1)
@@ -679,7 +679,7 @@ internal object BackupJson {
                 else -> r.skipValue()
             }
         }
-        if (format != FORMAT && !sawBooks) throw IllegalArgumentException("리더플러스 백업 파일이 아닙니다")
+        if (format != FORMAT && !sawBooks) throw IllegalArgumentException("PureRead 백업 파일이 아닙니다")
         return BackupHeader(version, createdAt, origin, summary ?: counted ?: AutoBackup.Summary(0, 0, 0, 0))
     }
 
