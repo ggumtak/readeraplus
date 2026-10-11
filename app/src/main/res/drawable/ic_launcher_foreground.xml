@@ -5,7 +5,7 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <group android:pivotX="54" android:pivotY="54" android:scaleX="0.92" android:scaleY="0.92">
-        <!-- 글결 (original artwork): a page with a folded corner and three lines of text drawn as the grain of the page. -->
+        <!-- Original artwork: a page with a folded corner and three wavy lines of text. -->
         <path
             android:fillColor="#FFFFFFFF"
             android:pathData="M38,28 H64 L74,38 V76 Q74,80 70,80 H38 Q34,80 34,76 V32 Q34,28 38,28 Z" />

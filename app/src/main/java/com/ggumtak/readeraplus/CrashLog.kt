@@ -46,7 +46,7 @@ object CrashLog {
         val sw = StringWriter()
         e.printStackTrace(PrintWriter(sw))
         val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(Date())
-        val head = "글결 ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · $time · thread $thread\n"
+        val head = "ReaderaPlus ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · $time · thread $thread\n"
         return (head + sw).take(MAX_CHARS)
     }
 }

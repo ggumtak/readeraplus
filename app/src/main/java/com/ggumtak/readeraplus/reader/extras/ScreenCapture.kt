@@ -28,18 +28,18 @@ import java.util.Locale
 import java.util.TimeZone
 
 /**
- * Saves the reader window as a PNG in Pictures/Geulgyeol (the selection menu's 스크린샷). The window is copied on the
+ * Saves the reader window as a PNG in Pictures/ReaderaPlus (the selection menu's 스크린샷). The window is copied on the
  * main thread (PixelCopy, or drawing the decor view when that fails); encoding and writing run on [Dispatchers.IO].
  */
 internal object ScreenCapture {
-    private const val FOLDER = "Geulgyeol"
+    private const val FOLDER = "ReaderaPlus"
     private const val MIME_PNG = "image/png"
 
-    /** "Geulgyeol_yyyyMMdd_HHmmss.png" for [millis] in [zone]. */
+    /** "ReaderaPlus_yyyyMMdd_HHmmss.png" for [millis] in [zone]. */
     fun fileName(millis: Long, zone: TimeZone = TimeZone.getDefault()): String {
         val format = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
         format.timeZone = zone
-        return "Geulgyeol_" + format.format(Date(millis)) + ".png"
+        return "ReaderaPlus_" + format.format(Date(millis)) + ".png"
     }
 
     /**
@@ -118,11 +118,11 @@ internal object ScreenCapture {
     }
 
     private fun report(activity: Activity, ok: Boolean, onDone: (Boolean) -> Unit) {
-        activity.toast(if (ok) "스크린샷을 저장했습니다 (사진 › Geulgyeol)" else "스크린샷을 저장하지 못했습니다")
+        activity.toast(if (ok) "스크린샷을 저장했습니다 (사진 › ReaderaPlus)" else "스크린샷을 저장하지 못했습니다")
         onDone(ok)
     }
 
-    /** API 29+: a MediaStore row in Pictures/Geulgyeol, pending while it is written, removed again on failure. */
+    /** API 29+: a MediaStore row in Pictures/ReaderaPlus, pending while it is written, removed again on failure. */
     @TargetApi(Build.VERSION_CODES.Q)
     private fun saveToMediaStore(context: Context, bitmap: Bitmap, name: String): Boolean {
         val resolver = context.contentResolver
@@ -148,7 +148,7 @@ internal object ScreenCapture {
         }
     }
 
-    /** API 26–28: a file in the public Pictures/Geulgyeol folder, then handed to the media scanner. */
+    /** API 26–28: a file in the public Pictures/ReaderaPlus folder, then handed to the media scanner. */
     @Suppress("DEPRECATION")
     private fun saveToPicturesDir(context: Context, bitmap: Bitmap, name: String): Boolean {
         val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), FOLDER)

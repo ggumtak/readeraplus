@@ -1,4 +1,4 @@
-# 글결 (코드명 ReaderaPlus) — Claude Code 작업 규칙
+# ReaderaPlus — Claude Code 작업 규칙
 
 Innospace One Comet(e-ink, Android 14)용 개인 전자책 리더. EPUB + TXT, Kotlin 2.1 / AGP 8.7 / minSdk 26.
 **AndroidX·Material·Compose 없음**, UI는 코드로 만든다(`ui/kit/Ui.kt`). 유일한 의존성은 `kotlinx-coroutines-android`.
