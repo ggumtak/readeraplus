@@ -3,7 +3,7 @@ name: ui-implementer
 description: Implements UI work in ReaderaPlus that the main agent has scoped - code-built views, dialogs, panels, menus, popups, settings screens, the selection popup, the AI dictionary page markup/CSS - following the e-ink rules (black and white, no animation). Not for core parsing/pagination/anchor logic.
 tools: Read, Edit, Write, Grep, Glob, Bash
 model: claude-sonnet-5-5
-effort: medium
+effort: high
 maxTurns: 40
 color: blue
 ---
