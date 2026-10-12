@@ -27,12 +27,12 @@ internal object LightPolicy {
     const val PANEL_SUBTITLE = "밝기 · 색온도(따뜻한 빛)"
     const val PANEL_SUBTITLE_NONE = "밝기와 색온도는 기기 조명에서 조절합니다"
 
-    /** Dialog A (brightness.md §5.3) before the "시스템 설정 수정" page; the system list names the app PureRead. */
+    /** Dialog A (brightness.md §5.3) before the "시스템 설정 수정" page; the system list names the app PureReader. */
     const val DEVICE_DIALOG = "이 기기의 조명은 앱 화면 밝기를 따르지 않을 수 있습니다. ‘시스템 설정 수정’을 허용하면 " +
         "리더가 기기 밝기를 직접 바꿉니다.\n\n" +
         "· 다른 앱에도 같은 밝기가 적용됩니다\n" +
         "· 리더를 나가면 원래 밝기로 돌아갑니다\n" +
-        "· 다음 화면에서 ‘PureRead’를 찾아 허용한 뒤 돌아오세요"
+        "· 다음 화면에서 ‘PureReader’를 찾아 허용한 뒤 돌아오세요"
 
     /** Dialog C (brightness.md §5.5): the firmware hides that page; the adb command follows on its own line. */
     const val NO_PERMISSION_SCREEN = "이 기기에는 ‘시스템 설정 수정’ 화면이 없습니다. PC에 연결해 아래 명령으로 허용할 수 있습니다."

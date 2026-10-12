@@ -12,7 +12,7 @@ import com.ggumtak.readeraplus.ui.kit.userMessage
 /**
  * Error text of the library and settings screens: never a raw exception message or class name. The app's own
  * Korean sentences are kept (Backup, Library and the screens reject input with a reason written for users, e.g.
- * "PureRead 백업 파일이 아닙니다"); platform errors read as [userMessage], and [detail] gives the class for a
+ * "PureReader 백업 파일이 아닙니다"); platform errors read as [userMessage], and [detail] gives the class for a
  * small grey second line where there is room.
  */
 internal object ErrorLines {

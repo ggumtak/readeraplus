@@ -1135,7 +1135,7 @@ internal object LanPage {
 <html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="data:,">
-<title>PureRead로 책 보내기</title>
+<title>PureReader로 책 보내기</title>
 <style>
 body{font-family:sans-serif;max-width:560px;margin:24px auto;padding:0 16px;color:#000;background:#fff;line-height:1.5}
 h1{font-size:22px}
@@ -1146,7 +1146,7 @@ li{margin:6px 0;word-break:break-all}
 .err{color:#b00020}
 small{color:#555}
 </style></head><body>
-<h1>PureRead로 책 보내기</h1>
+<h1>PureReader로 책 보내기</h1>
 <p>다 받을 때까지 기기에서 ‘Wi-Fi로 책 받기’ 화면을 열어 두세요.</p>
 <div id="drop">TXT·EPUB 파일을 여기에 끌어다 놓거나 고르세요<br><br><input type="file" id="f" multiple accept=".txt,.epub"></div>
 <ul id="list"></ul>

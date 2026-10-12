@@ -36,7 +36,7 @@ internal object SelectionActions {
         WEB_SEARCH("웹 검색"),
         READ_ALOUD("여기부터 듣기"),
         DELETE_PHRASE("문구 지우기"),
-        /** Saves the reader window as a picture (Pictures/PureRead), after the selection is closed. */
+        /** Saves the reader window as a picture (Pictures/PureReader), after the selection is closed. */
         SCREENSHOT("스크린샷"),
     }
 

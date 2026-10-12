@@ -58,11 +58,14 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
     override fun build(): View {
         val body = ctx.pageBody()
         val head = ctx.vertical { setPadding(ctx.dp(16), ctx.dp(20), ctx.dp(16), ctx.dp(8)) }
+        head.addView(ctx.icon(R.drawable.ic_purereader, 64).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, lp(ctx.dp(64), ctx.dp(64)).apply { bottomMargin = ctx.dp(12) })
         head.addView(ctx.label(ctx.getString(R.string.app_name), 24f, bold = true))
         head.addView(ctx.label("버전 ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", 15f, color = Ink.GRAY).apply {
             setPadding(0, ctx.dp(6), 0, 0)
         })
-        head.addView(ctx.label("e-ink 리더기를 위한 TXT·EPUB 리더", 15f).apply { setPadding(0, ctx.dp(10), 0, 0) })
+        head.addView(ctx.label("TXT · EPUB · PDF, 읽기에 집중하는 리더", 15f).apply { setPadding(0, ctx.dp(10), 0, 0) })
         head.addView(ctx.label(
             keepAll("직접 연 사전·웹 검색과 AI 사전, 업데이트 확인(내 Google Drive) 말고는 인터넷을 쓰지 않습니다. ‘Wi-Fi로 책 받기’ 화면이 열려 있을 때만 같은 Wi-Fi에서 파일을 받습니다."),
             14f,
@@ -72,7 +75,7 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
 
         body.section("라이선스")
         licensesBox = ctx.vertical().also(body::addView)
-        body.addView(ctx.note("아이콘: Material Symbols (Google, Apache License 2.0)\n글꼴: 모두 SIL 오픈 폰트 라이선스 1.1 (앱 안에서만 사용, 수정 없음)"))
+        body.addView(ctx.note("브랜드 로고·주요 서재 아이콘·빈 화면 삽화: PureReader 자체 제작\n그 외 아이콘: Material Symbols (Google, Apache License 2.0)\n글꼴: 모두 SIL 오픈 폰트 라이선스 1.1 (앱 안에서만 사용, 수정 없음)"))
         loadLicenses()
 
         body.section("문제 해결")

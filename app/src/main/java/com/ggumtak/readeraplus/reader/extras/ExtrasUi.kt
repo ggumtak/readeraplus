@@ -211,6 +211,25 @@ internal fun Context.emptyMessage(text: String): TextView = label(text, 17f, col
     setLineSpacing(0f, 1.3f)
 }
 
+/** Static original artwork above an empty-list message; scrolls on small screens or large text. */
+internal fun Context.illustratedEmpty(text: String, art: Int): View {
+    val body = vertical {
+        gravity = Gravity.CENTER_HORIZONTAL
+        setPadding(dp(24), dp(24), dp(24), dp(24))
+        addView(ImageView(this@illustratedEmpty).apply {
+            setImageResource(art)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(72), dp(72)))
+        addView(label(text, 17f, color = Ink.GRAY).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(16), 0, 0)
+            setLineSpacing(0f, 1.3f)
+        }, lp())
+    }
+    return einkScroll(body)
+}
+
 /** A plain text button with a 1px border (dialog footers). */
 internal fun Context.outlineButton(text: String, onClick: (View) -> Unit): TextView = label(text, 16f, bold = true).apply {
     gravity = Gravity.CENTER
@@ -302,7 +321,7 @@ internal object TextActions {
      */
     fun copy(ctx: Context, text: String, confirm: Boolean = Build.VERSION.SDK_INT < 33) {
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
-        cm.setPrimaryClip(ClipData.newPlainText("PureRead", text))
+        cm.setPrimaryClip(ClipData.newPlainText("PureReader", text))
         if (confirm) ctx.toast("복사했습니다")
     }
 

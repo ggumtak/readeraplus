@@ -715,7 +715,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             val list = loaded.sortedWith(compareBy({ it.section }, { it.offset }))
             tabLabels[1]?.text = if (list.isEmpty()) "북마크" else "북마크 ${list.size}"
             if (list.isEmpty()) {
-                container.addView(ctx.emptyMessage(TocText.noBookmarks(Settings.app.bookmarkByTouch)))
+                container.addView(ctx.illustratedEmpty(TocText.noBookmarks(Settings.app.bookmarkByTouch), R.drawable.ill_empty_bookmarks))
                 return@launch
             }
             val lv = ctx.einkListView()
@@ -826,7 +826,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         if (tab == 2) shareAll.visibility = if (list.isNotEmpty()) View.VISIBLE else View.GONE
         container.removeAllViews()
         if (all.isEmpty()) {
-            container.addView(ctx.emptyMessage("형광펜이 없습니다\n\n본문을 길게 누른 뒤 ‘형광펜’을 누르세요"))
+            container.addView(ctx.illustratedEmpty("형광펜이 없습니다\n\n본문을 길게 누른 뒤 ‘형광펜’을 누르세요", R.drawable.ill_empty_highlights))
             return
         }
         val ink = QuoteLook.ink()

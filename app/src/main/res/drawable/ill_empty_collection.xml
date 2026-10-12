@@ -1,12 +1,7 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="96dp"
-    android:height="96dp"
-    android:viewportWidth="960"
-    android:viewportHeight="960">
-  <path
-      android:strokeColor="#FF000000"
-      android:strokeWidth="30"
-      android:strokeLineCap="round"
-      android:strokeLineJoin="round"
-      android:pathData="M120,240L380,240L460,330L800,330Q840,330 840,370L840,760Q840,800 800,800L160,800Q120,800 120,760ZM480,480L480,660M390,570L570,570"/>
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original PureReader artwork: source SVG in art/purereader. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="96dp" android:height="96dp" android:viewportWidth="96" android:viewportHeight="96">
+    <path android:pathData="M18,36 V72 H78 V38 H48 L40,28 H18 Z M18,42 H78" android:strokeColor="#151515" android:strokeWidth="2.4" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M43,53 H53 M48,48 V58 M28,64 H67" android:strokeColor="#151515" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M16,80 H80" android:strokeColor="#151515" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" />
 </vector>

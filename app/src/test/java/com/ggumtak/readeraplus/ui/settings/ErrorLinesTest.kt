@@ -12,8 +12,8 @@ import java.util.zip.ZipException
 class ErrorLinesTest {
     @Test
     fun keepsTheAppsOwnKoreanSentence() {
-        val e = IllegalArgumentException("PureRead 백업 파일이 아닙니다")
-        assertEquals("복원 실패: PureRead 백업 파일이 아닙니다", ErrorLines.line("복원 실패", e))
+        val e = IllegalArgumentException("PureReader 백업 파일이 아닙니다")
+        assertEquals("복원 실패: PureReader 백업 파일이 아닙니다", ErrorLines.line("복원 실패", e))
         assertNull(ErrorLines.detail(e))
         assertEquals("백업 실패: 파일을 열 수 없습니다", ErrorLines.line("백업 실패", IllegalStateException("파일을 열 수 없습니다")))
         assertEquals("비우지 못했습니다: 파일 3개가 지워지지 않습니다",

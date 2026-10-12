@@ -427,7 +427,6 @@ class NotesActivity : Activity() {
         val emptyCol = vertical { gravity = Gravity.CENTER_HORIZONTAL }
         emptyArt = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
-            setColorFilter(Ink.GRAY)
             contentDescription = null
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
@@ -566,7 +565,12 @@ class NotesActivity : Activity() {
         setText(emptyText, keepAll(NotesText.emptyText(q.tab, q.text, q.bookId != null, app.recordLookups, app.bookmarkByTouch)).toString())
         val art = when (NotesText.emptyArt(case)) {
             NotesText.EmptyArt.SEARCH -> R.drawable.ill_empty_search
-            NotesText.EmptyArt.NOTES -> R.drawable.ill_empty_notes
+            NotesText.EmptyArt.NOTES -> when (q.tab) {
+                NotesTab.BOOKMARKS -> R.drawable.ill_empty_bookmarks
+                NotesTab.QUOTES -> R.drawable.ill_empty_highlights
+                NotesTab.WORDS -> R.drawable.ill_empty_words
+                else -> R.drawable.ill_empty_notes
+            }
         }
         if (art != emptyArtRes) {
             emptyArt.setImageResource(art)

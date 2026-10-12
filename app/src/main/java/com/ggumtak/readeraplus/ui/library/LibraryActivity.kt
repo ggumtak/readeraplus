@@ -704,7 +704,6 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         emptyButtons = vertical { gravity = Gravity.CENTER_HORIZONTAL }
         emptyArt = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
-            setColorFilter(Ink.GRAY)
             contentDescription = null
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             visibility = View.GONE
@@ -910,7 +909,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             minimumHeight = dp(64)
             setPadding(dp(16), dp(8), dp(16), dp(8))
         }
-        header.addView(icon(R.drawable.ic_auto_stories, 28).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(20) })
+        header.addView(icon(R.drawable.ic_purereader, 32).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(20) })
         header.addView(label(getString(R.string.app_name), 20f, bold = true, maxLines = 1), lp(0, WRAP_CONTENT, 1f))
         col.addView(header, lp())
         col.addView(hairline())

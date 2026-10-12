@@ -418,7 +418,7 @@ class LanUploadTest {
     fun uploadPageIsSelfContained() {
         val html = LanPage.HTML
         assertTrue(html.contains("<meta charset=\"utf-8\">"))
-        assertTrue(html.contains("PureRead로 책 보내기"))
+        assertTrue(html.contains("PureReader로 책 보내기"))
         // The one warning first, before the drop zone.
         assertTrue(html.indexOf("‘Wi-Fi로 책 받기’ 화면을 열어 두세요") in 0 until html.indexOf("<div id=\"drop\">"))
         assertTrue(html.contains("'/upload'"))
@@ -499,7 +499,7 @@ class LanUploadTest {
         val h = harness()
         val (status, body) = h.get("/k7m3")
         assertEquals(200, status)
-        assertTrue(body.contains("PureRead로 책 보내기"))
+        assertTrue(body.contains("PureReader로 책 보내기"))
         assertEquals(200, h.get("/K7M3/").first)
         val head = h.get("/k7m3", method = "HEAD")
         assertEquals(200 to "", head)
