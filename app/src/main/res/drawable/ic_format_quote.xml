@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Original PureReader artwork: source SVG in art/purereader. -->
+<!-- Original PureReader artwork. Regenerate with tools/generate_navigation_icons.py. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
-    <path android:pathData="M4,5 H20 V21 H4 Z" android:strokeColor="#151515" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" />
-    <path android:pathData="M8,9 V12 H10 V9 H8 M14,9 V12 H16 V9 H14 M8,16 H16" android:strokeColor="#151515" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M4,3 H15 V21 H4 Z M2.5,7 H5.5 M2.5,12 H5.5 M2.5,17 H5.5" android:strokeColor="#151515" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M8,7 H12 M8,11 H11" android:strokeColor="#151515" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M12,16 L18,6 L21,8 L15,18 L11,20 Z M17,8 L20,10" android:strokeColor="#151515" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" />
 </vector>

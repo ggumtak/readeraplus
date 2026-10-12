@@ -476,7 +476,7 @@ class NotesActivity : Activity() {
         selectTitle = label("", 18f, bold = true, maxLines = 1).apply { setPadding(dp(12), 0, dp(8), 0) }
         row.addView(selectTitle, lp(0, WRAP_CONTENT, 1f))
         row.addView(iconButton(R.drawable.ic_share, "공유") { if (selected.isNotEmpty()) menus.shareList(selected.toLongArray()) })
-        row.addView(iconButton(R.drawable.ic_upload, "내보내기") { if (selected.isNotEmpty()) menus.exportChooser(selected.toLongArray()) })
+        row.addView(iconButton(R.drawable.ic_export_file, "내보내기") { if (selected.isNotEmpty()) menus.exportChooser(selected.toLongArray()) })
         selectColour = iconButton(R.drawable.ic_ink_highlighter, "색 바꾸기") { menus.recolourSelected(it) }
         row.addView(selectColour)
         row.addView(iconButton(R.drawable.ic_delete, "삭제") { if (selected.isNotEmpty()) menus.deleteSelected() })

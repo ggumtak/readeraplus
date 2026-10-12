@@ -972,15 +972,15 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
     }
 
     private fun shelfIcon(s: Shelf): Int = when (s) {
-        Shelf.READING_NOW -> R.drawable.ic_autorenew
+        Shelf.READING_NOW -> R.drawable.ic_reading_now
         Shelf.ALL -> R.drawable.ic_menu_book
         Shelf.FAVORITES -> R.drawable.ic_star
         Shelf.TO_READ -> R.drawable.ic_schedule
         Shelf.HAVE_READ -> R.drawable.ic_done_all
         Shelf.AUTHORS -> R.drawable.ic_person
-        Shelf.SERIES -> R.drawable.ic_sell
+        Shelf.SERIES -> R.drawable.ic_series
         Shelf.COLLECTIONS -> R.drawable.ic_library_books
-        Shelf.FORMATS -> R.drawable.ic_layers
+        Shelf.FORMATS -> R.drawable.ic_file_formats
         Shelf.FOLDERS -> R.drawable.ic_folder
         Shelf.DOWNLOADS -> R.drawable.ic_download
         Shelf.TRASH -> R.drawable.ic_delete
@@ -1763,7 +1763,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         if (shelf == Shelf.TRASH) items += MenuItem("휴지통 비우기", R.drawable.ic_delete_forever) { confirmEmptyTrash() }
         items += MenuItem("파일 열기", R.drawable.ic_file_open, groupStart = true) { openFilePicker() }
         // Books received there are in the database when this screen resumes: onResume reloads the list and counts.
-        items += MenuItem("Wi-Fi로 책 받기", R.drawable.ic_download) { SettingsActivity.open(this, SettingsActivity.PAGE_WIFI) }
+        items += MenuItem("Wi-Fi로 책 받기", R.drawable.ic_wifi_receive) { SettingsActivity.open(this, SettingsActivity.PAGE_WIFI) }
         // "지금 스캔", as the row of 설정 → 책 스캔 that does the same.
         items += MenuItem("지금 스캔", R.drawable.ic_refresh, groupStart = true) { manualScan() }
         items += MenuItem("스캔 폴더 추가", R.drawable.ic_create_new_folder) { pickTree() }

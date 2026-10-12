@@ -37,11 +37,14 @@ internal fun ReaderActivity.showOverflowMenu(anchor: View) {
     val bk = currentBookOrNull() ?: return
     val bookmarked = isCurrentPageBookmarked()
     val items = listOfNotNull(
-        MenuItem("페이지 이동", R.drawable.ic_find_in_page) { guarded { ReaderPanels.showGoTo(this) } },
+        MenuItem("페이지 이동", R.drawable.ic_page_jump) { guarded { ReaderPanels.showGoTo(this) } },
         if (!scrollMode) MenuItem("페이지 미리보기", R.drawable.ic_grid_view) { guarded { ReaderPanels.showContents(this, 3) } } else null,
         // C22 (narrow): only while the top bar is too narrow for its bookmark button (U §2.2 width guard).
         if (!bookmarkInChrome()) {
-            MenuItem(if (bookmarked) "북마크 삭제" else "북마크 추가", R.drawable.ic_bookmark_add) { toggleBookmark() }
+            MenuItem(
+                if (bookmarked) "북마크 삭제" else "북마크 추가",
+                if (bookmarked) R.drawable.ic_bookmark_remove else R.drawable.ic_bookmark_add,
+            ) { toggleBookmark() }
         } else null,
         // S §1.2: the quick way into scroll mode and always the way back.
         MenuItem(ScrollWiring.modeItem(scrollMode), if (scrollMode) R.drawable.ic_auto_stories else R.drawable.ic_view_list, groupStart = true) {

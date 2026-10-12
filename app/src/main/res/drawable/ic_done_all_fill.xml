@@ -1,9 +1,5 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
-    android:viewportWidth="960"
-    android:viewportHeight="960">
-  <path
-      android:fillColor="#FF000000"
-      android:pathData="M268,720L42,494L99,438L269,608L269,608L325,664L268,720ZM494,720L268,494L324,437L494,607L862,239L918,296L494,720ZM494,494L437,438L635,240L692,296L494,494Z"/>
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original PureReader artwork. Regenerate with tools/generate_navigation_icons.py. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M21.5,12 A9.5,9.5 0,1 1,2.5,12 A9.5,9.5 0,1 1,21.5,12 Z M4.8,11.5 L6,10.3 L10,14.3 L16.8,7.5 L18,8.7 L10,16.7 Z" android:fillColor="#151515" android:fillType="evenOdd" />
 </vector>

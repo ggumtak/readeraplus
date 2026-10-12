@@ -377,7 +377,7 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
      */
     fun setTools(presets: List<PenPreset>, selected: Int, mode: Int, annotating: Boolean) {
         annotatingNow = annotating
-        modeButton.setImageResource(if (annotating) R.drawable.ic_edit else R.drawable.ic_touch_app)
+        modeButton.setImageResource(if (annotating) R.drawable.ic_pen_mode_fill else R.drawable.ic_pen_mode)
         modeButton.imageTintList = ColorStateList.valueOf(if (annotating) 0xFF1F1F1F.toInt() else ICON)
         modeButton.background = if (annotating) modeOn else modeOff
         // Described by what a tap does (also what the emulator check taps).
@@ -424,9 +424,7 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
             setOnClickListener { listener.onTool(PdfPageView.MODE_LASSO) }
         }.also { toolRow.addView(it) }
         toolRow.addView(icon(R.drawable.ic_undo, "되돌리기", size = TOOL_ICON_DP) { listener.onUndo() })
-        // The undo arrow mirrored.
-        redoButton = icon(R.drawable.ic_undo, "다시 실행", size = TOOL_ICON_DP) { listener.onRedo() }.apply {
-            scaleX = -1f
+        redoButton = icon(R.drawable.ic_redo, "다시 실행", size = TOOL_ICON_DP) { listener.onRedo() }.apply {
             visibility = if (canRedoNow) View.VISIBLE else View.GONE
         }.also { toolRow.addView(it) }
         toolRow.addView(divider())

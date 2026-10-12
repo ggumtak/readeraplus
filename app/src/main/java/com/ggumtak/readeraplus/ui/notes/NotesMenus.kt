@@ -97,7 +97,7 @@ internal class NotesMenus(private val a: NotesActivity) {
             NoteKind.LOOKUP -> {
                 items += MenuItem("뜻 메모", R.drawable.ic_sticky_note_2) { editNote(row) }
                 items += MenuItem("다시 찾기", R.drawable.ic_translate) { lookUp(row) }
-                items += MenuItem("웹 검색", R.drawable.ic_search) { TextActions.webSearch(a, row.word.trim()) }
+                items += MenuItem("웹 검색", R.drawable.ic_web_search) { TextActions.webSearch(a, row.word.trim()) }
                 if (a.q.wordsOnce && row.wordCount > 1) {
                     items += MenuItem("모든 기록 보기", R.drawable.ic_history) { a.setWordsOnce(false, text = row.word.trim()) }
                 }
@@ -229,7 +229,7 @@ internal class NotesMenus(private val a: NotesActivity) {
     fun overflow(anchor: View) {
         val items = ArrayList<MenuItem>()
         items += MenuItem("여러 개 선택", R.drawable.ic_check_box) { a.enterSelection(null) }
-        items += MenuItem("내보내기…", R.drawable.ic_upload) { exportChooser(null) }
+        items += MenuItem("내보내기…", R.drawable.ic_export_file) { exportChooser(null) }
         items += MenuItem("공유", R.drawable.ic_share) { shareList(null) }
         if (a.q.tab == NotesTab.WORDS) {
             val once = Settings.raw().getBoolean(NotesActivity.PREF_WORDS_ONCE, false)

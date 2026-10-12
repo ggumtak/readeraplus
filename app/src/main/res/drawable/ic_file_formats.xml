@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original PureReader artwork. Regenerate with tools/generate_navigation_icons.py. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M6,3 H16 L21,8 V19 H6 Z M16,3 V8 H21 M3,6 V22 H17" android:strokeColor="#151515" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M10,11 H17 M10,15 H14" android:strokeColor="#151515" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

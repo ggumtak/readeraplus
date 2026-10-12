@@ -18,3 +18,11 @@ Navigation icons use 24-unit viewports and 1.8-unit rounded strokes. Illustratio
 The product name is PureReader. `com.ggumtak.readeraplus`, the repository name, the backup format marker and the APK/update transport filenames remain stable to retain compatibility with existing installs and backups. New reader screenshots are saved under `Pictures/PureReader`; existing pictures are left where they were saved.
 
 Other icons in the app retain their existing attribution (Material Symbols, Apache 2.0).
+
+## Navigation review (2026-10-12)
+
+The follow-up review covers every existing icon resource, actual Kotlin call sites, PDF tools drawn on Canvas, status battery/bookmark marks and the AI page's inline SVG/CSS symbols. Decisions and the complete inventory are in [ICON_AUDIT.md](../../docs/ICON_AUDIT.md).
+
+`tools/generate_navigation_icons.py` owns 33 original navigation resources and their SVG pairs. Run it from any directory to regenerate only that set. It keeps active/normal contours related, uses transparent cut-outs in filled symbols so Android tinting works on either background, and uses 1.8-unit rounded strokes (the tiny series numbers use 1.5 units). Do not edit generated geometry without also updating this generator.
+
+The navigation family now includes explicit page jump, book series, file formats, reading-in-progress, Wi-Fi receive, export, web search, bookmark removal, pen mode and redo pictograms. The normal and filled `ic_done_all` resources represent a check inside the same circular frame; the old resources were identical double-check shapes and could not communicate state.

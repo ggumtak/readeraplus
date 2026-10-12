@@ -699,9 +699,9 @@ internal class GroupAdapter(
     companion object {
         fun groupIcon(shelf: Shelf): Int = when (shelf) {
             Shelf.AUTHORS -> R.drawable.ic_person
-            Shelf.SERIES -> R.drawable.ic_sell
+            Shelf.SERIES -> R.drawable.ic_series
             Shelf.COLLECTIONS -> R.drawable.ic_library_books
-            Shelf.FORMATS -> R.drawable.ic_layers
+            Shelf.FORMATS -> R.drawable.ic_file_formats
             else -> R.drawable.ic_folder
         }
     }
