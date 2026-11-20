@@ -3,71 +3,59 @@ package com.ggumtak.readeraplus.update
 import android.content.pm.PackageInstaller
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UpdateInfoTest {
+    private val base = "https://github.com/ggumtak/readeraplus/releases/download/latest/"
+
+    private fun asset(
+        name: String,
+        url: String = base + name,
+        size: Long = 24_508_766L,
+        state: String = "uploaded",
+        digest: String = "null",
+    ) = """{"name":"$name","browser_download_url":"$url","size":$size,"state":"$state","digest":$digest}"""
+
+    private fun release(vararg assets: String, tag: String = "latest", draft: Boolean = false) =
+        """{"tag_name":"$tag","prerelease":true,"draft":$draft,"assets":[${assets.joinToString(",")}]}"""
+
     @Test
-    fun parsesTheWebAppsAnswer() {
-        val l = UpdateInfo.parse("""{"build":185,"id":"1AbC-def_ghIJklmnOP"}""")
-        assertNotNull(l)
-        assertEquals(185, l!!.build)
-        assertEquals("1AbC-def_ghIJklmnOP", l.fileId)
-        // no build yet, an error page, a broken id
-        assertNull(UpdateInfo.parse("""{"build":0}"""))
-        assertNull(UpdateInfo.parse("<html><body>Error</body></html>"))
-        assertNull(UpdateInfo.parse("""{"build":185,"id":"../../x"}"""))
-        assertNull(UpdateInfo.parse("""{"build":185,"id":"short"}"""))
+    fun picksTheNewestUploadedApkWithItsSizeAndDigest() {
+        val sha = "9f83c54a5a5503aed916a2f2420198dc71a772ca75806ace7f3759ed0facbdac"
+        val latest = UpdateInfo.parse(
+            release(asset("ReaderaPlus-188.apk"), asset("ReaderaPlus-189.apk", digest = "\"sha256:$sha\""), asset("notes.txt")),
+        )!!
+        assertEquals(189, latest.build)
+        assertEquals(base + "ReaderaPlus-189.apk", latest.url)
+        assertEquals(24_508_766L, latest.size)
+        assertEquals(sha, latest.sha256)
+        assertTrue(UpdateInfo.isNewer(latest, 188))
+        assertFalse(UpdateInfo.isNewer(latest, 189))
+        assertFalse(UpdateInfo.isNewer(latest, 190))
+        assertNull(UpdateInfo.parse(release(asset("ReaderaPlus-189.apk")))!!.sha256)
+    }
+
+    @Test
+    fun skipsIncompleteOrInvalidAssets() {
+        val valid = asset("ReaderaPlus-189.apk")
+        val result = UpdateInfo.parse(release(
+            valid,
+            asset("ReaderaPlus-190.apk", url = "https://github.com/other/repo/releases/download/latest/ReaderaPlus-190.apk"),
+            asset("ReaderaPlus-191.apk", url = base + "ReaderaPlus-192.apk"),
+            asset("ReaderaPlus-192.apk", state = "starter"),
+            asset("ReaderaPlus-193.apk", size = 0),
+            asset("ReaderaPlus-194.apk", size = UpdateInfo.MAX_APK_BYTES + 1),
+            asset("ReaderaPlus-195.apk", digest = "\"sha256:invalid\""),
+            asset("Hanja-196.apk"),
+        ))
+        assertEquals(189, result?.build)
+        assertNull(UpdateInfo.parse(release(asset("ReaderaPlus-0.apk"))))
+        assertNull(UpdateInfo.parse(release(valid, draft = true)))
+        assertNull(UpdateInfo.parse(release(valid, tag = "other")))
+        assertNull(UpdateInfo.parse("""{"message":"rate limited"}"""))
         assertNull(UpdateInfo.parse(""))
-    }
-
-    /** The shape of drive.google.com/embeddedfolderview: entry id, then the file link, then the name. */
-    @Test
-    fun findsTheNewestApkInAFolderListing() {
-        fun entry(id: String, name: String) =
-            "<div class=\"flip-entry\" id=\"entry-$id\" tabindex=\"0\" role=\"link\"><div class=\"flip-entry-info\">" +
-                "<a href=\"https://drive.google.com/file/d/$id/view?usp=drive_web\" target=\"_blank\">" +
-                "<div class=\"flip-entry-visual\"><img src=\"https://drive-thirdparty.googleusercontent.com/16/type/x\"></div>" +
-                "<div class=\"flip-entry-title\">$name</div></a></div>" +
-                "<div class=\"flip-entry-last-modified\"><div>오후 1:00</div></div></div>"
-        val html = "<html><body><div class=\"flip-entries\">" +
-            entry("1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "ReaderaPlus-184.apk") +
-            entry("1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "ReaderaPlus-185.apk") +
-            entry("1cccccccccccccccccccccccccccccccc", "notes.txt") +
-            "</div></body></html>"
-        val l = UpdateInfo.parseFolder(html)
-        assertNotNull(l)
-        assertEquals(185, l!!.build)
-        assertEquals("1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", l.fileId)
-        // a link-only listing works too; a sign-in page or an empty folder lists nothing
-        val plain = "<a href=\"/file/d/1ddddddddddddddddddddd/view\">ReaderaPlus-190.apk</a>"
-        assertEquals(190, UpdateInfo.parseFolder(plain)!!.build)
-        assertNull(UpdateInfo.parseFolder("<html><title>Google Drive - Sign in</title></html>"))
-        assertNull(UpdateInfo.parseFolder(entry("1cccccccccccccccccccccccccccccccc", "notes.txt")))
-        assertEquals(
-            "https://drive.google.com/embeddedfolderview?id=17HGqQJ-A0rT_OhkkvIrDrWgGPiq3DcPl",
-            UpdateInfo.folderUrl(UpdateInfo.DRIVE_FOLDER),
-        )
-    }
-
-    @Test
-    fun newerOnlyWhenTheBuildNumberIsHigher() {
-        val l = UpdateInfo.Latest(185, "1AbC-def_ghIJklmnOP")
-        assertTrue(UpdateInfo.isNewer(l, 184))
-        assertFalse(UpdateInfo.isNewer(l, 185))
-        assertFalse(UpdateInfo.isNewer(l, 190))
-    }
-
-    @Test
-    fun urls() {
-        assertEquals("https://script.google.com/macros/s/X/exec?what=latest", UpdateInfo.checkUrl("https://script.google.com/macros/s/X/exec"))
-        assertEquals("https://a/exec?k=1&what=latest", UpdateInfo.checkUrl("https://a/exec?k=1"))
-        assertEquals(
-            "https://drive.usercontent.google.com/download?id=1AbC-def_ghIJklmnOP&export=download&confirm=t",
-            UpdateInfo.downloadUrl("1AbC-def_ghIJklmnOP"),
-        )
     }
 
     @Test
@@ -81,9 +69,10 @@ class UpdateInfoTest {
 
     @Test
     fun apkHeaderAndCachedNames() {
-        assertTrue(UpdateInfo.looksLikeApk(byteArrayOf(0x50, 0x4B, 3, 4), 4))
-        assertFalse(UpdateInfo.looksLikeApk("<htm".toByteArray(), 4))
-        assertFalse(UpdateInfo.looksLikeApk(byteArrayOf(0x50, 0x4B), 2))
+        assertTrue(UpdateInfo.looksLikeApk(byteArrayOf(0x50, 0x4B, 3, 4)))
+        assertFalse(UpdateInfo.looksLikeApk("<htm".toByteArray()))
+        assertFalse(UpdateInfo.looksLikeApk(byteArrayOf(0x50, 0x4B)))
+        assertFalse(UpdateInfo.looksLikeApk(byteArrayOf(0x50, 0x4B, 5, 6)))
         assertEquals("ReaderaPlus-185.apk", UpdateInfo.fileName(185))
         assertEquals(185, UpdateInfo.buildOf("ReaderaPlus-185.apk"))
         assertEquals(0, UpdateInfo.buildOf("ReaderaPlus-185.apk.part"))

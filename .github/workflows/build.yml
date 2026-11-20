@@ -19,7 +19,8 @@ permissions:
 concurrency:
   # The scheduled key keep-alive must never cancel a running build (and vice versa).
   group: build-${{ github.ref }}-${{ github.event_name == 'schedule' && 'keepalive' || 'build' }}
-  cancel-in-progress: true
+  # Let an active run finish publishing the rolling release before starting the next one.
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -43,8 +44,7 @@ jobs:
 
       # Signing must be the SAME for every build, or Android refuses to install an update over the installed app
       # ("package conflicts") and the user has to uninstall, losing settings and reading positions.
-      # Preferred: the repository secrets. Without them: one key generated on the first run and kept in this
-      # private repository's Actions cache (never in git), restored by every later build.
+      # The original key is supplied by repository secrets or restored from the Actions cache.
       - name: Restore signing key
         uses: actions/cache/restore@v4
         with:
@@ -52,7 +52,6 @@ jobs:
           key: readeraplus-signing-v2
 
       - name: Prepare signing key
-        id: key
         env:
           KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
           SECRET_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
@@ -72,14 +71,8 @@ jobs:
           fi
           dir="$HOME/.readeraplus-signing"
           if [ ! -f "$dir/release.keystore" ] || [ ! -f "$dir/pass" ]; then
-            echo "::warning::No cached signing key: generating a NEW one. Apps signed by an earlier key must be reinstalled once."
-            rm -rf "$dir" && mkdir -p "$dir"
-            pass="$(openssl rand -hex 24)"
-            printf '%s' "$pass" > "$dir/pass"
-            keytool -genkeypair -keystore "$dir/release.keystore" -storetype PKCS12 -alias readeraplus \
-              -keyalg RSA -keysize 3072 -validity 36500 -storepass "$pass" -keypass "$pass" \
-              -dname "CN=ReaderaPlus" > /dev/null
-            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "::error::The existing PureReader signing key is missing. Restore it before building an update."
+            exit 1
           fi
           pass="$(cat "$dir/pass")"
           echo "::add-mask::$pass"
@@ -91,13 +84,6 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "Using the cached signing key"
 
-      - name: Save new signing key
-        if: steps.key.outputs.new == 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.readeraplus-signing
-          key: readeraplus-signing-v2
-
       - name: Unit tests
         run: ./gradlew --stacktrace testDebugUnitTest
 
@@ -105,17 +91,22 @@ jobs:
         run: node --test tools/ai-dictionary/test.mjs
 
       - name: Build release APK
-        env:
-          # The Drive web app's URL: the app asks it for newer builds (설정 → 업데이트 확인). Empty without the secret.
-          UPDATE_URL: ${{ secrets.GDRIVE_UPLOAD_URL }}
         run: ./gradlew --stacktrace assembleRelease
 
-      - name: Signing certificate
+      - name: Verify release signature
         id: cert
-        continue-on-error: true
+        env:
+          # SHA-256 of the public signing certificate of the published PureReader build 189.
+          RELEASE_CERT_SHA256: ea9aed1a60878b4ed5635c873d94268540106d332eb4cd814f5d127c06ab9e1c
         run: |
+          set -o pipefail
           apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
-          sha="$("$apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)"
+          certs="$("$apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk)"
+          sha="$(sed -n 's/.*certificate SHA-256 digest: //p' <<< "$certs")"
+          if [ "$sha" != "$RELEASE_CERT_SHA256" ]; then
+            echo "::error::The APK signing certificate does not match the existing PureReader release."
+            exit 1
+          fi
           echo "Signing certificate SHA-256: $sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 

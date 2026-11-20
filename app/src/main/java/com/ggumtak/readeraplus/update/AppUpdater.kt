@@ -22,19 +22,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * In-app update (the user, 2026-10-11: "앱 내에서 업데이트가 있습니다 … 예 누르면 업데이트"). Every CI build is in the
- * user's Google Drive folder ([UpdateInfo.DRIVE_FOLDER], tools/gdrive/upload.gs), shared by link: its public listing
- * names the newest build and its file id (or, failing that, the Drive web app [BuildConfig.UPDATE_URL] answers
- * `?what=latest`). A newer build is offered in a dialog; 업데이트 downloads the
- * APK (cache/update) and hands it to [PackageInstaller], which asks the user once to confirm (Android never installs
- * silently on a first update; later ones may skip it, [PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED]).
- * Android only accepts an APK signed like the installed app, so nothing else can be installed this way.
- *
- * The library checks at most every 12 h ([autoCheck]); 설정 → 업데이트 확인 checks now ([check] manual). Network and
- * file work run on IO; dialogs on the main thread, only while the activity is alive.
+ * Checks the GitHub release tagged latest, downloads its APK, and hands it to the Android installer.
+ * The library checks at most every 12 h. Settings can check immediately.
  */
 internal object AppUpdater {
     private const val PREFS = "app_update"
@@ -42,17 +35,14 @@ internal object AppUpdater {
     private const val K_SKIPPED = "skipped_build"
     private const val AUTO_INTERVAL_MS = 12L * 60 * 60 * 1000
     private const val DIR = "update"
-    private const val MAX_BYTES = 300L * 1024 * 1024
     const val ACTION_STATUS = "com.ggumtak.readeraplus.UPDATE_STATUS"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var busy = false
 
-    fun enabled(): Boolean = UpdateInfo.DRIVE_FOLDER.isNotEmpty() || BuildConfig.UPDATE_URL.isNotEmpty()
-
     /** A library visit: checks at most every 12 h and offers a newer build unless the user said 나중에 to it. */
     fun autoCheck(activity: Activity) {
-        if (!enabled() || busy) return
+        if (busy) return
         val app = activity.applicationContext
         scope.launch {
             // The prefs file is read off the main thread (its first load blocks).
@@ -65,20 +55,18 @@ internal object AppUpdater {
         }
     }
 
-    /** Asks the web app now; [manual] says what it found even when there is nothing to update. */
+    /** Asks GitHub now; [manual] says what it found even when there is nothing to update. */
     fun check(activity: Activity, manual: Boolean) {
-        if (!enabled()) {
-            if (manual) activity.toast("이 빌드에는 업데이트 주소가 없습니다")
-            return
-        }
-        if (manual) activity.toast("업데이트 확인 중…")
         if (busy) return
+        if (manual) activity.toast("업데이트 확인 중…")
         busy = true
         val app = activity.applicationContext
         scope.launch {
             val latest = withContext(Dispatchers.IO) {
-                sweep(app)
-                runCatching { fetchLatest() }.getOrNull()
+                runCatching {
+                    sweep(app)
+                    getText(UpdateInfo.LATEST_URL)?.let(UpdateInfo::parse)
+                }.getOrNull()
             }
             busy = false
             if (!alive(activity)) return@launch
@@ -153,10 +141,12 @@ internal object AppUpdater {
             return
         }
         val app = activity.applicationContext
+        busy = true
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
                 runCatching { commit(app, file) }.isSuccess.also { if (!it) file.delete() }
             }
+            busy = false
             if (!ok && alive(activity)) activity.toast("업데이트를 설치하지 못했습니다")
         }
     }
@@ -189,19 +179,12 @@ internal object AppUpdater {
 
     // ------------------------------------------------------------------ network (IO)
 
-    /** The shared Drive folder's listing first; the Drive web app (`?what=latest`) when that finds nothing. */
-    private fun fetchLatest(): UpdateInfo.Latest? {
-        if (UpdateInfo.DRIVE_FOLDER.isNotEmpty()) {
-            runCatching { getText(UpdateInfo.folderUrl(UpdateInfo.DRIVE_FOLDER))?.let(UpdateInfo::parseFolder) }
-                .getOrNull()?.let { return it }
-        }
-        if (BuildConfig.UPDATE_URL.isEmpty()) return null
-        return getText(UpdateInfo.checkUrl(BuildConfig.UPDATE_URL))?.let(UpdateInfo::parse)
-    }
-
     /** A page's text (at most 2 MB), or null for anything but 200. */
     private fun getText(url: String): String? {
-        val conn = open(url)
+        val conn = open(url).apply {
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+        }
         try {
             if (conn.responseCode != 200) return null
             val bytes = conn.inputStream.use { input ->
@@ -224,13 +207,13 @@ internal object AppUpdater {
     private fun fetchApk(context: Context, latest: UpdateInfo.Latest, cancelled: AtomicBoolean, progress: (Int) -> Unit): File? {
         val dir = File(context.cacheDir, DIR).apply { mkdirs() }
         val target = File(dir, UpdateInfo.fileName(latest.build))
-        if (target.length() > 0 && isApk(target)) return target
-        val part = File(dir, target.name + ".part")
-        val conn = open(UpdateInfo.downloadUrl(latest.fileId))
+        if (isExpectedApk(context, target, latest)) return target
+        val part = File(dir, "download-${latest.build}.apk")
+        val conn = open(latest.url)
         try {
             if (conn.responseCode != 200) return null
             val total = conn.contentLengthLong
-            if (total > MAX_BYTES) return null
+            if (total >= 0 && total != latest.size) return null
             var done = 0L
             conn.inputStream.use { input ->
                 part.outputStream().use { out ->
@@ -239,15 +222,14 @@ internal object AppUpdater {
                         if (cancelled.get()) return null
                         val n = input.read(buf)
                         if (n < 0) break
-                        out.write(buf, 0, n)
                         done += n
-                        if (done > MAX_BYTES) return null
-                        progress(if (total > 0) (done * 100 / total).toInt().coerceIn(0, 100) else -1)
+                        if (done > latest.size) return null
+                        out.write(buf, 0, n)
+                        progress((done * 100 / latest.size).toInt())
                     }
                 }
             }
-            if (!isApk(part) || (total > 0 && done != total)) return null
-            target.delete()
+            if (cancelled.get() || !isExpectedApk(context, part, latest)) return null
             return if (part.renameTo(target)) target else null
         } finally {
             conn.disconnect()
@@ -260,15 +242,30 @@ internal object AppUpdater {
             connectTimeout = 15_000
             readTimeout = 30_000
             instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "ReaderaPlus/${BuildConfig.VERSION_CODE}")
+            setRequestProperty("User-Agent", "PureReader/${BuildConfig.VERSION_CODE}")
         }
 
-    private fun isApk(f: File): Boolean = try {
+    @Suppress("DEPRECATION")
+    private fun isExpectedApk(context: Context, file: File, latest: UpdateInfo.Latest): Boolean {
+        if (file.length() != latest.size) return false
         val head = ByteArray(4)
-        val n = f.inputStream().use { it.read(head) }
-        UpdateInfo.looksLikeApk(head, n)
-    } catch (e: Exception) {
-        false
+        if (!file.inputStream().use { it.read(head) == head.size && UpdateInfo.looksLikeApk(head) }) return false
+        if (latest.sha256 != null) {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                }
+            }
+            val hash = digest.digest().joinToString("") { "%02x".format(it) }
+            if (hash != latest.sha256) return false
+        }
+        val archive = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0) ?: return false
+        val version = if (Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()
+        return archive.packageName == context.packageName && version == latest.build.toLong()
     }
 
     /** Drops every cached download: a failed install must not reuse a file that may be cut short. */

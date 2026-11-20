@@ -2,78 +2,55 @@ package com.ggumtak.readeraplus.update
 
 import android.content.pm.PackageInstaller
 import org.json.JSONObject
-import java.net.URLEncoder
 
-/**
- * The pure half of the in-app update ([AppUpdater]): the newest build in the user's Drive folder (its public listing,
- * or the Drive web app's `?what=latest` answer), whether it is newer than this build, where its APK downloads from,
- * and the messages. Unit-tested.
- */
+/** Release selection, cache names and messages for the in-app update. */
 internal object UpdateInfo {
-    /** The Drive folder every CI build goes to (tools/gdrive/upload.gs), shared by link (the user, 2026-10-11). */
-    const val DRIVE_FOLDER = "17HGqQJ-A0rT_OhkkvIrDrWgGPiq3DcPl"
+    const val LATEST_URL = "https://api.github.com/repos/ggumtak/readeraplus/releases/tags/latest"
+    const val MAX_APK_BYTES = 300L * 1024 * 1024
 
-    /** The folder's public file list (no sign-in, no API key): one entry per file with its link and name. */
-    fun folderUrl(folderId: String): String =
-        "https://drive.google.com/embeddedfolderview?id=" + URLEncoder.encode(folderId, "UTF-8")
+    private const val DOWNLOAD_BASE = "https://github.com/ggumtak/readeraplus/releases/download/latest/"
+    private val APK_NAME = Regex("""ReaderaPlus-(\d{1,9})\.apk""")
+    private val SHA256 = Regex("""sha256:([0-9a-fA-F]{64})""")
 
-    private val FILE_REF = Regex("(?:/file/d/|id=\"entry-)([A-Za-z0-9_-]{10,200})")
-    private val APK_NAME = Regex("ReaderaPlus-(\\d{1,9})\\.apk")
+    data class Latest(val build: Int, val url: String, val size: Long, val sha256: String?)
 
-    /**
-     * The newest ReaderaPlus-<build>.apk in a folder listing: each file's id (its link or entry id) is followed by
-     * its name before the next file's id. Null when the page lists none (not shared, a sign-in page, empty).
-     */
-    fun parseFolder(html: String): Latest? {
-        val refs = FILE_REF.findAll(html).toList()
-        var best: Latest? = null
-        for ((k, ref) in refs.withIndex()) {
-            val end = if (k + 1 < refs.size) refs[k + 1].range.first else html.length
-            val window = html.substring(ref.range.last + 1, minOf(end, ref.range.last + 1 + 4000))
-            val build = APK_NAME.find(window)?.groupValues?.get(1)?.toIntOrNull() ?: continue
-            if (build > (best?.build ?: 0)) best = Latest(build, ref.groupValues[1])
-        }
-        return best
-    }
-    /** The newest build in the user's Drive folder: its CI run number and its Drive file id. */
-    class Latest(val build: Int, val fileId: String)
-
-    private val FILE_ID = Regex("[A-Za-z0-9_-]{10,200}")
-
-    /** The web app's answer `{"build":184,"id":"…"}`; null for anything else (no build yet, an error page). */
+    /** Pick the newest uploaded APK from the release CI publishes under the latest tag. */
     fun parse(text: String): Latest? {
-        val o = try {
-            JSONObject(text.trim())
-        } catch (e: Exception) {
-            return null
+        val release = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        if (release.optString("tag_name") != "latest" || release.optBoolean("draft")) return null
+        val assets = release.optJSONArray("assets") ?: return null
+        var newest: Latest? = null
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            if (asset.optString("state") != "uploaded") continue
+            val name = asset.optString("name")
+            val build = buildOf(name)
+            if (build <= (newest?.build ?: 0)) continue
+            val url = asset.optString("browser_download_url")
+            val size = asset.optLong("size", -1)
+            if (url != DOWNLOAD_BASE + name || size !in 1..MAX_APK_BYTES) continue
+            val digest = if (asset.isNull("digest")) "" else asset.optString("digest", "")
+            val sha256 = SHA256.matchEntire(digest)?.groupValues?.get(1)?.lowercase()
+            if (digest.isNotEmpty() && sha256 == null) continue
+            newest = Latest(build, url, size, sha256)
         }
-        val build = o.optInt("build", 0)
-        val id = o.optString("id", "")
-        if (build <= 0 || !FILE_ID.matches(id)) return null
-        return Latest(build, id)
+        return newest
     }
 
     fun isNewer(latest: Latest, currentBuild: Int): Boolean = latest.build > currentBuild
 
-    /** [base] (the web app's /exec URL) asking for the newest build. */
-    fun checkUrl(base: String): String = base + (if ('?' in base) "&" else "?") + "what=latest"
-
-    /** The direct download of a Drive file shared by link (no "can't scan for viruses" page in between). */
-    fun downloadUrl(fileId: String): String =
-        "https://drive.usercontent.google.com/download?id=" + URLEncoder.encode(fileId, "UTF-8") + "&export=download&confirm=t"
-
     /** An automatic check is due [interval] ms after the last one (or when the clock went back). */
     fun due(now: Long, last: Long, interval: Long): Boolean = last <= 0L || now < last || now - last >= interval
 
-    /** An APK is a zip: it starts with "PK". A Drive error page (HTML) does not. */
-    fun looksLikeApk(head: ByteArray, n: Int): Boolean = n >= 4 && head[0] == 'P'.code.toByte() && head[1] == 'K'.code.toByte()
+    /** An APK starts with a ZIP local file header. */
+    fun looksLikeApk(head: ByteArray): Boolean = head.contentEquals(byteArrayOf(0x50, 0x4b, 3, 4))
 
     /** The cached download of [build]. */
     fun fileName(build: Int): String = "ReaderaPlus-$build.apk"
 
     /** The build number of a cached download, or 0. */
     fun buildOf(fileName: String): Int =
-        Regex("ReaderaPlus-(\\d{1,9})\\.apk").matchEntire(fileName)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        APK_NAME.matchEntire(fileName)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
     fun offerMessage(latest: Int, current: Int): String = "새 버전이 있습니다 (빌드 $latest · 지금 $current).\n지금 업데이트할까요?"
 
@@ -82,7 +59,7 @@ internal object UpdateInfo {
     /** A failed install, in words; null when nothing should be said (the user cancelled, or it worked). */
     fun failureMessage(status: Int): String? = when (status) {
         PackageInstaller.STATUS_SUCCESS, PackageInstaller.STATUS_FAILURE_ABORTED -> null
-        PackageInstaller.STATUS_FAILURE_CONFLICT -> "설치된 앱과 서명이 달라 업데이트할 수 없습니다. 앱을 지우고 새로 설치해 주세요"
+        PackageInstaller.STATUS_FAILURE_CONFLICT -> "설치된 앱과 서명이 달라 업데이트할 수 없습니다"
         PackageInstaller.STATUS_FAILURE_STORAGE -> "저장 공간이 부족해 업데이트하지 못했습니다"
         PackageInstaller.STATUS_FAILURE_INVALID, PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> "업데이트 파일이 올바르지 않습니다"
         PackageInstaller.STATUS_FAILURE_BLOCKED -> "기기에서 설치를 막았습니다"

@@ -61,7 +61,7 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
 
         body.section("기타")
         body.addView(ctx.row("모든 설정 초기화", SettingsReset.SUMMARY) { resetSettings() })
-        if (AppUpdater.enabled()) body.addView(ctx.row("업데이트 확인", "지금 빌드 ${BuildConfig.VERSION_CODE}") { AppUpdater.check(activity, manual = true) })
+        body.addView(ctx.row("업데이트 확인", "지금 빌드 ${BuildConfig.VERSION_CODE}") { AppUpdater.check(activity, manual = true) })
         body.addView(ctx.navRow("정보", "버전 ${BuildConfig.VERSION_NAME}") { activity.push(SettingsActivity.PAGE_ABOUT) })
         return ctx.pageScroll(body)
     }

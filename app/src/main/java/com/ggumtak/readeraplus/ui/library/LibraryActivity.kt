@@ -393,7 +393,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         releaseDrawHold() // a reopen from onNewIntent held an already built library
         refreshVisible()
         showLastCrash()
-        AppUpdater.autoCheck(this) // at most every 12 h; offers a newer build in the user's Drive
+        AppUpdater.autoCheck(this) // at most every 12 h; offers a newer GitHub release
     }
 
     /** Builds the library (if needed) and runs the per-visit refresh that onResume skipped while deciding. */
@@ -401,7 +401,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         ensureUi()
         refreshVisible()
         showLastCrash()
-        AppUpdater.autoCheck(this) // at most every 12 h; offers a newer build in the user's Drive
+        AppUpdater.autoCheck(this) // at most every 12 h; offers a newer GitHub release
     }
 
     /** An earlier run crashed: its stack trace once, to copy and send (no logcat on a phone). */
