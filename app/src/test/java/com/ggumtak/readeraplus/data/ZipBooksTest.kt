@@ -144,4 +144,16 @@ class ZipBooksTest {
         val opened = ZipBooks.open(f)
         opened.zip.use { assertEquals(listOf("한글 소설.txt"), opened.entries.map { it.name }) }
     }
+
+    @Test
+    fun copiesNeverTakeTheStoragesLastRoom() {
+        val min = ZipBooks.MIN_FREE_BYTES
+        // Exactly the reserve left after the entry: allowed; one byte less: not.
+        assertTrue(ZipBooks.hasRoom(min + 5_000_000, 5_000_000))
+        assertFalse(ZipBooks.hasRoom(min + 5_000_000 - 1, 5_000_000))
+        // An entry of unknown size counts as nothing here (the copy's own limits still apply).
+        assertTrue(ZipBooks.hasRoom(min, -1))
+        assertFalse(ZipBooks.hasRoom(min - 1, -1))
+        assertFalse(ZipBooks.hasRoom(0, 0))
+    }
 }

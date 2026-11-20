@@ -68,6 +68,20 @@ class UpdateInfoTest {
     }
 
     @Test
+    fun aCheckWithoutAnAnswerIsDueAgainAfterTheRetryTime() {
+        val h12 = 12L * 60 * 60 * 1000
+        val m30 = 30L * 60 * 1000
+        val now = 100L * h12
+        val stamp = UpdateInfo.retryStamp(now, h12, m30)
+        assertFalse(UpdateInfo.due(now, stamp, h12))
+        assertFalse(UpdateInfo.due(now + m30 - 1, stamp, h12))
+        assertTrue(UpdateInfo.due(now + m30, stamp, h12))
+        // A clock near zero (a device without a set time): the stamp stays a valid "checked" mark, never in the future.
+        val early = UpdateInfo.retryStamp(1_000, h12, m30)
+        assertTrue(early in 1..1_000)
+    }
+
+    @Test
     fun apkHeaderAndCachedNames() {
         assertTrue(UpdateInfo.looksLikeApk(byteArrayOf(0x50, 0x4B, 3, 4)))
         assertFalse(UpdateInfo.looksLikeApk("<htm".toByteArray()))
@@ -81,7 +95,10 @@ class UpdateInfoTest {
 
     @Test
     fun messages() {
-        assertEquals("새 버전이 있습니다 (빌드 185 · 지금 184).\n지금 업데이트할까요?", UpdateInfo.offerMessage(185, 184))
+        assertEquals(
+            "새 버전이 있습니다 (빌드 185 · 지금 184).\n지금 업데이트할까요?\n설치가 끝나면 앱이 닫힙니다. 다시 열어 주세요.",
+            UpdateInfo.offerMessage(185, 184),
+        )
         assertEquals("내려받는 중… 40%", UpdateInfo.progressMessage(40))
         assertEquals("내려받는 중…", UpdateInfo.progressMessage(-1))
         assertNull(UpdateInfo.failureMessage(PackageInstaller.STATUS_SUCCESS))

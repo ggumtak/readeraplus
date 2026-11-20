@@ -25,8 +25,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * "이 책의 TXT 정리" (T1-9): the TXT options of the book the reader has open ([OpenBook]), reached from the main list
- * and 읽기 설정. The rows show the book's effective values (`Settings.reader.withTxt(override)`, the TXT defaults
+ * "이 책의 TXT 정리" (T1-9): the TXT options of the book the reader has open ([OpenBook]), reached from the main
+ * list and the empty table of contents. The rows show the book's effective values (`Settings.reader.withTxt(override)`, the TXT defaults
  * page's wording); a change becomes the book's override ([TxtEdits.overrideFor]), saved at once (BookPrefs, in order)
  * and handed to the reader, which re-parses the book once when it is back in front, however many rows changed. A new
  * 인코딩 is saved in the library and makes the reader re-open the book. The global defaults and other books are never

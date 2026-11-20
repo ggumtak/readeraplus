@@ -3,11 +3,10 @@ package com.ggumtak.readeraplus.ui.settings
 import android.view.View
 import android.widget.LinearLayout
 import com.ggumtak.readeraplus.BuildConfig
+import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.settings.AppSettings
-import com.ggumtak.readeraplus.settings.LibraryListMode
-import com.ggumtak.readeraplus.settings.LibrarySort
+import com.ggumtak.readeraplus.settings.ReadMode
 import com.ggumtak.readeraplus.settings.Settings
-import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.ui.kit.toast
@@ -19,23 +18,28 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * The main list, in small groups of one kind of row each: 읽기 (읽기 설정, which holds everything that adjusts the page:
- * letters, margins, colours, 상태 표시줄, 넘기기·터치·키, 글꼴 관리 and the TXT options; then e-ink 화면, 화면·밝기, 듣기,
- * 사전·검색), 서재 (the library's choices), 책 가져오기 (the library's pages that bring books in), 기록·데이터 (읽기 기록,
- * 백업·복원, 캐시 비우기) and 기타 (모든 설정 초기화, 정보).
+ * The main list: a map of the settings, one home for each (the user, 2026-11-20: the options felt scattered rather than
+ * organised). It only moves on (every row but the three actions at its end opens a page), in groups that say what the
+ * pages are about, at most two levels deep:
  *
- * Opened from the reader ([OpenBook.info] set; memory only, no IO) it leaves out what belongs to the library: the
- * 서재, 책 가져오기 and 기록·데이터 groups (restoring a backup under an open book is unsafe; no walk over the open
- * book's cache).
+ * 책 화면 (how the page looks: 보기 설정, the page the quick sheet of the same name continues on; 상태 표시줄; the TXT
+ * cleanup) · 조작·기기 (how the reader is worked: 넘기기·터치·키, 화면·밝기, e-ink 화면) · 기능 (듣기, 사전·검색) · 서재
+ * (서재 보기, 책 스캔, Wi-Fi로 책 받기) · 기록·데이터 (읽기 기록, 백업·복원, 캐시 비우기) · 앱 (업데이트 확인, 정보, 모든 설정
+ * 초기화: the destructive row last).
+ *
+ * Opened from the reader's 뷰어 설정 button ([OpenBook.info] set; memory only, no IO) it carries that name and leaves
+ * out what belongs to the library: the 서재 and 기록·데이터 groups (restoring a backup under an open book is unsafe; no
+ * walk over the open book's cache).
  */
-internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_MAIN, "설정") {
+internal class MainPage(a: SettingsActivity) :
+    SettingsPage(a, SettingsActivity.PAGE_MAIN, if (OpenBook.info != null) READER_TITLE else "설정") {
+    private var bookTxtRow: View? = null
+    private var turnRow: View? = null
     private var einkRow: View? = null
     private var ttsRow: View? = null
     private var lookupRow: View? = null
+    private var libraryRow: View? = null
     private var scanRow: View? = null
-    private var sortRow: View? = null
-    private var listModeRow: View? = null
-    private var listPagingRow: View? = null
     private var backupRow: View? = null
     private var cacheRow: View? = null
     private var cacheBusy = false
@@ -47,10 +51,22 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         val book = OpenBook.info
         val body = ctx.pageBody()
 
-        body.section("읽기")
-        body.addView(ctx.navRow("읽기 설정", "글자 · 여백 · 상태 표시줄 · 넘기기·터치") { activity.push(SettingsActivity.PAGE_READING) })
+        body.section("책 화면")
+        body.addView(ctx.navRow(ReadingPage.TITLE, "글꼴 · 글자 · 줄·문단 · 여백 · 색") { activity.push(SettingsActivity.PAGE_READING) })
+        body.addView(ctx.navRow("상태 표시줄", "위·아래 표시 항목 · 진행 막대") { activity.push(SettingsActivity.PAGE_STATUS) })
+        // The open TXT book's own cleanup first (the reader's context only), then the one every TXT book follows.
+        if (book != null && book.format == BookFormat.TXT) {
+            bookTxtRow = ctx.navRow(BookTxtPage.TITLE, MainRows.bookTxt(book.override != null)) { activity.push(SettingsActivity.PAGE_BOOK_TXT) }
+                .also(body::addView)
+        }
+        body.addView(ctx.navRow(TxtDefaultsPage.TITLE, "빈 줄 · 줄 합치기 · 챕터 인식") { activity.push(SettingsActivity.PAGE_TXT_DEFAULTS) })
+
+        body.section("조작·기기")
+        turnRow = ctx.navRow("넘기기·터치·키", MainRows.turn(app)) { activity.push(SettingsActivity.PAGE_PAGE_TURNING) }.also(body::addView)
+        body.addView(ctx.navRow("화면·밝기", "전체 화면 · 화면 방향 · 가로 두 쪽 · 밝기") { activity.push(SettingsActivity.PAGE_SCREEN) })
         einkRow = ctx.navRow(EinkPage.TITLE, EinkChoices.mainSummary(app)) { activity.push(SettingsActivity.PAGE_EINK) }.also(body::addView)
-        body.addView(ctx.navRow("화면·밝기", "전체 화면 · 화면 방향 · 밝기") { activity.push(SettingsActivity.PAGE_SCREEN) })
+
+        body.section("기능")
         ttsRow = ctx.navRow("듣기", ttsSummary(app)) { activity.push(SettingsActivity.PAGE_TTS) }.also(body::addView)
         lookupRow = ctx.navRow("사전·검색", lookupSummary(app)) { activity.push(SettingsActivity.PAGE_LOOKUP) }.also(body::addView)
 
@@ -59,43 +75,18 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             addData(body, app)
         }
 
-        body.section("기타")
-        body.addView(ctx.row("모든 설정 초기화", SettingsReset.SUMMARY) { resetSettings() })
+        // The app itself; the one row that undoes the user's work comes last.
+        body.section("앱")
         body.addView(ctx.row("업데이트 확인", "지금 빌드 ${BuildConfig.VERSION_CODE}") { AppUpdater.check(activity, manual = true) })
         body.addView(ctx.navRow("정보", "버전 ${BuildConfig.VERSION_NAME}") { activity.push(SettingsActivity.PAGE_ABOUT) })
+        body.addView(ctx.row("모든 설정 초기화", SettingsReset.SUMMARY) { resetSettings() })
         return ctx.pageScroll(body)
     }
 
-    /** "서재": the library's own choices (choosers and a switch); "책 가져오기": its pages that bring books in. */
+    /** "서재": how the library lists its books ([LibraryViewPage]) and its two pages that bring books in. */
     private fun addLibrary(body: LinearLayout, app: AppSettings) {
         body.section("서재")
-        sortRow = ctx.valueRow("정렬", app.librarySort.label) {
-            val all = LibrarySort.entries
-            ctx.chooser("정렬", all.map { it.label }, all.indexOf(Settings.app.librarySort)) { i ->
-                editApp { it.copy(librarySort = all[i]) }
-                sortRow?.setSummary(all[i].label)
-            }
-        }.also(body::addView)
-        listModeRow = ctx.valueRow("보기", app.libraryListMode.label) {
-            val all = LibraryListMode.entries
-            ctx.chooser("보기", all.map { R3Rows.libraryViewChoice(it) }, all.indexOf(Settings.app.libraryListMode)) { i ->
-                editApp { it.copy(libraryListMode = all[i]) }
-                listModeRow?.setSummary(all[i].label)
-            }
-        }.also(body::addView)
-        listPagingRow = ctx.valueRow("목록 넘기기", R3Rows.listPaging(app.listPaging)) {
-            val opts = R3Rows.LIST_PAGINGS
-            ctx.chooser("목록 넘기기", opts.map { R3Rows.listPaging(it) }, R3Rows.listPagingIndex(Settings.app.listPaging)) { i ->
-                editApp { it.copy(listPaging = opts[i]) }
-                listPagingRow?.setSummary(R3Rows.listPaging(opts[i]))
-            }
-        }.also(body::addView)
-        // Off, the app still comes back to a book the system closed while it was open (LibraryText.startMode: RESUME).
-        body.addView(ctx.toggleRow("시작할 때 읽던 책 열기", null, app.openLastOnStart) { v ->
-            editApp { it.copy(openLastOnStart = v) }
-        })
-
-        body.section("책 가져오기")
+        libraryRow = ctx.navRow(LibraryViewPage.TITLE, MainRows.library(app)) { activity.push(SettingsActivity.PAGE_LIBRARY_VIEW) }.also(body::addView)
         scanRow = ctx.navRow("책 스캔", scanSummary(app)) { activity.push(SettingsActivity.PAGE_SCAN) }.also(body::addView)
         body.addView(ctx.navRow("Wi-Fi로 책 받기", "PC · 휴대폰 브라우저에서 보내기") { activity.push(SettingsActivity.PAGE_WIFI) })
     }
@@ -114,18 +105,21 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
 
     override fun onResume() {
         refreshSummaries()
+        // Back from the system's ‘알 수 없는 앱 설치’ page: the update that waited for the permission goes on.
+        AppUpdater.resume(activity)
     }
 
     /** The summaries other pages may have changed (rows left out in the reader's context are null). */
     private fun refreshSummaries() {
         val app = Settings.app
+        // 이 책의 TXT 정리 may have given the book its own options, or cleared them.
+        OpenBook.info?.let { book -> bookTxtRow?.setSummary(MainRows.bookTxt(book.override != null)) }
+        turnRow?.setSummary(MainRows.turn(app))
         einkRow?.setSummary(EinkChoices.mainSummary(app))
         ttsRow?.setSummary(ttsSummary(app))
         lookupRow?.setSummary(lookupSummary(app))
+        libraryRow?.setSummary(MainRows.library(app))
         scanRow?.setSummary(scanSummary(app))
-        sortRow?.setSummary(app.librarySort.label)
-        listModeRow?.setSummary(app.libraryListMode.label)
-        listPagingRow?.setSummary(R3Rows.listPaging(app.listPaging))
         backupRow?.setSummary(backupSummary(app))
         val row = cacheRow ?: return
         if (!cacheBusy && sizeJob?.isActive != true) {
@@ -207,6 +201,34 @@ internal class MainPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             ctx.toast("기본값으로 되돌렸습니다")
         }
     }
+
+    companion object {
+        /** The main list's title over an open book: the name of the reader's button that opens it. */
+        const val READER_TITLE = "뷰어 설정"
+    }
+}
+
+/** What the main list's rows say about the pages behind them. Pure, unit-tested. */
+internal object MainRows {
+    /**
+     * 넘기기·터치·키: "터치: 좌우 넘김 · 볼륨 키 · 지정 키 2개", with "스크롤" first in scroll mode (paged is the default: not
+     * named, so "넘김" is never said twice; the e-ink cadence has its own row).
+     */
+    fun turn(app: AppSettings): String {
+        val parts = ArrayList<String>()
+        if (app.readMode == ReadMode.SCROLL) parts += R3Rows.readMode(app.readMode)
+        parts += "터치: " + TapZoneModel.modeName(app.tapZoneMode)
+        if (app.volumeKeysTurn) parts += "볼륨 키"
+        val keys = KeyAssign.entries(app).size
+        if (keys > 0) parts += "지정 키 ${keys}개"
+        return parts.joinToString(" · ")
+    }
+
+    /** 서재 보기: the two choices the library shows by, "제목순 · 자세히". */
+    fun library(app: AppSettings): String = app.librarySort.label + " · " + app.libraryListMode.label
+
+    /** 이 책의 TXT 정리: "따로 정함" while the open book has TXT options of its own, else "기본값 따름". */
+    fun bookTxt(own: Boolean): String = if (own) "따로 정함" else "기본값 따름"
 }
 
 /** Total size of a file or directory tree (blocking). */

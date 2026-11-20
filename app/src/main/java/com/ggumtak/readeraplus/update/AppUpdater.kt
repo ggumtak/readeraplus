@@ -27,25 +27,40 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Checks the GitHub release tagged latest, downloads its APK, and hands it to the Android installer.
- * The library checks at most every 12 h. Settings can check immediately.
+ * The library checks at most every 12 h (30 min after a check that got no answer). Settings can check immediately.
+ *
+ * An update the user asked for is never dropped quietly: a download that finished after its screen was gone, or one
+ * that waits for the ‘알 수 없는 앱 설치’ permission, is remembered ([K_PENDING]) and installed the next time the
+ * library or the settings list comes to the front ([resume]).
  */
 internal object AppUpdater {
     private const val PREFS = "app_update"
     private const val K_LAST = "last_check"
     private const val K_SKIPPED = "skipped_build"
+    /** The build whose verified download waits in cache/update to be installed (0 = none). */
+    private const val K_PENDING = "pending_build"
     private const val AUTO_INTERVAL_MS = 12L * 60 * 60 * 1000
+    private const val RETRY_MS = 30L * 60 * 1000
     private const val DIR = "update"
     const val ACTION_STATUS = "com.ggumtak.readeraplus.UPDATE_STATUS"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var busy = false
 
-    /** A library visit: checks at most every 12 h and offers a newer build unless the user said 나중에 to it. */
+    /**
+     * A library visit: first an update that waits to be installed ([resume]); else checks at most every 12 h and
+     * offers a newer build unless the user said 나중에 to it.
+     */
     fun autoCheck(activity: Activity) {
         if (busy) return
         val app = activity.applicationContext
         scope.launch {
             // The prefs file is read off the main thread (its first load blocks).
+            val waiting = withContext(Dispatchers.IO) { pendingFile(app) }
+            if (waiting != null) {
+                if (alive(activity)) installPending(activity, waiting)
+                return@launch
+            }
             val due = withContext(Dispatchers.IO) {
                 val prefs = prefs(app)
                 val now = System.currentTimeMillis()
@@ -55,9 +70,49 @@ internal object AppUpdater {
         }
     }
 
+    /**
+     * The settings list is in front again (back from the system's ‘알 수 없는 앱 설치’ page): installs the update that
+     * waited for it. Nothing while none waits or the permission is still missing.
+     */
+    fun resume(activity: Activity) {
+        if (busy) return
+        val app = activity.applicationContext
+        scope.launch {
+            val waiting = withContext(Dispatchers.IO) { pendingFile(app) } ?: return@launch
+            if (alive(activity)) installPending(activity, waiting)
+        }
+    }
+
+    private fun installPending(activity: Activity, file: File) {
+        if (busy || !activity.packageManager.canRequestPackageInstalls()) return
+        install(activity, file)
+    }
+
+    /** The verified download that waits to be installed, or null (a stale mark is dropped). IO. */
+    private fun pendingFile(context: Context): File? {
+        val prefs = prefs(context)
+        val build = prefs.getInt(K_PENDING, 0)
+        if (build == 0) return null
+        // Only a download that passed isExpectedApk carries this name.
+        val file = File(File(context.cacheDir, DIR), UpdateInfo.fileName(build))
+        if (build > BuildConfig.VERSION_CODE && file.isFile) return file
+        prefs.edit().remove(K_PENDING).apply()
+        return null
+    }
+
+    private fun setPending(context: Context, build: Int) {
+        val e = prefs(context).edit()
+        if (build > 0) e.putInt(K_PENDING, build) else e.remove(K_PENDING)
+        e.apply()
+    }
+
     /** Asks GitHub now; [manual] says what it found even when there is nothing to update. */
     fun check(activity: Activity, manual: Boolean) {
-        if (busy) return
+        if (busy) {
+            // A tap must always answer (an automatic check, a download or an install is under way).
+            if (manual) activity.toast("업데이트를 이미 진행하고 있습니다")
+            return
+        }
         if (manual) activity.toast("업데이트 확인 중…")
         busy = true
         val app = activity.applicationContext
@@ -66,7 +121,12 @@ internal object AppUpdater {
                 runCatching {
                     sweep(app)
                     getText(UpdateInfo.LATEST_URL)?.let(UpdateInfo::parse)
-                }.getOrNull()
+                }.getOrNull().also { answer ->
+                    // No answer (offline when the library opened): the automatic check tries again in 30 min, not 12 h.
+                    val now = System.currentTimeMillis()
+                    val stamp = if (answer != null) now else UpdateInfo.retryStamp(now, AUTO_INTERVAL_MS, RETRY_MS)
+                    runCatching { prefs(app).edit().putLong(K_LAST, stamp).apply() }
+                }
             }
             busy = false
             if (!alive(activity)) return@launch
@@ -115,7 +175,18 @@ internal object AppUpdater {
             }
             if (dialog.isShowing) runCatching { dialog.dismiss() }
             busy = false
-            if (cancelled.get() || !alive(activity)) return@launch
+            if (cancelled.get()) return@launch
+            if (!alive(activity)) {
+                // The screen was rebuilt meanwhile (rotation, dark mode, font scale): the download is kept and the
+                // install goes on from the screen that replaced it (autoCheck / resume), with a word about it.
+                if (file != null) {
+                    withContext(Dispatchers.IO) { setPending(app, latest.build) }
+                    app.toast("업데이트를 내려받았습니다. 서재로 돌아가면 설치를 이어 갑니다")
+                } else {
+                    app.toast("업데이트를 내려받지 못했습니다")
+                }
+                return@launch
+            }
             if (file == null) {
                 activity.toast("업데이트를 내려받지 못했습니다")
                 return@launch
@@ -125,10 +196,15 @@ internal object AppUpdater {
     }
 
     private fun install(activity: Activity, file: File) {
+        val app = activity.applicationContext
         if (!activity.packageManager.canRequestPackageInstalls()) {
+            // Remembered across the system's page (the process may be restarted there): the install goes on when the
+            // library or the settings list is in front again, with nothing to press a second time.
+            val build = UpdateInfo.buildOf(file.name)
+            scope.launch(Dispatchers.IO) { setPending(app, build) }
             activity.alert()
                 .setTitle("설치 허용")
-                .setMessage("업데이트를 설치하려면 이 앱의 ‘알 수 없는 앱 설치’를 허용해야 합니다. 허용한 뒤 업데이트를 다시 눌러 주세요.")
+                .setMessage("업데이트를 설치하려면 이 앱의 ‘알 수 없는 앱 설치’를 허용해야 합니다. 허용하고 돌아오면 설치를 이어 갑니다.")
                 .setPositiveButton("설정 열기") { _, _ ->
                     runCatching {
                         activity.startActivity(
@@ -136,14 +212,14 @@ internal object AppUpdater {
                         )
                     }
                 }
-                .setNegativeButton("취소", null)
+                .setNegativeButton("취소") { _, _ -> scope.launch(Dispatchers.IO) { setPending(app, 0) } }
                 .showNoAnim()
             return
         }
-        val app = activity.applicationContext
         busy = true
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
+                setPending(app, 0)
                 runCatching { commit(app, file) }.isSuccess.also { if (!it) file.delete() }
             }
             busy = false
@@ -271,6 +347,7 @@ internal object AppUpdater {
     /** Drops every cached download: a failed install must not reuse a file that may be cut short. */
     fun forgetDownloads(context: Context) {
         File(context.cacheDir, DIR).listFiles()?.forEach { it.delete() }
+        setPending(context, 0)
     }
 
     /** Removes downloads of builds this one already is (or is newer than). */

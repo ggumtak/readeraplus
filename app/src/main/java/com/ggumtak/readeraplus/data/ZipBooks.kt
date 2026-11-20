@@ -166,6 +166,10 @@ internal object ZipBooks {
                 prefs.edit().putString(path, stamp).apply()
             } catch (e: StoppedException) {
                 break
+            } catch (e: NoRoomException) {
+                // The storage is nearly full: no more copies in this scan, and this ZIP is tried again by a later one.
+                Log.w(TAG, "zip extraction stopped, storage nearly full: ${zip.name}")
+                break
             } catch (e: Exception) {
                 Log.w(TAG, "zip skipped: ${zip.name}: $e")
             }
@@ -177,6 +181,19 @@ internal object ZipBooks {
 
     /** [stopWhen] said stop in the middle of a ZIP (it is not marked as handled). */
     private class StoppedException : Exception()
+
+    /** Copying the next entry would leave less than [MIN_FREE_BYTES] on the storage (the ZIP is not marked as handled). */
+    private class NoRoomException : Exception()
+
+    /**
+     * The copies are made without asking (a scan folder with dozens of novel ZIPs writes gigabytes), so they never take
+     * the storage's last room: after an entry of [entrySize] bytes (unknown = negative: counted as nothing, the copy's
+     * own limit still holds) at least [MIN_FREE_BYTES] of [usable] must stay free. Pure, unit-tested.
+     */
+    fun hasRoom(usable: Long, entrySize: Long): Boolean = usable - entrySize.coerceAtLeast(0L) >= MIN_FREE_BYTES
+
+    /** Free space the ZIP copies always leave: room for the library database, backups and the reader's caches. */
+    const val MIN_FREE_BYTES = 200L * 1024 * 1024
 
     /** An open ZIP and all of its entries; the caller closes [zip]. */
     internal class Opened(val zip: ZipFile, val entries: List<ZipEntry>)
@@ -212,6 +229,7 @@ internal object ZipBooks {
                 val remaining = MAX_TOTAL_BYTES - total
                 if (remaining <= 0) break
                 val cap = minOf(MAX_ENTRY_BYTES, remaining)
+                if (!hasRoom(dir.usableSpace, e.size)) throw NoRoomException()
                 val name = outName(e.name)
                 val input = zip.getInputStream(e) ?: continue
                 val tmp = File(dir, "${BookCopies.COPY_PREFIX}${System.nanoTime()}${BookCopies.PART_SUFFIX}")

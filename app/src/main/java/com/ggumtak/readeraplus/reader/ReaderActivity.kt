@@ -4476,8 +4476,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val code = event.keyCode
-        if (code == KeyEvent.KEYCODE_BACK || session == null || errorPanel.visibility == View.VISIBLE) {
-            return super.dispatchKeyEvent(event)
+        if (code == KeyEvent.KEYCODE_BACK || errorPanel.visibility == View.VISIBLE) return super.dispatchKeyEvent(event)
+        if (session == null) {
+            // Still opening (a large TXT takes seconds): a page key pressed early is swallowed, so the volume keys do
+            // not change the media volume and bring up its panel over the book. Every other key is the system's.
+            val early = KeyMap.action(code, event.isShiftPressed, app)
+            return if (early == TapAction.NEXT || early == TapAction.PREV) true else super.dispatchKeyEvent(event)
         }
         val a = app
         val action = KeyMap.action(code, event.isShiftPressed, a)
@@ -4762,10 +4766,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         override fun onRotation() {
             val lock = if (app.orientationLock != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
                 ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            } else if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             } else {
-                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                // The way the screen is held now, of the four (plain 가로 flipped a phone held the other way round).
+                @Suppress("DEPRECATION")
+                val rotation = runCatching {
+                    (if (Build.VERSION.SDK_INT >= 30) display else windowManager.defaultDisplay)?.rotation
+                }.getOrNull() ?: RotationLock.ROTATION_0
+                RotationLock.forDisplay(rotation, resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
             }
             setOrientationLock(lock)
         }
@@ -4951,7 +4958,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     internal fun openAppSettings(settingsPage: String? = null) {
         light.markOwnLaunch()
-        // The open book goes along, so 읽기 설정 can offer its own TXT options ([takeSettingsEdits] takes them back).
+        // The open book goes along, so 설정 can offer its own TXT options ([takeSettingsEdits] takes them back).
         val b = bookRef
         val book = if (b != null && session != null) OpenBook.Info(b.id, b.title, b.format, b.encoding, bookOverride) else null
         SettingsActivity.open(this, settingsPage, book)

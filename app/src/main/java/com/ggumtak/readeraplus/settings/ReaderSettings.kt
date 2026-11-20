@@ -188,7 +188,7 @@ enum class TapAction(val label: String) {
     BOOKMARK("북마크"),
     TOC("목차"),
     SEARCH("검색"),
-    SETTINGS("읽기 설정"),
+    SETTINGS("보기 설정"),
     TTS("듣기"),
     NEXT_CHAPTER("다음 챕터"),
     PREV_CHAPTER("이전 챕터"),

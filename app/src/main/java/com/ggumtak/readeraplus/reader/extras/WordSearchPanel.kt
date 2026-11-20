@@ -7,6 +7,8 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.text.Editable
 import android.text.InputType
@@ -760,12 +762,27 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         for (k in webs.indices) {
             val web = webs[k] ?: continue
             webs[k] = null
-            runCatching {
-                web.stopLoading()
-                web.loadUrl("about:blank")
-                (web.parent as? ViewGroup)?.removeView(web)
-                web.removeAllViews()
-                web.destroy()
+            val takeApart = {
+                runCatching {
+                    web.stopLoading()
+                    web.loadUrl("about:blank")
+                    web.removeAllViews()
+                    web.destroy()
+                }
+                Unit
+            }
+            runCatching { (web.parent as? ViewGroup)?.removeView(web) }
+            if (k == WordSearchQuery.TAB_AI && aiDeviceEink == true) {
+                // The app's own AI page keeps an answer that is still arriving when it is told it is going away
+                // (its "pagehide": snapshot and save). Destroyed in the same message, it never heard: the history
+                // kept the question alone. It is told first and taken apart once it has answered, or after
+                // AI_LEAVE_MS at the latest (a main-looper handler: a detached view's own posts never run).
+                var done = false
+                val finish = { if (!done) { done = true; takeApart() } }
+                val asked = runCatching { web.evaluateJavascript(AI_LEAVE_SCRIPT) { finish() } }.isSuccess
+                if (asked) Handler(Looper.getMainLooper()).postDelayed(finish, AI_LEAVE_MS) else finish()
+            } else {
+                takeApart()
             }
         }
     }
@@ -783,6 +800,11 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
     }
 
     private companion object {
+        /** Tells the app's AI page it is going away (its own "pagehide" handler saves a partial answer). */
+        const val AI_LEAVE_SCRIPT = "window.dispatchEvent(new Event('pagehide'))"
+        /** The longest the closed panel waits for that page before taking its WebView apart. */
+        const val AI_LEAVE_MS = 300L
+
         /** RIDI's grey for the idle tabs and the grey lines of a phone; an e-ink screen takes [Ink.GRAY] and black. */
         const val PHONE_GRAY = 0xFF888888.toInt()
         const val PHONE_LINE = 0xFFE0E0E0.toInt()

@@ -4,7 +4,7 @@ import com.ggumtak.readeraplus.data.TxtOverride
 import com.ggumtak.readeraplus.format.BookFormat
 
 /**
- * The book the reader had open when it opened 설정, so 읽기 설정 can offer that book's own TXT options ("이 책의 TXT
+ * The book the reader had open when it opened 설정, so 설정 can offer that book's own TXT options ("이 책의 TXT
  * 정리"), and the edits made there, which the reader takes back once in its onResume: the new override is applied
  * there (at most one re-parse for any number of changes), a new encoding re-opens the book. Main thread only.
  *

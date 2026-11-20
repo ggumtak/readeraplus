@@ -18,9 +18,16 @@ class UpdateReceiver : BroadcastReceiver() {
                 @Suppress("DEPRECATION")
                 intent.getParcelableExtra(Intent.EXTRA_INTENT)
             }
-            if (confirm != null) {
+            val shown = confirm != null && runCatching {
                 confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                runCatching { context.startActivity(confirm) }
+                context.startActivity(confirm)
+            }.isSuccess
+            if (!shown) {
+                // The app left the front meanwhile (Android 10+ starts nothing from the background): the session would
+                // wait for ever without a word. Dropped; the download stays for the next try.
+                val id = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
+                if (id >= 0) runCatching { context.packageManager.packageInstaller.abandonSession(id) }
+                context.applicationContext.toast("설치 화면을 열지 못했습니다. 앱을 연 채로 업데이트를 다시 눌러 주세요")
             }
             return
         }

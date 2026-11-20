@@ -17,6 +17,7 @@ class ReadingDefaultsTest {
             epubPublisherStyles = !d.epubPublisherStyles,
             epubIgnoreBookSizes = !d.epubIgnoreBookSizes, pageTheme = PageTheme.MARU,
             invert = true, footerCenter = StatusItem.CLOCK, progressBar = !d.progressBar, statusFontSizeSp = 14f,
+            landscapePages = 2,
             txtBlankLines = 3, txtDetectChapters = !d.txtDetectChapters, txtReplaceRules = "a=>b",
         )
         val out = ReadingDefaults.reset(mine)
@@ -37,6 +38,8 @@ class ReadingDefaultsTest {
         assertEquals(StatusItem.CLOCK, out.footerCenter)
         assertEquals(mine.progressBar, out.progressBar)
         assertEquals(14f, out.statusFontSizeSp, 0f)
+        // 가로 화면 lives on 화면·밝기 (beside 화면 방향) since the settings were regrouped: not this page's to reset.
+        assertEquals(2, out.landscapePages)
         assertEquals(3, out.txtBlankLines)
         assertEquals(mine.txtDetectChapters, out.txtDetectChapters)
         assertEquals("a=>b", out.txtReplaceRules)

@@ -11,13 +11,13 @@ import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.stepperRow
 
 /**
- * "상태 표시줄" (reached from 읽기 설정 and the quick options): 위쪽 상태 표시줄 and 아래쪽 상태 표시줄 (three slots each,
+ * "상태 표시줄" (reached from the main list and the quick sheet): 위쪽 상태 표시줄 and 아래쪽 상태 표시줄 (three slots each,
  * titled by their place only, then 진행 막대 and 상태 글자 크기 with the bottom band; UI_SPEC §5.5, anchor §2.7). The
  * status bands have their own places (`StatusBands`): another item in a slot only repaints the page; a band that comes,
  * goes or changes height (진행 막대, 상태 글자 크기) re-lays it at the same first character.
  */
 internal class StatusBarPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_STATUS, "상태 표시줄") {
-    /** The reading settings the rows show (읽기 설정's margins or a reset rebuild the page in [onShown]). */
+    /** The reading settings the rows show (보기 설정's margins or a reset rebuild the page in [onShown]). */
     private var seenReader: ReaderSettings? = null
     /** The six slot rows, index band * 3 + pos. */
     private val slotRows = arrayOfNulls<View>(6)

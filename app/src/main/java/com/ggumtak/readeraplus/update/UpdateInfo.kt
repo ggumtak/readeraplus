@@ -42,6 +42,12 @@ internal object UpdateInfo {
     /** An automatic check is due [interval] ms after the last one (or when the clock went back). */
     fun due(now: Long, last: Long, interval: Long): Boolean = last <= 0L || now < last || now - last >= interval
 
+    /**
+     * The "last check" to store after a check that got no answer, so that [due] holds again [retry] ms from [now]
+     * instead of a whole [interval] later (never in the future: a clock that goes back makes a check due anyway).
+     */
+    fun retryStamp(now: Long, interval: Long, retry: Long): Long = (now - interval + retry).coerceIn(1L, now.coerceAtLeast(1L))
+
     /** An APK starts with a ZIP local file header. */
     fun looksLikeApk(head: ByteArray): Boolean = head.contentEquals(byteArrayOf(0x50, 0x4b, 3, 4))
 
@@ -52,7 +58,7 @@ internal object UpdateInfo {
     fun buildOf(fileName: String): Int =
         APK_NAME.matchEntire(fileName)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-    fun offerMessage(latest: Int, current: Int): String = "새 버전이 있습니다 (빌드 $latest · 지금 $current).\n지금 업데이트할까요?"
+    fun offerMessage(latest: Int, current: Int): String = "새 버전이 있습니다 (빌드 $latest · 지금 $current).\n지금 업데이트할까요?\n설치가 끝나면 앱이 닫힙니다. 다시 열어 주세요."
 
     fun progressMessage(percent: Int): String = if (percent < 0) "내려받는 중…" else "내려받는 중… $percent%"
 
