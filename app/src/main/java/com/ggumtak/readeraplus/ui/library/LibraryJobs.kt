@@ -40,6 +40,8 @@ internal object LibraryJobs {
         private set
     @Volatile var scanFound = 0
         private set
+    /** The running scan is copying books out of ZIP files (the found count stays still meanwhile). */
+    @Volatile private var scanZipping = false
     /** The running scan is the periodic one: it stops as soon as a reader comes to the front. */
     @Volatile private var scanYields = false
     /** The running scan reports its result (a manual request that finds the periodic scan running sets it too). */
@@ -60,7 +62,9 @@ internal object LibraryJobs {
      * once a manual request takes it over.
      */
     fun status(): String? =
-        LibraryText.statusText(scanning && !(scanYields && !scanAnnounce), scanFound, importing, imported, importTotal)
+        LibraryText.statusText(
+            scanning && !(scanYields && !scanAnnounce), scanFound, importing, imported, importTotal, scanZipping,
+        )
 
     private fun progress() = main.post { listeners.forEach { it.onJobProgress() } }
     private fun done(msg: String?, rowsChanged: Boolean = true) =
@@ -85,6 +89,7 @@ internal object LibraryJobs {
             }
             scanning = true
             scanFound = 0
+            scanZipping = false
             scanYields = periodic
             scanAnnounce = announce
         }
@@ -100,6 +105,12 @@ internal object LibraryJobs {
                     app,
                     stopWhen = { scanYields && ReaderPresence.inFront },
                     synced = { rowsChanged = it },
+                    // Called once per scan: one strip update, outside the throttle (the stage must show at once). A
+                    // silent periodic scan shows nothing; a manual request taking it over posts its own update.
+                    zipStage = {
+                        scanZipping = true
+                        if (!scanYields || scanAnnounce) progress()
+                    },
                 ) { n ->
                     scanFound = n
                     if (throttle.ready(SystemClock.elapsedRealtime())) progress()
@@ -112,6 +123,7 @@ internal object LibraryJobs {
                 msg = ErrorLines.line("스캔 실패", t)
             } finally {
                 scanning = false
+                scanZipping = false
             }
             // Stopped for the reader: only the status strip changes. A "done" would reload the library's list, a
             // query racing the book that is opening (the library reloads on its next onResume anyway).

@@ -451,10 +451,26 @@ internal object LibraryText {
     fun rescanDue(lastScanAt: Long, now: Long, maxAgeMs: Long = 30L * 60 * 1000): Boolean =
         lastScanAt <= 0L || now - lastScanAt > maxAgeMs || now < lastScanAt
 
-    /** Status row text while scanning / importing, or null when idle. */
-    fun statusText(scanning: Boolean, scanFound: Int, importing: Boolean, imported: Int, importTotal: Int): String? {
+    /**
+     * Status row text while scanning / importing, or null when idle. [zipping]: the scan is copying books out of ZIP
+     * files (its found count no longer moves then).
+     */
+    fun statusText(
+        scanning: Boolean,
+        scanFound: Int,
+        importing: Boolean,
+        imported: Int,
+        importTotal: Int,
+        zipping: Boolean = false,
+    ): String? {
         val parts = ArrayList<String>(2)
-        if (scanning) parts += if (scanFound > 0) "책 스캔 중… ${scanFound}권" else "책 스캔 중…"
+        if (scanning) {
+            parts += when {
+                zipping -> "ZIP에서 책을 꺼내는 중…"
+                scanFound > 0 -> "책 스캔 중… ${scanFound}권"
+                else -> "책 스캔 중…"
+            }
+        }
         if (importing) parts += if (importTotal > 0) "가져오는 중… $imported/$importTotal" else "가져오는 중… $imported"
         return if (parts.isEmpty()) null else parts.joinToString(" · ")
     }

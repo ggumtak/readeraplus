@@ -48,6 +48,40 @@ internal object UpdateInfo {
      */
     fun retryStamp(now: Long, interval: Long, retry: Long): Long = (now - interval + retry).coerceIn(1L, now.coerceAtLeast(1L))
 
+    /** What a screen coming to the front does about a download that waits to be installed. */
+    enum class ResumeStep {
+        /** Nothing waits, or its permission prompt was shown already: the usual (due) update check. */
+        CHECK,
+        /** The install permission is there: install the waiting download now. */
+        INSTALL,
+        /** The permission is missing and was never asked for this build: show the prompt once. */
+        ASK,
+    }
+
+    /**
+     * [pending]: a verified download waits; [permitted]: the app may install packages; [asked]: the permission prompt
+     * was shown for that build already. Asking again on every visit would nag, and returning without checking would
+     * skip the automatic check for ever, so a refused prompt falls back to [ResumeStep.CHECK] (the download is kept and
+     * installed once the user allows it).
+     */
+    fun resumeStep(pending: Boolean, permitted: Boolean, asked: Boolean): ResumeStep = when {
+        !pending -> ResumeStep.CHECK
+        permitted -> ResumeStep.INSTALL
+        !asked -> ResumeStep.ASK
+        else -> ResumeStep.CHECK
+    }
+
+    /** What to do with the installer's confirm screen. */
+    enum class ConfirmStep {
+        /** Start it: the app is in front. */
+        SHOW,
+        /** Drop the session and keep the download pending: a start from the background is ignored without a word. */
+        FOLD,
+    }
+
+    fun confirmStep(foreground: Boolean, hasIntent: Boolean): ConfirmStep =
+        if (foreground && hasIntent) ConfirmStep.SHOW else ConfirmStep.FOLD
+
     /** An APK starts with a ZIP local file header. */
     fun looksLikeApk(head: ByteArray): Boolean = head.contentEquals(byteArrayOf(0x50, 0x4b, 3, 4))
 

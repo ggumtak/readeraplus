@@ -130,9 +130,16 @@ internal object ZipBooks {
      * trash). Blocking (worker thread). Returns the number of books added (or refreshed). [stopWhen] is checked between
      * ZIPs and entries; a ZIP left half done is tried again by the next scan. A ZIP that cannot be opened at all
      * (malformed, or entry names Android 14 refuses) is remembered as failed for this version and not opened again; any
-     * other failure is logged and tried again by the next scan. Temp files are deleted.
+     * other failure is logged and tried again by the next scan. Temp files are deleted. [onStage] is called once, just
+     * before the first ZIP is opened (never when every ZIP is unchanged), so a progress line can say what the scan is
+     * doing while large entries are copied.
      */
-    fun extractNew(context: Context, zips: List<File>, stopWhen: () -> Boolean = { false }): Int {
+    fun extractNew(
+        context: Context,
+        zips: List<File>,
+        stopWhen: () -> Boolean = { false },
+        onStage: (() -> Unit)? = null,
+    ): Int {
         if (zips.isEmpty()) return 0
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val ignored = runCatching {
@@ -140,6 +147,7 @@ internal object ZipBooks {
         }.getOrDefault(HashSet())
         var dir: File? = null
         var added = 0
+        var stage = onStage
         for (zip in zips) {
             if (stopWhen()) break
             val path = zip.absolutePath
@@ -153,6 +161,10 @@ internal object ZipBooks {
                 val target = dir ?: (context.getExternalFilesDir("books") ?: File(context.filesDir, "books")).also {
                     if (!it.isDirectory) it.mkdirs()
                     dir = it
+                }
+                stage?.let {
+                    stage = null
+                    it()
                 }
                 val opened = try {
                     open(zip)
@@ -247,19 +259,37 @@ internal object ZipBooks {
                         tmp.delete()
                         continue
                     }
-                    // An identical earlier copy (the same ZIP seen before, another ZIP, a picker copy) is reused.
-                    BookCopies.settle(tmp, dir, name)
+                    // Like a scan, not a user's import: a removed (ignored) path stays out, a trashed row stays trashed.
+                    placeCopy(tmp, dir, name) { Library.normalizePath(it.absolutePath) in ignored }
                 } catch (t: Throwable) {
                     tmp.delete()
                     throw t
                 }
-                // Like a scan, not a user's import: a removed (ignored) path stays out, a trashed row stays trashed.
-                if (Library.normalizePath(placed.absolutePath) in ignored) continue
+                if (placed == null) continue
                 if (Library.addOrUpdate(placed, explicit = false) != null) added++
             }
         }
         return added
     }
+
+    /**
+     * Settles the copied entry [tmp] as [name] in [dir] ([BookCopies.settleTracked]: an identical earlier copy from the
+     * same ZIP seen before, another ZIP or a picker copy is reused). Returns the file to add, or null when its path is
+     * one the user removed from the library ([isIgnored]). A file this call placed is then deleted again (it would stay
+     * in the copy folder with no row pointing at it); a reused earlier copy is left alone, another row may use it.
+     * Holds the copy lock throughout, so no other copy can reuse the new file before it is deleted.
+     */
+    internal fun placeCopy(tmp: File, dir: File, name: String, isIgnored: (File) -> Boolean): File? =
+        synchronized(BookCopies) {
+            val settled = BookCopies.settleTracked(tmp, dir, name)
+            when {
+                !isIgnored(settled.file) -> settled.file
+                else -> {
+                    if (settled.isNew) settled.file.delete()
+                    null
+                }
+            }
+        }
 
     /** Copies [input] to [out]; the byte count, or -1 (copy incomplete) once more than [cap] bytes came. */
     private fun copy(input: InputStream, out: File, cap: Long): Long {

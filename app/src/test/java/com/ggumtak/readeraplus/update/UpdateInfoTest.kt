@@ -82,6 +82,27 @@ class UpdateInfoTest {
     }
 
     @Test
+    fun aWaitingUpdateIsInstalledAskedForOnceOrLeftToTheUsualCheck() {
+        // Nothing waits: the usual check, whatever the permission.
+        assertEquals(UpdateInfo.ResumeStep.CHECK, UpdateInfo.resumeStep(pending = false, permitted = true, asked = false))
+        assertEquals(UpdateInfo.ResumeStep.CHECK, UpdateInfo.resumeStep(pending = false, permitted = false, asked = true))
+        // Permitted: installs, also after the prompt (the user allowed it on the system page).
+        assertEquals(UpdateInfo.ResumeStep.INSTALL, UpdateInfo.resumeStep(pending = true, permitted = true, asked = false))
+        assertEquals(UpdateInfo.ResumeStep.INSTALL, UpdateInfo.resumeStep(pending = true, permitted = true, asked = true))
+        // Not permitted: the prompt once, then the automatic check is no longer skipped.
+        assertEquals(UpdateInfo.ResumeStep.ASK, UpdateInfo.resumeStep(pending = true, permitted = false, asked = false))
+        assertEquals(UpdateInfo.ResumeStep.CHECK, UpdateInfo.resumeStep(pending = true, permitted = false, asked = true))
+    }
+
+    @Test
+    fun theConfirmScreenIsShownOnlyInFront() {
+        assertEquals(UpdateInfo.ConfirmStep.SHOW, UpdateInfo.confirmStep(foreground = true, hasIntent = true))
+        assertEquals(UpdateInfo.ConfirmStep.FOLD, UpdateInfo.confirmStep(foreground = false, hasIntent = true))
+        assertEquals(UpdateInfo.ConfirmStep.FOLD, UpdateInfo.confirmStep(foreground = true, hasIntent = false))
+        assertEquals(UpdateInfo.ConfirmStep.FOLD, UpdateInfo.confirmStep(foreground = false, hasIntent = false))
+    }
+
+    @Test
     fun apkHeaderAndCachedNames() {
         assertTrue(UpdateInfo.looksLikeApk(byteArrayOf(0x50, 0x4B, 3, 4)))
         assertFalse(UpdateInfo.looksLikeApk("<htm".toByteArray()))

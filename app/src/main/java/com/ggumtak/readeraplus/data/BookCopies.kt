@@ -102,12 +102,22 @@ internal object BookCopies {
      * deleted), else [tmp] placed under [fileName]. Check and move happen under one lock hold.
      */
     @Synchronized
-    fun settle(tmp: File, dir: File, fileName: String): File {
+    fun settle(tmp: File, dir: File, fileName: String): File = settleTracked(tmp, dir, fileName).file
+
+    /** What [settleTracked] did: [file] is the final file, [isNew] false when an identical earlier copy was reused. */
+    internal class Settled(val file: File, val isNew: Boolean)
+
+    /**
+     * [settle] that also tells whether the file was placed by this call. A caller that may drop the result again
+     * must only delete a new file: a reused copy can be another library row's book.
+     */
+    @Synchronized
+    internal fun settleTracked(tmp: File, dir: File, fileName: String): Settled {
         existingCopy(dir, fileName, tmp)?.let {
             tmp.delete()
-            return it
+            return Settled(it, isNew = false)
         }
-        return place(tmp, dir, fileName)
+        return Settled(place(tmp, dir, fileName), isNew = true)
     }
 
     /**

@@ -54,15 +54,19 @@ import java.util.concurrent.ArrayBlockingQueue
  *   renamed when complete; a failed upload leaves nothing behind.
  * - Each finished file: `Library.addOrUpdateFile` on the handler thread, then [Listener.onReceived].
  *
- * Threading: [start] / [stop] on the main thread ([start] binds a socket: fast, no DNS). Listener callbacks are posted
- * to the main thread, and never after [stop].
+ * Threading: [start] on a worker thread (it may open the library database, lists the network interfaces and tries up
+ * to ten ports), never two at once on one instance; [stop] on any thread. Listener callbacks are posted to the main
+ * thread, and never after [stop].
  */
 class LanUpload(private val context: Context, private val destDir: File, private val listener: Listener) {
 
     /** Events for the page. Always called on the main thread. */
     interface Listener {
-        /** [file] was received and stored; [book] is its library entry, or null when adding it failed. */
-        fun onReceived(file: File, book: Book?)
+        /**
+         * [file] was received and stored ([bytes] long, read on the handler thread so the page never touches the disk);
+         * [book] is its library entry, or null when adding it failed.
+         */
+        fun onReceived(file: File, book: Book?, bytes: Long)
 
         /**
          * An upload was refused or failed; [message] is user text ("200MB보다 큰 파일은 받을 수 없습니다", …), [file] the
@@ -86,7 +90,11 @@ class LanUpload(private val context: Context, private val destDir: File, private
     val isRunning: Boolean
         get() = server != null
 
-    /** Starts the server (idempotent: returns the running one's result). Null when no Wi-Fi address or no free port. */
+    /**
+     * Starts the server (idempotent: returns the running one's result). Null when no Wi-Fi address or no free port.
+     * Blocking: call it off the main thread. A [stop] that ran while this was still binding does not see the new
+     * server; the caller stops it once this returns.
+     */
     fun start(): Result? {
         server?.let { return it.result }
         lastError = null
@@ -148,7 +156,10 @@ class LanUpload(private val context: Context, private val destDir: File, private
                 }
             },
             events = object : LanExchange.Events {
-                override fun received(file: File, book: Book?) = post { listener.onReceived(file, book) }
+                override fun received(file: File, book: Book?) {
+                    val bytes = file.length()
+                    post { listener.onReceived(file, book, bytes) }
+                }
                 override fun error(message: String, file: String?) = post { listener.onError(message, file) }
             },
         )

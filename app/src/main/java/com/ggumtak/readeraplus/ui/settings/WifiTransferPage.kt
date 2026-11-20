@@ -15,6 +15,7 @@ import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -39,6 +40,8 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
     private var server: LanUpload? = null
     private var destDir: File? = null
     private var startJob: Job? = null
+    /** A start is in flight (main thread only): set before the job launches, cleared once its IO work has returned. */
+    private var starting = false
     /** Files received while this page lived (newest first); kept across a pause. */
     private val received = ArrayList<Pair<String, String>>()
     private var shown = false
@@ -100,32 +103,56 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
         stopServer(paused = false)
     }
 
-    /** Starts the server when this page is on top of a resumed activity (the folder is resolved once, on IO). */
+    /**
+     * Starts the server when this page is on top of a resumed activity. The folder lookup and the server start run on
+     * IO (the start may open the library database and tries up to ten ports); [starting] keeps a second start out
+     * until the first one has returned, even after a pause cancelled it.
+     */
     private fun startIfVisible() {
         if (!shown || !activity.isResumedNow) return
-        if (server?.isRunning == true || startJob?.isActive == true) return
+        if (starting || server?.isRunning == true) return
+        starting = true
         startJob = activity.scope.launch {
-            val dir = destDir ?: withContext(Dispatchers.IO) {
-                runCatching { LanUpload.destinationDir(activity.applicationContext) }.getOrNull()
-            }?.also { destDir = it }
-            if (dir == null) {
-                showFailure("받을 폴더를 만들지 못했습니다", "저장 공간과 파일 접근 권한을 확인한 뒤 [다시 시도]를 누르세요.")
-                return@launch
+            try {
+                startNow()
+            } finally {
+                // Main thread, after any start on IO has returned (also when cancelled: withContext waits for its block).
+                starting = false
+                val s = server
+                if (!isActive || !shown || !activity.isResumedNow) {
+                    // The page went (or came back) while the server was starting: never leave that server open.
+                    if (s != null && s.isRunning) runCatching { s.stop() }
+                    // A resume during that start was turned away by [starting]: start again now.
+                    if (shown && activity.isResumedNow) startIfVisible()
+                }
             }
-            folderRow.setInfoValue(FolderSets.displayName(dir.absolutePath, StorageAccess.primaryRoot()))
-            // The page may have gone meanwhile (a pause during the folder lookup).
-            if (!shown || !activity.isResumedNow) return@launch
-            val s = server ?: LanUpload(activity.applicationContext, dir, listener).also { server = it }
-            val result = runCatching { s.start() }.getOrNull()
-            if (result == null) {
-                showFailure(s.lastError ?: "전송을 시작하지 못했습니다", "Wi-Fi 연결을 확인한 뒤 [다시 시도]를 누르세요.")
-            } else {
-                urlText.text = result.url
-                urlText.setTextColor(Ink.BLACK)
-                statusText.text = "받은 파일은 바로 서재에 추가됩니다."
-                statusText.visibility = View.VISIBLE
-                retryBar.visibility = View.GONE
-            }
+        }
+    }
+
+    /** Resolves the folder (once) and starts the server, both on IO; then shows the address or the failure. */
+    private suspend fun startNow() {
+        val dir = destDir ?: withContext(Dispatchers.IO) {
+            runCatching { LanUpload.destinationDir(activity.applicationContext) }.getOrNull()
+        }?.also { destDir = it }
+        if (dir == null) {
+            showFailure("받을 폴더를 만들지 못했습니다", "저장 공간과 파일 접근 권한을 확인한 뒤 [다시 시도]를 누르세요.")
+            return
+        }
+        folderRow.setInfoValue(FolderSets.displayName(dir.absolutePath, StorageAccess.primaryRoot()))
+        // The page may have gone meanwhile (a pause during the folder lookup).
+        if (!shown || !activity.isResumedNow) return
+        val s = server ?: LanUpload(activity.applicationContext, dir, listener).also { server = it }
+        val result = withContext(Dispatchers.IO) { runCatching { s.start() }.getOrNull() }
+        // Gone during the start: the caller's finally closes the server; nothing to show.
+        if (!shown || !activity.isResumedNow) return
+        if (result == null) {
+            showFailure(s.lastError ?: "전송을 시작하지 못했습니다", "Wi-Fi 연결을 확인한 뒤 [다시 시도]를 누르세요.")
+        } else {
+            urlText.text = result.url
+            urlText.setTextColor(Ink.BLACK)
+            statusText.text = "받은 파일은 바로 서재에 추가됩니다."
+            statusText.visibility = View.VISIBLE
+            retryBar.visibility = View.GONE
         }
     }
 
@@ -150,8 +177,8 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
     }
 
     private val listener = object : LanUpload.Listener {
-        override fun onReceived(file: File, book: Book?) {
-            received.add(0, file.name to SettingsFormat.received(file.length(), book != null))
+        override fun onReceived(file: File, book: Book?, bytes: Long) {
+            received.add(0, file.name to SettingsFormat.received(bytes, book != null))
             errorText.visibility = View.GONE
             fillReceived()
         }
