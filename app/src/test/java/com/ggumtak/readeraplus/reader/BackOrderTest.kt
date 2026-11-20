@@ -2,6 +2,8 @@ package com.ggumtak.readeraplus.reader
 
 import com.ggumtak.readeraplus.reader.BackOrder.Step
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BackOrderTest {
@@ -38,6 +40,22 @@ class BackOrderTest {
     @Test fun endPanelAndSelectionStayAboveTheBars() {
         assertEquals(Step.END_PANEL, next(endPanel = true, selection = true, chrome = true, tts = true, searchBar = true))
         assertEquals(Step.SELECTION, next(selection = true, chrome = true, tts = true, searchBar = true))
+    }
+
+    /** 검색 결과 목록 hid the bar and left its highlight: closing the bars (or anything else in the book) takes it too. */
+    @Test fun aHighlightLeftByAHiddenSearchBarGoesWithABackThatStays() {
+        val step = next(chrome = true, searchBar = false)
+        assertEquals(Step.CHROME, step)
+        assertTrue(BackOrder.dropsSearchHighlight(step, searchBar = false))
+        for (s in listOf(Step.END_PANEL, Step.SELECTION, Step.TTS)) assertTrue(BackOrder.dropsSearchHighlight(s, false))
+        // Leaving the book clears everything anyway.
+        assertFalse(BackOrder.dropsSearchHighlight(Step.EXIT, searchBar = false))
+    }
+
+    @Test fun aShownSearchBarKeepsItsHighlightUntilItsOwnStep() {
+        for (s in listOf(Step.END_PANEL, Step.SELECTION, Step.CHROME, Step.TTS, Step.SEARCH_BAR)) {
+            assertFalse(BackOrder.dropsSearchHighlight(s, searchBar = true))
+        }
     }
 
     /** Pressing BACK repeatedly with everything open closes one thing per press, top first. */

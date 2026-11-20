@@ -66,6 +66,7 @@ import com.ggumtak.readeraplus.reader.extras.QuoteRows
 import com.ggumtak.readeraplus.reader.extras.ReaderEndHost
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
 import com.ggumtak.readeraplus.reader.extras.SearchNavBar
+import com.ggumtak.readeraplus.reader.extras.SearchPanel
 import com.ggumtak.readeraplus.reader.extras.SelectionController
 import com.ggumtak.readeraplus.reader.extras.StatusSampleHost
 import com.ggumtak.readeraplus.reader.extras.TtsController
@@ -4633,13 +4634,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         // The topmost thing on screen closes first ([BackOrder]): the bars before TTS and the search-results bar.
+        val searchBar = safely { SearchNavBar.isShown(this) } == true
         val step = BackOrder.next(
             endPanel = endPanel?.isShowing == true,
             selection = safely { selection?.isActive } == true,
             chrome = chromeVisible,
             tts = ttsSpeaking(),
-            searchBar = safely { SearchNavBar.isShown(this) } == true,
+            searchBar = searchBar,
         )
+        // A highlight the hidden results bar left behind goes too (a no-op without one: no redraw).
+        if (BackOrder.dropsSearchHighlight(step, searchBar)) safely { SearchPanel.clearHighlight(this) }
         when (step) {
             BackOrder.Step.END_PANEL -> closeEndPanel()
             BackOrder.Step.SELECTION -> safely { selection?.clear() }

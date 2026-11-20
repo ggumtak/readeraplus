@@ -330,6 +330,14 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
                 }
 
                 override fun onStartTrackingTouch(s: SeekBar) {
+                    // A key burst still settling is taken over: this seek starts where the keys started (onSeekStart
+                    // forgets that start, the first onSeekPreview sets it), so lifting without a move keeps their jump.
+                    val keyFrom = if (keySeek.pending) {
+                        s.removeCallbacks(settleKeySeek)
+                        keySeek.takeOver(s.progress)
+                    } else {
+                        -1
+                    }
                     isSeeking = true
                     actions.onSeekStart()
                     // The start text is set outside the throttle: a touch on the track away from the thumb reports
@@ -337,6 +345,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
                     // first draw, so the box is drawn once, already showing the touched position.
                     dropHeldSeek()
                     seekThrottle.reset()
+                    if (keyFrom >= 0 && keyFrom != s.progress) actions.onSeekPreview(keyFrom)
                     setSeekInfo(actions.onSeekPreview(s.progress))
                     showSeekInfo(true)
                     focusSeek(true)

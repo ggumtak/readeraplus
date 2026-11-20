@@ -50,7 +50,7 @@
   돌아가기 줄을 누름), 마지막 위치의 DB 저장이 비동기뿐(onPause 직후 강제 종료 시 한 번의 넘김 유실 가능: 실기기 재현 필요, 핵심
   영역이라 근거 없이 바꾸지 않음), 복원 시 백업 파일을 통째로 메모리에(최대 64 MB), AI 사전 기본 지침 문구(해요체, 저장값 이전
   필요), 2차 점검의 미확인 구역(DeviceLight의 자기 반향, PageRenderer의 형광펜 · 본문 루프, 독서 노트 메뉴의 터치 영역 전수 확인).
-- 검사: 전체 typecheck 통과, JVM 단위 테스트 2,298개 이상 통과, AI 사전 node 테스트 37개 통과, `bash -n screenshots.sh`,
+- 검사: 전체 typecheck 통과, JVM 단위 테스트 2,309개 통과, AI 사전 node 테스트 37개 통과, `bash -n screenshots.sh`,
   CI(Gradle `testDebugUnitTest` + `assembleRelease`) 205 · 206 성공. CI 화면 스크립트는 새 이름 · 위치로 고쳤지만 `[screens]`로
   돌리지 않았다. **실기기 확인 전부 남음**(DEVICE_CHECKLIST 11m).
 - 이 브랜치는 배포 브랜치(`codex/eink-ai-dictionary`)가 아니라서 푸시해도 `latest` 릴리스 · 앱 내 업데이트로 나가지 않는다.

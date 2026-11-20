@@ -60,6 +60,28 @@ class KeySeekTest {
     }
 
     @Test
+    fun aTouchTakingOverAPendingBurstStartsFromTheBurstsFirstValue() {
+        val k = KeySeek()
+        k.step(41)
+        k.step(42)
+        // The keys moved the bar to 43; a tap on the thumb there starts its seek from 41, so lifting at 43 still jumps.
+        assertEquals(41, k.takeOver(43))
+        assertFalse(k.pending)
+        assertFalse(k.settle(touching = false))
+    }
+
+    @Test
+    fun aTouchWithoutAPendingBurstStartsFromTheBarsValue() {
+        val k = KeySeek()
+        assertEquals(43, k.takeOver(43))
+        // A settled burst is not taken over again.
+        k.step(10)
+        k.settle(touching = false)
+        assertEquals(11, k.takeOver(11))
+        assertFalse(k.pending)
+    }
+
+    @Test
     fun settleWithoutAStepCommitsNothing() {
         assertFalse(KeySeek().settle(touching = false))
     }

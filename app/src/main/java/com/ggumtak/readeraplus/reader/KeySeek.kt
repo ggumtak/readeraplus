@@ -42,6 +42,17 @@ internal class KeySeek {
         pending = false
     }
 
+    /**
+     * A touch on the bar takes over (the caller also stops its settle wait). Returns the value the touch's seek starts
+     * from: the burst's first [from] while one is pending, so that a tap on the thumb the keys moved, lifted without a
+     * move, still jumps where the keys went; otherwise [current] (the bar's value), as for any touch.
+     */
+    fun takeOver(current: Int): Int {
+        val start = if (pending) from else current
+        cancel()
+        return start
+    }
+
     companion object {
         /** Quiet time after the last step before the one jump. */
         const val SETTLE_MS = 250L

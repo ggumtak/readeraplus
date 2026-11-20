@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.update
 
+import android.app.ActivityManager
 import android.content.pm.PackageInstaller
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -97,9 +98,27 @@ class UpdateInfoTest {
     @Test
     fun theConfirmScreenIsShownOnlyInFront() {
         assertEquals(UpdateInfo.ConfirmStep.SHOW, UpdateInfo.confirmStep(foreground = true, hasIntent = true))
+        // No screen: kept pending, installed on the next return.
         assertEquals(UpdateInfo.ConfirmStep.FOLD, UpdateInfo.confirmStep(foreground = false, hasIntent = true))
-        assertEquals(UpdateInfo.ConfirmStep.FOLD, UpdateInfo.confirmStep(foreground = true, hasIntent = false))
         assertEquals(UpdateInfo.ConfirmStep.FOLD, UpdateInfo.confirmStep(foreground = false, hasIntent = false))
+        // In front without an intent: dropped with a word, not retried on every return.
+        assertEquals(UpdateInfo.ConfirmStep.DROP, UpdateInfo.confirmStep(foreground = true, hasIntent = false))
+    }
+
+    @Test
+    fun onlyAShownScreenCountsAsInFront() {
+        assertEquals(100, ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND)
+        assertEquals(125, ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE)
+        assertEquals(200, ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE)
+        assertTrue(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND))
+        assertTrue(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE))
+        // TTS reading in the background: its foreground service shows no screen.
+        assertFalse(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE))
+        assertFalse(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE))
+        assertFalse(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE))
+        assertFalse(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED))
+        assertFalse(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_GONE))
+        assertFalse(UpdateInfo.showsScreen(0))
     }
 
     @Test

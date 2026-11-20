@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.update
 
+import android.app.ActivityManager
 import android.content.pm.PackageInstaller
 import org.json.JSONObject
 
@@ -75,12 +76,34 @@ internal object UpdateInfo {
     enum class ConfirmStep {
         /** Start it: the app is in front. */
         SHOW,
-        /** Drop the session and keep the download pending: a start from the background is ignored without a word. */
+        /**
+         * No screen of the app shows: drop the session and keep the download pending (a start from the background is
+         * ignored without a word); the install goes on when the library or the settings list is next in front.
+         */
         FOLD,
+        /**
+         * The app is in front but the screen cannot be opened (no intent, or starting it failed): drop the session
+         * and say so, without keeping it pending, or every return to the library would fail the same way again.
+         */
+        DROP,
     }
 
-    fun confirmStep(foreground: Boolean, hasIntent: Boolean): ConfirmStep =
-        if (foreground && hasIntent) ConfirmStep.SHOW else ConfirmStep.FOLD
+    /** [foreground]: [showsScreen]; [hasIntent]: the installer sent its confirm intent. */
+    fun confirmStep(foreground: Boolean, hasIntent: Boolean): ConfirmStep = when {
+        !foreground -> ConfirmStep.FOLD
+        hasIntent -> ConfirmStep.SHOW
+        else -> ConfirmStep.DROP
+    }
+
+    /**
+     * Whether the process [importance] (`ActivityManager.RunningAppProcessInfo`) means one of the app's screens shows:
+     * in front (100) or visible (200, e.g. the unfocused half of split screen), both of which may start an activity. A
+     * foreground service alone (125, TTS reading in the background) shows nothing, and a confirm screen started then
+     * is ignored; split screen with that service running also reports 125 and folds (the install goes on on return).
+     */
+    fun showsScreen(importance: Int): Boolean =
+        importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+            importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
 
     /** An APK starts with a ZIP local file header. */
     fun looksLikeApk(head: ByteArray): Boolean = head.contentEquals(byteArrayOf(0x50, 0x4b, 3, 4))
