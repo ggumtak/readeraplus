@@ -306,11 +306,14 @@ internal fun LibraryActivity.confirmEmptyTrash() {
             .setView(box)
             .setPositiveButton("비우기") { _, _ ->
                 val deleteFiles = cb.isChecked
-                io("비우지 못했습니다", {
-                    // The trash could not be listed: nothing was counted, so nothing is deleted.
-                    Library.emptyTrash(ids ?: error("trash not listed"), deleteFiles)
-                }) {
-                    toast("휴지통을 비웠습니다")
+                scope.launch {
+                    val r = withContext(Dispatchers.IO) {
+                        // The trash could not be listed: nothing was counted, so nothing is deleted.
+                        runCatching { Library.emptyTrash(ids ?: error("trash not listed"), deleteFiles) }
+                    }
+                    toast(r.fold({ "휴지통을 비웠습니다" }, { ErrorLines.line("비우지 못했습니다", it) }))
+                    // Also after a failure: a file that would not go stops only its own book, the others are gone
+                    // from the database by then, and a list that still showed them would open nothing.
                     changed(collections = true)
                 }
             }

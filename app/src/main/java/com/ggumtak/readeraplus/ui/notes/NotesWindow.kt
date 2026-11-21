@@ -24,7 +24,12 @@ class NotesWindow<P>(val pageRows: Int = PAGE_ROWS, val maxPages: Int = MAX_PAGE
     var pendingMove = -1
         private set
 
-    enum class Put { STALE, STORED, MOVE }
+    /**
+     * What [put] did: [STALE] = loaded under an older [token], dropped; [FAILED] = current token but the load failed
+     * (the page is no longer in flight, so the next [request] for it loads it again); [STORED] = kept; [MOVE] = kept
+     * and the pending far jump can move now.
+     */
+    enum class Put { STALE, FAILED, STORED, MOVE }
 
     /** A new query or data generation: drops every page and every load in flight. */
     fun reset(count: Int) {
@@ -56,11 +61,11 @@ class NotesWindow<P>(val pageRows: Int = PAGE_ROWS, val maxPages: Int = MAX_PAGE
         return true
     }
 
-    /** A load of [page] finished under [token] ([page] null = failed). */
+    /** A load of [page] finished under [token] ([value] null = failed). A stale token wins over a failure. */
     fun put(token: Int, page: Int, value: P?): Put {
         if (token != this.token) return Put.STALE
         pending -= page
-        if (value == null) return Put.STALE
+        if (value == null) return Put.FAILED
         pages[page] = value
         while (pages.size > maxPages) {
             val eldest = pages.keys.iterator().next()

@@ -39,7 +39,7 @@ internal object Compact {
      * [PopupGeometry.QUICK_ROWS] rows, 432 dp) fits under the 62% cap of the Comet (446 dp) without scrolling.
      */
     const val ROW_DP = 48
-    /** The top bar ("전체 읽기 설정 ›" · 닫기). */
+    /** The top bar ("보기 설정 전체 ›" · 닫기). */
     const val BAR_DP = 48
     const val LABEL_SP = 16f
     const val VALUE_SP = 17f

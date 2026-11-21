@@ -65,6 +65,8 @@ import com.ggumtak.readeraplus.reader.extras.QuoteCache
 import com.ggumtak.readeraplus.reader.extras.QuoteRows
 import com.ggumtak.readeraplus.reader.extras.ReaderEndHost
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
+import com.ggumtak.readeraplus.reader.extras.SearchNavBar
+import com.ggumtak.readeraplus.reader.extras.SearchPanel
 import com.ggumtak.readeraplus.reader.extras.SelectionController
 import com.ggumtak.readeraplus.reader.extras.StatusSampleHost
 import com.ggumtak.readeraplus.reader.extras.TtsController
@@ -190,6 +192,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         private const val SIDE_BOTH = 0
         private const val SIDE_LEFT = 1
         private const val SIDE_RIGHT = 2
+
+        /**
+         * The sticky battery broadcast through [ctx]: `percent shl 1`, its low bit set while charging; -1 when it
+         * cannot be read. Packed so the background read in [battery] hands both values back without an object.
+         */
+        private fun readBattery(ctx: Context, filter: IntentFilter): Int = try {
+            val i = ctx.registerReceiver(null, filter)
+            val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+            val charging = i?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) == BatteryManager.BATTERY_STATUS_CHARGING
+            if (level >= 0 && scale > 0) (level * 100 / scale shl 1) or (if (charging) 1 else 0) else -1
+        } catch (_: Throwable) {
+            -1
+        }
     }
 
     private enum class Nav { OPEN, TURN, JUMP, RELAYOUT }
@@ -415,6 +431,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var batteryAt = 0L
     /** The sticky battery broadcast's filter, built once (the battery is read at most once a minute). */
     private val batteryFilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+    /** A background battery read ([battery]) is running: a stale value does not start a second one. */
+    private var batteryReading = false
     /** The status slots of the page on screen: one shared [StatusModel.decor], filled from [statusInputs]. */
     private val status = StatusModel()
     private val statusInputs = StatusInputs()
@@ -685,6 +703,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (requestCode == REQ_PICK_IMAGE) {
             val done = imagePicked
             imagePicked = null
+            // The reader was made again while the picker was in front: the waiting callback died with the old one.
+            if (done == null && resultCode == RESULT_OK) toast("사진을 다시 골라 주세요")
             done?.invoke(if (resultCode == RESULT_OK) data?.data else null)
             return
         }
@@ -1746,9 +1766,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             changedSections.addAll(quoteRows.keys); changedSections.addAll(nextQuotes.keys)
             for (mark in bookmarks) changedSections.add(mark.section)
             for (mark in nextMarks) changedSections.add(mark.section)
+            // Grouped once (order kept), not filtered per section: a section without marks is null on both sides
+            // where a filter gave two empty lists, so the same sections are bumped.
+            val oldBySection = bookmarks.groupBy { it.section }
+            val newBySection = nextMarks.groupBy { it.section }
             for (sec in changedSections) {
-                if (quoteRows[sec] != nextQuotes[sec] ||
-                    bookmarks.filter { it.section == sec } != nextMarks.filter { it.section == sec }) bumpThumbDecor(sec)
+                if (quoteRows[sec] != nextQuotes[sec] || oldBySection[sec] != newBySection[sec]) bumpThumbDecor(sec)
             }
             bookmarks = nextMarks
             if (quotesCurrent) {
@@ -3530,20 +3553,37 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         return StatusClock.minuteOfDay(now, zone.getOffset(now))
     }
 
-    /** Battery percent from the sticky broadcast, read at most once a minute (on page turns only). */
+    /**
+     * Battery percent from the sticky broadcast, read at most once a minute (on page turns only). Only the first read
+     * (none yet, or reset on resume) runs here; later a value older than a minute is returned as is and a fresh one is
+     * read on [ReaderIo] for the next page, so a page turn never waits on the system call. The late value is not
+     * drawn by itself (one e-ink update per action).
+     */
     private fun battery(): Int {
         val now = SystemClock.uptimeMillis()
-        if (batteryLevel >= 0 && now - batteryAt < 60_000) return batteryLevel
-        batteryAt = now
-        batteryLevel = try {
-            val i = registerReceiver(null, batteryFilter)
-            val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-            val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
-            batteryCharging = i?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) == BatteryManager.BATTERY_STATUS_CHARGING
-            if (level >= 0 && scale > 0) level * 100 / scale else -1
-        } catch (t: Throwable) {
-            batteryCharging = false
-            -1
+        if (batteryLevel < 0) {
+            batteryAt = now
+            val r = readBattery(this, batteryFilter)
+            batteryLevel = if (r < 0) -1 else r shr 1
+            batteryCharging = r >= 0 && (r and 1) != 0
+            return batteryLevel
+        }
+        if (now - batteryAt >= 60_000 && !batteryReading) {
+            batteryReading = true
+            batteryAt = now
+            val app = applicationContext
+            val filter = batteryFilter
+            ReaderIo.launch {
+                val r = readBattery(app, filter)
+                // Fields are written on the main thread only; a reader destroyed meanwhile drops the value.
+                handler.post {
+                    batteryReading = false
+                    if (!isDestroyed && r >= 0) {
+                        batteryLevel = r shr 1
+                        batteryCharging = (r and 1) != 0
+                    }
+                }
+            }
         }
         return batteryLevel
     }
@@ -4476,8 +4516,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val code = event.keyCode
-        if (code == KeyEvent.KEYCODE_BACK || session == null || errorPanel.visibility == View.VISIBLE) {
-            return super.dispatchKeyEvent(event)
+        if (code == KeyEvent.KEYCODE_BACK || errorPanel.visibility == View.VISIBLE) return super.dispatchKeyEvent(event)
+        if (session == null) {
+            // Still opening (a large TXT takes seconds): a page key pressed early is swallowed, so the volume keys do
+            // not change the media volume and bring up its panel over the book. Every other key is the system's.
+            val early = KeyMap.action(code, event.isShiftPressed, app)
+            return if (early == TapAction.NEXT || early == TapAction.PREV) true else super.dispatchKeyEvent(event)
         }
         val a = app
         val action = KeyMap.action(code, event.isShiftPressed, a)
@@ -4589,14 +4633,25 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        when {
-            endPanel?.isShowing == true -> closeEndPanel()
-            safely { selection?.isActive } == true -> safely { selection?.clear() }
-            ttsSpeaking() -> safely { tts?.stop() }
-            // The search-results bar goes first; the next BACK leaves the book.
-            safely { ReaderPanels.closeSearchBar(this) } == true -> {}
-            chromeVisible -> closeChrome()
-            else -> {
+        // The topmost thing on screen closes first ([BackOrder]): the bars before TTS and the search-results bar.
+        val searchBar = safely { SearchNavBar.isShown(this) } == true
+        val step = BackOrder.next(
+            endPanel = endPanel?.isShowing == true,
+            selection = safely { selection?.isActive } == true,
+            chrome = chromeVisible,
+            tts = ttsSpeaking(),
+            searchBar = searchBar,
+        )
+        // A highlight the hidden results bar left behind goes too (a no-op without one: no redraw).
+        if (BackOrder.dropsSearchHighlight(step, searchBar)) safely { SearchPanel.clearHighlight(this) }
+        when (step) {
+            BackOrder.Step.END_PANEL -> closeEndPanel()
+            BackOrder.Step.SELECTION -> safely { selection?.clear() }
+            BackOrder.Step.CHROME -> closeChrome()
+            BackOrder.Step.TTS -> safely { tts?.stop() }
+            // The search-results bar (and its highlight) goes before the book; the next BACK leaves it.
+            BackOrder.Step.SEARCH_BAR -> safely { ReaderPanels.closeSearchBar(this) }
+            BackOrder.Step.EXIT -> {
                 @Suppress("DEPRECATION")
                 super.onBackPressed()
             }
@@ -4762,10 +4817,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         override fun onRotation() {
             val lock = if (app.orientationLock != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
                 ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            } else if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             } else {
-                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                // The way the screen is held now, of the four (plain 가로 flipped a phone held the other way round).
+                @Suppress("DEPRECATION")
+                val rotation = runCatching {
+                    (if (Build.VERSION.SDK_INT >= 30) display else windowManager.defaultDisplay)?.rotation
+                }.getOrNull() ?: RotationLock.ROTATION_0
+                RotationLock.forDisplay(rotation, resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
             }
             setOrientationLock(lock)
         }
@@ -4951,7 +5009,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     internal fun openAppSettings(settingsPage: String? = null) {
         light.markOwnLaunch()
-        // The open book goes along, so 읽기 설정 can offer its own TXT options ([takeSettingsEdits] takes them back).
+        // The open book goes along, so 설정 can offer its own TXT options ([takeSettingsEdits] takes them back).
         val b = bookRef
         val book = if (b != null && session != null) OpenBook.Info(b.id, b.title, b.format, b.encoding, bookOverride) else null
         SettingsActivity.open(this, settingsPage, book)

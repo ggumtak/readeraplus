@@ -489,9 +489,18 @@ internal object SearchNavBar {
         row.addView(ctx.flatIcon(R.drawable.ic_chevron_left, "이전 결과") {
             if (index > 0) SearchPanel.jumpTo(host, state, index - 1, remember = false)
         }.apply { visibility = if (index > 0) View.VISIBLE else View.INVISIBLE })
-        row.addView(ctx.flatIcon(R.drawable.ic_chevron_right, "다음 결과") {
-            if (index < state.hits.size - 1) SearchPanel.jumpTo(host, state, index + 1, remember = false)
-        }.apply { visibility = if (index < state.hits.size - 1) View.VISIBLE else View.INVISIBLE })
+        // Past the last result found so far, while the scan is unfinished ("3 / 57+": it stopped when the list
+        // closed), › opens the list again, which goes on scanning; it used to vanish with results still to come.
+        val hasNext = index < state.hits.size - 1
+        val unfinished = !state.complete
+        row.addView(ctx.flatIcon(R.drawable.ic_chevron_right, if (hasNext || !unfinished) "다음 결과" else "결과 더 찾기") {
+            if (hasNext) {
+                SearchPanel.jumpTo(host, state, index + 1, remember = false)
+            } else if (unfinished) {
+                remove()
+                SearchPanel.show(host, "")
+            }
+        }.apply { visibility = if (hasNext || unfinished) View.VISIBLE else View.INVISIBLE })
         row.setPadding(row.paddingLeft, row.paddingTop, row.paddingRight, Overlay.bottomInset(host.pageView))
         parent.addView(row, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
         barRef = WeakReference(row)

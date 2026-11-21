@@ -416,14 +416,14 @@ reader_more() { # reader_more "item": the reader's ⋮ (content description 더�
   tap_label "$1" || { back; return 1; }
   sleep 3
 }
-open_popup() { # the quick reading options (the bottom bar's 보기 설정 button since abc78df): a top bar "전체 읽기 설정 ›"
+open_popup() { # the quick reading options (the bottom bar's 보기 설정 button since abc78df): a top bar "보기 설정 전체 ›"
   # · 닫기, the 글자 크기 · 굵기 · 줄 간격 · 문단 간격 · 좌우 여백 · 상하 여백 steppers and 글꼴 (384 dp: no 더보기, no
   # scrolling). A 설정 a failed step left in front is left first.
   if on_top SettingsActivity; then log "open_popup: 설정 is still in front, leaving it first"; leave_settings; fi
   show_chrome || return 1
   tap_label "보기 설정" || return 1
   sleep 2; dump || return 1
-  has "글자 크기" contains && has "전체 읽기 설정" || { log "the quick options popup is not the active window"; return 1; }
+  has "글자 크기" contains && has "보기 설정 전체" || { log "the quick options popup is not the active window"; return 1; }
 }
 popup_focused() { # a focusable PopupWindow (the quick options popup, its 글꼴 list, a menu) has the input focus
   adb shell dumpsys window 2>/dev/null | grep -m1 -E 'mCurrentFocus=' | grep -q 'PopupWindow'
@@ -440,7 +440,7 @@ close_popup() { # one BACK closes the popup (and the bars); BACK again while a p
   done
   hide_chrome; sleep 1
 }
-margins_zero() { # margins_zero <n>: on 설정 → 읽기 설정 (open; the quick options show the same two steppers since
+margins_zero() { # margins_zero <n>: on 설정 → 보기 설정 (open; the quick options show the same two steppers since
   # 68aa271, CHECK 14q), 좌우 여백 and 상하 여백 both read "0" (S §2.4, A), each from the dump of the scroll_find that put
   # its stepper on screen. No align: on settings pages it dragged the list past both rows (CI 34; its dump rightly had
   # neither).
@@ -531,7 +531,7 @@ pick_setting() { # pick_setting "row" "choice" [exact|contains] [index]: a setti
 
 # ------------------------------------------------------------------ 설정 over the open book (672e85d, 68aa271)
 # The quick options keep seven rows (the four steppers, 좌우 여백 · 상하 여백 since 68aa271, 글꼴). Everything else is a
-# 설정 row: 페이지 나눔, 정렬 … on 읽기 설정 (the popup's "전체 읽기 설정"); since 68aa271 the old 넘김·화면 설정 is three
+# 설정 row: 페이지 나눔, 정렬 … on 보기 설정 (the popup's "보기 설정 전체"); since 68aa271 the old 넘김·화면 설정 is three
 # pages of 설정's main list: 넘기기·터치·키 (넘기는 방식, 스크롤 움직임, 볼륨 키), 화면·밝기 (위쪽 / 아래쪽 상태 표시줄: the
 # slots and 진행 막대; 인용문 색 표시; 밝기) and e-ink 새로고침. The reader's ⋮ → 설정 shows the main list without the 서재
 # and 책 가져오기 groups, 읽기 기록, 백업·복원 and 캐시 비우기 (R3-book-context-main): steps that need those (목록 넘기기,
@@ -539,18 +539,18 @@ pick_setting() { # pick_setting "row" "choice" [exact|contains] [index]: a setti
 # (onResume), keeping the page's first character. So a step changes the row there over the open book (never through the
 # library, which would reopen it), leaves 설정 with BACK and checks the book as it did with the popup.
 
-open_reading_page() { # ⚙ → 전체 읽기 설정: 설정 → 읽기 설정 over the open book, the only page of its stack (one BACK leaves)
+open_reading_page() { # ⚙ → 보기 설정 전체: 설정 → 보기 설정 over the open book, the only page of its stack (one BACK leaves)
   open_popup || return 1
-  tap_label "전체 읽기 설정" || { close_popup; return 1; }
+  tap_label "보기 설정 전체" || { close_popup; return 1; }
   sleep 3
-  reading_page_shown || { log "전체 읽기 설정 did not bring 설정 → 읽기 설정 to the front"; leave_settings; return 1; }
+  reading_page_shown || { log "보기 설정 전체 did not bring 설정 → 보기 설정 to the front"; leave_settings; return 1; }
 }
-reading_page_shown() { # 설정 → 읽기 설정 in front: its toolbar title and its first section, 스타일 (the main list has neither)
-  on_top SettingsActivity && dump && has "읽기 설정" && has "스타일"
+reading_page_shown() { # 설정 → 보기 설정 in front: its toolbar title and its first section, 스타일 (the main list has neither)
+  on_top SettingsActivity && dump && has "보기 설정" && has "스타일"
 }
 open_page_over_reader() { # open_page_over_reader "page" "row": the bottom bar's 뷰어 설정 (was ⋮ → 설정) → that page of the 읽기 group over the
   # open book, checked by its toolbar title and one of its own rows (neither is an exact text of the main list): two pages
-  # in 설정's stack, two BACKs to the book. (읽기 설정 opened from ⚙ links 모든 설정 too, but at its end: a page of swipes
+  # in 설정's stack, two BACKs to the book. (보기 설정 opened from ⚙ links 뷰어 설정 too, but at its end: a page of swipes
   # on every trip.)
   if on_top SettingsActivity; then log "open_page_over_reader: 설정 is still in front, leaving it first"; leave_settings; fi
   show_chrome || return 1
@@ -563,7 +563,7 @@ open_page_over_reader() { # open_page_over_reader "page" "row": the bottom bar's
   log "$1 did not open from 설정"; leave_settings; return 1
 }
 open_turning_over_reader() { open_page_over_reader "넘기기·터치·키" "넘기는 방식"; } # 넘기는 방식, 스크롤 움직임, 볼륨 키
-open_screen_over_reader() { open_page_over_reader "화면·밝기" "위쪽 상태 표시줄"; } # the status slots and 진행 막대 (its first sections)
+open_screen_over_reader() { open_page_over_reader "상태 표시줄" "위쪽 상태 표시줄"; } # the status slots and 진행 막대 (its first sections)
 leave_settings() { # BACK while 설정 is in front (one per page of its stack, one more for a chooser left open), then the
   # book must be in front with its bars closed. The guard before each BACK matters: one BACK too many would close the book.
   local i n=0
@@ -780,13 +780,13 @@ history_cols() { # history_cols <n> <left text or ""> [right text or ""]: the hi
   check "$1" $ok "지우기 at x = $cx${2:+, '$2' ends at $l2}${3:+, '$3' starts at $r1}"
   HIST_CX=$cx
 }
-set_page_look() { # set_page_look "흰 바탕"|마루뷰어 on|off: 화면 색 and 흑백 반전 on 설정 → 읽기 설정 (⚙ → 전체 읽기
+set_page_look() { # set_page_look "흰 바탕"|마루뷰어 on|off: 화면 색 and 흑백 반전 on 설정 → 보기 설정 (⚙ → 전체 읽기
   # 설정) in one visit over the open book; a repaint only, never a relayout (PLAN 2026-10-04). Leaves 설정, bars closed.
   local rc=0
   open_reading_page || return 1
   pick_setting "화면 색" "$1" exact || rc=1
   set_toggle "흑백 반전" "$2" || rc=1
-  dump && log "읽기 설정: 화면 색 '$(row_value "화면 색")', 흑백 반전 '$(row_checked "흑백 반전")'"
+  dump && log "보기 설정: 화면 색 '$(row_value "화면 색")', 흑백 반전 '$(row_checked "흑백 반전")'"
   leave_settings
   return $rc
 }
@@ -942,7 +942,7 @@ chrome_looks() { # 13t–13w, then as 13 left it: 흰 바탕, 흑백 반전 off,
   show_chrome
   return $rc
 }
-reading_settings() { # 14 the quick options (⚙) and 14q their margins; 14s their "전체 읽기 설정" → 설정 → 읽기 설정, and
+reading_settings() { # 14 the quick options (⚙) and 14q their margins; 14s their "보기 설정 전체" → 설정 → 보기 설정, and
   # BACK to the same page (14s_back, 14s_same); 14m the margins there; 14b, 14c the status slots on 화면·밝기; then 10b
   # (+rawshot, first_is): the footer band that comes keeps the page's first character
   local label0 label1 miss t top first l v
@@ -950,25 +950,25 @@ reading_settings() { # 14 the quick options (⚙) and 14q their margins; 14s the
   label0=$(page_label); perf_mark 14s_a
   tap_label "보기 설정" || return 1
   shot 14_reading_settings 2
-  # 14: the quick options since 68aa271: one top bar "전체 읽기 설정 ›" · 닫기 over six steppers (글자 크기 · 굵기 ·
+  # 14: the quick options since 68aa271: one top bar "보기 설정 전체 ›" · 닫기 over six steppers (글자 크기 · 굵기 ·
   # 줄 간격 · 문단 간격 · 좌우 여백 · 상하 여백) and 글꼴; no 더보기 / 접기, and no "읽기 설정 · 모든 책에 적용" bar any more
-  dump; miss=$(missing "전체 읽기 설정" "닫기" "글꼴")
+  dump; miss=$(missing "보기 설정 전체" "닫기" "글꼴")
   for t in "글자 크기" "굵기" "줄 간격" "문단 간격" "좌우 여백" "상하 여백"; do
     has "$t 줄이기" && has "$t 늘리기" || miss="$miss '$t 줄이기/늘리기'"
   done
-  top=$(xy_of "전체 읽기 설정"); first=$(xy_of "글자 크기 줄이기")
-  if [ -n "$top" ] && [ -n "$first" ] && [ "${top#* }" -lt "${first#* }" ]; then :; else miss="$miss '전체 읽기 설정 above 글자 크기'"; fi
+  top=$(xy_of "보기 설정 전체"); first=$(xy_of "글자 크기 줄이기")
+  if [ -n "$top" ] && [ -n "$first" ] && [ "${top#* }" -lt "${first#* }" ]; then :; else miss="$miss '보기 설정 전체 above 글자 크기'"; fi
   if [ -z "$miss" ] && ! has "더보기" contains && ! has "접기" && ! has "모든 책에 적용"; then
-    check 14 0 "quick options: 전체 읽기 설정 › · 닫기 on top, 6 steppers (with 좌우 여백 · 상하 여백), 글꼴; no 더보기"
+    check 14 0 "quick options: 보기 설정 전체 › · 닫기 on top, 6 steppers (with 좌우 여백 · 상하 여백), 글꼴; no 더보기"
   else check 14 1 "quick options: missing [${miss# }], 더보기 / 접기 / 모든 책에 적용 $(has "더보기" contains || has "접기" || has "모든 책에 적용" && echo shown || echo absent)"; fi
-  # 14q: the quick options' margins read as 읽기 설정's (14m): "0" at the defaults (R1-quick-margins, same steps and values)
+  # 14q: the quick options' margins read as 보기 설정's (14m): "0" at the defaults (R1-quick-margins, same steps and values)
   l=$(stepper_value "좌우 여백"); v=$(stepper_value "상하 여백")
   [ "$l" = 0 ] && [ "$v" = 0 ]; check 14q $? "quick options: 좌우 여백 '$l', 상하 여백 '$v'"
-  # 14s: 전체 읽기 설정 opens 설정 → 읽기 설정 (the only page of its stack); BACK returns to the same page of the book
-  tap_label "전체 읽기 설정" || return 1
+  # 14s: 보기 설정 전체 opens 설정 → 보기 설정 (the only page of its stack); BACK returns to the same page of the book
+  tap_label "보기 설정 전체" || return 1
   sleep 3
-  if reading_page_shown; then check 14s 0 "설정 → 읽기 설정 in front (title 읽기 설정, section 스타일)"
-  else check 14s 1 "설정 → 읽기 설정 not in front after 전체 읽기 설정"; return 1; fi
+  if reading_page_shown; then check 14s 0 "설정 → 보기 설정 in front (title 보기 설정, section 스타일)"
+  else check 14s 1 "설정 → 보기 설정 not in front after 보기 설정 전체"; return 1; fi
   shot 14s_reading_page 0
   margins_zero 14m
   leave_settings || return 1
@@ -1341,9 +1341,9 @@ library_views() { # 43 큰 표지 (3 columns; was 썸네일), 44 작은 표지 (
   shot 44_library_grid 2
   set_list_mode "자세히"
 }
-library_paged() { # 45/46 + CHECK 46: 목록 넘기기 (설정 → 서재, from the library only) → 한 화면씩 (was 쪽 단위), the next
+library_paged() { # 45/46 + CHECK 46: 목록 넘기기 (설정 → 서재 보기, from the library only) → 한 화면씩 (was 쪽 단위), the next
   # page by a swipe; then 스크롤 (the default) again
-  open_settings || return 1
+  open_settings_page "서재 보기" || return 1
   pick_setting "목록 넘기기" "한 화면씩" || return 1
   restart_library
   shot 45_library_paged 2
@@ -1351,7 +1351,7 @@ library_paged() { # 45/46 + CHECK 46: 목록 넘기기 (설정 → 서재, from 
   adb shell input swipe 360 1000 360 600 300
   shot 46_library_page2 2
   dump; if has "2 / " contains; then check 46 0 "pager '2 / N' after a swipe"; else check 46 1 "no '2 / N' after a swipe"; fi
-  open_settings && pick_setting "목록 넘기기" "스크롤"
+  open_settings_page "서재 보기" && pick_setting "목록 넘기기" "스크롤"
 }
 library_multiselect() { # 46c: a long-press on a book starts multi-select ("1권 선택" and the batch actions, T1-13)
   restart_library
@@ -1515,7 +1515,7 @@ notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select
 notes_paged() { # 89p: 목록 넘기기 → 한 화면씩, a tap on the first row's day header still opens the book (a paged list
   # keeps every touch for paging, the row takes its own: the header takes none, so the tap is the row's); then 스크롤
   # (the default) again. On purpose the header, not the note text 87 taps: both ways to the row are covered.
-  open_settings || return 1
+  open_settings_page "서재 보기" || return 1
   pick_setting "목록 넘기기" "한 화면씩" || return 1
   restart_library
   open_drawer || return 1
@@ -1523,7 +1523,7 @@ notes_paged() { # 89p: 목록 넘기기 → 한 화면씩, a tap on the first ro
   sleep 3
   tap_label "인용문" || return 1
   sleep 2
-  dump; if ! has "모든 색" contains; then check 89p 1 "paged hub: no 인용문 tab"; open_settings && pick_setting "목록 넘기기" "스크롤"; return 1; fi
+  dump; if ! has "모든 색" contains; then check 89p 1 "paged hub: no 인용문 tab"; open_settings_page "서재 보기" && pick_setting "목록 넘기기" "스크롤"; return 1; fi
   local xy where="the first row's day header"
   xy=$(hub_xy day)
   [ -n "$xy" ] || { where="the first note's text (no day header on screen)"; xy=$(first_row_xy); }
@@ -1532,7 +1532,7 @@ notes_paged() { # 89p: 목록 넘기기 → 한 화면씩, a tap on the first ro
   dump; if ! has "모든 색" contains; then check 89p 0 "paged hub: a tap on $where opens the book"
   else check 89p 1 "paged hub: a tap on $where left the hub on screen"; fi
   back; sleep 2
-  open_settings && pick_setting "목록 넘기기" "스크롤"
+  open_settings_page "서재 보기" && pick_setting "목록 넘기기" "스크롤"
 }
 notes_ink() { # 90: 인용문 색 표시 (설정 → 화면·밝기 since 68aa271) → 흑백 무늬 on the quotes; then 자동 again
   local i
@@ -1578,7 +1578,7 @@ progress_toggle() { # 53: 진행 막대 off (화면·밝기, over the book): the
   perf_check 53 first_is 52b 53
   open_screen_over_reader && set_toggle "진행 막대" on; leave_settings
 }
-margin_v_exact() { # 54: 상하 여백 +10 (설정 → 읽기 설정, over the book; the quick options have the same stepper again since
+margin_v_exact() { # 54: 상하 여백 +10 (설정 → 보기 설정, over the book; the quick options have the same stepper again since
   # 68aa271, 14q reads it there) keeps the exact first character when the book applies it, back in front; then back to
   # "0" (K8)
   local i v
@@ -1610,7 +1610,7 @@ font_up_down() { # 55: 글자 크기 +1 then −1 (still in the quick options) g
   shot 55_font_up_down 1; rawshot 55b
   raw_check 55 55a 55b content
 }
-page_break_paragraph() { # 56: 페이지 나눔 = 문단 단위 (설정 → 읽기 설정, over the book) keeps the first character when the
+page_break_paragraph() { # 56: 페이지 나눔 = 문단 단위 (설정 → 보기 설정, over the book) keeps the first character when the
   # book applies it, back in front; the next page; then 줄 단위 again. The chooser items read "문단 단위 (페이지 아래가 빌
   # 수 있음)" and "줄 단위 (기본)" (contains).
   perf_mark 56a
@@ -1772,7 +1772,7 @@ restore_offer() {
   else check 96 1 "샘플 EPUB not on the 읽고 있는 책 shelf (title 읽고 있는 책: $(has "읽고 있는 책" && echo yes || echo no))"; fi
   tap_label "샘플 EPUB" contains || return 1
   sleep 5
-  open_reading_page || return 1 # 설정 → 읽기 설정 (⚙ → 전체 읽기 설정), as 14m
+  open_reading_page || return 1 # 설정 → 보기 설정 (⚙ → 보기 설정 전체), as 14m
   margins_zero 97
   shot 97_restored_margins 1
   leave_settings

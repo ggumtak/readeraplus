@@ -153,7 +153,7 @@ private fun ReaderActivity.showCollections(id: Long) {
 
 /**
  * Long-press on the rotation button: pick a fixed orientation or follow the sensor (설정's 화면 방향 choices). The button
- * next to 취소 switches the 가로 화면 between one page across the width and two side by side (읽기 설정's 가로 화면): it
+ * next to 취소 switches the 가로 화면 between one page across the width and two side by side (화면·밝기's 가로 화면): it
  * names the other choice, and the reader lays out again from the first character shown.
  */
 internal fun ReaderActivity.showOrientationChooser() {

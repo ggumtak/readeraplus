@@ -175,6 +175,13 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
             setSeekInfo(actions.onSeekPreview(p))
         }
     }
+    /** Seek bar steps without a drag (keys, TalkBack): one jump once they settle. */
+    private val keySeek = KeySeek()
+    /** The seek bar's progress as last reported, from any source: the value a key step moved away from. */
+    private var seekLast = 0
+    private val settleKeySeek = Runnable {
+        if (keySeek.settle(isSeeking)) actions.onSeekDone(seek.progress)
+    }
 
     // Insets and the bar width the width-dependent views were last sized for (decided in setVisible(true) only).
     private var insetLeft = 0
@@ -316,9 +323,21 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
                         previewSeek(p)
                         wantSeekThumb(p)
                     }
+                    // A step without a drag (D-pad, TalkBack) gets no start / stop tracking: it seeks here, like
+                    // the brightness bar's `!tracking`. A drag that starts meanwhile takes over (its own done jumps).
+                    if (fromUser && !isSeeking) keyStep(seekLast) else if (isSeeking && keySeek.pending) dropKeySeek()
+                    seekLast = p
                 }
 
                 override fun onStartTrackingTouch(s: SeekBar) {
+                    // A key burst still settling is taken over: this seek starts where the keys started (onSeekStart
+                    // forgets that start, the first onSeekPreview sets it), so lifting without a move keeps their jump.
+                    val keyFrom = if (keySeek.pending) {
+                        s.removeCallbacks(settleKeySeek)
+                        keySeek.takeOver(s.progress)
+                    } else {
+                        -1
+                    }
                     isSeeking = true
                     actions.onSeekStart()
                     // The start text is set outside the throttle: a touch on the track away from the thumb reports
@@ -326,6 +345,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
                     // first draw, so the box is drawn once, already showing the touched position.
                     dropHeldSeek()
                     seekThrottle.reset()
+                    if (keyFrom >= 0 && keyFrom != s.progress) actions.onSeekPreview(keyFrom)
                     setSeekInfo(actions.onSeekPreview(s.progress))
                     showSeekInfo(true)
                     focusSeek(true)
@@ -340,6 +360,12 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
                     // After the jump: the thumbnails' cancel refills the neighbours of the page now shown.
                     showSeekInfo(false)
                 }
+            })
+            // A key seek still settling when the reader goes away jumps nowhere.
+            addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) {}
+
+                override fun onViewDetachedFromWindow(v: View) = dropKeySeek()
             })
         }
         // Row 1: the seek bar between the chapter buttons (the secondary colour).
@@ -699,6 +725,7 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         }
         if (!visible) {
             dropHeldSeek()
+            dropKeySeek()
             showSeekInfo(false)
             if (!fade) setBrightnessOptionsOpen(false)
         }
@@ -800,6 +827,25 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
         if (seekHeld < 0) return
         seekHeld = -1
         seekInfo.removeCallbacks(showHeldSeek)
+    }
+
+    /**
+     * A seek bar step without a drag ([KeySeek]) from [from]: the first of a burst starts a seek as a drag's start does
+     * (the preview text is not shown: no extra e-ink update), and the jump waits until the steps settle.
+     */
+    private fun keyStep(from: Int) {
+        if (keySeek.step(from)) {
+            actions.onSeekStart()
+            actions.onSeekPreview(from)
+        }
+        seek.removeCallbacks(settleKeySeek)
+        seek.postDelayed(settleKeySeek, KeySeek.SETTLE_MS)
+    }
+
+    /** No key seek settles any more (hidden, detached, or a drag took over); the next [setPage] binds the bar again. */
+    private fun dropKeySeek() {
+        seek.removeCallbacks(settleKeySeek)
+        keySeek.cancel()
     }
 
     private fun setSeekInfo(text: CharSequence) {
@@ -951,7 +997,8 @@ internal class ReaderChrome(private val ctx: Context, private val actions: Actio
      * 중" while the pages are counted; the description reads it too.
      */
     fun setPage(label: String, max: Int, progress: Int, shown: String? = null) {
-        if (isSeeking) return
+        // A key seek settling keeps the bar (and its scale, which onSeekStart took) until its own jump, like a drag.
+        if (isSeeking || keySeek.pending) return
         if (label != boundLabel || shown != boundShown) {
             // While [shown] stays, a changed estimate redraws nothing (no e-ink update without a visible change).
             val redraw = shown == null || shown != boundShown

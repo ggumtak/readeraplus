@@ -117,6 +117,8 @@ class SelectionController(private val host: ReaderHost) {
     /** Edge dwell ([EdgeDwell]): the page turn a held point in an edge zone asks for, and the wait for its page. */
     private val dwell = EdgeDwell()
     private val dwellFire = Runnable { fireDwell() }
+    /** [zoneNow]'s page geometry for the drag going on; dropped when a drag starts, a page shows or the selection goes. */
+    private val zoneGeometry = DragGeometryMemo()
     /** An edge turn was asked for and its page is not shown yet: its [onPageChanged] extends instead of clearing. */
     private var turnPending = false
     private var turnLayout: SectionLayout? = null
@@ -224,6 +226,7 @@ class SelectionController(private val host: ReaderHost) {
         paletteMode = false
         active = true
         fromLongPress = true
+        zoneGeometry.invalidate()
         pressX = x
         pressY = y
         pressDragged = false
@@ -266,6 +269,7 @@ class SelectionController(private val host: ReaderHost) {
             MotionEvent.ACTION_UP -> {
                 main.removeCallbacks(reselect)
                 releaseDwell()
+                zoneGeometry.invalidate()
                 if (fromLongPress) {
                     fromLongPress = false
                     showActions()
@@ -277,6 +281,7 @@ class SelectionController(private val host: ReaderHost) {
             MotionEvent.ACTION_CANCEL -> {
                 main.removeCallbacks(reselect)
                 releaseDwell()
+                zoneGeometry.invalidate()
                 if (fromLongPress) showActions()
                 fromLongPress = false
                 tapCandidate = false
@@ -292,6 +297,7 @@ class SelectionController(private val host: ReaderHost) {
         tapCandidate = false
         dragHandle = null
         cancelDwell()
+        zoneGeometry.invalidate()
         main.removeCallbacks(reselect)
         editingQuote = null
         paletteMode = false
@@ -324,6 +330,8 @@ class SelectionController(private val host: ReaderHost) {
         turnPending = false
         turnLayout = null
         main.removeCallbacks(turnTimeout)
+        // Another page: the edge zones are measured again on the next check.
+        zoneGeometry.invalidate()
         // Scroll: a settle gives the virtual page back to the anchor's section; the selection's section stays in focus.
         host.holdSection(section)
         val now = host.currentLayout
@@ -366,7 +374,9 @@ class SelectionController(private val host: ReaderHost) {
         val off = host.hitTest(x, y)
         if (off < 0 || host.hitSection(x) != section) return
         val text = span.layout.content.text
-        val o = off.coerceIn(span.start, span.end - 1)
+        // A page with no char (an empty section) has nothing to extend to.
+        val o = SelectionDrag.clampOffset(off, span.start, span.end)
+        if (o < 0) return
         val s = minOf(anchorStart, clusterStart(text, o))
         val e = maxOf(anchorEnd, clusterEnd(text, o))
         setRange(s, e)
@@ -389,7 +399,8 @@ class SelectionController(private val host: ReaderHost) {
         val off = host.hitTest(px, py)
         if (off < 0 || host.hitSection(px) != section) return
         val text = span.layout.content.text
-        val o = off.coerceIn(span.start, span.end - 1)
+        val o = SelectionDrag.clampOffset(off, span.start, span.end)
+        if (o < 0) return
         if (h.start) setRange(clusterStart(text, o.coerceAtMost(selEnd - 1)), selEnd)
         else setRange(selStart, maxOf(clusterEnd(text, o), clusterEnd(text, selStart)))
     }
@@ -403,15 +414,20 @@ class SelectionController(private val host: ReaderHost) {
         if (!onCurrentSection()) return Zone.NONE
         val len = sectionText?.length ?: return Zone.NONE
         val v = host.pageView
-        val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density, host.pageCutoutTop,
-            emPx = AndroidTextMeasurer.emPxFor(ctx, Settings.reader.fontSizeSp),
-            naturalLinePx = AndroidTextMeasurer.naturalLinePxFor(ctx, Settings.reader))
+        // Called on every MOVE of a drag: the geometry (font metrics included) is computed once per drag and page.
+        if (!zoneGeometry.matches(v.width, v.height)) {
+            val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density, host.pageCutoutTop,
+                emPx = AndroidTextMeasurer.emPxFor(ctx, Settings.reader.fontSizeSp),
+                naturalLinePx = AndroidTextMeasurer.naturalLinePxFor(ctx, Settings.reader))
+            zoneGeometry.store(v.width, v.height, g.contentTop, ctx.dpF(EDGE_ZONE_DP.toFloat()))
+        }
+        val top = zoneGeometry.contentTop
         val h = dragHandle
         val allowNext = (h == null || !h.start) && SelectionSpan.canTurn(true, page.start, page.end, len)
         val allowPrev = (h == null || h.start) && SelectionSpan.canTurn(false, page.start, page.end, len)
         // Use the visible layout's actual height (including the e-ink body-only bottom reserve).
-        return EdgeZone.of(dragY, g.contentTop.toFloat(), (g.contentTop + page.layout.config.height).toFloat(),
-            ctx.dpF(EDGE_ZONE_DP.toFloat()), allowNext, allowPrev)
+        return EdgeZone.of(dragY, top.toFloat(), (top + page.layout.config.height).toFloat(),
+            zoneGeometry.zonePx, allowNext, allowPrev)
     }
 
     /** The held point moved (or a page showed): starts, keeps or drops the dwell timer. */
@@ -616,6 +632,7 @@ class SelectionController(private val host: ReaderHost) {
                     dragRawY = ev.rawY
                     dragGrabDx = h.anchorX - ev.rawX
                     dragGrabDy = h.anchorY - ev.rawY
+                    zoneGeometry.invalidate()
                     cancelDwell()
                     hideActions()
                     // The handle's own touch stream: the page view sees none of it, so no tap or swipe is recognised.
@@ -631,6 +648,7 @@ class SelectionController(private val host: ReaderHost) {
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (dragHandle === h) dragHandle = null
                     cancelDwell()
+                    zoneGeometry.invalidate()
                     showActions()
                 }
             }

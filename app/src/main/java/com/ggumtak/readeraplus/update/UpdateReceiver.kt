@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.update
 
+import android.app.ActivityManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -18,9 +19,27 @@ class UpdateReceiver : BroadcastReceiver() {
                 @Suppress("DEPRECATION")
                 intent.getParcelableExtra(Intent.EXTRA_INTENT)
             }
-            if (confirm != null) {
-                confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                runCatching { context.startActivity(confirm) }
+            // Decided here, when the installer asks, and nowhere else: a session the user already confirmed is never touched.
+            val step = UpdateInfo.confirmStep(isForeground(), hasIntent = confirm != null)
+            val shown = step == UpdateInfo.ConfirmStep.SHOW && confirm != null &&
+                runCatching {
+                    confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(confirm)
+                }.isSuccess
+            if (!shown) {
+                // The session is dropped either way (its abort status says nothing and the download is kept).
+                val id = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
+                if (id >= 0) runCatching { context.packageManager.packageInstaller.abandonSession(id) }
+                if (step == UpdateInfo.ConfirmStep.FOLD) {
+                    // Android 10+ ignores a start from the background without an error, so the session would wait for
+                    // ever without a word: the build waits again and installs when the library or the settings list is
+                    // next in front.
+                    runCatching { AppUpdater.keepPending(context, intent.getIntExtra(AppUpdater.EXTRA_BUILD, 0)) }
+                } else {
+                    // In front and still not shown: trying again on every return would fail the same way, so the
+                    // user starts the next try.
+                    context.applicationContext.toast("설치 화면을 열지 못했습니다. 업데이트를 다시 눌러 주세요")
+                }
             }
             return
         }
@@ -29,4 +48,13 @@ class UpdateReceiver : BroadcastReceiver() {
         runCatching { AppUpdater.forgetDownloads(context) }
         context.applicationContext.toast(message)
     }
+
+    /**
+     * Whether one of the app's screens shows ([UpdateInfo.showsScreen]; a running receiver or the TTS foreground service
+     * alone does not count).
+     */
+    private fun isForeground(): Boolean = runCatching {
+        val info = ActivityManager.RunningAppProcessInfo().also { ActivityManager.getMyMemoryState(it) }
+        UpdateInfo.showsScreen(info.importance)
+    }.getOrDefault(false)
 }

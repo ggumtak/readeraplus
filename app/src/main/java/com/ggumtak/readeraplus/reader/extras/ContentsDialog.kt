@@ -753,11 +753,17 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             MenuItem("이동", R.drawable.ic_bookmark) { goAndClose(DocPosition(b.section, b.offset)) },
             MenuItem("메모 편집", R.drawable.ic_edit) { editBookmarkNote(b, b.note, container) },
             MenuItem("삭제", R.drawable.ic_delete) {
-                scope.launch {
-                    val ok = withContext(Dispatchers.IO) { runCatching { Library.deleteBookmark(b.id) }.isSuccess }
-                    if (!ok) failed("삭제하지 못했습니다")
-                    loadBookmarks(container)
+                val delete = {
+                    scope.launch {
+                        val ok = withContext(Dispatchers.IO) { runCatching { Library.deleteBookmark(b.id) }.isSuccess }
+                        if (!ok) failed("삭제하지 못했습니다")
+                        loadBookmarks(container)
+                    }
+                    Unit
                 }
+                // A bare bookmark is one tap to put back; one with a memo takes the typed text with it, so it asks
+                // first, as a highlight does (a menu row is easy to hit by mistake on e-ink).
+                if (b.note.isBlank()) delete() else ctx.confirm("북마크 삭제", "메모가 있는 북마크입니다. 삭제할까요?", "삭제") { delete() }
             },
         ))
     }

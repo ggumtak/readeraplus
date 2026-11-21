@@ -33,7 +33,7 @@ class SettingsActivity : Activity() {
         const val PAGE_PAGE_TURNING = "page_turning"
         /** "화면·밝기": the screen (전체 화면, 화면 켜짐 유지, 화면 방향) and the brightness. */
         const val PAGE_SCREEN = "screen"
-        /** "상태 표시줄" (under 읽기 설정): the two status bands, 진행 막대 and 상태 글자 크기. */
+        /** "상태 표시줄" (the main list's 책 화면, and the quick sheet): the two status bands, 진행 막대 and 상태 글자 크기. */
         const val PAGE_STATUS = "status"
         /** "e-ink 화면": refresh cadence, chapter / picture refreshes, the page mode and the 고급 group. */
         const val PAGE_EINK = "eink"
@@ -54,12 +54,14 @@ class SettingsActivity : Activity() {
         /** "TXT 정리 (모든 책)" (T1-9): the global TXT options every book without its own override uses. */
         const val PAGE_TXT_DEFAULTS = "txt_defaults"
         /**
-         * "읽기 설정": every reading setting (style, letters, paragraphs, page, file options); the quick options' "전체
-         * 읽기 설정" opens it.
+         * "보기 설정": how the page looks (style, letters, paragraphs, margins, colours, page breaks, the EPUB
+         * switches); the quick sheet of the same name opens it with "보기 설정 전체".
          */
         const val PAGE_READING = "reading"
-        /** "이 책의 TXT 정리" (T1-9): the TXT options of the book the reader has open ([OpenBook]); else 읽기 설정. */
+        /** "이 책의 TXT 정리" (T1-9): the TXT options of the book the reader has open ([OpenBook]); else the TXT defaults. */
         const val PAGE_BOOK_TXT = "book_txt"
+        /** "서재 보기": 정렬, 보기, 목록 넘기기, 시작할 때 읽던 책 열기 (the main list's 서재, from the library only). */
+        const val PAGE_LIBRARY_VIEW = "library_view"
 
         /**
          * Raw pref (Long, epoch millis) bumped by "캐시 비우기". Modules that cache derived data outside cacheDir
@@ -126,7 +128,7 @@ class SettingsActivity : Activity() {
             ?: listOf(intent?.getStringExtra(EXTRA_PAGE) ?: PAGE_MAIN))
             // 이 책의 TXT 정리 needs the reader's book: restored without it (the process was killed), it is left out.
             .filter { it != PAGE_BOOK_TXT || OpenBook.info?.format == BookFormat.TXT }
-            .ifEmpty { listOf(PAGE_READING) }
+            .ifEmpty { listOf(PAGE_MAIN) }
         for (id in ids) stack += createPage(id)
         showTop()
     }
@@ -147,11 +149,13 @@ class SettingsActivity : Activity() {
         PAGE_TXT_DEFAULTS -> TxtDefaultsPage(this)
         PAGE_READING -> ReadingPage(this)
         // Restored after the process was killed, or opened without a TXT book: the page it belongs to.
-        PAGE_BOOK_TXT -> if (OpenBook.info?.format == BookFormat.TXT) BookTxtPage(this) else ReadingPage(this)
+        PAGE_BOOK_TXT -> if (OpenBook.info?.format == BookFormat.TXT) BookTxtPage(this) else TxtDefaultsPage(this)
+        // The library's own page: over an open book (a restored stack) the main list, which leaves the library out.
+        PAGE_LIBRARY_VIEW -> if (OpenBook.info == null) LibraryViewPage(this) else MainPage(this)
         else -> MainPage(this)
     }
 
-    /** True when [page] is the bottom of the stack (opened directly, e.g. by the quick options' "전체 읽기 설정"). */
+    /** True when [page] is the bottom of the stack (opened directly, e.g. by the quick sheet's "보기 설정 전체"). */
     internal fun isRoot(page: SettingsPage): Boolean = stack.firstOrNull() === page
 
     /** Opens a sub-page on top of the current one. */

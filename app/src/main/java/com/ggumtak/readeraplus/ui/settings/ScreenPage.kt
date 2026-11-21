@@ -22,9 +22,11 @@ import kotlinx.coroutines.withContext
 import android.provider.Settings as SystemSettings
 
 /**
- * "화면·밝기": 화면 (전체 화면, 화면 켜짐 유지, 화면 방향) and 밝기 (UI_SPEC §4.6, brightness.md §5.6: 스와이프로 밝기
- * 조절, 기기 밝기 직접 조절 and its permission flow, 나갈 때 원래 밝기로, the device's own light settings). The status
- * bar moved to [StatusBarPage] and 형광펜 색 표시 to 읽기 설정 (2026-10-11).
+ * "화면·밝기": 화면 (전체 화면, 화면 켜짐 유지, 화면 방향 and, beside it since 2026-11-20, 가로 화면: one page or two on
+ * a landscape screen, a [com.ggumtak.readeraplus.settings.ReaderSettings] field the reader applies when it comes back)
+ * and 밝기 (UI_SPEC §4.6, brightness.md §5.6: 스와이프로 밝기 조절, 기기 밝기 직접 조절 and its permission flow, 나갈 때
+ * 원래 밝기로, the device's own light settings). The status bar moved to [StatusBarPage] and 형광펜 색 표시 to 보기 설정
+ * (2026-10-11).
  */
 internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_SCREEN, "화면·밝기") {
     private var swipeLightRow: View? = null
@@ -81,6 +83,15 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
             ctx.chooser("화면 방향", opts.map { it.first }, sel) { i ->
                 editApp { it.copy(orientationLock = opts[i].second) }
                 orientationRow?.setSummary(opts[i].first)
+            }
+        }.also(body::addView)
+        // Two pages side by side on a landscape screen (the reader lays out again from the first character shown).
+        var landscapeRow: View? = null
+        landscapeRow = ctx.valueRow("가로 화면", R3Rows.landscapePages(Settings.reader.landscapePages)) {
+            val opts = R3Rows.LANDSCAPE_PAGES
+            ctx.chooser("가로 화면", opts.map { R3Rows.landscapePagesChoice(it) }, opts.indexOf(Settings.reader.landscapePages)) { i ->
+                if (Settings.reader.landscapePages != opts[i]) editReader { it.copy(landscapePages = opts[i]) }
+                landscapeRow?.setSummary(R3Rows.landscapePages(opts[i]))
             }
         }.also(body::addView)
     }

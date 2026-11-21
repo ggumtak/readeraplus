@@ -39,8 +39,35 @@ class NotesWindowTest {
     fun aFailedLoadCanBeRequestedAgain() {
         val w = window(100)
         assertTrue(w.request(1))
-        assertEquals(NotesWindow.Put.STALE, w.put(w.token, 1, null))
+        assertEquals(NotesWindow.Put.FAILED, w.put(w.token, 1, null))
+        assertFalse(w.isPending(1))
+        assertFalse(w.isLoaded(1))
         assertTrue(w.request(1))
+        assertEquals(NotesWindow.Put.STORED, w.put(w.token, 1, "p1"))
+    }
+
+    @Test
+    fun aFailedLoadUnderAnOldTokenIsStaleNotFailed() {
+        val w = window(100)
+        val old = w.token
+        assertTrue(w.request(0))
+        w.reset(100)
+        assertTrue(w.request(0))
+        // The old load's failure is dropped and leaves the new load of the same page in flight.
+        assertEquals(NotesWindow.Put.STALE, w.put(old, 0, null))
+        assertTrue(w.isPending(0))
+        assertFalse(w.request(0))
+    }
+
+    @Test
+    fun aFailedTargetPageDoesNotMoveAndKeepsTheJumpPending() {
+        val w = window(1000)
+        assertFalse(w.moveTo(620))
+        w.request(12)
+        assertEquals(NotesWindow.Put.FAILED, w.put(w.token, 12, null))
+        assertEquals(620, w.pendingMove) // the move timeout still moves the list
+        assertTrue(w.request(12))
+        assertEquals(NotesWindow.Put.MOVE, w.put(w.token, 12, "p12"))
     }
 
     @Test

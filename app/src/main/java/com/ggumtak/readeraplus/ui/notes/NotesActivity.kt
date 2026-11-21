@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.DocumentsContract
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
@@ -117,6 +118,38 @@ class NotesActivity : Activity() {
         private const val STATE_EXPORT_ALL = "notes.s.exportAll"
 
         internal const val REQ_EXPORT = 7301
+
+        /**
+         * Open modes for the export target, in order. The picker may hand back an existing (older, longer) export the
+         * user chose to overwrite, and "w" does not truncate on every provider: the old tail would stay after the new
+         * text. So "wt" (write + truncate) first; "w" only when a provider rejects "wt" (throws or returns null).
+         */
+        internal val WRITE_MODES = listOf("wt", "w")
+
+        /** The first of [WRITE_MODES] the provider accepts. Static: the export job must not hold the Activity. */
+        private fun openForWrite(ctx: Context, uri: Uri): OutputStream {
+            val cr = ctx.contentResolver
+            var last: Exception? = null
+            for (mode in WRITE_MODES) {
+                try {
+                    cr.openOutputStream(uri, mode)?.let { return it }
+                } catch (e: Exception) {
+                    last = e
+                }
+            }
+            throw IOException("openOutputStream", last)
+        }
+
+        /**
+         * Best effort after a failed export (caller's IO thread): deletes the document, or when the provider cannot,
+         * empties it ("wt"). Both may fail (e.g. "wt" unsupported); the caller's failure toast is shown either way.
+         */
+        private fun discardPartial(ctx: Context, uri: Uri) {
+            val cr = ctx.contentResolver
+            val deleted = runCatching { DocumentsContract.deleteDocument(cr, uri) }.getOrDefault(false)
+            if (deleted) return
+            runCatching { cr.openOutputStream(uri, "wt")?.close() }
+        }
     }
 
     /** `adb shell setprop log.tag.RANotes DEBUG` (before the app starts) logs the hub's load timings. */
@@ -152,6 +185,8 @@ class NotesActivity : Activity() {
     /** `Library.notesGen` the shown data was read under. */
     private var loadedGen = Long.MIN_VALUE
     private var reloadToken = 0
+    /** [NotesWindow.token] a page-load failure was last told under (one toast per reload), or -1. */
+    private var pageFailToastToken = -1
     private var loading = false
     private var openedAt = 0L
 
@@ -680,6 +715,14 @@ class NotesActivity : Activity() {
             NotesPerf.log("page $p: ${SystemClock.uptimeMillis() - t0} ms")
             when (rowWindow.put(tok, p, page)) {
                 NotesWindow.Put.STALE -> {}
+                NotesWindow.Put.FAILED -> {
+                    // The page is out of flight again: the next bind or page turn over it asks once more (no retry
+                    // loop here). One toast per window token, i.e. per reload: on e-ink a toast is a redraw too.
+                    if (pageFailToastToken != tok) {
+                        pageFailToastToken = tok
+                        toast("노트를 불러오지 못했습니다")
+                    }
+                }
                 NotesWindow.Put.MOVE -> {
                     handler.removeCallbacks(moveTimeout)
                     val row = rowWindow.takeMove()
@@ -981,8 +1024,10 @@ class NotesActivity : Activity() {
         val main = Handler(Looper.getMainLooper())
         ReaderIo.launch {
             val t0 = SystemClock.uptimeMillis()
+            // Set once the target is open: from then on it may hold a partial (or truncated) file.
+            var opened = false
             val msg = try {
-                val n = openForWrite(app, uri).use { os ->
+                val n = openForWrite(app, uri).also { opened = true }.use { os ->
                     val w = BufferedWriter(OutputStreamWriter(os, Charsets.UTF_8))
                     val n = Notes.export(refs, q0, format, w, System.currentTimeMillis())
                     w.flush()
@@ -992,6 +1037,9 @@ class NotesActivity : Activity() {
                 NotesText.exportedToast(n)
             } catch (t: Throwable) {
                 Log.w(NotesPerf.TAG, "export failed", t)
+                // Never leave a cut-off file under a normal name. Not when the open itself failed: the target is then
+                // untouched, and it may be an older export the user chose to overwrite.
+                if (opened) discardPartial(app, uri)
                 ErrorLines.line("내보내지 못했습니다", t)
             }
             main.post {
@@ -1007,10 +1055,4 @@ class NotesActivity : Activity() {
         }
     }
 
-    /** Mode "w" first (a new document has nothing to truncate), "wt" when a provider rejects it. */
-    private fun openForWrite(ctx: Context, uri: Uri): OutputStream {
-        val cr = ctx.contentResolver
-        val first = try { cr.openOutputStream(uri, "w") } catch (e: Exception) { null }
-        return first ?: cr.openOutputStream(uri, "wt") ?: throw IOException("openOutputStream")
-    }
 }
