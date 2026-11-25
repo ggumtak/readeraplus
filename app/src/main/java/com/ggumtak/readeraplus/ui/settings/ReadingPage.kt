@@ -238,7 +238,7 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
                 breakRow?.setSummary(R3Rows.pageBreak(opts[i]))
             }
         }.also(body::addView)
-        body.addView(ctx.toggleRow("외톨이 줄 방지", null, r.widowOrphanControl) { v ->
+        body.addView(ctx.toggleRow("외톨이 줄 방지", "문단의 첫 줄이나 마지막 줄만 페이지 끝에 남지 않게 합니다", r.widowOrphanControl) { v ->
             edit { it.copy(widowOrphanControl = v) }
         })
     }
@@ -254,10 +254,10 @@ internal class ReadingPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     /** How an EPUB's own styling is taken (the TXT cleanup, which changes the text itself, is on the main list). */
     private fun addEpub(body: LinearLayout, r: ReaderSettings) {
         body.section("EPUB 서식")
-        body.addView(ctx.toggleRow("글자 크기 통일", null, r.epubIgnoreBookSizes) { v ->
+        body.addView(ctx.toggleRow("글자 크기 통일", "책 속 글자 크기 지정 대신 위에서 정한 크기를 적용합니다", r.epubIgnoreBookSizes) { v ->
             edit { it.copy(epubIgnoreBookSizes = v) }
         })
-        body.addView(ctx.toggleRow("책의 원래 서식 따르기", null, r.epubPublisherStyles) { v ->
+        body.addView(ctx.toggleRow("책의 원래 서식 따르기", "EPUB에 담긴 정렬·여백·강조 스타일을 유지합니다", r.epubPublisherStyles) { v ->
             edit { it.copy(epubPublisherStyles = v) }
         })
     }

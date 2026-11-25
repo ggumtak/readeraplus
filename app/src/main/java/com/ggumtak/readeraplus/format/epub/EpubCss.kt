@@ -20,6 +20,8 @@ internal class CssDecl {
     @JvmField var marginBottom = 0f
     @JvmField var marginLeft = 0f
     @JvmField var paddingLeft = 0f
+    @JvmField var marginRight = 0f
+    @JvmField var paddingRight = 0f
     @JvmField var breakBefore = false
     @JvmField var breakAfter = false
     @JvmField var underline = false
@@ -49,6 +51,8 @@ internal class CssDecl {
         if (m and MB != 0) marginBottom = o.marginBottom
         if (m and ML != 0) marginLeft = o.marginLeft
         if (m and PL != 0) paddingLeft = o.paddingLeft
+        if (m and MR != 0) marginRight = o.marginRight
+        if (m and PR != 0) paddingRight = o.paddingRight
         if (m and BB != 0) breakBefore = o.breakBefore
         if (m and BA != 0) breakAfter = o.breakAfter
         if (m and DECOR != 0) {
@@ -80,6 +84,8 @@ internal class CssDecl {
         const val VALIGN = 1 shl 13
         const val WS = 1 shl 14
         const val LIST = 1 shl 15
+        const val MR = 1 shl 16
+        const val PR = 1 shl 17
 
         const val A_LEFT = 1
         const val A_CENTER = 2
@@ -555,6 +561,8 @@ internal object CssParser {
             "margin-bottom" -> emLength(v)?.let { d.marginBottom = it; d.mask = d.mask or CssDecl.MB }
             "margin-left", "margin-inline-start" -> emLength(v)?.let { d.marginLeft = it; d.mask = d.mask or CssDecl.ML }
             "padding-left", "padding-inline-start" -> emLength(v)?.let { d.paddingLeft = it; d.mask = d.mask or CssDecl.PL }
+            "margin-right", "margin-inline-end" -> emLength(v)?.let { d.marginRight = it; d.mask = d.mask or CssDecl.MR }
+            "padding-right", "padding-inline-end" -> emLength(v)?.let { d.paddingRight = it; d.mask = d.mask or CssDecl.PR }
             "margin" -> {
                 val t = v.split(' ').filter { it.isNotEmpty() }
                 if (t.isEmpty() || t.size > 4) return
@@ -565,12 +573,15 @@ internal object CssParser {
                 emLength(top)?.let { d.marginTop = it; d.mask = d.mask or CssDecl.MT }
                 emLength(bottom)?.let { d.marginBottom = it; d.mask = d.mask or CssDecl.MB }
                 emLength(left)?.let { d.marginLeft = it; d.mask = d.mask or CssDecl.ML }
+                emLength(right)?.let { d.marginRight = it; d.mask = d.mask or CssDecl.MR }
             }
             "padding" -> {
                 val t = v.split(' ').filter { it.isNotEmpty() }
                 if (t.isEmpty() || t.size > 4) return
-                val left = t.getOrElse(3) { t.getOrElse(1) { t[0] } }
+                val right = t.getOrElse(1) { t[0] }
+                val left = t.getOrElse(3) { right }
                 emLength(left)?.let { d.paddingLeft = it; d.mask = d.mask or CssDecl.PL }
+                emLength(right)?.let { d.paddingRight = it; d.mask = d.mask or CssDecl.PR }
             }
             "page-break-before", "break-before", "-webkit-column-break-before" -> {
                 breakValue(v)?.let { d.breakBefore = it; d.mask = d.mask or CssDecl.BB }

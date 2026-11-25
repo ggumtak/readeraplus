@@ -14,9 +14,12 @@ import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.ui.kit.Ink
@@ -38,7 +41,7 @@ import com.ggumtak.readeraplus.ui.kit.vertical
  */
 internal object LookupPanel {
     private const val SIDE_DP = 8
-    private const val BAR_DP = 44
+    private const val BAR_DP = 48
 
     /**
      * Shows [url] in the window titled [title]. When no WebView can be created (no WebView provider installed) the
@@ -50,7 +53,7 @@ internal object LookupPanel {
         val web = try {
             WebView(activity)
         } catch (_: Throwable) {
-            activity.toast("웹 창을 열 수 없어 브라우저로 엽니다")
+            activity.toast("앱 안에서 웹페이지를 열 수 없어 외부 브라우저로 엽니다")
             return openInBrowser(activity, url)
         }
         web.settings.apply {
@@ -83,6 +86,35 @@ internal object LookupPanel {
 
         lateinit var dialog: Dialog
         val line = View(activity).apply { setBackgroundColor(Ink.BLACK); visibility = View.INVISIBLE }
+        val errorLabel = activity.label("페이지를 불러올 수 없습니다.\n인터넷 연결을 확인한 뒤 다시 시도하세요.", 15f, color = Ink.GRAY).apply {
+            gravity = Gravity.CENTER
+            setLineSpacing(0f, 1.3f)
+        }
+        val retryBtn = activity.label("다시 시도", 15f, bold = true).apply {
+            gravity = Gravity.CENTER
+            minHeight = activity.dp(48)
+            setPadding(activity.dp(20), 0, activity.dp(20), 0)
+            background = activity.borderBox()
+        }
+        val errorBox = activity.vertical {
+            gravity = Gravity.CENTER
+            setBackgroundColor(Ink.WHITE)
+            setPadding(activity.dp(24), activity.dp(24), activity.dp(24), activity.dp(24))
+            visibility = View.GONE
+            addView(errorLabel, lp(WRAP_CONTENT, WRAP_CONTENT))
+            addView(retryBtn, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = activity.dp(16) })
+        }
+        retryBtn.setOnClickListener {
+            if (destroyed) {
+                dialog.dismiss()
+                show(activity, title, url)
+                return@setOnClickListener
+            }
+            errorBox.visibility = View.GONE
+            web.visibility = View.VISIBLE
+            web.loadUrl(web.url?.takeUnless { it == "about:blank" } ?: url)
+        }
+
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val scheme = request.url.scheme?.lowercase()
@@ -91,11 +123,29 @@ internal object LookupPanel {
             }
 
             override fun onPageStarted(view: WebView, u: String?, favicon: Bitmap?) {
+                errorBox.visibility = View.GONE
+                web.visibility = View.VISIBLE
                 line.visibility = View.VISIBLE
             }
 
             override fun onPageFinished(view: WebView, u: String?) {
                 line.visibility = View.INVISIBLE
+            }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                if (!request.isForMainFrame) return
+                line.visibility = View.INVISIBLE
+                web.visibility = View.GONE
+                errorLabel.text = "페이지를 불러올 수 없습니다.\n인터넷 연결을 확인한 뒤 다시 시도하세요."
+                errorBox.visibility = View.VISIBLE
+            }
+
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                line.visibility = View.INVISIBLE
+                destroyWeb()
+                errorLabel.text = "웹페이지를 표시하던 중 오류가 발생했습니다.\n다시 시도해 주세요."
+                errorBox.visibility = View.VISIBLE
+                return true
             }
         }
 
@@ -112,7 +162,7 @@ internal object LookupPanel {
             minimumHeight = activity.dp(BAR_DP)
             setPadding(activity.dp(12), 0, 0, 0)
             addView(titleView, lp(0, WRAP_CONTENT, 1f))
-            addView(button("브라우저") { openInBrowser(activity, web.url ?: url) })
+            addView(button("브라우저") { openInBrowser(activity, if (destroyed) url else web.url ?: url) })
             addView(button("닫기") { dialog.dismiss() })
         }
         attachResize(bar, screen, { height }) { h ->
@@ -121,18 +171,22 @@ internal object LookupPanel {
             dialog.window?.setLayout(MATCH_PARENT, h)
         }
 
+        val webContainer = FrameLayout(activity).apply {
+            addView(web, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            addView(errorBox, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        }
         val root = activity.vertical {
             addView(bar, lp(MATCH_PARENT, WRAP_CONTENT))
             addView(activity.hairline())
             addView(line, lp(MATCH_PARENT, activity.dp(2)))
-            addView(web, lp(MATCH_PARENT, 0, 1f))
+            addView(webContainer, lp(MATCH_PARENT, 0, 1f))
         }
 
         dialog = object : Dialog(activity, R.style.InkDialog) {
             @Deprecated("Deprecated in Java")
             @Suppress("OVERRIDE_DEPRECATION")
             override fun onBackPressed() {
-                if (web.canGoBack()) web.goBack() else dismiss()
+                if (!destroyed && web.canGoBack()) web.goBack() else dismiss()
             }
         }
         dialog.setContentView(root)

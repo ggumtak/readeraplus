@@ -113,7 +113,7 @@ internal class ScreenPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
             editApp { it.copy(brightnessRestore = v) }
             updateLightUi()
         }.also(body::addView)
-        verdictRow = ctx.row("밝기 방식 다시 묻기", null) { resetVerdict() }.also(body::addView)
+        verdictRow = ctx.row("밝기 방식 다시 묻기", "기기 조명과 앱 화면 밝기 중 조절 방식을 다시 선택합니다") { resetVerdict() }.also(body::addView)
         body.addView(ctx.navRow("기기 조명 설정", R3Rows.LIGHT_SETTINGS) { openDisplaySettings() })
         updateLightUi()
     }

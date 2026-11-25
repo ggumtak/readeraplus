@@ -278,12 +278,12 @@ class SettingsFormatTest {
     fun brightnessSubtitles() {
         assertEquals("왼쪽 가장자리를 위아래로 밀기", R3Rows.brightnessSwipe(scroll = false, none = false))
         assertEquals("왼쪽 가장자리만 밝기 · 나머지는 스크롤", R3Rows.brightnessSwipe(scroll = true, none = false))
-        assertEquals("이 기기에서는 밝기 스와이프를 쓸 수 없습니다", R3Rows.brightnessSwipe(scroll = true, none = true))
+        assertEquals("이 기기에서는 밝기 스와이프를 사용할 수 없습니다", R3Rows.brightnessSwipe(scroll = true, none = true))
         assertEquals("조명이 안 바뀔 때 켜세요", R3Rows.brightnessDevice(false, true, true, false))
         assertEquals("나가면 원래 밝기로", R3Rows.brightnessDevice(true, true, true, false))
         assertEquals("나가도 이 밝기 유지", R3Rows.brightnessDevice(true, false, true, false))
         assertEquals("권한 필요 · 눌러서 허용", R3Rows.brightnessDevice(true, true, false, false))
-        assertEquals("이 기기는 앱이 조명을 바꿀 수 없습니다", R3Rows.brightnessDevice(true, true, true, true))
+        assertEquals("이 기기에서는 앱이 조명을 조절할 수 없습니다", R3Rows.brightnessDevice(true, true, true, true))
         // UI_SPEC §4.3 fix 2: an automatic original comes back on leave even when the level stays.
         assertEquals("나가도 이 밝기 유지 · 자동 밝기는 다시 켬", R3Rows.brightnessDevice(true, false, true, false, origAuto = true))
         assertEquals("나가면 원래 밝기로", R3Rows.brightnessDevice(true, true, true, false, origAuto = true))

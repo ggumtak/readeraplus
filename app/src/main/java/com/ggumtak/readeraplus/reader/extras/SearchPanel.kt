@@ -25,6 +25,7 @@ import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.format.LoadHints
 import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.ReaderHost
@@ -333,7 +334,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
                 var s = st.scanned
                 while (s < total && count < SearchPanel.MAX_RESULTS) {
                     ensureActive()
-                    val text = texts.text(s) { i -> runCatching { doc.loadSection(i).text }.getOrNull() }
+                    val text = texts.text(s) { i -> runCatching { LoadHints.asBackground { doc.loadSection(i).text } }.getOrNull() }
                     if (text != null) {
                         TextSearch.scan(text, q) { off ->
                             batch.add(SearchPanel.Hit(s, off, off + q.length, SearchPanel.buildSnippet(text, off, off + q.length)))

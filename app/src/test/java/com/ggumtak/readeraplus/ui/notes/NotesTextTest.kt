@@ -105,17 +105,17 @@ class NotesTextTest {
         assertEquals(NotesText.Empty.WORDS_OFF, NotesText.emptyCase(NotesTab.WORDS, "", false, false))
         assertEquals(NotesText.Empty.TAB, NotesText.emptyCase(NotesTab.QUOTES, "", false, false))
         assertEquals(
-            "아직 노트가 없습니다\n\n읽다가 글자를 길게 눌러 ‘형광펜’·‘메모’를 고르거나\n북마크를 추가하면 여기에 모입니다",
+            "아직 노트가 없습니다\n\n읽다가 본문을 길게 눌러 ‘형광펜’·‘메모’를 고르거나\n북마크를 추가하면 여기에 모입니다",
             NotesText.emptyText(NotesTab.ALL, "", false, true, true),
         )
-        assertEquals("메모가 없습니다\n\n문장을 길게 눌러 ‘메모’를 누르세요", NotesText.emptyText(NotesTab.MEMOS, "", false, true, true))
+        assertEquals("메모가 없습니다\n\n본문을 길게 눌러 ‘메모’를 선택하세요", NotesText.emptyText(NotesTab.MEMOS, "", false, true, true))
         assertEquals(
             "리뷰가 없습니다\n\n읽는 화면 ⋮ 메뉴의 ‘내 리뷰’나\n다 읽은 뒤 ‘리뷰 쓰기’로 남기세요",
             NotesText.emptyText(NotesTab.REVIEWS, "", false, true, true),
         )
         assertTrue(NotesText.emptyText(NotesTab.BOOKMARKS, "", false, true, true).endsWith("\n화면 오른쪽 위 모서리를 눌러도 됩니다"))
         assertEquals("북마크가 없습니다\n\n읽는 중에 메뉴의 북마크 버튼을 누르세요", NotesText.emptyText(NotesTab.BOOKMARKS, "", false, true, false))
-        assertEquals("형광펜이 없습니다\n\n본문을 길게 누른 뒤 ‘형광펜’을 누르세요", NotesText.emptyText(NotesTab.QUOTES, "", false, true, true))
+        assertEquals("형광펜이 없습니다\n\n본문을 길게 눌러 ‘형광펜’을 선택하세요", NotesText.emptyText(NotesTab.QUOTES, "", false, true, true))
         for (t in NotesTab.entries) {
             val text = NotesText.emptyText(t, "", false, true, true)
             assertTrue(text.isNotBlank())

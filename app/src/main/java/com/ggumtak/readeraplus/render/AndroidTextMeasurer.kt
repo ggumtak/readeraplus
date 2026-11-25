@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.os.Build
 import android.text.TextPaint
 import android.util.TypedValue
 import com.ggumtak.readeraplus.engine.FontMetricsPx
@@ -57,6 +58,7 @@ class AndroidTextMeasurer(
     private var lastStyle: RunStyle? = null
     private var lastPaint: TextPaint? = null
     private var chars = CharArray(0)
+    private var widths = FloatArray(0)
     private val fm = Paint.FontMetrics()
 
     override fun measure(text: String, start: Int, end: Int, style: RunStyle, out: FloatArray, outOffset: Int) {
@@ -69,7 +71,15 @@ class AndroidTextMeasurer(
         if (chars.size < n) chars = CharBuffers.grow(chars, n)
         val buf = chars
         text.toCharArray(buf, 0, s, s + n)
-        p.getTextRunAdvances(buf, 0, n, 0, n, false, out, outOffset)
+        if (Build.VERSION.SDK_INT >= 29) {
+            p.getTextRunAdvances(buf, 0, n, 0, n, false, out, outOffset)
+        } else if (outOffset == 0) {
+            p.getTextWidths(buf, 0, n, out)
+        } else {
+            if (widths.size < n) widths = FloatArray(maxOf(n, widths.size * 2))
+            p.getTextWidths(buf, 0, n, widths)
+            System.arraycopy(widths, 0, out, outOffset, n)
+        }
         CharBuffers.zeroInvisible(buf, n, out, outOffset)
     }
 
@@ -131,7 +141,7 @@ class AndroidTextMeasurer(
                 stroke = FontManager.syntheticStroke(fontId, weight, size)
                 FontManager.typeface(fontId, weight, style.italic)
             } catch (t: Throwable) {
-                Typeface.create(Typeface.SERIF, (if (style.bold) Typeface.BOLD else 0) or (if (style.italic) Typeface.ITALIC else 0))
+                Typeface.create(Typeface.SERIF, typefaceStyle(style.bold, style.italic))
             }
         }
         p.typeface = tf
@@ -147,8 +157,15 @@ class AndroidTextMeasurer(
     }
 
     private fun monospace(bold: Boolean, italic: Boolean): Typeface {
-        val st = (if (bold) Typeface.BOLD else 0) or (if (italic) Typeface.ITALIC else 0)
-        return if (st == 0) Typeface.MONOSPACE else Typeface.create(Typeface.MONOSPACE, st)
+        val st = typefaceStyle(bold, italic)
+        return if (st == Typeface.NORMAL) Typeface.MONOSPACE else Typeface.create(Typeface.MONOSPACE, st)
+    }
+
+    private fun typefaceStyle(bold: Boolean, italic: Boolean): Int = when {
+        bold && italic -> Typeface.BOLD_ITALIC
+        bold -> Typeface.BOLD
+        italic -> Typeface.ITALIC
+        else -> Typeface.NORMAL
     }
 
     internal companion object {

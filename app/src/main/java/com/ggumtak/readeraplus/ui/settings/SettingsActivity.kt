@@ -13,9 +13,11 @@ import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.settings.Settings
 import com.ggumtak.readeraplus.ui.kit.Ink
+import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.lp
 import com.ggumtak.readeraplus.ui.kit.toolbar
 import com.ggumtak.readeraplus.ui.kit.vertical
+import com.ggumtak.readeraplus.ui.library.LibraryText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
@@ -222,10 +224,22 @@ class SettingsActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val top = stack.lastOrNull()
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && event.keyCode != KeyEvent.KEYCODE_BACK) {
             lastKeyCode = event.keyCode
             lastScanCode = event.scanCode
-            stack.lastOrNull()?.onKeyPressed(event.keyCode, event.scanCode)
+            top?.onKeyPressed(event.keyCode, event.scanCode)
+        }
+        if (top != null && top.id != PAGE_PAGE_TURNING) {
+            val dir = LibraryText.pageDirection(event.keyCode, Settings.app)
+            val sv = top.view as? ScrollView
+            if (dir != 0 && sv != null && currentFocus !is android.widget.EditText) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    val step = (sv.height - sv.paddingTop - sv.paddingBottom - dp(24)).coerceAtLeast(dp(48))
+                    sv.scrollBy(0, dir * step)
+                }
+                return true
+            }
         }
         return super.dispatchKeyEvent(event)
     }

@@ -229,6 +229,7 @@ class BookSession(
     // Main thread: renderer for drawing (same metrics as the layout measurer of the current settings).
     private var renderer: PageRenderer? = null
     private var rendererSettings: ReaderSettings? = null
+    private var rendererEink: Boolean? = null
     /** Main thread: a layout of this session was logged already ([traceLayout], RAPerf DEBUG). */
     private var layoutTraced = false
 
@@ -341,15 +342,17 @@ class BookSession(
         waiting.forEach { it.deferred.complete(null) }
     }
 
-    /** Renderer matching the current settings (created lazily on the main thread; typefaces are cached). */
+    /** Renderer matching the current settings and probed device class (created lazily on the main thread; typefaces are cached). */
     fun renderer(): PageRenderer {
+        val einkNow = DeviceClass.cached(context) != false
         val r = renderer
-        if (r != null && rendererSettings === settings) return r
+        if (r != null && rendererSettings === settings && rendererEink == einkNow) return r
         val s = settings
         val m = AndroidTextMeasurer(context, s) { images.size(it) }
         return PageRenderer(context, m, images).also {
             renderer = it
             rendererSettings = s
+            rendererEink = einkNow
         }
     }
 

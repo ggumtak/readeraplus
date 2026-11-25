@@ -188,6 +188,7 @@ internal class PdfPageView(context: Context) : View(context) {
             val dark = v == PdfPrefs.TONE_DARK
             highlightBlend(highlightPaint, !dark)
             highlightBlend(layerMultiply, !dark)
+            highlightBlend(highlightTailPaint, !dark)
             layerMultiply.alpha = if (dark) 0x80 else 0xFF
             highlightAlpha = if (dark) 0x80 else 0xFF
             invalidate()
@@ -242,10 +243,16 @@ internal class PdfPageView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+    /** The highlighter line's tail: BUTT cap avoids overlapping the live tile's round cap and double-darkening. */
+    private val highlightTailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.BUTT
+        strokeJoin = Paint.Join.ROUND
+    }.also { highlightBlend(it, true) }
     private val layerPaint = Paint()
     private val layerMultiply = Paint().also { highlightBlend(it, true) }
     /** Points the platform predicts the pen will reach next (view px), drawn ahead of the real line (Android 14+). */
-    /** The MotionPredictor (Android 14+), false when the device has none, null until the first stroke. */
+    /** The per-(deviceId, source) MotionPredictor cache (Android 14+), null until the first stroke. */
     internal var predictorSlot: Any? = null
     private val predicted = FloatArray(MAX_PREDICTED * 2)
     private var predictedCount = 0
@@ -659,7 +666,7 @@ internal class PdfPageView(context: Context) : View(context) {
         if (liveOn) {
             // The highlighter layer is drawn opaque and multiplied onto the page as a whole (no darker overlaps).
             tiles.drawTo(canvas, if (inkGesture == MODE_HIGHLIGHTER) layerMultiply else layerPaint)
-            if (inkGesture == MODE_PEN) drawTail(canvas)
+            if (inkGesture == MODE_PEN || inkGesture == MODE_HIGHLIGHTER) drawTail(canvas)
         } else if (inkGesture == MODE_LASSO || lassoShown) {
             toView.setScale(s, s)
             toView.postTranslate(ox, oy)
@@ -673,17 +680,24 @@ internal class PdfPageView(context: Context) : View(context) {
     }
 
     /**
-     * The pen line's tail, redrawn each frame and never stored: from the last drawn midpoint to the last real point
-     * (the layer stops half a segment short), then on through the predicted points (Android 14+).
+     * The pen / highlighter line's tail, redrawn each frame and never stored: from the last drawn midpoint to the last
+     * real point (the layer stops half a segment short), then on through the predicted points (Android 14+).
      */
     private fun drawTail(canvas: Canvas) {
         predictPath.rewind()
         predictPath.moveTo(midVx, midVy)
         predictPath.lineTo(lastVx, lastVy)
         for (i in 0 until predictedCount) predictPath.lineTo(predicted[i * 2], predicted[i * 2 + 1])
-        tailPaint.color = penColor
-        tailPaint.strokeWidth = maxOf(1f, lastHalf * 2f)
-        canvas.drawPath(predictPath, tailPaint)
+        val p = if (inkGesture == MODE_HIGHLIGHTER) {
+            highlightTailPaint.color = highlighterColor
+            highlightTailPaint.alpha = highlightAlpha
+            highlightTailPaint
+        } else {
+            tailPaint.color = penColor
+            tailPaint
+        }
+        p.strokeWidth = maxOf(1f, lastHalf * 2f)
+        canvas.drawPath(predictPath, p)
     }
 
     private fun drawPage(canvas: Canvas, b: Bitmap) {
@@ -1407,6 +1421,7 @@ internal class PdfPageView(context: Context) : View(context) {
             if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
                 // A second finger: zoom / move instead; the stroke so far is dropped.
                 cancelInk()
+                inkTouched = false
             } else {
                 handleInk(event)
             }
@@ -1457,6 +1472,12 @@ private object Prediction {
     /** How far ahead the line is drawn: about one frame of a 60 Hz screen plus touch latency. */
     private const val AHEAD_NS = 24_000_000L
 
+    private class PredictorCache(val predictor: android.view.MotionPredictor) {
+        var deviceId = Int.MIN_VALUE
+        var source = 0
+        var available = false
+    }
+
     fun record(view: PdfPageView, e: MotionEvent) {
         val p = predictorOf(view, e) ?: return
         try {
@@ -1491,15 +1512,14 @@ private object Prediction {
     }
 
     private fun predictorOf(view: PdfPageView, e: MotionEvent): android.view.MotionPredictor? {
-        val existing = view.predictorSlot as? android.view.MotionPredictor
-        if (existing != null) return existing
-        if (view.predictorSlot == false) return null
-        val p = android.view.MotionPredictor(view.context)
-        if (!p.isPredictionAvailable(e.deviceId, e.source)) {
-            view.predictorSlot = false
-            return null
+        val cache = (view.predictorSlot as? PredictorCache) ?: PredictorCache(android.view.MotionPredictor(view.context)).also {
+            view.predictorSlot = it
         }
-        view.predictorSlot = p
-        return p
+        if (cache.deviceId != e.deviceId || cache.source != e.source) {
+            cache.deviceId = e.deviceId
+            cache.source = e.source
+            cache.available = cache.predictor.isPredictionAvailable(e.deviceId, e.source)
+        }
+        return if (cache.available) cache.predictor else null
     }
 }

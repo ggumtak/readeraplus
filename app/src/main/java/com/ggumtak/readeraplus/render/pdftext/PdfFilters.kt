@@ -94,12 +94,12 @@ internal object PdfFilters {
     }
 
     fun ascii85(data: ByteArray): ByteArray {
-        val out = ByteSink(data.size)
+        val out = ByteSink(maxOf(256, minOf(data.size, 1 shl 20)))
         var i = 0
         if (data.size >= 2 && data[0] == '<'.code.toByte() && data[1] == '~'.code.toByte()) i = 2
         var tuple = 0L
         var cnt = 0
-        while (i < data.size) {
+        while (i < data.size && out.len < MAX_OUT) {
             val c = data[i++].toInt() and 0xFF
             if (c == '~'.code) break
             if (c == 'z'.code && cnt == 0) {
@@ -117,15 +117,16 @@ internal object PdfFilters {
                 cnt = 0
             }
         }
-        if (cnt > 1) {
+        if (cnt > 1 && out.len < MAX_OUT) {
             for (k in cnt until 5) tuple = tuple * 85 + 84
             for (k in 0 until cnt - 1) out.put((tuple shr (24 - 8 * k)).toInt())
         }
+        if (out.len > MAX_OUT) out.len = MAX_OUT
         return out.toByteArray()
     }
 
     fun runLength(data: ByteArray): ByteArray {
-        val out = ByteSink(data.size * 2)
+        val out = ByteSink(maxOf(256, minOf(data.size.toLong() * 2L, (1 shl 20).toLong()).toInt()))
         var i = 0
         while (i < data.size && out.len < MAX_OUT) {
             val n = data[i++].toInt() and 0xFF
@@ -139,11 +140,12 @@ internal object PdfFilters {
                 for (k in 0 until 257 - n) out.put(b)
             }
         }
+        if (out.len > MAX_OUT) out.len = MAX_OUT
         return out.toByteArray()
     }
 
     fun lzw(data: ByteArray, early: Int): ByteArray {
-        val out = ByteSink(data.size * 3)
+        val out = ByteSink(maxOf(256, minOf(data.size.toLong() * 3L, (1 shl 20).toLong()).toInt()))
         val prefix = IntArray(4096)
         val suffix = ByteArray(4096)
         val first = ByteArray(4096)
@@ -208,6 +210,7 @@ internal object PdfFilters {
                 else -> 9
             }
         }
+        if (out.len > MAX_OUT) out.len = MAX_OUT
         return out.toByteArray()
     }
 
@@ -227,26 +230,30 @@ internal object PdfFilters {
     }
 
     private fun pngPredictor(data: ByteArray, rowLen: Int, bpp: Int): ByteArray {
-        val stride = rowLen + 1
-        val rows = (data.size + stride - 1) / stride
-        val out = ByteArray(rows * rowLen)
+        val stride = rowLen.toLong() + 1L
+        val rows = ((data.size.toLong() + stride - 1L) / stride).toInt()
+        val outSize = minOf(rows.toLong() * rowLen.toLong(), data.size.toLong(), MAX_OUT.toLong()).toInt()
+        if (outSize <= 0) return ByteArray(0)
+        val out = ByteArray(outSize)
         var total = 0
         for (r in 0 until rows) {
-            val so = r * stride
-            val avail = minOf(rowLen, data.size - so - 1)
+            val so = (r.toLong() * stride).toInt()
+            val o = r.toLong() * rowLen.toLong()
+            if (so >= data.size || o >= outSize) break
+            val avail = minOf(rowLen, data.size - so - 1, (outSize - o).toInt())
             if (avail <= 0) break
+            val oi = o.toInt()
             val ft = data[so].toInt()
-            val o = r * rowLen
             for (i in 0 until avail) {
                 val x = data[so + 1 + i].toInt() and 0xFF
-                val a = if (i >= bpp) out[o + i - bpp].toInt() and 0xFF else 0
-                val b = if (r > 0) out[o - rowLen + i].toInt() and 0xFF else 0
+                val a = if (i >= bpp) out[oi + i - bpp].toInt() and 0xFF else 0
+                val b = if (r > 0) out[oi - rowLen + i].toInt() and 0xFF else 0
                 val v = when (ft) {
                     1 -> x + a
                     2 -> x + b
                     3 -> x + ((a + b) shr 1)
                     4 -> {
-                        val c = if (r > 0 && i >= bpp) out[o - rowLen + i - bpp].toInt() and 0xFF else 0
+                        val c = if (r > 0 && i >= bpp) out[oi - rowLen + i - bpp].toInt() and 0xFF else 0
                         val pp = a + b - c
                         val pa = Math.abs(pp - a)
                         val pb = Math.abs(pp - b)
@@ -255,9 +262,9 @@ internal object PdfFilters {
                     }
                     else -> x
                 }
-                out[o + i] = v.toByte()
+                out[oi + i] = v.toByte()
             }
-            total = o + avail
+            total = oi + avail
         }
         return if (total == out.size) out else out.copyOf(total)
     }

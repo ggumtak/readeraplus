@@ -117,6 +117,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
             val (access, last) = withContext(Dispatchers.IO) {
                 StorageAccess.granted(appCtx) to runCatching { AutoBackup.lastWrittenAt(appCtx) }.getOrDefault(0L)
             }
+            if (destroyed) return@launch
             val on = Settings.app.autoBackup
             autoRow?.setSummary(R3Rows.autoBackupSummary(access, location(), last))
             autoRow?.setToggleChecked(on)
@@ -135,6 +136,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
                 runCatching { AutoBackup.runNow(appCtx, force = true) { ReaderPresence.inFront } }.getOrDefault(AutoBackup.Outcome.FAILED)
             }
             busy = false
+            if (destroyed) return@launch
             showStatus(autoStatus, R3Rows.autoBackupOutcome(outcome, location()))
             refreshAuto()
         }
@@ -160,7 +162,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
             restoreStatus.setShown(false)
             val labels = cands.map { R3Rows.candidate(it.createdAt, it.summary, it.auto) }
             listDialog = ctx.alert()
-                .setTitle("복원할 백업 고르기")
+                .setTitle("복원할 백업 선택")
                 .setItems(labels.toTypedArray()) { _, i -> confirmAutoRestore(cands[i]) }
                 .setNegativeButton("취소", null)
                 .showNoAnim()
@@ -176,6 +178,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
             activity.scope.launch {
                 val result = withContext(Dispatchers.IO) { runCatching { AutoBackup.restore(appCtx, c) } }
                 busy = false
+                if (destroyed) return@launch
                 result.onSuccess { n -> restored(n) }.onFailure { e ->
                     showStatus(restoreStatus, ErrorLines.withDetail(ErrorLines.line("복원 실패", e), e))
                 }
@@ -189,10 +192,12 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
      */
     private fun deleteAutoFiles() {
         if (busy) return
+        busy = true
         val appCtx = activity.applicationContext
         val others = canDeleteOthers()
         activity.scope.launch {
             val n = withContext(Dispatchers.IO) { runCatching { AutoBackup.countFiles(appCtx, others) }.getOrDefault(0) }
+            busy = false
             if (destroyed) return@launch
             if (n <= 0) {
                 showStatus(autoStatus, "지울 자동 백업 파일이 없습니다")
@@ -204,6 +209,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
                 activity.scope.launch {
                     val deleted = withContext(Dispatchers.IO) { runCatching { AutoBackup.deleteFiles(appCtx, others) }.getOrDefault(0) }
                     busy = false
+                    if (destroyed) return@launch
                     showStatus(autoStatus, "자동 백업 파일 ${deleted}개를 지웠습니다")
                     refreshAuto()
                 }
@@ -254,23 +260,27 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
 
     /** The status line says how it went (no toast); the row's "마지막 백업" moves on. */
     private fun export(uri: Uri) {
+        if (busy) return
         busy = true
         showStatus(backupStatus, "백업 파일을 만드는 중…")
         val appCtx = activity.applicationContext
         activity.scope.launch {
             val result = withContext(Dispatchers.IO) {
+                var opened = false
                 runCatching {
                     val out = runCatching { appCtx.contentResolver.openOutputStream(uri, "wt") }.getOrNull()
                         ?: appCtx.contentResolver.openOutputStream(uri)
                         ?: error("파일을 열 수 없습니다")
+                    opened = true
                     out.use { Backup.export(appCtx, it) }
                     Settings.raw().edit().putLong(PREF_LAST_BACKUP_AT, System.currentTimeMillis()).apply()
                 }.onFailure {
-                    // Don't leave a truncated backup behind that a later restore would choke on.
-                    runCatching { DocumentsContract.deleteDocument(appCtx.contentResolver, uri) }
+                    // Don't leave a truncated backup behind, but never delete an untouched existing file if opening failed.
+                    if (opened) runCatching { DocumentsContract.deleteDocument(appCtx.contentResolver, uri) }
                 }
             }
             busy = false
+            if (destroyed) return@launch
             result.onSuccess {
                 exportRow?.setSummary(lastBackupText())
                 showStatus(backupStatus, "백업 파일을 저장했습니다")
@@ -281,10 +291,14 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
     }
 
     private fun confirmRestore(uri: Uri) {
-        ctx.confirm("백업에서 복원", RESTORE_MESSAGE, ok = "복원") { restore(uri) }
+        if (busy) return
+        ctx.confirm("백업에서 복원", RESTORE_MESSAGE, ok = "복원") {
+            if (!busy) restore(uri)
+        }
     }
 
     private fun restore(uri: Uri) {
+        if (busy) return
         busy = true
         showStatus(restoreStatus, "복원하는 중…")
         val appCtx = activity.applicationContext
@@ -299,6 +313,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
                 }
             }
             busy = false
+            if (destroyed) return@launch
             // The reason already says what was wrong with the file (K23).
             result.onSuccess { n -> restored(n) }.onFailure { e ->
                 showStatus(restoreStatus, ErrorLines.withDetail(ErrorLines.line("복원 실패", e), e))
@@ -310,7 +325,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         showStatus(restoreStatus, "책 ${n}권의 기록을 복원했습니다")
         ctx.alert()
             .setTitle("복원 완료")
-            .setMessage("책 ${n}권의 기록을 복원했습니다.\n앱을 다시 시작해야 모두 적용됩니다.")
+            .setMessage("책 ${n}권의 기록을 복원했습니다.\n변경 사항을 모두 반영하려면 앱을 다시 시작해 주세요.")
             .setPositiveButton("다시 시작") { _, _ -> restartApp(activity) }
             .setCancelable(false)
             .setNegativeButton("나중에", null)
@@ -328,7 +343,7 @@ internal class BackupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         const val PREF_LAST_BACKUP_AT = "lastBackupAt"
         /** [AutoBackup.locationLabel]'s text, used if it cannot be read. */
         private const val LOCATION = "다운로드/ReaderaPlus/backup"
-        private const val RESTORE_MESSAGE = "백업의 기록과 노트를 이 기기에 합치고, 설정은 백업의 것으로 바꿉니다. 계속할까요?"
+        private const val RESTORE_MESSAGE = "백업 파일의 독서 기록과 노트를 이 기기에 합치고, 설정은 백업 상태로 되돌립니다. 계속할까요?"
     }
 }
 

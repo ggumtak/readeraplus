@@ -213,9 +213,9 @@ class WordSearchQueryTest {
 
     @Test
     fun metaLineShowsPercentAndPage() {
-        assertEquals("34% | 128 페이지", WordSearchQuery.meta(34, "128"))
-        assertEquals("0% | 1 페이지", WordSearchQuery.meta(0, " 1 "))
-        // No page while the pages are counted: just the percent, never "- 페이지".
+        assertEquals("34% · 128쪽", WordSearchQuery.meta(34, "128"))
+        assertEquals("0% · 1쪽", WordSearchQuery.meta(0, " 1 "))
+        // No page while the pages are counted: just the percent, never "- 쪽".
         assertEquals("34%", WordSearchQuery.meta(34, ""))
         assertEquals("34%", WordSearchQuery.meta(34, "-"))
         assertEquals("34%", WordSearchQuery.meta(34, null))
@@ -242,7 +242,7 @@ class WordSearchQueryTest {
     @Test
     fun webMessages() {
         assertEquals("검색어가 없습니다", WordSearchQuery.webMessage("", false))
-        assertEquals("웹 창을 열 수 없어 브라우저로 열었습니다", WordSearchQuery.webMessage("말이다", true))
+        assertEquals("앱 안에서 웹페이지를 열 수 없어 외부 브라우저로 열었습니다", WordSearchQuery.webMessage("말이다", true))
         assertNull(WordSearchQuery.webMessage("말이다", false))
     }
 

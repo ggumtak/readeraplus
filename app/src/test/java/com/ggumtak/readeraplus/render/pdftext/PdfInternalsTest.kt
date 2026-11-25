@@ -298,4 +298,26 @@ class PdfInternalsTest {
         assertArrayEquals(floatArrayOf(200f, 100f), r.pageSize(0), 0.01f)
         assertEquals("in", r.page(0).text)
     }
+
+    @Test
+    fun pngPredictorAndFilterBounds() {
+        // Large /Columns within rowBits limit with small stream decodes cleanly without huge allocation.
+        val largeCols = dict("<< /Predictor 12 /Columns 8000000 /Colors 4 /BitsPerComponent 8 >>")
+        assertArrayEquals(
+            byteArrayOf(1, 2, 3),
+            PdfFilters.decodeChain(TestPdf.deflate(byteArrayOf(0, 1, 2, 3)), PdfName("FlateDecode"), largeCols),
+        )
+        // Excessive rowBits (> 2^28) safely skips predictor and returns raw inflated bytes.
+        val hugeCols = dict("<< /Predictor 12 /Columns 10000000 /Colors 4 /BitsPerComponent 8 >>")
+        assertArrayEquals(
+            byteArrayOf(0, 1, 2, 3),
+            PdfFilters.decodeChain(TestPdf.deflate(byteArrayOf(0, 1, 2, 3)), PdfName("FlateDecode"), hugeCols),
+        )
+        // Truncated predictor stream with zero bytes after filter byte returns empty without throwing.
+        val empty = PdfFilters.decodeChain(TestPdf.deflate(byteArrayOf(2)), PdfName("FlateDecode"), dict("<< /Predictor 12 /Columns 4 >>"))
+        assertEquals(0, empty.size)
+        // ASCII85 'z' expansion stays strictly bounded by MAX_OUT.
+        val zRun = ByteArray(1000) { 'z'.code.toByte() }
+        assertEquals(4000, PdfFilters.ascii85(zRun).size)
+    }
 }

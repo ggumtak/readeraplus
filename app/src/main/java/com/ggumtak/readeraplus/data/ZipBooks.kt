@@ -45,7 +45,7 @@ internal object ZipBooks {
         name.length > 4 && name[0] != '.' && name.endsWith(".zip", ignoreCase = true)
 
     /**
-     * Whether a ZIP entry name is a book to copy: not a directory, `.txt` / `.epub` (any case), not inside a
+     * Whether a ZIP entry name is a book to copy: not a directory, `.txt` / `.epub` / `.pdf` (any case), not inside a
      * `__MACOSX` folder and its base name not hidden (AppleDouble `._x.txt`).
      */
     fun isBookEntry(name: String): Boolean {
@@ -54,13 +54,15 @@ internal object ZipBooks {
         if (norm.split('/').any { it == "__MACOSX" }) return false
         val base = norm.substringAfterLast('/')
         if (base.isEmpty() || base[0] == '.') return false
-        return base.endsWith(".txt", ignoreCase = true) || base.endsWith(".epub", ignoreCase = true)
+        return base.endsWith(".txt", ignoreCase = true) ||
+            base.endsWith(".epub", ignoreCase = true) ||
+            base.endsWith(".pdf", ignoreCase = true)
     }
 
     /**
      * The file name an entry is copied under: its base name (after the last `/` or `\`) with control characters
      * and `"*:<>?|` replaced by `_`, trimmed, the stem shortened to [MAX_STEM_BYTES] UTF-8 bytes. A name left empty
-     * (or hidden) becomes "book.<ext>" for a TXT / EPUB entry, else [FALLBACK_NAME].
+     * (or hidden) becomes "book.<ext>" for a TXT / EPUB / PDF entry, else [FALLBACK_NAME].
      */
     fun outName(entryName: String): String {
         val base = entryName.substring(maxOf(entryName.lastIndexOf('/'), entryName.lastIndexOf('\\')) + 1)
@@ -72,7 +74,9 @@ internal object ZipBooks {
         val dot = clean.lastIndexOf('.')
         val ext = if (dot >= 0) clean.substring(dot + 1) else ""
         val stem = (if (dot >= 0) clean.substring(0, dot) else clean).trim()
-        val bookExt = ext.equals("txt", ignoreCase = true) || ext.equals("epub", ignoreCase = true)
+        val bookExt = ext.equals("txt", ignoreCase = true) ||
+            ext.equals("epub", ignoreCase = true) ||
+            ext.equals("pdf", ignoreCase = true)
         if (stem.isEmpty() || stem[0] == '.' || !bookExt) {
             return if (bookExt) "book.${ext.lowercase()}" else FALLBACK_NAME
         }
@@ -246,7 +250,7 @@ internal object ZipBooks {
                 val input = zip.getInputStream(e) ?: continue
                 val tmp = File(dir, "${BookCopies.COPY_PREFIX}${System.nanoTime()}${BookCopies.PART_SUFFIX}")
                 val placed = try {
-                    val written = input.use { copy(it, tmp, cap) }
+                    val written = input.use { copy(it, tmp, cap, stopWhen) }
                     if (written < 0) {
                         tmp.delete()
                         // Over the total budget: stop this ZIP; over the entry limit: next entry.
@@ -292,11 +296,12 @@ internal object ZipBooks {
         }
 
     /** Copies [input] to [out]; the byte count, or -1 (copy incomplete) once more than [cap] bytes came. */
-    private fun copy(input: InputStream, out: File, cap: Long): Long {
+    private fun copy(input: InputStream, out: File, cap: Long, stopWhen: () -> Boolean): Long {
         var total = 0L
         FileOutputStream(out).use { os ->
             val buf = ByteArray(BUFFER_BYTES)
             while (true) {
+                if (stopWhen()) throw StoppedException()
                 val n = input.read(buf)
                 if (n < 0) break
                 total += n

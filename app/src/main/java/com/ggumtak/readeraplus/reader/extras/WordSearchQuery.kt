@@ -199,9 +199,9 @@ internal object WordSearchQuery {
             ReaderFormat.percent(if (fraction.isNaN()) 0f else fraction)
         }
 
-    /** A row's grey line: "34% | 128 페이지"; just "34%" while there is no page number (pages not counted yet). */
+    /** A row's grey line: "34% · 128쪽"; just "34%" while there is no page number (pages not counted yet). */
     fun meta(percent: Int, page: String?): String =
-        if (PageLabel.hasPage(page)) "$percent% | ${page!!.trim()} 페이지" else "$percent%"
+        if (PageLabel.hasPage(page)) "$percent% · ${page!!.trim()}쪽" else "$percent%"
 
     /**
      * The message over an empty 본문 list, or null while there are rows: nothing typed, the book not open, searching
@@ -225,7 +225,7 @@ internal object WordSearchQuery {
     /** What a web tab shows instead of its page, or null when it shows the page. */
     fun webMessage(webQuery: String, failed: Boolean): String? = when {
         webQuery.isEmpty() -> "검색어가 없습니다"
-        failed -> "웹 창을 열 수 없어 브라우저로 열었습니다"
+        failed -> "앱 안에서 웹페이지를 열 수 없어 외부 브라우저로 열었습니다"
         else -> null
     }
 }

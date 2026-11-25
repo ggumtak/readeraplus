@@ -99,14 +99,14 @@ private class RulesScreen(
 
         adapter = Adapter()
         val list = ctx.einkListView().apply { this.adapter = this@RulesScreen.adapter }
-        val empty = ctx.emptyMessage("규칙이 없습니다\n\n[+ 규칙 추가]나 [추천 규칙…]을 누르세요")
+        val empty = ctx.emptyMessage("등록된 규칙이 없습니다\n\n아래 [+ 규칙 추가]나 [추천 규칙…]에서 추가해 보세요")
         val frame = FrameLayout(ctx)
         frame.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         frame.addView(empty, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
         list.emptyView = empty
         list.setOnItemClickListener { _, row, i, _ ->
             val r = items.getOrNull(i) ?: return@setOnItemClickListener
-            if ((row as? RuleRow)?.onCheckbox() == true) toggle(i) else edit(i, r)
+            if ((row as? RuleRow)?.consumeCheckbox() == true) toggle(i) else edit(i, r)
         }
         list.setOnItemLongClickListener { _, _, i, _ ->
             rowMenu(i)
@@ -317,7 +317,7 @@ private class RulesScreen(
                     val p = packs[which]
                     when {
                         CleanupPacks.isAdded(items, p) -> ctx.toast("이미 추가한 규칙입니다")
-                        p.warning != null -> ctx.confirm(p.name, "주의: ${p.warning}.\n추가할까요?", "추가") { addPack(p) }
+                        p.warning != null -> ctx.confirm(p.name, "${p.warning.trimEnd('.')}.\n그래도 추가할까요?", "추가") { addPack(p) }
                         else -> addPack(p)
                     }
                 }
@@ -340,7 +340,7 @@ private class RulesScreen(
             text,
             "찾을 정규식 => 바꿀 내용",
             minLines = 6,
-            message = "한 줄에 규칙 하나: ‘찾을 정규식 => 바꿀 내용’. ‘## 이름’은 아래 규칙의 이름, ‘#- ’로 시작하면 꺼진 규칙, 그 밖의 #은 주석입니다.",
+            message = "한 줄에 규칙 하나씩 ‘찾을 내용 => 바꿀 내용’ 형식으로 입력하세요.\n‘## 이름’으로 규칙 이름을 붙이고, ‘#- ’로 시작하면 비활성화되며, 나머지 ‘#’ 줄은 주석입니다.",
         ) { t ->
             val bad = Fmt.invalidRuleCount(t)
             text = t.trimEnd()
@@ -405,6 +405,7 @@ private class RuleRow(context: Context) : LinearLayout(context) {
     }
 
     fun bind(r: RuleItem) {
+        downX = -1f
         box.setImageResource(if (r.enabled) R.drawable.ic_check_box else R.drawable.ic_check_box_outline_blank)
         box.contentDescription = if (r.enabled) "켜짐" else "꺼짐"
         val bad = if (RuleList.isValid(r)) "" else " (잘못된 규칙)"
@@ -420,8 +421,12 @@ private class RuleRow(context: Context) : LinearLayout(context) {
         title.setTextColor(if (r.enabled) Ink.BLACK else Ink.GRAY)
     }
 
-    /** The last press was on the checkbox column (left 56 dp). */
-    fun onCheckbox(): Boolean = downX in 0f..context.dp(56).toFloat()
+    /** Consumes the last press and reports whether it landed on the checkbox column (left 56 dp). */
+    fun consumeCheckbox(): Boolean {
+        val hit = downX in 0f..context.dp(56).toFloat()
+        downX = -1f
+        return hit
+    }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) downX = ev.x

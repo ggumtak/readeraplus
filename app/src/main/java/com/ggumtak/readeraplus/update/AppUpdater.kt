@@ -148,7 +148,7 @@ internal object AppUpdater {
         front = WeakReference(activity)
         if (busy) {
             // A tap must always answer (an automatic check, a download or an install is under way).
-            if (manual) activity.toast("업데이트를 이미 진행하고 있습니다")
+            if (manual) activity.toast("이미 업데이트를 진행 중입니다")
             return
         }
         if (manual) activity.toast("업데이트 확인 중…")
@@ -171,7 +171,7 @@ internal object AppUpdater {
             val current = BuildConfig.VERSION_CODE
             when {
                 latest == null -> if (manual) activity.toast("업데이트를 확인하지 못했습니다")
-                !UpdateInfo.isNewer(latest, current) -> if (manual) activity.toast("최신 버전입니다 (빌드 $current)")
+                !UpdateInfo.isNewer(latest, current) -> if (manual) activity.toast("최신 버전입니다 (현재 빌드 $current)")
                 !manual && prefs(activity).getInt(K_SKIPPED, 0) >= latest.build -> Unit
                 else -> offer(activity, latest)
             }
@@ -199,14 +199,19 @@ internal object AppUpdater {
             .setCancelable(false)
             .showNoAnim()
         scope.launch {
-            var shown = -1
+            var shownBucket = -1
             val file = withContext(Dispatchers.IO) {
                 runCatching {
                     fetchApk(app, latest, cancelled) { percent ->
-                        // Every 10 %: each change is an e-ink update.
-                        if (percent / 10 != shown / 10) {
-                            shown = percent
-                            scope.launch { if (dialog.isShowing) dialog.setMessage(UpdateInfo.progressMessage(percent)) }
+                        // Every 10 %: each change is an e-ink update (bucket -1 ensures 0% updates immediately).
+                        val bucket = percent / 10
+                        if (bucket != shownBucket) {
+                            shownBucket = bucket
+                            scope.launch {
+                                if (alive(activity) && dialog.isShowing) {
+                                    dialog.setMessage(UpdateInfo.progressMessage(percent))
+                                }
+                            }
                         }
                     }
                 }.getOrNull()
@@ -224,7 +229,7 @@ internal object AppUpdater {
                     next != null -> install(next, file)
                     else -> {
                         withContext(prefsIo) { setPending(app, latest.build) }
-                        app.toast("업데이트를 내려받았습니다. 앱으로 돌아오면 설치를 이어 갑니다")
+                        app.toast("업데이트 파일을 받았습니다. 앱으로 돌아오면 설치를 이어갑니다")
                     }
                 }
                 return@launch
@@ -250,7 +255,7 @@ internal object AppUpdater {
             val drop = { scope.launch(prefsIo) { setPending(app, 0) }; Unit }
             activity.alert()
                 .setTitle("설치 허용")
-                .setMessage("업데이트를 설치하려면 이 앱의 ‘알 수 없는 앱 설치’를 허용해야 합니다. 허용하고 돌아오면 설치를 이어 갑니다.")
+                .setMessage("업데이트를 설치하려면 이 앱의 ‘알 수 없는 앱 설치’ 권한을 허용해야 합니다. 허용 후 돌아오면 설치를 이어갑니다.")
                 .setPositiveButton("설정 열기") { _, _ ->
                     runCatching {
                         activity.startActivity(

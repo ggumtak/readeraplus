@@ -351,6 +351,7 @@ class NotesActivity : Activity() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         releaseDrawHold()
+        com.ggumtak.readeraplus.reader.extras.PanelRegistry.closeAll(this)
         scope.cancel()
         super.onDestroy()
     }
@@ -359,6 +360,10 @@ class NotesActivity : Activity() {
     override fun onBackPressed() {
         if (selecting) {
             endSelection()
+            return
+        }
+        if (::searchRow.isInitialized && searchRow.visibility == View.VISIBLE) {
+            closeSearch()
             return
         }
         @Suppress("DEPRECATION") super.onBackPressed()
@@ -428,17 +433,17 @@ class NotesActivity : Activity() {
         root.addView(tabs, lp())
         root.addView(hairline())
 
-        // 48 dp with 40 dp chips: the book, order and colour choices (the ⋮ menu does not repeat them).
+        // 56 dp with 48 dp chips: the book, order and colour choices (the ⋮ menu does not repeat them).
         val filters = horizontal {
-            minimumHeight = dp(48)
+            minimumHeight = dp(56)
             setPadding(dp(16), dp(4), dp(16), dp(4))
         }
         bookChip = chip { if (q.bookId != null) setBook(null) else menus.bookChooser() }.apply { maxWidth = dp(150) }
         orderChip = chip { menus.orderChooser() }
         styleChip = chip { menus.styleChooser() }
-        filters.addView(bookChip, lp(WRAP_CONTENT, dp(40)))
-        filters.addView(orderChip, lp(WRAP_CONTENT, dp(40)).apply { leftMargin = dp(8) })
-        filters.addView(styleChip, lp(WRAP_CONTENT, dp(40)).apply { leftMargin = dp(8) })
+        filters.addView(bookChip, lp(WRAP_CONTENT, dp(48)))
+        filters.addView(orderChip, lp(WRAP_CONTENT, dp(48)).apply { leftMargin = dp(8) })
+        filters.addView(styleChip, lp(WRAP_CONTENT, dp(48)).apply { leftMargin = dp(8) })
         root.addView(filters, lp())
         root.addView(hairline())
 
@@ -500,7 +505,7 @@ class NotesActivity : Activity() {
     private fun chip(onClick: (View) -> Unit): TextView = label("", 14f, maxLines = 1).apply {
         gravity = Gravity.CENTER
         setPadding(dp(12), 0, dp(12), 0)
-        background = borderBox(radiusDp = 20f)
+        background = borderBox(radiusDp = 24f)
         setOnClickListener(onClick)
     }
 
@@ -540,7 +545,8 @@ class NotesActivity : Activity() {
                     handler.postDelayed(searchRunnable, NotesWindow.SEARCH_DEBOUNCE_MS)
                 }
             })
-            setOnEditorActionListener { _, _, _ ->
+            setOnEditorActionListener { _, _, ev ->
+                if (ev != null && ev.action != KeyEvent.ACTION_DOWN) return@setOnEditorActionListener false
                 handler.removeCallbacks(searchRunnable)
                 applySearch(text.toString())
                 hideKeyboard()
@@ -548,7 +554,9 @@ class NotesActivity : Activity() {
             }
         }
         row.addView(searchEdit, lp(0, WRAP_CONTENT, 1f))
-        row.addView(iconButton(R.drawable.ic_close, "지우기") { searchEdit.setText("") })
+        row.addView(iconButton(R.drawable.ic_close, "지우기") {
+            if (searchEdit.text.isNotEmpty()) searchEdit.setText("") else closeSearch()
+        })
         val col = vertical()
         col.addView(row, lp())
         col.addView(hairline())
@@ -946,8 +954,7 @@ class NotesActivity : Activity() {
         val q0 = q
         scope.launch {
             val refs = withContext(Dispatchers.IO) { runCatching { Notes.refs(q0) }.getOrNull() } ?: return@launch
-            if (isDestroyed) return@launch
-            if (!selecting) enterSelection(null)
+            if (isDestroyed || !selecting || q != q0) return@launch
             for (r in refs) selected += r
             updateChrome()
             rebindVisible()
@@ -974,6 +981,10 @@ class NotesActivity : Activity() {
 
     /** Opens the document picker for an export of [refs] (null = the whole list under the query). */
     internal fun startExport(format: NotesExport.Format, refs: LongArray?) {
+        if (exporting) {
+            toast("내보내기가 이미 진행 중입니다")
+            return
+        }
         val title = if (q.bookId != null) filterBook?.title else null
         val name = NotesText.fileName(title, format.ext, System.currentTimeMillis())
         val i = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
@@ -991,7 +1002,7 @@ class NotesActivity : Activity() {
             } catch (e: ActivityNotFoundException) {
                 exportFormat = null
                 exportRefs = null
-                toast("저장할 곳을 고르는 화면을 열 수 없습니다")
+                toast("저장할 위치를 선택하는 화면을 열 수 없습니다")
             }
         }
     }

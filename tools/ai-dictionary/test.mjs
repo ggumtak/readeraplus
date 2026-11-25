@@ -537,9 +537,33 @@ test('picture blocks are validated before the network',async()=>{
 test('the e-ink query switches on the e-ink class and nothing else changes',()=>{
   assert.equal(ui({search:'?eink=1'}).document.documentElement.classes?.includes('eink'),true);
   assert.equal(ui({search:'?x=1&eink=1'}).document.documentElement.classes?.includes('eink'),true);
+  assert.equal(ui({hash:'#q=word&eink=1'}).document.documentElement.classes?.includes('eink'),true);
   for(const search of ['','?eink=0','?eink=true'])assert.equal(ui({search}).document.documentElement.classes,undefined);
+  assert.equal(ui({hash:'#q=word&eink=0'}).document.documentElement.classes,undefined);
   assert.match(html,/\.eink \.hint,[^{]*\{font-size:14px\}/);
   assert.match(html,/\.eink \[aria-checked="true"\][^{]*\{background:#000;color:#fff;font-weight:700\}/);
+});
+
+test('empty new conversations are not persisted or listed, and the same word can be looked up again after reset',async()=>{
+  const calls=[];const app=ui({savedKey:key,hash:'#q='+encodeURIComponent('귀접 뜻'),fetch:async(u,i)=>{calls.push(JSON.parse(i.body));return reply();}});
+  await settle();assert.equal(calls.length,1);
+  click(app.nodes.new);click(app.nodes.new);
+  const index=JSON.parse(app.storage.getItem('reader-ai-sessions-v1'));
+  assert.equal(index.items.length,1);
+  click(app.nodes.menu);assert.equal(app.nodes['recent-list'].querySelectorAll('.recent-open').length,1);
+  app.window.events.hashchange();await settle();
+  assert.equal(calls.length,2);assert.equal(calls[1].messages[0].content,'귀접 뜻');
+});
+
+test('connecting an API key from settings returns to settings with unsaved edits intact',()=>{
+  const app=ui({});
+  click(app.nodes.settings);
+  app.nodes.instructions.value='초안 지침';
+  click(app.nodes['settings-key']);
+  assert.equal(app.nodes['key-dialog'].hidden,false);assert.equal(app.nodes['settings-dialog'].hidden,true);
+  app.nodes['api-key'].value=key;submit(app.nodes['key-form']);
+  assert.equal(app.nodes['key-dialog'].hidden,true);assert.equal(app.nodes['settings-dialog'].hidden,false);
+  assert.equal(app.nodes.instructions.value,'초안 지침');
 });
 
 test('every tappable control is at least 48px and visible text uses the polite formal ending',()=>{

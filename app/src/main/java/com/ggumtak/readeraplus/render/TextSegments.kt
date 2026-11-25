@@ -43,9 +43,9 @@ internal object TextSegments {
     }
 
     fun isBlankChar(c: Char): Boolean = when (c) {
-        ' ', ' ', '　', '\t', '​', '‌', '‍', '⁠', '﻿', ' ', ' ',
-        '\n', '\r', '­', OBJECT_CHAR -> true
-        else -> c in ' '..' '
+        ' ', '\u00A0', '\u3000', '\t', '\u200B', '\u200C', '\u200D', '\u2060', '\uFEFF', '\u202F', '\u205F',
+        '\n', '\r', '\u00AD', OBJECT_CHAR -> true
+        else -> c in '\u2000'..'\u200A'
     }
 
     /** Index of the first style run whose end is after [offset] (runs sorted, non-overlapping); runs.size if none. */

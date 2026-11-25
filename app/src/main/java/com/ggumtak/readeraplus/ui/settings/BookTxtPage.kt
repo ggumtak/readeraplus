@@ -104,9 +104,9 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         // Both rows are about the defaults: the section shows only while the book has options of its own.
         ownViews.clear()
         ownViews += body.section("기본값")
-        ownViews += ctx.row(SAVE_DEFAULTS, "이 설정을 TXT 정리 (모든 책)로 저장") { saveAsDefaults() }.also(body::addView)
+        ownViews += ctx.row(SAVE_DEFAULTS, "이 설정을 ‘TXT 정리 (모든 책)’ 기본값으로 저장") { saveAsDefaults() }.also(body::addView)
         ownViews += ctx.row(CLEAR_OWN, "바꾸기 규칙 포함 · 기본값을 따릅니다") { clearOwn() }.also(body::addView)
-        followsNote = ctx.note("이 책은 TXT 정리 (모든 책)를 따릅니다.").also(body::addView)
+        followsNote = ctx.note("이 책은 ‘TXT 정리 (모든 책)’ 설정을 따릅니다.").also(body::addView)
         refreshActions()
         return ctx.pageScroll(body)
     }
@@ -166,7 +166,7 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     private fun saveAsDefaults() {
         ctx.confirm(
             SAVE_DEFAULTS,
-            "이 책의 TXT 정리를 TXT 정리 (모든 책)로 저장할까요? 다른 TXT 책은 다음에 열 때 다시 정리합니다.",
+            "이 책의 설정을 모든 TXT 책의 기본값으로 저장할까요? 다른 TXT 책은 다음에 열 때 다시 정리합니다.",
             "저장",
         ) {
             val global = Settings.reader.withTxt(override)

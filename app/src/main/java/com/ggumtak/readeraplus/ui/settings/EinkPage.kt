@@ -40,6 +40,7 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
     /** Read on IO when the page is built: the device's ghost clearing, and whether the xrz refresh exists. */
     private var cleanInfo: DeviceCleanInfo? = null
     private var hasXrz: Boolean? = null
+    private var destroyed = false
 
     override fun build(): View {
         val app = Settings.app
@@ -50,6 +51,7 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
     }
 
     override fun onDestroy() {
+        destroyed = true
         runCatching { testDialog?.dismiss() }
         testDialog = null
     }
@@ -131,6 +133,7 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
                     Diag(Eink.vendorName(), Eink.supportsViewMode(), Eink.hasXrzRefresh(), Eink.deviceCleanInfo())
                 }.getOrDefault(Diag(null, false, false, null))
             }
+            if (destroyed) return@launch
             hasXrz = d.hasXrz
             cleanInfo = d.clean
             // The mode works only through the device's e-ink control: without it the row says why and is disabled.
@@ -155,6 +158,7 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
     private fun chooseMethod() {
         activity.scope.launch {
             val xrz = hasXrz ?: withContext(Dispatchers.IO) { runCatching { Eink.hasXrzRefresh() }.getOrDefault(false) }.also { hasXrz = it }
+            if (destroyed) return@launch
             val opts = EinkChoices.methods(xrz)
             val sel = opts.indexOfFirst { it.second == Settings.app.einkRefreshMethod }
             ctx.chooser("새로고침 방식", opts.map { it.first }, sel) { i -> setMethod(opts[i].second) }
@@ -170,6 +174,7 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         if (testDialog?.isShowing == true) return
         activity.scope.launch {
             val xrz = hasXrz ?: withContext(Dispatchers.IO) { runCatching { Eink.hasXrzRefresh() }.getOrDefault(false) }.also { hasXrz = it }
+            if (destroyed) return@launch
             val app = Settings.app
             // A stored device method this firmware lacks would only test the flash: start from 자동 instead.
             val start = if (!xrz && EinkChoices.isDeviceMethod(app.einkRefreshMethod)) EinkChoices.METHODS[0].second else app.einkRefreshMethod
@@ -185,6 +190,6 @@ internal class EinkPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
         /** The page's title and the main list's row. */
         const val TITLE = "e-ink 화면"
         private const val MODE_NOTE = "‘기기 설정 따름’은 책을 다시 열 때 적용됩니다."
-        private const val MODE_UNAVAILABLE = "이 기기에서는 바꿀 수 없습니다 · 기기 e-ink 설정을 쓰세요"
+        private const val MODE_UNAVAILABLE = "이 기기에서는 변경할 수 없습니다 · 기기의 e-ink 설정을 이용해 주세요"
     }
 }

@@ -84,6 +84,7 @@ internal object PdfSheet {
         if (onDismiss != null) dialog.setOnDismissListener { onDismiss() }
         dialog.show()
         keepBars(dialog, activity)
+        com.ggumtak.readeraplus.reader.extras.PanelRegistry.dialog(activity, dialog)
         return dialog
     }
 
@@ -143,7 +144,7 @@ internal object PdfSheet {
             val c = ctx.label(o, 14f, bold = true).apply {
                 gravity = Gravity.CENTER
                 minWidth = ctx.dp(52)
-                minHeight = ctx.dp(36)
+                minHeight = ctx.dp(44)
                 setPadding(ctx.dp(10), 0, ctx.dp(10), 0)
                 setOnClickListener {
                     paint(i)
@@ -151,7 +152,7 @@ internal object PdfSheet {
                 }
             }
             cells += c
-            seg.addView(c, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(36)).apply { leftMargin = ctx.dp(6) })
+            seg.addView(c, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.dp(44)).apply { leftMargin = ctx.dp(6) })
         }
         paint(selected)
         return row(ctx, title, null, seg, null)
@@ -200,15 +201,15 @@ internal object PdfSheet {
         }
         head.addView(ctx.label("−", 24f, color = TEXT).apply {
             gravity = Gravity.CENTER
-            minWidth = ctx.dp(40)
-            minHeight = ctx.dp(40)
+            minWidth = ctx.dp(48)
+            minHeight = ctx.dp(48)
             setOnClickListener { step(-1) }
         })
         head.addView(value)
         head.addView(ctx.label("+", 24f, color = TEXT).apply {
             gravity = Gravity.CENTER
-            minWidth = ctx.dp(40)
-            minHeight = ctx.dp(40)
+            minWidth = ctx.dp(48)
+            minHeight = ctx.dp(48)
             setOnClickListener { step(1) }
         })
         bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {

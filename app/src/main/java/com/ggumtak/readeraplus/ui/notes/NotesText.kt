@@ -159,16 +159,16 @@ object NotesText {
             Empty.ONE_BOOK -> "이 책에는 노트가 없습니다"
             Empty.WORDS_OFF -> "찾아본 단어 기록이 꺼져 있습니다"
             Empty.TAB -> when (tab) {
-                NotesTab.ALL -> "아직 노트가 없습니다\n\n읽다가 글자를 길게 눌러 ‘형광펜’·‘메모’를 고르거나\n" +
+                NotesTab.ALL -> "아직 노트가 없습니다\n\n읽다가 본문을 길게 눌러 ‘형광펜’·‘메모’를 고르거나\n" +
                     "북마크를 추가하면 여기에 모입니다"
-                // The 목차 dialog's 인용문 tab says the same (ContentsDialog).
-                NotesTab.QUOTES -> "형광펜이 없습니다\n\n본문을 길게 누른 뒤 ‘형광펜’을 누르세요"
-                NotesTab.MEMOS -> "메모가 없습니다\n\n문장을 길게 눌러 ‘메모’를 누르세요"
+                // The 목차 dialog's 형광펜 tab says the same (ContentsDialog).
+                NotesTab.QUOTES -> "형광펜이 없습니다\n\n본문을 길게 눌러 ‘형광펜’을 선택하세요"
+                NotesTab.MEMOS -> "메모가 없습니다\n\n본문을 길게 눌러 ‘메모’를 선택하세요"
                 NotesTab.BOOKMARKS -> "북마크가 없습니다\n\n읽는 중에 메뉴의 북마크 버튼을 누르세요" +
                     (if (bookmarkByTouch) "\n화면 오른쪽 위 모서리를 눌러도 됩니다" else "")
                 NotesTab.REVIEWS -> "리뷰가 없습니다\n\n읽는 화면 ⋮ 메뉴의 ‘내 리뷰’나\n다 읽은 뒤 ‘리뷰 쓰기’로 남기세요"
-                NotesTab.WORDS -> "찾아본 단어가 없습니다\n\n글자를 길게 눌러 ‘사전·번역’이나 ‘웹 검색’을 누르면\n" +
-                    "찾아본 단어와 그 문장이 여기에 기록됩니다"
+                NotesTab.WORDS -> "찾아본 단어가 없습니다\n\n본문을 길게 눌러 ‘검색’으로 단어를 찾아보면\n" +
+                    "단어와 문장이 여기에 기록됩니다"
             }
         }
 

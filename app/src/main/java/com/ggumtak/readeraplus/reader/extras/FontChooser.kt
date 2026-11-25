@@ -232,6 +232,7 @@ class FontImportFragment : Fragment() {
                 startActivityForResult(intent, REQ)
             } catch (_: Exception) {
                 pending = null
+                pendingActivity = null
                 activity?.toast("파일 선택 화면을 열 수 없습니다")
                 finish()
             }
@@ -247,8 +248,9 @@ class FontImportFragment : Fragment() {
         if (requestCode != REQ) return
         val act = activity
         val uri = data?.data
-        val cb = pending
+        val cb = if (act != null && act === pendingActivity?.get()) pending else null
         pending = null
+        pendingActivity = null
         if (act != null && resultCode == Activity.RESULT_OK && uri != null) FontChooser.importFont(act, uri, cb)
         finish()
     }
@@ -262,14 +264,18 @@ class FontImportFragment : Fragment() {
         private const val TAG = "readeraplus.fontimport"
         /** Callback of the running import (captures the settings popup); cleared on every exit path. */
         private var pending: ((String) -> Unit)? = null
+        /** Owning activity of [pending]; prevents invoking a stale callback after activity recreation. */
+        private var pendingActivity: java.lang.ref.WeakReference<Activity>? = null
 
         fun start(activity: Activity, onPick: (String) -> Unit) {
             pending = onPick
+            pendingActivity = java.lang.ref.WeakReference(activity)
             val fm = activity.fragmentManager
             fm.findFragmentByTag(TAG)?.let { old -> runCatching { fm.beginTransaction().remove(old).commitNowAllowingStateLoss() } }
             runCatching { fm.beginTransaction().add(FontImportFragment(), TAG).commitAllowingStateLoss() }
                 .onFailure {
                     pending = null
+                    pendingActivity = null
                     activity.toast("파일 선택 화면을 열 수 없습니다")
                 }
         }

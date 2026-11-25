@@ -10,6 +10,7 @@ import com.ggumtak.readeraplus.data.BookCopies
 import com.ggumtak.readeraplus.data.Library
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 
 /**
  * Bringing documents picked through the Storage Access Framework into the library (blocking; IO thread).
@@ -20,6 +21,7 @@ import java.io.FileOutputStream
 internal object LibraryImport {
     private const val MIN_TXT_BYTES = 1024L
     private const val MAX_TREE_DEPTH = 12
+    private const val SPACE_MARGIN_BYTES = 8L * 1024 * 1024
 
     /** Where copied books live: external app files ("Android/data/…/files/books") or internal files. */
     fun booksDir(context: Context): File {
@@ -93,6 +95,10 @@ internal object LibraryImport {
         val mime = knownMime ?: try { context.contentResolver.getType(uri) } catch (t: Throwable) { null }
         val fileName = LibraryText.importFileName(ns.name, mime) ?: return null
         val dir = booksDir(context)
+        val free = dir.usableSpace
+        if (ns.size > 0 && free in 0 until ns.size + SPACE_MARGIN_BYTES) {
+            throw IOException("저장 공간이 부족합니다")
+        }
         val part = File(dir, "${BookCopies.IMPORT_PREFIX}${System.nanoTime()}${BookCopies.PART_SUFFIX}")
         val target = try {
             val input = context.contentResolver.openInputStream(uri) ?: return null

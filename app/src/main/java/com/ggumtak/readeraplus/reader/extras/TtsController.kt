@@ -318,7 +318,7 @@ class TtsController(private val host: ReaderHost) {
             runCatching { engine.shutdown() }
             tts = null
             afterInit = null
-            ctx.toast("음성 엔진을 쓸 수 없습니다 · 기기의 음성 엔진 설정을 확인하세요")
+            ctx.toast("음성 엔진을 사용할 수 없습니다 · 기기의 음성 엔진 설정을 확인하세요")
             stop()
             return
         }
@@ -349,7 +349,7 @@ class TtsController(private val host: ReaderHost) {
         } else if (runCatching { engine.isLanguageAvailable(Locale.KOREAN) >= TextToSpeech.LANG_AVAILABLE }.getOrDefault(false)) {
             runCatching { engine.language = Locale.KOREAN }
         } else if (hangul) {
-            ctx.toast("한국어 음성이 없습니다 · 음성 엔진 설정에서 받으세요")
+            ctx.toast("한국어 음성이 없습니다 · 음성 엔진 설정에서 설치하세요")
         }
     }
 
@@ -497,9 +497,11 @@ class TtsController(private val host: ReaderHost) {
             if (stopAt != null && !before(u, stopAt)) break
             val id = UtteranceId.make(u.sec, u.start, u.end, u.serial, uttGen)
             val r = runCatching { engine.speak(u.text, TextToSpeech.QUEUE_ADD, Bundle(), id) }.getOrDefault(TextToSpeech.ERROR)
+            val rejectedHead = r == TextToSpeech.ERROR && enqueued == pos
             enqueued++
             if (r == TextToSpeech.ERROR) {
-                // A rejected utterance never reports back: without this the session would hang "playing" silently.
+                // A rejected utterance never reports back: advance pos when it was the head so the session never hangs.
+                if (rejectedHead) pos++
                 errorStreak++
                 if (errorStreak >= MAX_ERRORS) {
                     pause()
@@ -507,6 +509,10 @@ class TtsController(private val host: ReaderHost) {
                     return
                 }
             }
+        }
+        if (stopAt != null && enqueued == pos && itemAt(pos)?.let { !before(it, stopAt) } == true) {
+            sleepNow()
+            return
         }
         if (base + items.size - pos <= AHEAD + 2) prefetchNext()
         if (pos >= base + items.size && endOfBook && !loadingNext) finished()
@@ -667,6 +673,7 @@ class TtsController(private val host: ReaderHost) {
         enqueued = pos
         if (background) spoken.start(SystemClock.elapsedRealtime())
         startSleepTimer()
+        if (!playing) return
         itemAt(pos)?.let { u ->
             follow(u.sec, u.start)
             highlight(u)
@@ -677,13 +684,13 @@ class TtsController(private val host: ReaderHost) {
         updateBar()
     }
 
-    private fun pauseInternal(abandonFocus: Boolean) {
+    private fun pauseInternal(abandonFocus: Boolean, keepSleep: Boolean = false) {
         if (!session) return
         pendingPlay = false
         if (playing) {
             playing = false
             flushEngine()
-            cancelSleep()
+            if (keepSleep) main.removeCallbacks(sleepRunnable) else cancelSleep()
             unregisterNoisy()
             if (background) {
                 spoken.stop(SystemClock.elapsedRealtime())
@@ -730,7 +737,7 @@ class TtsController(private val host: ReaderHost) {
             AudioManager.AUDIOFOCUS_LOSS -> pause()
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> if (playing) {
                 pausedByFocus = true
-                pauseInternal(abandonFocus = false)
+                pauseInternal(abandonFocus = false, keepSleep = true)
             }
             AudioManager.AUDIOFOCUS_GAIN -> if (pausedByFocus && session) {
                 pausedByFocus = false
@@ -794,7 +801,7 @@ class TtsController(private val host: ReaderHost) {
         cancelSleep()
         if (playing || pendingPlay) {
             pause()
-            ctx.toast("예약대로 듣기를 멈췄습니다")
+            ctx.toast("멈춤 예약에 따라 듣기를 멈췄습니다")
         }
     }
 
@@ -820,6 +827,10 @@ class TtsController(private val host: ReaderHost) {
         }
         val now = SystemClock.elapsedRealtime()
         if (sleepDeadline == 0L) sleepDeadline = now + min * 60_000L
+        if (sleepDeadline <= now) {
+            sleepNow()
+            return
+        }
         main.postDelayed(sleepRunnable, (sleepDeadline - now).coerceAtLeast(0L))
     }
 
@@ -961,7 +972,7 @@ class TtsController(private val host: ReaderHost) {
     private fun updateBar() {
         val b = bar ?: return
         val active = playing || pendingPlay
-        b.keepScreenOn = active
+        b.keepScreenOn = active && Settings.app.keepScreenOn
         val icon = if (active) R.drawable.ic_pause else R.drawable.ic_play_arrow
         if (icon != lastPlayIcon) {
             playButton?.setImageResource(icon)
@@ -1030,12 +1041,12 @@ class TtsController(private val host: ReaderHost) {
         main.postDelayed(paramsRestart, 500)
     }
 
-    /** The saved voice's readable name (once the engine lists its voices), else "기본 목소리" / "고른 목소리". */
+    /** The saved voice's readable name (once the engine lists its voices), else "기본 목소리" / "선택한 목소리". */
     private fun currentVoiceName(): String {
         val saved = runCatching { Settings.app.ttsVoice }.getOrDefault("")
         if (saved.isEmpty()) return TtsVoices.DEFAULT
-        val engine = tts?.takeIf { ready } ?: return "고른 목소리"
-        return voiceChoices(engine).firstOrNull { it.first.name == saved }?.second ?: "고른 목소리"
+        val engine = tts?.takeIf { ready } ?: return "선택한 목소리"
+        return voiceChoices(engine).firstOrNull { it.first.name == saved }?.second ?: "없는 목소리 · 기본 목소리로 읽음"
     }
 
     /** The engine's voices as the chooser lists them: Korean first, then the book's language (A13). */
@@ -1063,7 +1074,7 @@ class TtsController(private val host: ReaderHost) {
             if (ctx.isFinishing || ctx.isDestroyed) return@withEngine
             val voices = voiceChoices(engine)
             if (voices.isEmpty()) {
-                ctx.toast("고를 수 있는 목소리가 없습니다")
+                ctx.toast("선택할 수 있는 목소리가 없습니다")
                 return@withEngine
             }
             val labels = listOf(TtsVoices.DEFAULT) + voices.map { it.second }

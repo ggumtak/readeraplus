@@ -57,6 +57,8 @@ class ZipBooksTest {
         assertTrue(ZipBooks.isBookEntry("소설 1권.txt"))
         assertTrue(ZipBooks.isBookEntry("dir/Sub/Book.EPUB"))
         assertTrue(ZipBooks.isBookEntry("win\\path\\a.Txt"))
+        assertTrue(ZipBooks.isBookEntry("a.pdf"))
+        assertTrue(ZipBooks.isBookEntry("dir/Doc.PDF"))
         assertFalse(ZipBooks.isBookEntry("dir/"))
         assertFalse(ZipBooks.isBookEntry("a.txt/"))
         assertFalse(ZipBooks.isBookEntry("__MACOSX/a.txt"))
@@ -64,7 +66,7 @@ class ZipBooksTest {
         assertFalse(ZipBooks.isBookEntry("._a.txt"))
         assertFalse(ZipBooks.isBookEntry("dir/.hidden.epub"))
         assertFalse(ZipBooks.isBookEntry("cover.jpg"))
-        assertFalse(ZipBooks.isBookEntry("a.pdf"))
+        assertFalse(ZipBooks.isBookEntry("doc.docx"))
         assertFalse(ZipBooks.isBookEntry("a.txt.bak"))
         assertFalse(ZipBooks.isBookEntry(""))
     }

@@ -136,7 +136,7 @@ class UpdateInfoTest {
     @Test
     fun messages() {
         assertEquals(
-            "새 버전이 있습니다 (빌드 185 · 지금 184).\n지금 업데이트할까요?\n설치가 끝나면 앱이 닫힙니다. 다시 열어 주세요.",
+            "새 버전이 있습니다 (빌드 185 · 현재 184).\n지금 업데이트할까요?\n설치가 끝나면 앱이 닫히므로 다시 열어 주세요.",
             UpdateInfo.offerMessage(185, 184),
         )
         assertEquals("내려받는 중… 40%", UpdateInfo.progressMessage(40))

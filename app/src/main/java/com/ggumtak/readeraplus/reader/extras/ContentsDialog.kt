@@ -397,7 +397,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             allBtn.visibility = View.GONE
             col.addView(head, lp(MATCH_PARENT, ctx.dp(HEADER_DP)))
             col.addView(timeLine, lp(MATCH_PARENT, ctx.dp(INFO_DP)))
-            col.addView(gapsLine, lp(MATCH_PARENT, ctx.dp(40)))
+            col.addView(gapsLine, lp(MATCH_PARENT, ctx.dp(48)))
             col.addView(ctx.hairline())
             val frame = FrameLayout(ctx)
             frame.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
@@ -433,7 +433,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             val filtering = rows != null
             summary.text = when {
                 filtering -> TocText.filterSummary(query, rows?.size ?: 0)
-                usable && e != null -> TocText.summary(n, current, e.maxNumber, if (current >= 0) e.numberAt(current) else -1)
+                usable -> TocText.summary(n, current, e.maxNumber, if (current >= 0) e.numberAt(current) else -1)
                 else -> TocText.summary(n, current, -1, -1)
             }
             nowBtn.visibility = if (filtering) View.GONE else View.VISIBLE
@@ -832,7 +832,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         if (tab == 2) shareAll.visibility = if (list.isNotEmpty()) View.VISIBLE else View.GONE
         container.removeAllViews()
         if (all.isEmpty()) {
-            container.addView(ctx.illustratedEmpty("형광펜이 없습니다\n\n본문을 길게 누른 뒤 ‘형광펜’을 누르세요", R.drawable.ill_empty_highlights))
+            container.addView(ctx.illustratedEmpty("형광펜이 없습니다\n\n본문을 길게 눌러 ‘형광펜’을 선택하세요", R.drawable.ill_empty_highlights))
             return
         }
         val ink = QuoteLook.ink()

@@ -41,7 +41,7 @@ object EpisodeNumbers {
         if (title.none { it in '0'..'9' }) return null
         for (p in RULES) {
             val m = p.matcher(title)
-            if (m.find()) return m.group(1).toIntOrNull()
+            if (m.find()) return m.group(1)?.toIntOrNull()
         }
         return null
     }

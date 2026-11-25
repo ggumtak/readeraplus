@@ -129,10 +129,10 @@ private fun LibraryActivity.editInfo(b: Book) {
 }
 
 private fun LibraryActivity.documentInfo(b: Book) {
-    // The dialog (reader extras) can edit title/author: refresh when this window gets focus back.
+    // The dialog (reader extras) can edit title/author: refresh immediately on save and on focus return.
     refreshOnFocus = true
     try {
-        ReaderPanels.showDocumentInfo(this, b, null)
+        ReaderPanels.showDocumentInfo(this, b, null) { checkTitles = true; changed() }
     } catch (t: Throwable) {
         refreshOnFocus = false
         toast(ErrorLines.line("책 정보를 열 수 없습니다", t))
@@ -246,8 +246,8 @@ private fun LibraryActivity.notesCountThen(count: () -> Int, then: (Int) -> Unit
 /** Appended to a delete question when [books] PDFs with ink / bookmarks of their own are among the books deleted. */
 private fun pdfNotesWarning(books: Int): String = when {
     books <= 0 -> ""
-    books == 1 -> "\n\n이 PDF의 필기·책갈피도 함께 지워집니다."
-    else -> "\n\nPDF ${books}권의 필기·책갈피도 함께 지워집니다."
+    books == 1 -> "\n\n이 PDF의 필기·북마크도 함께 지워집니다."
+    else -> "\n\nPDF ${books}권의 필기·북마크도 함께 지워집니다."
 }
 
 /**
@@ -299,6 +299,10 @@ internal fun LibraryActivity.confirmEmptyTrash() {
         if (ids.isEmpty()) 0 else Notes.countForBooks(ids)
     }) { notes ->
         val ids = counted
+        if (ids != null && ids.isEmpty()) {
+            toast("휴지통이 비어 있습니다")
+            return@notesCountThen
+        }
         val cb = deleteFileCheckBox()
         val box = FrameLayout(this).apply { setPadding(dp(20), dp(4), dp(20), 0); addView(cb) }
         val d = alert().setTitle("휴지통 비우기")
@@ -403,7 +407,7 @@ internal fun LibraryActivity.collectionGroupMenu(g: ShelfGroup) {
                 prompt("이름 바꾸기", initial = g.label, hint = "컬렉션 이름", ok = "바꾸기") { raw ->
                     val name = raw.trim()
                     if (name.isEmpty() || name == g.label) return@prompt
-                    io("이름을 바꾸지 못했습니다 (같은 이름의 컬렉션이 있을 수 있습니다)", { Library.renameCollection(id, name) }) {
+                    io("이름을 바꾸지 못했습니다. 같은 이름의 컬렉션이 이미 있을 수 있습니다", { Library.renameCollection(id, name) }) {
                         changed(collections = true)
                     }
                 }

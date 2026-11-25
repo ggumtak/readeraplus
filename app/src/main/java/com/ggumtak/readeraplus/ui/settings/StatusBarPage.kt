@@ -55,7 +55,7 @@ internal class StatusBarPage(a: SettingsActivity) : SettingsPage(a, SettingsActi
             body.section(R3Rows.bandHeader(band))
             for (pos in 0..2) addSlotRow(body, r, band, pos)
         }
-        body.addView(ctx.toggleRow("진행 막대", null, r.progressBar) { v ->
+        body.addView(ctx.toggleRow("진행 막대", "화면 맨 아래에 읽기 진행률을 가는 선으로 표시합니다", r.progressBar) { v ->
             editOwn { it.copy(progressBar = v) }
             updateStatusUi()
         })

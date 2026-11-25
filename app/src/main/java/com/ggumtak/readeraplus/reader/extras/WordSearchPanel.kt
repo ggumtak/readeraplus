@@ -25,8 +25,10 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -41,6 +43,7 @@ import android.widget.ListView
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.format.LoadHints
 import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderHost
@@ -50,6 +53,7 @@ import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.InkEditText
 import com.ggumtak.readeraplus.ui.kit.InkPager
 import com.ggumtak.readeraplus.ui.kit.InkPagerBar
+import com.ggumtak.readeraplus.ui.kit.borderBox
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.einkListView
 import com.ggumtak.readeraplus.ui.kit.fullScreenDialog
@@ -117,6 +121,7 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
     private val webs = arrayOfNulls<WebView>(WordSearchQuery.TAB_COUNT)
     private val webLoading = BooleanArray(WordSearchQuery.TAB_COUNT)
     private val webFailed = BooleanArray(WordSearchQuery.TAB_COUNT)
+    private val webError = arrayOfNulls<String>(WordSearchQuery.TAB_COUNT)
     /** A web tab that loads a new query forgets its old pages once it has loaded (Back then leaves the panel). */
     private val clearHistoryAfter = BooleanArray(WordSearchQuery.TAB_COUNT)
 
@@ -130,7 +135,9 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
     private lateinit var note: TextView
     private lateinit var message: TextView
     private lateinit var webFrame: FrameLayout
+    private lateinit var webMessageBox: LinearLayout
     private lateinit var webMessage: TextView
+    private lateinit var webRetry: TextView
     private var pager: InkPager? = null
     private val tabLabels = arrayOfNulls<TextView>(WordSearchQuery.TAB_COUNT)
     private val tabBars = arrayOfNulls<View>(WordSearchQuery.TAB_COUNT)
@@ -304,8 +311,27 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         webFrame = FrameLayout(ctx)
         webFrame.visibility = View.GONE
         webMessage = ctx.emptyMessage("")
-        webMessage.visibility = View.GONE
-        webFrame.addView(webMessage, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
+        webRetry = ctx.label("다시 시도", 15f, bold = true).apply {
+            gravity = Gravity.CENTER
+            minHeight = ctx.dp(48)
+            setPadding(ctx.dp(20), 0, ctx.dp(20), 0)
+            background = ctx.borderBox()
+            visibility = View.GONE
+            setOnClickListener {
+                if (!WordSearchQuery.isWeb(tab) || webQ.isEmpty()) return@setOnClickListener
+                webError[tab] = null
+                webFailed[tab] = false
+                loads.markStale(tab)
+                showWeb(tab)
+            }
+        }
+        webMessageBox = ctx.vertical {
+            gravity = Gravity.CENTER_HORIZONTAL
+            visibility = View.GONE
+            addView(webMessage, lp())
+            addView(webRetry, lp(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = ctx.dp(4) })
+        }
+        webFrame.addView(webMessageBox, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
         body.addView(webFrame, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         return body
     }
@@ -437,7 +463,7 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
                 var s = 0
                 while (s < total && count < SearchPanel.MAX_RESULTS) {
                     ensureActive()
-                    val text = texts.text(s) { i -> runCatching { doc.loadSection(i).text }.getOrNull() }
+                    val text = texts.text(s) { i -> runCatching { LoadHints.asBackground { doc.loadSection(i).text } }.getOrNull() }
                     if (text != null) {
                         TextSearch.scan(text, q) { off ->
                             batch.add(SearchPanel.Hit(s, off, off + q.length, buildSnippet(text, off, off + q.length)))
@@ -510,7 +536,7 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         SearchPanel.jumpTo(host, st, position, remember = true)
     }
 
-    /** "34% | 128 페이지" of a match; the page number is [SearchPanel]'s (empty until the pages are counted). */
+    /** "34% · 128쪽" of a match; the page number is [SearchPanel]'s (empty until the pages are counted). */
     private fun metaOf(h: SearchPanel.Hit): String {
         val pos = DocPosition(h.section, h.start)
         val counted = runCatching { host.pagesPending() }.getOrNull() == null
@@ -564,12 +590,18 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
             loads.markLoaded(visible)
             if (webQ.isNotEmpty()) loadWeb(visible)
         }
-        val msg = if (visible == WordSearchQuery.TAB_AI && aiDeviceEink == null && webQ.isNotEmpty())
-            "기기 확인 중…" else if (visible == WordSearchQuery.TAB_AI && aiDeviceEink == true && webFailed[visible])
-            "AI 창을 열 수 없습니다. Android System WebView를 확인해 주세요."
-            else if (web) WordSearchQuery.webMessage(webQ, webFailed[visible]) else null
+        val err = if (web) webError[visible] else null
+        val msg = when {
+            visible == WordSearchQuery.TAB_AI && aiDeviceEink == null && webQ.isNotEmpty() -> "기기 확인 중…"
+            visible == WordSearchQuery.TAB_AI && aiDeviceEink == true && webFailed[visible] ->
+                "AI 사전을 열 수 없습니다. 기기의 웹뷰(Android System WebView)를 최신 버전으로 업데이트하세요."
+            err != null && webQ.isNotEmpty() -> err
+            web -> WordSearchQuery.webMessage(webQ, webFailed[visible])
+            else -> null
+        }
         setText(webMessage, msg ?: "")
-        webMessage.visibility = if (msg == null) View.GONE else View.VISIBLE
+        webMessageBox.visibility = if (msg == null) View.GONE else View.VISIBLE
+        webRetry.visibility = if (err != null && webQ.isNotEmpty()) View.VISIBLE else View.GONE
         for (k in WordSearchQuery.TAB_KO until WordSearchQuery.TAB_COUNT) {
             val w = webs[k] ?: continue
             if (k == visible && msg == null) {
@@ -605,7 +637,9 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         val existing = webs[ai]
         if (existing != null) {
             webFailed[ai] = false
+            webError[ai] = null
             clearHistoryAfter[ai] = true
+            webLoading[ai] = true
             existing.loadUrl(webUrl(ai))
             return
         }
@@ -613,6 +647,7 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         web.visibility = View.GONE
         webs[ai] = web
         webFrame.addView(web, 0, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        webLoading[ai] = true
         web.loadUrl(webUrl(ai))
     }
 
@@ -637,6 +672,7 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         }
         val url = webUrl(i)
         webFailed[i] = false
+        webError[i] = null
         val existing = webs[i]
         if (existing != null) {
             clearHistoryAfter[i] = true
@@ -647,9 +683,9 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
         if (web == null) {
             webFailed[i] = true
             if (i == WordSearchQuery.TAB_AI && aiDeviceEink == true)
-                ctx.toast("AI 창을 열 수 없습니다. Android System WebView를 확인해 주세요")
+                ctx.toast("AI 사전을 열 수 없습니다. 기기의 웹뷰(Android System WebView)를 최신 버전으로 업데이트하세요")
             else {
-                ctx.toast("웹 창을 열 수 없어 브라우저로 엽니다")
+                ctx.toast("앱 안에서 웹페이지를 열 수 없어 외부 브라우저로 엽니다")
                 TextActions.start(ctx, Intent(Intent.ACTION_VIEW, Uri.parse(url)))
             }
             return
@@ -710,6 +746,10 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
 
             override fun onPageStarted(view: WebView, u: String?, favicon: Bitmap?) {
                 webLoading[i] = true
+                if (webError[i] != null) {
+                    webError[i] = null
+                    if (tab == i) showWeb(tab)
+                }
                 updateLine()
             }
 
@@ -723,6 +763,28 @@ private class WordSearchDialog(private val host: ReaderHost, initialQuery: Strin
                 // A page that was loaded ahead is paused until its tab is shown; the dictionary's end starts it.
                 if (i == WordSearchQuery.TAB_AI && tab != i) view.onPause()
                 if (i == WordSearchQuery.TAB_KO) view.post { preloadAi() }
+            }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                if (localAi || !request.isForMainFrame || closed) return
+                webLoading[i] = false
+                webError[i] = "페이지를 불러올 수 없습니다.\n인터넷 연결을 확인한 뒤 다시 시도하세요."
+                if (tab == i) showWeb(tab) else updateLine()
+            }
+
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                webLoading[i] = false
+                if (webs[i] === view) webs[i] = null
+                runCatching {
+                    (view.parent as? ViewGroup)?.removeView(view)
+                    view.removeAllViews()
+                    view.destroy()
+                }
+                if (!closed) {
+                    webError[i] = "웹페이지를 표시하던 중 오류가 발생했습니다.\n다시 시도해 주세요."
+                    if (tab == i) showWeb(tab) else updateLine()
+                }
+                return true
             }
         }
         if (localAi) web.webChromeClient = object : WebChromeClient() {

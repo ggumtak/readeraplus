@@ -72,13 +72,15 @@ internal object InfoDialogs {
         scope.launch {
             val ok = withContext(Dispatchers.IO) { runCatching { Library.setReview(bookId, text) }.isSuccess }
             scope.cancel()
-            ctx.toast(if (!ok) "리뷰를 저장하지 못했습니다" else if (text.isEmpty()) "리뷰를 지웠습니다" else "리뷰를 저장했습니다")
+            if (!ctx.isFinishing && !ctx.isDestroyed) {
+                ctx.toast(if (!ok) "리뷰를 저장하지 못했습니다" else if (text.isEmpty()) "리뷰를 지웠습니다" else "리뷰를 저장했습니다")
+            }
         }
     }
 
     // ------------------------------------------------------------------ 책 정보
 
-    fun documentInfo(activity: Activity, book: Book, document: BookDocument?) {
+    fun documentInfo(activity: Activity, book: Book, document: BookDocument?, onSaved: (() -> Unit)? = null) {
         val scope = MainScope()
         PanelRegistry.job(activity, scope.launch {
             // The caller's Book is a snapshot (the reader's is from when the book was opened: stale progress,
@@ -90,11 +92,11 @@ internal object InfoDialogs {
             }
             scope.cancel()
             if (activity.isFinishing || activity.isDestroyed) return@launch
-            showInfo(activity, fresh, document, meta)
+            showInfo(activity, fresh, document, meta, onSaved)
         })
     }
 
-    private fun showInfo(activity: Activity, book: Book, document: BookDocument?, meta: DocMeta?) {
+    private fun showInfo(activity: Activity, book: Book, document: BookDocument?, meta: DocMeta?, onSaved: (() -> Unit)?) {
         val box = activity.vertical { setPadding(activity.dp(24), activity.dp(8), activity.dp(24), activity.dp(8)) }
         fun field(key: String, value: String?) {
             if (value.isNullOrBlank()) return
@@ -118,7 +120,7 @@ internal object InfoDialogs {
         }
         // Reading first (where am I, how long), then what the user wrote, then the file.
         field("제목", book.title)
-        field("작가", book.author.ifBlank { meta?.authors?.joinToString(", ") ?: "" }.ifBlank { "알 수 없음" })
+        field("작가", book.author.ifBlank { meta?.authors?.joinToString(", ") ?: "" }.ifBlank { "작가 미상" })
         val series = book.series ?: meta?.series
         if (!series.isNullOrBlank()) {
             val idx = book.seriesIndex ?: meta?.seriesIndex
@@ -154,7 +156,7 @@ internal object InfoDialogs {
         PanelRegistry.dialog(activity, activity.alert().setTitle("책 정보")
             .setView(activity.einkScroll(box))
             .setPositiveButton("닫기", null)
-            .setNeutralButton("편집") { _, _ -> editMeta(activity, book) }
+            .setNeutralButton("편집") { _, _ -> editMeta(activity, book, onSaved) }
             .showNoAnim())
     }
 
@@ -194,8 +196,10 @@ internal object InfoDialogs {
                         }.isSuccess
                     }
                     scope.cancel()
-                    activity.toast(if (ok) "저장했습니다" else "저장하지 못했습니다")
-                    if (ok) onSaved?.invoke()
+                    if (!activity.isFinishing && !activity.isDestroyed) {
+                        activity.toast(if (ok) "저장했습니다" else "저장하지 못했습니다")
+                        if (ok) onSaved?.invoke()
+                    }
                 }
             }
             .setNegativeButton("취소", null)
@@ -475,6 +479,7 @@ internal object InfoText {
     fun volume(chars: Long, charsPerMinute: Int?): String? {
         if (chars <= 0L) return null
         val size = when {
+            chars < 100L -> "${chars}자"
             chars < 10_000L -> "약 ${String.format(Locale.US, "%,d", (chars + 50) / 100 * 100)}자"
             chars < 100_000L -> {
                 val tenths = (chars + 500) / 1000

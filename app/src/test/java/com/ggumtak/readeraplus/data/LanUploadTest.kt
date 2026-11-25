@@ -83,11 +83,13 @@ class LanUploadTest {
         assertEquals("abcd.epub", LanNames.sanitize("a<b>:c|d?*\".epub"))
         assertEquals("hidden.txt", LanNames.sanitize(".hidden.txt"))
         assertEquals("a b.txt", LanNames.sanitize("a\u0000\n b.txt"))
+        assertEquals("문서.pdf", LanNames.sanitize("dir/문서.pdf"))
+        assertEquals("report.PDF", LanNames.sanitize("report.PDF"))
     }
 
     @Test
     fun sanitizeRefusesWhatIsNotABook() {
-        assertNull(LanNames.sanitize("a.pdf"))
+        assertNull(LanNames.sanitize("a.docx"))
         assertNull(LanNames.sanitize("noext"))
         assertNull(LanNames.sanitize(".."))
         assertNull(LanNames.sanitize("..txt"))
@@ -410,6 +412,8 @@ class LanUploadTest {
         assertEquals("192.168.0.23", LanNet.pick(all)!!.hostAddress)
         assertEquals("172.16.0.9", LanNet.pick(all.filterNot { it.first == "wlan0" })!!.hostAddress)
         assertNull(LanNet.pick(all.filterNot { it.first.startsWith("wlan") }))
+        assertEquals("192.168.43.1", LanNet.pick(listOf("rmnet_data0" to ip(10, 23, 4, 5), "swlan0" to ip(192, 168, 43, 1)))!!.hostAddress)
+        assertEquals("192.168.1.50", LanNet.pick(listOf("eth0" to ip(192, 168, 1, 50)))!!.hostAddress)
         assertNull(LanNet.pick(listOf("wlan0" to ip(8, 8, 8, 8))))
         assertNull(LanNet.pick(emptyList()))
     }
@@ -567,26 +571,28 @@ class LanUploadTest {
     @Test
     fun refusesOtherTypesAndEmptyFiles() {
         val h = harness()
-        val (status, body) = h.upload(listOf(file("그림.pdf", "x")))
+        assertEquals(200 to "받았습니다", h.upload(listOf(file("문서.pdf", "%PDF-1.4"))))
+        assertEquals(listOf("문서.pdf"), names(h.dir))
+        val (status, body) = h.upload(listOf(file("그림.docx", "x")))
         assertEquals(415, status)
         // One file per request (the page): the reason only, the page shows the name before it.
         assertEquals(LanExchange.WRONG_TYPE, body)
         assertEquals(listOf(LanExchange.WRONG_TYPE), h.events.errors)
-        assertEquals(listOf<String?>("그림.pdf"), h.events.files)
+        assertEquals(listOf<String?>("그림.docx"), h.events.files)
         val (s2, b2) = h.upload(listOf(file("빈.txt", "")))
         assertEquals(415, s2)
         assertEquals(LanExchange.EMPTY, b2)
         assertEquals("빈.txt", h.events.files.last())
-        assertTrue(names(h.dir).isEmpty())
+        assertEquals(listOf("문서.pdf"), names(h.dir))
         // One good file and one refused: 200 with the problem listed as "name · reason".
         val (s3, b3) = h.upload(listOf(file("good.txt", "ok"), file("나쁜.exe", "x")))
         assertEquals(200, s3)
         assertEquals("받았습니다 (1개)\n나쁜.exe · ${LanExchange.WRONG_TYPE}", b3)
-        assertEquals(listOf("good.txt"), names(h.dir))
+        assertEquals(listOf("good.txt", "문서.pdf"), names(h.dir))
         // Two refused in one request: one line each.
-        val (s4, b4) = h.upload(listOf(file("a.pdf", "x"), file("b.txt", "")))
+        val (s4, b4) = h.upload(listOf(file("a.docx", "x"), file("b.txt", "")))
         assertEquals(415, s4)
-        assertEquals("a.pdf · ${LanExchange.WRONG_TYPE}\nb.txt · ${LanExchange.EMPTY}", b4)
+        assertEquals("a.docx · ${LanExchange.WRONG_TYPE}\nb.txt · ${LanExchange.EMPTY}", b4)
     }
 
     @Test

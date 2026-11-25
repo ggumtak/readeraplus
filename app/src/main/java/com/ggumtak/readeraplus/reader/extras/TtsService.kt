@@ -95,7 +95,7 @@ class TtsService : Service() {
             nm?.createNotificationChannel(
                 // The same channel id ("tts"): what the user set for it in the system stays.
                 NotificationChannel(CHANNEL, "듣기", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "화면을 꺼도 듣는 동안 표시합니다"
+                    description = "화면을 꺼도 듣기가 계속되도록 표시하는 알림입니다"
                     setShowBadge(false)
                     enableVibration(false)
                     setSound(null, null)

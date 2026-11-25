@@ -52,17 +52,17 @@ internal class LookupPage(a: SettingsActivity) : SettingsPage(a, SettingsActivit
         customRow = ctx.radioRow(WebEngines.CUSTOM, if (idx < 0) current else "", idx < 0) {
             ctx.prompt("검색 주소", if (WebEngines.indexOf(Settings.app.webSearchUrl) < 0) Settings.app.webSearchUrl else "https://", "https://example.com/search?q=%s") { text ->
                 val t = WebEngines.normalizeTemplate(text)
-                if (t == null) ctx.toast("주소에 검색어 자리(%s)를 넣어 주세요") else setEngine(t)
+                if (t == null) ctx.toast("주소에 검색어 자리(%s)를 포함해 주세요") else setEngine(t)
             }
         }.also(body::addView)
         body.addView(ctx.row("검색해 보기", null) { testSearch() })
         updateRadios()
 
-        body.section("이북 AI 사전")
-        body.addView(ctx.note("검색 › AI 탭은 앱 안의 Claude 사전입니다. API 키를 한 번 등록하면 됩니다."))
+        body.section("AI 사전 (e-ink)")
+        body.addView(ctx.note("본문에서 ‘검색’을 눌렀을 때 나오는 AI 탭은 앱 내장 Claude 사전입니다. API 키를 한 번 등록하면 바로 사용할 수 있습니다."))
 
         body.section("사전·번역 목록")
-        body.addView(ctx.note("선택 메뉴의 ‘사전·번역’에 보일 항목"))
+        body.addView(ctx.note("사전·번역 목록에 표시할 항목"))
         appsText = ctx.note("불러오는 중…").also(body::addView)
         appsBox = ctx.vertical().also(body::addView)
         loadApps()

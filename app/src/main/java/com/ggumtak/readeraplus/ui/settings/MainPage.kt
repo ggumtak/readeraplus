@@ -77,7 +77,7 @@ internal class MainPage(a: SettingsActivity) :
 
         // The app itself; the one row that undoes the user's work comes last.
         body.section("앱")
-        body.addView(ctx.row("업데이트 확인", "지금 빌드 ${BuildConfig.VERSION_CODE}") { AppUpdater.check(activity, manual = true) })
+        body.addView(ctx.row("업데이트 확인", "현재 버전 ${BuildConfig.VERSION_NAME} (빌드 ${BuildConfig.VERSION_CODE})") { AppUpdater.check(activity, manual = true) })
         body.addView(ctx.navRow("정보", "버전 ${BuildConfig.VERSION_NAME}") { activity.push(SettingsActivity.PAGE_ABOUT) })
         body.addView(ctx.row("모든 설정 초기화", SettingsReset.SUMMARY) { resetSettings() })
         return ctx.pageScroll(body)
@@ -124,7 +124,7 @@ internal class MainPage(a: SettingsActivity) :
         val row = cacheRow ?: return
         if (!cacheBusy && sizeJob?.isActive != true) {
             sizeJob = activity.scope.launch {
-                val size = withContext(Dispatchers.IO) { cacheDirs().sumOf { dirSize(it) } }
+                val size = withContext(Dispatchers.IO) { clearableCacheSize() }
                 if (!cacheBusy) row.setSummary(cacheSummary(size))
             }
         }
@@ -152,16 +152,29 @@ internal class MainPage(a: SettingsActivity) :
 
     private fun backupSummary(app: AppSettings): String = if (app.autoBackup) "자동 백업 켜짐" else "자동 백업 꺼짐"
 
-    /** "12MB · 표지 · 색인 · 페이지 수": the size first, then what the cache holds. */
-    private fun cacheSummary(size: Long): String = "${SettingsFormat.bytes(size)} · 표지 · 색인 · 페이지 수"
+    /** "12MB · 표지 · 색인 · 페이지 정보": the size first, then what the cache holds. */
+    private fun cacheSummary(size: Long): String = "${SettingsFormat.bytes(size)} · 표지 · 색인 · 페이지 정보"
 
     private fun cacheDirs(): List<File> = listOfNotNull(activity.cacheDir, activity.externalCacheDir)
+
+    /** Keeps in-flight APK updates (`update/`) and saved Notes selection refs (`*.refs`). */
+    private fun keepInCache(f: File): Boolean = f.name == "update" || f.name.endsWith(".refs")
+
+    private fun clearableCacheSize(): Long {
+        var total = 0L
+        for (dir in cacheDirs()) {
+            dir.listFiles()?.forEach { f ->
+                if (!keepInCache(f)) total += dirSize(f)
+            }
+        }
+        return total
+    }
 
     private fun clearCache() {
         if (cacheBusy) return
         ctx.confirm(
             "캐시 비우기",
-            "표지 이미지 · TXT 색인 · 페이지 수 계산을 지울까요? 책을 처음 열 때 다시 만들어 잠시 느려질 수 있습니다.",
+            "표지 이미지 · TXT 색인 · 페이지 정보를 지울까요? 책을 처음 열 때 다시 만들어 잠시 느려질 수 있습니다.",
             ok = "지우기",
         ) {
             cacheBusy = true
@@ -171,6 +184,7 @@ internal class MainPage(a: SettingsActivity) :
                     var total = 0L
                     for (dir in cacheDirs()) {
                         dir.listFiles()?.forEach { f ->
+                            if (keepInCache(f)) return@forEach
                             val s = dirSize(f)
                             if (f.deleteRecursively()) total += s
                         }

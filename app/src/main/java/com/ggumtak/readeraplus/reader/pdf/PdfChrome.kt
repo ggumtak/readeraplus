@@ -117,8 +117,8 @@ internal class PdfChrome(private val activity: Activity, private val root: Frame
         top.addView(icon(R.drawable.ic_grid_view, "페이지 탐색") { listener.onPages(PdfSidePanel.TAB_PAGES) })
         title = ctx.label("", 15f, color = 0xFFE0E0E0.toInt(), maxLines = 1).apply { setPadding(ctx.dp(6), 0, ctx.dp(6), 0) }
         top.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        top.addView(icon(R.drawable.ic_search, "찾기") { listener.onSearch() })
-        bookmark = icon(R.drawable.ic_bookmark, "책갈피") { listener.onBookmark() }
+        top.addView(icon(R.drawable.ic_search, "검색") { listener.onSearch() })
+        bookmark = icon(R.drawable.ic_bookmark, "북마크") { listener.onBookmark() }
         top.addView(bookmark)
         top.addView(icon(R.drawable.ic_settings, "PDF 설정") { listener.onSettings() })
         root.addView(top, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP))

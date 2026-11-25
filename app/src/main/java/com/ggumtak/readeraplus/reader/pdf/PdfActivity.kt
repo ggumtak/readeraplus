@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.reader.pdf
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -23,6 +24,7 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.data.Book
+import com.ggumtak.readeraplus.data.BookPrefs
 import com.ggumtak.readeraplus.data.Library
 import com.ggumtak.readeraplus.data.ReaderPresence
 import com.ggumtak.readeraplus.data.ReadingLog
@@ -30,9 +32,11 @@ import com.ggumtak.readeraplus.format.BookFormat
 import com.ggumtak.readeraplus.format.DocumentException
 import com.ggumtak.readeraplus.reader.DayClock
 import com.ggumtak.readeraplus.reader.IntentFiles
+import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.reader.ReaderIo
 import com.ggumtak.readeraplus.reader.ReaderWindow
+import com.ggumtak.readeraplus.reader.extras.PanelRegistry
 import com.ggumtak.readeraplus.reader.extras.TextActions
 import com.ggumtak.readeraplus.reader.ReadingDelta
 import com.ggumtak.readeraplus.reader.ReadingTracker
@@ -42,6 +46,7 @@ import com.ggumtak.readeraplus.render.PdfPages
 import com.ggumtak.readeraplus.render.PdfText
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.Settings
+import com.ggumtak.readeraplus.settings.TapAction
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
@@ -177,14 +182,19 @@ class PdfActivity : Activity() {
     /** Last search: its query and the pages with matches (rectangles in page points). */
     private var searchQuery = ""
     private var searchHits: List<SearchHit> = emptyList()
+    private var partialSearchQuery = ""
+    private var partialSearchHits: List<SearchHit> = emptyList()
     @Volatile private var searchRun = 0
+    /** Book id already auto-marked finished on reaching the last page this session. */
+    private var autoMarkedBook = -1L
 
-    private class SearchHit(val page: Int, val rects: List<RectF>)
+    private class SearchHit(val page: Int, val count: Int, val rects: List<RectF>)
 
     // ================================================================== lifecycle
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ReaderPresence.inFront = true
         if (Build.VERSION.SDK_INT >= 31) splashScreen.setOnExitAnimationListener { it.remove() }
         Settings.init(this)
         if (Build.VERSION.SDK_INT >= 34) {
@@ -221,13 +231,18 @@ class PdfActivity : Activity() {
         startOpen(intent)
     }
 
+    @SuppressLint("WrongConstant")
+    private fun applyOrientation(lock: Int) {
+        if (requestedOrientation != lock) requestedOrientation = lock
+    }
+
     override fun onResume() {
         super.onResume()
         resumed = true
         ReaderPresence.inFront = true
         val a = app
         ReaderWindow.applyFullscreen(this, a.fullscreen)
-        if (requestedOrientation != a.orientationLock) requestedOrientation = a.orientationLock
+        applyOrientation(a.orientationLock)
         keeper.enabled = a.keepScreenOn
         pageView.swipeEnabled = a.swipeToTurn
         applyViewerPrefs()
@@ -268,6 +283,7 @@ class PdfActivity : Activity() {
         handler.removeCallbacksAndMessages(null)
         keeper.dispose()
         closeDocument()
+        PanelRegistry.closeAll(this)
         worker.shutdown()
         super.onDestroy()
     }
@@ -391,7 +407,7 @@ class PdfActivity : Activity() {
                     return@execute
                 }
                 val f = File(b.path)
-                if (!f.isFile) throw DocumentException("파일을 찾을 수 없습니다.\n${b.path}")
+                if (!f.isFile) throw DocumentException("파일을 찾을 수 없습니다.")
                 val p = PdfPages.open(f)
                 pages = p
                 val count = p.pageCount
@@ -419,6 +435,7 @@ class PdfActivity : Activity() {
     private fun onOpened(b: Book, count: Int, loaded: PdfNotes, text: Boolean) {
         openingId = -1L
         book = b
+        autoMarkedBook = -1L
         pageCount = count
         notes = loaded
         canReadText = text
@@ -432,6 +449,7 @@ class PdfActivity : Activity() {
 
     /** Saves the position, ends the document's reading time and closes it on the render thread. */
     private fun closeDocument() {
+        PanelRegistry.closeAll(this)
         tracker.flush(SystemClock.elapsedRealtime())?.let { writeReading(it) }
         flushPosition()
         flushNotes()
@@ -442,11 +460,14 @@ class PdfActivity : Activity() {
         searchRun++
         searchHits = emptyList()
         searchQuery = ""
+        partialSearchHits = emptyList()
+        partialSearchQuery = ""
         pageCount = 0
         current = -1
         updateBadge()
         generation++
         book = null
+        autoMarkedBook = -1L
         openingId = -1L
         pageCount = 0
         current = -1
@@ -492,6 +513,7 @@ class PdfActivity : Activity() {
             keeper.poke()
             trackPage()
             schedulePositionSave()
+            maybeMarkFinished(target)
         }
         prefetch()
     }
@@ -504,11 +526,12 @@ class PdfActivity : Activity() {
         if (pageView.page == current && pageView.step(dir)) return
         val next = current + dir
         if (next < 0) {
-            toast("첫 쪽입니다")
+            toast("첫 페이지입니다")
             return
         }
         if (next >= pageCount) {
-            toast("마지막 쪽입니다")
+            maybeMarkFinished(current)
+            toast("마지막 페이지입니다")
             return
         }
         if (pageView.page == current && pageView.animateTurn(dir)) return
@@ -605,7 +628,7 @@ class PdfActivity : Activity() {
                 }
                 if (result == null) {
                     if (index == current) {
-                        showMessage("${index + 1}쪽을 그리지 못했습니다.\n\n(가운데를 눌러 다시 시도)")
+                        showMessage("${index + 1}쪽을 표시하지 못했습니다.\n\n(가운데를 눌러 다시 시도)")
                         failedPage = index
                     }
                     return@post
@@ -660,8 +683,18 @@ class PdfActivity : Activity() {
         if (pageView.zoomed) handler.postDelayed(detailRunnable, DETAIL_DELAY_MS)
     }
 
+    /**
+     * Returns a dropped detail bitmap to the spare slot after two vsyncs so HWUI's RenderThread has finished drawing
+     * any prior frame that referenced it before the worker thread overwrites its pixels.
+     */
     private fun keepSpare(b: Bitmap) {
-        spareDetail.set(b)
+        if (isDestroyed) return
+        pageView.postOnAnimation {
+            if (isDestroyed) return@postOnAnimation
+            pageView.postOnAnimation {
+                if (!isDestroyed && !b.isRecycled) spareDetail.set(b)
+            }
+        }
     }
 
     private fun renderDetail() {
@@ -746,7 +779,10 @@ class PdfActivity : Activity() {
         keeper.poke()
         var zone = PdfMath.tapZone(x, pageView.width)
         if (app.invertTaps) zone = -zone
-        if (zone == 0 && failedPage >= 0 && failedPage == current) retryPage(current)
+        if (zone == 0 && failedPage >= 0 && failedPage == current) {
+            retryPage(current)
+            return
+        }
         if (zone == 0) toggleBars() else turn(zone)
     }
 
@@ -762,33 +798,23 @@ class PdfActivity : Activity() {
     }
 
     /**
-     * Page keys (keyboard arrows, Page Up / Down, Space, volume, learned keys) turn pages before any view sees them:
-     * a focused button, slider or tool bar would otherwise take the arrows for focus moves. Dialogs have their own
-     * windows, so typing in 찾기 is not affected. A held key repeats.
+     * Page keys (keyboard arrows, Page Up / Down, Space, volume, learned and custom-bound keys via [KeyMap]) turn
+     * pages before any view sees them. Dialogs and the open side panel keep normal text input.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        // The side panel's fields take every key (a space in 찾기 is a space).
+        // The side panel's fields take every key (a space in 검색 is a space).
         if (::side.isInitialized && side.isShown) return super.dispatchKeyEvent(event)
-        val dir = keyDirection(event.keyCode)
+        val dir = keyDirection(event)
         if (dir == 0) return super.dispatchKeyEvent(event)
-        if (event.action == KeyEvent.ACTION_DOWN) turn(if (event.isShiftPressed && event.keyCode == KeyEvent.KEYCODE_SPACE) -1 else dir)
+        if (event.action == KeyEvent.ACTION_DOWN) turn(dir)
         return true
     }
 
-    /** +1 next page, -1 previous, 0 = not a page key (the volume keys only when they turn pages in 설정). */
-    private fun keyDirection(keyCode: Int): Int {
-        val a = app
-        return when (keyCode) {
-            KeyEvent.KEYCODE_VOLUME_DOWN -> if (!a.volumeKeysTurn) 0 else if (a.invertVolumeKeys) -1 else 1
-            KeyEvent.KEYCODE_VOLUME_UP -> if (!a.volumeKeysTurn) 0 else if (a.invertVolumeKeys) 1 else -1
-            KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_SPACE -> 1
-            KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP -> -1
-            else -> when (keyCode) {
-                in a.nextPageKeys -> 1
-                in a.prevPageKeys -> -1
-                else -> 0
-            }
-        }
+    /** +1 next page, -1 previous, 0 = not a page key (honours keyBindings, learned keys and volume settings). */
+    private fun keyDirection(event: KeyEvent): Int = when (KeyMap.action(event.keyCode, event.isShiftPressed, app)) {
+        TapAction.NEXT -> 1
+        TapAction.PREV -> -1
+        else -> 0
     }
 
     // ================================================================== notes: bookmarks, strokes
@@ -864,7 +890,7 @@ class PdfActivity : Activity() {
         if (current < 0) return
         val on = n.toggleBookmark(current)
         showPageMarks()
-        toast(if (on) "책갈피를 꽂았습니다" else "책갈피를 뺐습니다")
+        toast(if (on) "북마크를 추가했습니다" else "북마크를 삭제했습니다")
         scheduleNotesSave()
     }
 
@@ -942,20 +968,20 @@ class PdfActivity : Activity() {
         val ctx = this
         val body = vertical()
         body.addView(PdfSheet.section(ctx, "보기", first = true))
-        body.addView(PdfSheet.choiceRow(ctx, "문서 색상", listOf("기본", "어둡게", "세피아"), p.pageTone) {
+        body.addView(PdfSheet.choiceRow(ctx, "페이지 색상", listOf("기본", "어둡게", "세피아"), p.pageTone) {
             p.pageTone = it
             pageView.tone = it
         })
-        body.addView(PdfSheet.switchRow(ctx, "페이지 번호 표시", "오른쪽 아래 '5 / 120 페이지'", p.pageBadge) {
+        body.addView(PdfSheet.switchRow(ctx, "페이지 번호 표시", "오른쪽 아래에 ‘5 / 120쪽’ 표시", p.pageBadge) {
             p.pageBadge = it
             updateBadge()
         })
         body.addView(PdfSheet.section(ctx, "도구 막대"))
-        body.addView(PdfSheet.choiceRow(ctx, "위치", listOf("위에 붙이기", "떠 있게"), if (chrome.docked) 0 else 1) {
+        body.addView(PdfSheet.choiceRow(ctx, "위치", listOf("위에 붙이기", "띄워 놓기"), if (chrome.docked) 0 else 1) {
             chrome.setLayout(it == 0, chrome.folded, p.toolbarX, p.toolbarY)
             toolbarLaidOut(chrome.docked, chrome.folded, p.toolbarX, p.toolbarY)
         })
-        body.addView(PdfSheet.switchRow(ctx, "도구 막대 접기", "손잡이와 펜 모드 버튼만 남깁니다. 손잡이(⋮⋮)를 끌어 옮길 수 있습니다", chrome.folded) {
+        body.addView(PdfSheet.switchRow(ctx, "도구 막대 접기", "손잡이와 필기 버튼만 남깁니다. 손잡이(⋮⋮)를 끌어 옮길 수 있습니다", chrome.folded) {
             chrome.setLayout(chrome.docked, it, p.toolbarX, p.toolbarY)
             toolbarLaidOut(chrome.docked, chrome.folded, p.toolbarX, p.toolbarY)
         })
@@ -964,18 +990,18 @@ class PdfActivity : Activity() {
             toast("도구 막대를 처음 위치로 되돌렸습니다")
         })
         body.addView(PdfSheet.section(ctx, "제스처"))
-        body.addView(PdfSheet.choiceRow(ctx, "밀어서 넘기기", listOf("한 손가락", "두 손가락"), p.swipeFingers - 1) {
+        body.addView(PdfSheet.choiceRow(ctx, "좌우 스와이프로 넘김", listOf("한 손가락", "두 손가락"), p.swipeFingers - 1) {
             p.swipeFingers = it + 1
             pageView.swipeFingers = it + 1
-            if (!app.swipeToTurn) toast("앱 설정에서 '밀어서 넘기기'가 꺼져 있습니다")
+            if (!app.swipeToTurn) toast("앱 설정에서 ‘좌우 스와이프로 넘김’이 꺼져 있습니다")
         })
-        body.addView(PdfSheet.switchRow(ctx, "한 손가락 패닝(펜)", "켜면 필기 중에도 손가락으로는 넘기고 움직이며, 펜으로만 씁니다. 펜을 한 번 쓰면 이 화면에서는 자동으로 이렇게 됩니다", !p.fingerDraws) {
+        body.addView(PdfSheet.switchRow(ctx, "펜으로만 필기 (손가락 이동)", "켜면 필기 중에도 손가락으로는 페이지를 넘기고 이동하며, 펜으로만 필기합니다. 펜을 한 번 사용하면 이 화면에서는 자동으로 전환됩니다", !p.fingerDraws) {
             p.fingerDraws = !it
             pageView.fingerDraws = !it
             pageView.resetStylusSeen()
         })
         body.addView(PdfSheet.section(ctx, "펜 도구"))
-        body.addView(PdfSheet.switchRow(ctx, "펜 입력 감도 사용", "스타일러스를 누르는 힘에 따라 펜 굵기가 변합니다", p.pressure) {
+        body.addView(PdfSheet.switchRow(ctx, "펜 압력 감지", "스타일러스를 누르는 힘에 따라 펜 굵기가 변합니다", p.pressure) {
             p.pressure = it
             // Only the pressure of the pen in use changes; the tool (or reading) stays as it is.
             loadPresets()
@@ -994,7 +1020,7 @@ class PdfActivity : Activity() {
                 toast("이 페이지에는 필기가 없습니다")
             }
         })
-        body.addView(PdfSheet.actionRow(ctx, "전체 필기 및 주석 삭제", "이 책의 모든 페이지 (책갈피는 남습니다)", danger = true) {
+        body.addView(PdfSheet.actionRow(ctx, "전체 필기 삭제", "이 책의 모든 페이지 (북마크는 남습니다)", danger = true) {
             confirm("전체 필기 삭제", "이 책의 필기를 모두 지울까요? 되돌릴 수 없습니다.", "지우기") {
                 val n = notes ?: return@confirm
                 val removed = n.clearAllInk()
@@ -1007,11 +1033,11 @@ class PdfActivity : Activity() {
         PdfSheet.show(this, "보기 설정", body)
     }
 
-    /** The "5 / 120 페이지" badge when on (hidden in full-screen reading). */
+    /** The "5 / 120쪽" badge when on (hidden in full-screen reading). */
     private fun updateBadge() {
         if (!::chrome.isInitialized) return
         val show = prefs.pageBadge && pageCount > 0 && current >= 0
-        chrome.setBadge(if (show) "${current + 1} / $pageCount 페이지" else null)
+        chrome.setBadge(if (show) "${current + 1} / ${pageCount}쪽" else null)
     }
 
     // ================================================================== annotating (pens, eraser, 선택)
@@ -1291,11 +1317,27 @@ class PdfActivity : Activity() {
             toast(NO_TEXT_API)
             return
         }
-        side.showSearch(searchQuery, onSearch = { q -> runSearch(q) }, onPick = { page ->
-            pageView.resetZoom()
-            goTo(page, fromEnd = false)
-        })
-        if (searchHits.isNotEmpty()) side.setSearchResults(searchQuery, searchHits.map { it.page to it.rects.size })
+        side.showSearch(
+            searchQuery,
+            onSearch = { q -> runSearch(q) },
+            onPick = { page ->
+                if (partialSearchHits.isNotEmpty() && (searchHits.isEmpty() || searchQuery != partialSearchQuery)) {
+                    searchQuery = partialSearchQuery
+                    searchHits = partialSearchHits
+                }
+                pageView.resetZoom()
+                goTo(page, fromEnd = false)
+            },
+            onClear = {
+                searchRun++
+                searchQuery = ""
+                searchHits = emptyList()
+                partialSearchQuery = ""
+                partialSearchHits = emptyList()
+                showPageMarks()
+            },
+        )
+        if (searchHits.isNotEmpty()) side.setSearchResults(searchQuery, searchHits.map { it.page to it.count })
     }
 
     /**
@@ -1306,6 +1348,8 @@ class PdfActivity : Activity() {
         val run = ++searchRun
         val gen = generation
         val total = pageCount
+        partialSearchQuery = query
+        partialSearchHits = emptyList()
         side.setSearchProgress(0, total)
         worker.execute {
             val hits = ArrayList<SearchHit>()
@@ -1323,27 +1367,34 @@ class PdfActivity : Activity() {
                         Log.w(TAG, "search failed on page $i", t)
                         emptyList()
                     }
-                    if (found.isNotEmpty()) hits += SearchHit(i, found.flatten())
+                    if (found.isNotEmpty()) hits += SearchHit(i, found.size, found.flatten())
                     done = i + 1
                     val now = SystemClock.uptimeMillis()
                     if (done < total && (done - pushedDone >= SEARCH_PUSH_PAGES || now - pushedAt >= SEARCH_PUSH_MS)) {
                         pushedDone = done
                         pushedAt = now
-                        // Built here, off the main thread: the panel gets a list nobody changes any more.
-                        val partial = hits.map { it.page to it.rects.size }
+                        // Snapshot built off the main thread: the panel gets immutable lists.
+                        val snapshot = ArrayList(hits)
+                        val partial = snapshot.map { it.page to it.count }
                         val d = done
                         handler.post {
-                            if (gen == generation && searchRun == run && side.isShown) side.setSearchPartial(partial, d, total)
+                            if (gen == generation && searchRun == run && side.isShown) {
+                                partialSearchQuery = query
+                                partialSearchHits = snapshot
+                                side.setSearchPartial(partial, d, total)
+                            }
                         }
                     }
                 }
             }
             // Only a search that read every page is a result; one stopped half way is dropped.
-            val result = if (done == total) hits.map { it.page to it.rects.size } else null
+            val result = if (done == total) hits.map { it.page to it.count } else null
             handler.post {
                 if (gen != generation || isDestroyed || searchRun != run || result == null) return@post
                 searchQuery = query
                 searchHits = hits
+                partialSearchQuery = query
+                partialSearchHits = hits
                 showPageMarks()
                 side.setSearchResults(query, result)
             }
@@ -1351,6 +1402,24 @@ class PdfActivity : Activity() {
     }
 
     // ================================================================== position & reading time
+
+    /** Marks the PDF finished once on reaching its last page when "다 읽으면 자동 완료" is enabled. */
+    private fun maybeMarkFinished(page: Int) {
+        if (!app.autoMarkFinished || pageCount <= 0 || page < pageCount - 1) return
+        val b = book ?: return
+        if (b.haveRead || autoMarkedBook == b.id) return
+        autoMarkedBook = b.id
+        val id = b.id
+        val now = System.currentTimeMillis()
+        ReaderIo.launch {
+            try {
+                Library.setHaveRead(id, true)
+                if (BookPrefs.finishedAt(id) == 0L) BookPrefs.setFinishedAt(id, now)
+            } catch (t: Throwable) {
+                Log.w(TAG, "auto mark finished failed", t)
+            }
+        }
+    }
 
     private val saveRunnable = Runnable { flushPosition() }
 

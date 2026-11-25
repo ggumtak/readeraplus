@@ -361,7 +361,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
 
     /** Live key tester: shows each key's code and what the reader does with it (consumes all keys but Back). */
     private fun showKeyTest() {
-        val out = ctx.label("아무 키나 누르세요.\n(뒤로 키: 닫기)\n\n코멧의 사용자 키가 안 되면 기기 설정(KeyPack)에서 볼륨 키로 지정해 보세요.", 17f).apply {
+        val out = ctx.label("아무 키나 누르세요.\n(뒤로 키: 닫기)\n\n사용자 정의 키가 인식되지 않으면 기기 설정에서 볼륨 키로 지정해 보세요.", 17f).apply {
             setPadding(ctx.dp(24), ctx.dp(16), ctx.dp(24), ctx.dp(8))
             setLineSpacing(0f, 1.2f)
             minLines = 5

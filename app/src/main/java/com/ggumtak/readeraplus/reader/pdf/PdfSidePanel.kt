@@ -123,17 +123,17 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
 
     // ------------------------------------------------------------------------------------------ search
 
-    fun showSearch(query: String, onSearch: (String) -> Unit, onPick: (page: Int) -> Unit) {
+    fun showSearch(query: String, onSearch: (String) -> Unit, onPick: (page: Int) -> Unit, onClear: (() -> Unit)? = null) {
         val b = beginMode("검색")
-        val ui = SearchUi(query, onSearch, onPick)
+        val ui = SearchUi(query, onSearch, onPick, onClear)
         search = ui
         b.addView(ui.rootView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         if (query.isEmpty()) ui.focusKeyboard()
     }
 
-    /** While a search runs ("찾는 중… 12 / 300쪽"). */
+    /** While a search runs ("검색 중… 12 / 300쪽"). */
     fun setSearchProgress(done: Int, total: Int) {
-        search?.setStatus("찾는 중… $done / ${total}쪽")
+        search?.setStatus("검색 중… $done / ${total}쪽")
     }
 
     /** Results as (page, count) pairs, page-ordered (0-based pages); empty = nothing found for [query]. */
@@ -141,7 +141,7 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
         val ui = search ?: return
         val n = results.size
         val total = showResults(ui, results)
-        ui.setStatus(if (n == 0) "‘$query’ 찾지 못했습니다" else "‘$query’ 총 ${total}곳 · ${n}쪽")
+        ui.setStatus(if (n == 0) "‘$query’ 검색 결과가 없습니다" else "‘$query’ 총 ${total}곳 · ${n}쪽")
     }
 
     /**
@@ -151,7 +151,7 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
     fun setSearchPartial(results: List<Pair<Int, Int>>, done: Int, total: Int) {
         val ui = search ?: return
         val found = showResults(ui, results)
-        ui.setStatus(if (results.isEmpty()) "찾는 중… $done / ${total}쪽" else "찾는 중… $done / ${total}쪽 · ${found}곳")
+        ui.setStatus(if (results.isEmpty()) "검색 중… $done / ${total}쪽" else "검색 중… $done / ${total}쪽 · ${found}곳")
     }
 
     /** Puts [results] in the list; returns the number of matches in them. */
@@ -362,7 +362,12 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
 
     // ------------------------------------------------------------------------------------------ search mode
 
-    private inner class SearchUi(query: String, private val onSearch: (String) -> Unit, private val onPick: (Int) -> Unit) {
+    private inner class SearchUi(
+        query: String,
+        private val onSearch: (String) -> Unit,
+        private val onPick: (Int) -> Unit,
+        private val onClear: (() -> Unit)?,
+    ) {
         val rootView: LinearLayout = activity.vertical()
         val adapter = ResultAdapter()
         private val edit = darkEdit("검색")
@@ -382,6 +387,9 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
                 visibility = if (query.isEmpty()) View.GONE else View.VISIBLE
                 setOnClickListener {
                     edit.setText("")
+                    adapter.set(IntArray(0), IntArray(0))
+                    setStatus("")
+                    onClear?.invoke()
                     showKeyboard(edit)
                 }
             }
@@ -404,12 +412,12 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
 
             val field = ctx.horizontal {
                 background = rounded(Flex.FIELD, 8f)
-                setPadding(ctx.dp(12), 0, ctx.dp(4), 0)
+                setPadding(ctx.dp(12), 0, ctx.dp(2), 0)
             }
             field.addView(ctx.icon(R.drawable.ic_search, 20, Flex.GREY))
             field.addView(edit, lp(0, MATCH_PARENT, 1f).apply { leftMargin = ctx.dp(8) })
-            field.addView(clear, LinearLayout.LayoutParams(ctx.dp(36), ctx.dp(36)))
-            rootView.addView(field, lp(MATCH_PARENT, ctx.dp(44)).apply { setMargins(ctx.dp(12), ctx.dp(12), ctx.dp(12), ctx.dp(8)) })
+            field.addView(clear, LinearLayout.LayoutParams(ctx.dp(44), ctx.dp(44)))
+            rootView.addView(field, lp(MATCH_PARENT, ctx.dp(48)).apply { setMargins(ctx.dp(12), ctx.dp(12), ctx.dp(12), ctx.dp(8)) })
 
             status.setPadding(ctx.dp(16), ctx.dp(4), ctx.dp(16), ctx.dp(8))
             status.visibility = View.GONE
@@ -438,7 +446,7 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
             if (q.isEmpty()) return
             hideKeyboard()
             adapter.set(IntArray(0), IntArray(0))
-            setStatus("찾는 중…")
+            setStatus("검색 중…")
             onSearch(q)
         }
     }
@@ -524,7 +532,7 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
         init {
             val ctx = activity
             val icons = intArrayOf(R.drawable.ic_grid_view, R.drawable.ic_bookmark, R.drawable.ic_edit)
-            val names = arrayOf("쪽", "책갈피", "필기")
+            val names = arrayOf("쪽", "북마크", "필기")
             val bar = ctx.horizontal { setBackgroundColor(Flex.HEADER) }
             for (i in 0 until 3) {
                 val ic = ImageView(ctx).apply { setImageResource(icons[i]) }
@@ -625,8 +633,8 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
                 setOnClickListener { go() }
             }
             val jump = ctx.horizontal { setPadding(ctx.dp(12), ctx.dp(12), ctx.dp(12), ctx.dp(8)) }
-            jump.addView(edit, lp(0, ctx.dp(44), 1f))
-            jump.addView(button, lp(ctx.dp(72), ctx.dp(44)).apply { leftMargin = ctx.dp(8) })
+            jump.addView(edit, lp(0, ctx.dp(48), 1f))
+            jump.addView(button, lp(ctx.dp(72), ctx.dp(48)).apply { leftMargin = ctx.dp(8) })
             col.addView(jump, lp())
 
             val contentW = (panelW - insetR).coerceAtLeast(ctx.dp(120))
@@ -648,7 +656,7 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
                 setOnItemClickListener { _, _, position, _ -> pickAndHide(onPick, adapter.pageAt(position)) }
             }
             frame.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-            val empty = emptyText("책갈피한 쪽이 없습니다")
+            val empty = emptyText("북마크한 쪽이 없습니다")
             empty.visibility = if (m.isEmpty()) View.VISIBLE else View.GONE
             marksEmpty = empty
             frame.addView(empty, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
@@ -733,7 +741,7 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
         }
     }
 
-    /** Ink rows: grey "페이지 N" header, then a dashed 72x96dp box with the pencil icon and "필기". */
+    /** Ink rows: grey "N쪽" header, then a dashed 72x96dp box with the pencil icon and "필기". */
     private inner class InkAdapter(private var pages: IntArray) : BaseAdapter() {
         fun set(p: IntArray) {
             pages = p
@@ -777,7 +785,7 @@ internal class PdfSidePanel(private val activity: Activity, private val root: Fr
                 row = convertView
                 h = row.tag as RowHolder
             }
-            h.label.text = "페이지 ${pages[position] + 1}"
+            h.label.text = "${pages[position] + 1}쪽"
             return row
         }
     }
@@ -930,14 +938,14 @@ private class PageThumbList(
     private fun onThumb(h: ThumbHolder, page: Int, req: ThumbReq, bmp: Bitmap?) {
         if (closed) return
         pending.remove(page)
+        val target = if (h.page == page) h else holders[page]
         if (bmp != null) {
             cache.put(page, bmp)
             // The cell that shows the page now (it may have scrolled away and come back in another cell).
-            val target = if (h.page == page) h else holders[page]
             if (target != null && target.page == page) target.image.setImageBitmap(bmp)
-        } else if (req.skipped && h.page == page && bound.containsKey(page)) {
-            // The cell scrolled away and came back before this skipped request was reported: ask again.
-            request(h, page)
+        } else if (req.skipped && target != null && target.page == page && bound.containsKey(page)) {
+            // The cell scrolled away and came back (possibly in another holder) before this skipped request reported.
+            request(target, page)
         }
     }
 

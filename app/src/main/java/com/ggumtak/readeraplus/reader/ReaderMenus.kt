@@ -53,7 +53,7 @@ internal fun ReaderActivity.showOverflowMenu(anchor: View) {
         MenuItem(ScrollWiring.autoItem(scrollMode, autoTurnOn), R.drawable.ic_timer) { toggleAutoTurn() },
         // After the popup has disappeared from the panel, or its outline stays as ghosting.
         MenuItem("화면 새로고침", R.drawable.ic_refresh) { refreshAfterDraw(POPUP_GONE_MS) },
-        MenuItem("책 정보", R.drawable.ic_info, groupStart = true) { guarded { ReaderPanels.showDocumentInfo(this, bk, document) } },
+        MenuItem("책 정보", R.drawable.ic_info, groupStart = true) { guarded { ReaderPanels.showDocumentInfo(this, bk, document) { refreshBookMeta() } } },
         MenuItem("내 리뷰", R.drawable.ic_rate_review) { guarded { ReaderPanels.showReview(this) } },
         MenuItem("즐겨찾기·컬렉션", R.drawable.ic_playlist_add) { showAddMenu(anchor, bk) },
     )

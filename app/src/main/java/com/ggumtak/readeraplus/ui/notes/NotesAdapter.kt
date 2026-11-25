@@ -99,7 +99,8 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
 
         h.check.visibility = if (cb.selecting) View.VISIBLE else View.GONE
         if (cb.selecting) h.check.setImageResource(if (cb.isSelected(row)) R.drawable.ic_check_box else R.drawable.ic_check_box_outline_blank)
-        h.content.setPadding(if (cb.selecting) 0 else ctx.dp(16), ctx.dp(12), 0, ctx.dp(12))
+        h.content.setPadding(if (cb.selecting) 0 else ctx.dp(16), ctx.dp(12), if (cb.selecting) ctx.dp(16) else 0, ctx.dp(12))
+        h.right.visibility = if (cb.selecting) View.GONE else View.VISIBLE
 
         val book = cb.book(row.bookId)
         val kind = row.ref.kind
@@ -207,7 +208,7 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
                 return
             }
             h.header.visibility = View.VISIBLE
-            h.header.minimumHeight = ctx.dp(40)
+            h.header.minimumHeight = ctx.dp(48)
             text(h.headerTitle, NotesText.bookHeader(book?.title ?: "(삭제된 책)", book?.count ?: 0), 15f, Ink.BLACK, 1, bold = true)
             h.headerAuthor.visibility = if (book?.author.isNullOrBlank()) View.GONE else View.VISIBLE
             h.headerAuthor.text = book?.author.orEmpty()
@@ -312,14 +313,14 @@ internal class NotesAdapter(private val ctx: Context, private val window: NotesW
             header.addView(headerAuthor, lp(WRAP_CONTENT, WRAP_CONTENT))
             titleLine.addView(tag, lp(WRAP_CONTENT, WRAP_CONTENT))
             titleLine.addView(mark)
-            titleLine.addView(title, lp(0, WRAP_CONTENT, 1f).apply { weight = 0f; width = WRAP_CONTENT })
+            titleLine.addView(title, lp(0, WRAP_CONTENT, 1f))
             titleLine.addView(badge, lp(WRAP_CONTENT, WRAP_CONTENT))
             content.addView(titleLine, lp().apply { bottomMargin = ctx.dp(4) })
             content.addView(text, lp())
             content.addView(secondary, lp())
             content.addView(note, lp())
             content.addView(meta, lp())
-            right.addView(swatchCell, LinearLayout.LayoutParams(ctx.dp(48), ctx.dp(40)))
+            right.addView(swatchCell, LinearLayout.LayoutParams(ctx.dp(48), ctx.dp(48)))
             right.addView(lookUp, LinearLayout.LayoutParams(ctx.dp(48), ctx.dp(48)))
             right.addView(menu, LinearLayout.LayoutParams(ctx.dp(48), ctx.dp(48)))
             body.addView(check)

@@ -213,8 +213,10 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             toShown = { (it - FontManager.naturalWeight(cur.fontId)) / 50.0 },
             fromShown = { FontManager.naturalWeight(cur.fontId) + it.toFloat() * 50f },
         )
+        var refreshWeight: (() -> Unit)? = null
         root.addView(stepperRow("굵기", cur.fontWeight.toFloat().coerceAtLeast(minWeight), minWeight, 900f, 50f,
             { Fmt.weight(it.toInt(), FontManager.naturalWeight(cur.fontId)) }, floor = { minWeightOf(cur.fontId) }, entry = weightEntry,
+            onRefresh = { refreshWeight = it },
             onChange = stepper(seeThrough = false) { update(cur.copy(fontWeight = it.toInt()), debounce = true) },
         ))
         root.addView(stepperRow("줄 간격", cur.lineHeightPct.toFloat(), 100f, 300f, 5f, { Fmt.pct(it.toInt()) },
@@ -248,7 +250,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                 vertical = to
             },
         ))
-        root.addView(fontRow())
+        root.addView(fontRow { refreshWeight?.invoke() })
         root.addView(themeRow())
         return root
     }
@@ -295,7 +297,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     }
 
     /** 글꼴: the font's name in its own face; the drop-down list of fonts (with 글꼴 추가 / 글꼴 관리). */
-    private fun fontRow(): LinearLayout {
+    private fun fontRow(onFontChanged: () -> Unit): LinearLayout {
         lateinit var row: LinearLayout
         lateinit var value: TextView
         row = ctx.compactRow {
@@ -304,6 +306,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                     update(cur.copy(fontId = id))
                     value.text = fontName(id)
                     value.typeface = fontTypeface(id)
+                    onFontChanged()
                 } else {
                     host.applySettings(Settings.reader.copy(fontId = id))
                 }
@@ -394,6 +397,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         format: (Float) -> String,
         floor: (() -> Float)? = null,
         entry: StepperEntry = StepperEntry(),
+        onRefresh: ((() -> Unit) -> Unit)? = null,
         onChange: (Float) -> Unit,
     ): LinearLayout {
         var v = value
@@ -403,6 +407,12 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         // Fixed width for the widest possible value (at least the common column width): the − / + buttons stay put
         // while tapping repeatedly, and line up with the other rows' buttons.
         valueView.lockWidthForValues(min, max, step, format, minPx = ctx.dp(Compact.STEP_VALUE_DP))
+        (valueView.layoutParams as? LinearLayout.LayoutParams)?.height = ctx.dp(Compact.ROW_DP)
+        onRefresh?.invoke {
+            val lo = floor?.invoke() ?: min
+            v = v.coerceIn(lo, max)
+            valueView.text = format(v)
+        }
         fun apply(s: Float) {
             if (s == v) return
             v = s
@@ -415,7 +425,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         valueView.contentDescription = "$title 직접 입력"
         valueView.setOnClickListener {
             val lo = floor?.invoke() ?: min
-            InkNumPad.showValue(ctx, title, "지금 ${format(v)} · ${entry.range(lo, max)}", entry.digits, entry.signed,
+            InkNumPad.showValue(ctx, title, "현재 ${format(v)} · ${entry.range(lo, max)}", entry.digits, entry.signed,
                 entry.decimals) { typed ->
                 val nv = entry.valueFor(typed, lo, max) ?: return@showValue "${entry.range(lo, max)} 사이로 입력하세요"
                 apply(nv)

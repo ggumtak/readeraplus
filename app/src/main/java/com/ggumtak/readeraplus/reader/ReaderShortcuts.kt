@@ -1,6 +1,5 @@
 package com.ggumtak.readeraplus.reader
 
-import android.annotation.TargetApi
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ShortcutInfo
@@ -38,14 +37,13 @@ internal object ReaderShortcuts {
 
     fun id(bookId: Long): String = "book_$bookId"
 
-    /** Puts [bookId] first among the shortcuts. Never throws; does nothing before Android 7.1. */
+    /** Puts [bookId] first among the shortcuts. Never throws. */
     fun remember(context: Context, bookId: Long, title: String, scope: CoroutineScope) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1 || bookId <= 0) return
+        if (bookId <= 0) return
         val app = context.applicationContext
         scope.launch(Dispatchers.IO) { runCatching { push(app, bookId, title) } }
     }
 
-    @TargetApi(Build.VERSION_CODES.N_MR1)
     private fun push(context: Context, bookId: Long, title: String) {
         val sm = context.getSystemService(ShortcutManager::class.java) ?: return
         val library = Intent(ACTION_LIBRARY).setClass(context, LibraryActivity::class.java)

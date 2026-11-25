@@ -155,7 +155,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             @Suppress("DEPRECATION")
             activity.startActivityForResult(intent, requestCode)
         } catch (_: Exception) {
-            ctx.toast("폴더 선택 화면을 열 수 없습니다. ‘경로 입력’을 쓰세요")
+            ctx.toast("폴더 선택 화면을 열 수 없습니다. ‘경로 입력’을 이용해 주세요")
         }
     }
 
@@ -178,7 +178,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
                 treeToPath(appCtx, uri)
             }
             if (path == null) {
-                ctx.toast("이 위치는 쓸 수 없습니다. 내부 저장소나 SD 카드의 폴더를 고르세요")
+                ctx.toast("이 위치는 선택할 수 없습니다. 내부 저장소나 SD 카드의 폴더를 선택해 주세요")
             } else {
                 addPath(path, excluded, checkExists = false)
             }
@@ -227,7 +227,7 @@ internal class ScanPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.
             if (excluded && FolderSets.exclusionHidesScanFolder(app.scanFolders, path)) {
                 ctx.confirm(
                     "스캔할 폴더를 제외할까요?",
-                    "‘${FolderSets.displayName(path, StorageAccess.primaryRoot())}’에는 스캔할 폴더가 들어 있어서, 그 폴더의 책을 모두 찾지 않게 됩니다.",
+                    "‘${FolderSets.displayName(path, StorageAccess.primaryRoot())}’ 안에 스캔할 폴더가 포함되어 있어 그 폴더의 책을 찾지 않게 됩니다.",
                     ok = "제외",
                 ) { commitAdd(result, excluded) }
                 return@launch

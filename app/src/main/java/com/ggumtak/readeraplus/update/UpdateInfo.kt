@@ -115,7 +115,7 @@ internal object UpdateInfo {
     fun buildOf(fileName: String): Int =
         APK_NAME.matchEntire(fileName)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-    fun offerMessage(latest: Int, current: Int): String = "새 버전이 있습니다 (빌드 $latest · 지금 $current).\n지금 업데이트할까요?\n설치가 끝나면 앱이 닫힙니다. 다시 열어 주세요."
+    fun offerMessage(latest: Int, current: Int): String = "새 버전이 있습니다 (빌드 $latest · 현재 $current).\n지금 업데이트할까요?\n설치가 끝나면 앱이 닫히므로 다시 열어 주세요."
 
     fun progressMessage(percent: Int): String = if (percent < 0) "내려받는 중…" else "내려받는 중… $percent%"
 

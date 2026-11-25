@@ -161,4 +161,18 @@ class EpubCssTest {
         assertEquals("ㄹ", ListMarkers.ordered(4, CssDecl.LS_HANGUL_CONSONANT))
         assertEquals("7", ListMarkers.ordered(7, 0))
     }
+
+    @Test
+    fun rightMarginsAndPadding() {
+        val d = CssParser.parseInline("margin: 1em 2em 0.5em 1.5em; padding-right: 16px")!!
+        assertEquals(2f, d.marginRight, 0.001f)
+        assertEquals(1.5f, d.marginLeft, 0.001f)
+        assertEquals(1f, d.paddingRight, 0.001f)
+        val two = CssParser.parseInline("margin: 0 3em; padding: 0 2em")!!
+        assertEquals(3f, two.marginRight, 0.001f)
+        assertEquals(3f, two.marginLeft, 0.001f)
+        assertEquals(2f, two.paddingRight, 0.001f)
+        val explicit = CssParser.parseInline("margin-right: 1.5em")!!
+        assertEquals(1.5f, explicit.marginRight, 0.001f)
+    }
 }

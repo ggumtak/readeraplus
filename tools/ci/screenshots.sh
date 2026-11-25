@@ -234,7 +234,7 @@ system_dialog() { # system_dialog: closes another app's "isn't responding" / "ke
   local what
   what=$(grep -oE "[^\"]*(responding|keeps stopping)[^\"]*" /tmp/ui.xml | head -1) # "isn't" may be escaped
   [ -n "$what" ] || return 1
-  if printf '%s' "$what" | grep -q "리더플러스"; then
+  if printf '%s' "$what" | grep -q "PureReader"; then
     log "CHECK anr FAIL system dialog about this app: $what"
     tap_label "Wait" exact
     return 1
@@ -510,7 +510,7 @@ open_settings_page() { # open_settings_page "page": 설정 from the library → 
   tap_xy "$XY"; sleep 3
 }
 open_turning_page() { open_settings_page "넘기기·터치·키"; } # 넘기는 방식, 스크롤 움직임, 볼륨 키 (68aa271)
-open_screen_page() { open_settings_page "화면·밝기"; } # 위쪽 / 아래쪽 상태 표시줄 (slots, 진행 막대), 인용문 색 표시, 밝기
+open_screen_page() { open_settings_page "상태 표시줄"; } # 위쪽 / 아래쪽 상태 표시줄 (slots, 진행 막대)
 library_more() { # library_more "item" [exact|contains]: the library toolbar's ⋮ (described "더보기" since a3b8826; the ☰
   # is "메뉴") → item. The ⋮ holds the library's own work, in groups (정렬, 보기 | 파일 열기, Wi-Fi로 책 받기 | 지금 스캔,
   # 스캔 폴더 추가 | 설정); the drawer is for moving between shelves.
@@ -780,13 +780,13 @@ history_cols() { # history_cols <n> <left text or ""> [right text or ""]: the hi
   check "$1" $ok "지우기 at x = $cx${2:+, '$2' ends at $l2}${3:+, '$3' starts at $r1}"
   HIST_CX=$cx
 }
-set_page_look() { # set_page_look "흰 바탕"|마루뷰어 on|off: 화면 색 and 흑백 반전 on 설정 → 보기 설정 (⚙ → 전체 읽기
-  # 설정) in one visit over the open book; a repaint only, never a relayout (PLAN 2026-10-04). Leaves 설정, bars closed.
+set_page_look() { # set_page_look "흰 바탕"|"회색 바탕" on|off: 배경 색 and 흑백 반전 on 설정 → 보기 설정 (⚙ → 보기 설정 전체)
+  # in one visit over the open book; a repaint only, never a relayout (PLAN 2026-10-04). Leaves 설정, bars closed.
   local rc=0
   open_reading_page || return 1
-  pick_setting "화면 색" "$1" exact || rc=1
+  pick_setting "배경 색" "$1" exact || rc=1
   set_toggle "흑백 반전" "$2" || rc=1
-  dump && log "보기 설정: 화면 색 '$(row_value "화면 색")', 흑백 반전 '$(row_checked "흑백 반전")'"
+  dump && log "보기 설정: 배경 색 '$(row_value "배경 색")', 흑백 반전 '$(row_checked "흑백 반전")'"
   leave_settings
   return $rc
 }
@@ -921,11 +921,11 @@ chrome_looks_run() {
   chrome_look paper "#FFFFFF" "#F5F5F5" shadow
   progress_look paper "#FFFFFF" "#D1D1D1" "#B4B4B4"
   LOOK_SET=1
-  set_page_look 마루뷰어 off || return 1
+  set_page_look "회색 바탕" off || return 1
   chrome_look maru "#323232" "#3C3C3C" shadow
   progress_look maru "#323232" "#4B4B4B" "#5A5A5A"
   history_row maru "#323232"
-  set_page_look 마루뷰어 on || return 1
+  set_page_look "회색 바탕" on || return 1
   chrome_look invert "#000000" "#1A1A1A" "#333333"
   progress_look invert "#000000" "#1F1F1F" "#323232"
 }
@@ -1376,7 +1376,7 @@ status_page() { # 51: 설정 → 화면·밝기, its first two sections 위쪽 �
   # most). A row counts when any of these screens showed it: one that left the top was seen just before.
   local slots=("위 왼쪽" "위 가운데" "위 오른쪽" "아래 왼쪽" "아래 가운데" "아래 오른쪽") t i on seen above="" gone=""
   open_screen_page || return 1
-  scroll_find "위쪽 상태 표시줄" || { check 51 1 "no 위쪽 상태 표시줄 section on 화면·밝기"; return 1; }
+  scroll_find "위쪽 상태 표시줄" || { check 51 1 "no 위쪽 상태 표시줄 section on 상태 표시줄"; return 1; }
   seen=$(present_slots "${slots[@]}")
   for i in 1 2; do
     [ -n "$(slot_xy "아래 오른쪽")" ] && break
@@ -1407,10 +1407,9 @@ wifi_page() { # 50c: ⋮ → Wi-Fi로 책 받기 (T1-12; it left the drawer for 
   library_more "Wi-Fi로 책 받기" || return 1
   shot 50c_wifi 5
 }
-eink_settings() { # 50d: 설정 → e-ink 새로고침 (e-ink 화면 until the 2026-10-04 review), its own page since 68aa271 (T1-3;
-  # was a section of 넘김·화면 설정), at its top; 50e: its 고급 group opened
-  open_settings_page "e-ink 새로고침" || return 1
-  dump && has "자동 새로고침" || log "50d: no 자동 새로고침 section on top of e-ink 새로고침"
+eink_settings() { # 50d: 설정 → e-ink 화면, at its top; 50e: its 고급 group opened
+  open_settings_page "e-ink 화면" || return 1
+  dump && has "자동 새로고침" || log "50d: no 자동 새로고침 section on top of e-ink 화면"
   shot 50d_eink_settings 2
   scroll_find "고급" || return 1
   tap_xy "$XY" || return 1
@@ -1427,13 +1426,13 @@ notes_quotes() { # 80 quote, 81/81b palette → 초록, 82 the existing quote's 
   full_page || return 1 # the saved page may end a chapter (short): page on to one with text down to the box's bottom
   select_at 300 700 || return 1
   local qy=$SEL_Y # where the first quote is, for 82
-  sel_tap "인용" || return 1
+  sel_tap "형광펜" || return 1
   shot 80_quote_saved 1
   log "80: no toast expected (checked by eye)"
   select_at 300 $((qy + 120 > 820 ? qy + 120 : 820)) || return 1 # never on the quote just made
   dump_all || return 1
-  local xy; xy=$(xy_of "인용"); [ -n "$xy" ] || xy=$(xy_of "인용" contains)
-  [ -n "$xy" ] || { check 81 1 "no 인용 cell"; back; return 1; }
+  local xy; xy=$(xy_of "형광펜"); [ -n "$xy" ] || xy=$(xy_of "형광펜" contains)
+  [ -n "$xy" ] || { check 81 1 "no 형광펜 cell"; back; return 1; }
   set -- $xy; longpress "$1" "$2" 900
   shot 81_palette 2
   dump; if has "노랑" contains && has "초록" contains; then check 81 0 "palette with 노랑 and 초록"; else check 81 1 "palette cells missing"; fi
@@ -1441,29 +1440,23 @@ notes_quotes() { # 80 quote, 81/81b palette → 초록, 82 the existing quote's 
   shot 81b_green 2
   longpress 300 "$qy" 900
   shot 82_quote_popup 2
-  dump_all; if has "인용 삭제"; then check 82 0 "existing quote popup with 인용 삭제"; else check 82 1 "no 인용 삭제"; fi
+  dump_all; if has "형광펜 삭제"; then check 82 0 "existing quote popup with 형광펜 삭제"; else check 82 1 "no 형광펜 삭제"; fi
   back
 }
-notes_toc() { # 83: TOC → 인용문 (its toolbar link to the hub is "독서 노트 (모든 책)" since 79cd1a5)
+notes_toc() { # 83: TOC → 형광펜 (its toolbar link to the hub is "독서 노트 (모든 책)" since 79cd1a5)
   dump_all && has "복사" && back # a selection a failed 80 left: BACK clears it (its tap would only clear it)
   show_chrome || return 1
   tap_label "목차" contains || return 1
   sleep 2
-  tap_label "인용문" || return 1
+  tap_label "형광펜" || return 1
   shot 83_toc_quotes 2
   dump; if has "독서 노트 (모든 책)" && has "전체 2" contains; then check 83 0 "link 독서 노트 (모든 책), chip 전체 2"; else check 83 1 "no 독서 노트 (모든 책) or chip 전체 2"; fi
   back
 }
-notes_lookup() { # 84: 사전·번역 cancelled, then 웹 검색 (logged only)
+notes_lookup() { # 84: 검색 (WordSearchPanel), records the word in 단어장
   hide_chrome
   select_at 300 940 || return 1
-  sel_tap "사전·번역" || { back; return 1; }
-  sleep 2; back
-  select_at 300 940 || return 1
-  sel_tap "사전·번역" || { back; return 1; }
-  sleep 2
-  # Without an ACTION_PROCESS_TEXT app TextActions.lookUp says so in a toast and opens the web search itself.
-  tap_label "웹 검색" contains || log "84: no 사전 · 번역 chooser (no PROCESS_TEXT app): the app went straight to the web search"
+  sel_tap "검색" || { back; return 1; }
   shot 84_lookup 4
   back; sleep 2
 }
@@ -1474,7 +1467,7 @@ first_row_xy() { # the first note's text in the last dump (never a header: CI 34
   if [ -z "$xy" ]; then xy="360 600"; log "first_row_xy: no note text in the dump, tapping $xy" >&2; fi
   echo "$xy"
 }
-notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select, 89 단어장
+notes_hub() { # 85a drawer, 85 hub, 86 형광펜, 87 jump (+CHECK 87), 88 select, 89 단어장
   # 87's chip offers the way back to the book's saved place, and only when that is not the quote's page (PLAN §1.6.1:
   # if (!isOnCurrentPage(saved)) returnNav.onJump(saved)). 80–84 made the quotes on the page sample-utf8.txt is saved
   # at (CI 30: no chip, correctly); full_page (80) turns to a full page before the first quote, so every page turn comes
@@ -1493,7 +1486,7 @@ notes_hub() { # 85a drawer, 85 hub, 86 인용문, 87 jump (+CHECK 87), 88 select
   else check 85a 1 "drawer rows 독서 노트 '$nq' 단어장 '$nw' (want 2 / 1)"; fi
   drawer_tap "독서 노트" || return 1
   shot 85_notes_hub 3
-  tap_label "인용문" || return 1
+  tap_label "형광펜" || return 1
   shot 86_notes_quotes 2
   dump; if has "모든 색" contains; then check 86 0 "filter row with 모든 색"; else check 86 1 "no 모든 색 filter"; fi
   local xy; xy=$(first_row_xy)
@@ -1521,9 +1514,9 @@ notes_paged() { # 89p: 목록 넘기기 → 한 화면씩, a tap on the first ro
   open_drawer || return 1
   drawer_tap "독서 노트" || return 1
   sleep 3
-  tap_label "인용문" || return 1
+  tap_label "형광펜" || return 1
   sleep 2
-  dump; if ! has "모든 색" contains; then check 89p 1 "paged hub: no 인용문 tab"; open_settings_page "서재 보기" && pick_setting "목록 넘기기" "스크롤"; return 1; fi
+  dump; if ! has "모든 색" contains; then check 89p 1 "paged hub: no 형광펜 tab"; open_settings_page "서재 보기" && pick_setting "목록 넘기기" "스크롤"; return 1; fi
   local xy where="the first row's day header"
   xy=$(hub_xy day)
   [ -n "$xy" ] || { where="the first note's text (no day header on screen)"; xy=$(first_row_xy); }
@@ -1534,16 +1527,16 @@ notes_paged() { # 89p: 목록 넘기기 → 한 화면씩, a tap on the first ro
   back; sleep 2
   open_settings_page "서재 보기" && pick_setting "목록 넘기기" "스크롤"
 }
-notes_ink() { # 90: 인용문 색 표시 (설정 → 화면·밝기 since 68aa271) → 흑백 무늬 on the quotes; then 자동 again
+notes_ink() { # 90: 형광펜 색 표시 (설정 → 보기 설정) → 흑백 무늬 on the quotes; then 자동 again
   local i
-  open_screen_page || return 1
-  pick_setting "인용문 색 표시" "흑백 무늬" || return 1
+  open_settings_page "보기 설정" || return 1
+  pick_setting "형광펜 색 표시" "흑백 무늬" || return 1
   fresh_reader sample-utf8.txt text/plain
   # 85_89 left the book 3 pages after the quotes' page (the hub's open is a peek: it saves nothing). Turns, not a
   # jump: no return chip over the shot. On the first page a PAGE_UP does nothing.
   for i in 1 2 3; do adb shell input keyevent KEYCODE_PAGE_UP; sleep 1; done
   shot 90_highlight_ink 2
-  open_screen_page && pick_setting "인용문 색 표시" "자동" # "자동 (색 그대로)" on the emulator (contains)
+  open_settings_page "보기 설정" && pick_setting "형광펜 색 표시" "자동" # "자동 (색 그대로)" on the emulator (contains)
 }
 
 # ------------------------------------------------------------------ anchor checks (A §6.6 → 52–57)

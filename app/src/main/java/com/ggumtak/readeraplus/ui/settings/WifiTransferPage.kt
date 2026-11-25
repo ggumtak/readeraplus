@@ -7,6 +7,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.LanUpload
+import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.label
@@ -22,13 +23,15 @@ import java.io.File
 import android.provider.Settings as SystemSettings
 
 /**
- * "Wi-Fi로 책 받기" (T1-12): shows the address a browser on the same Wi-Fi opens to upload .txt / .epub files, the
+ * "Wi-Fi로 책 받기" (T1-12): shows the address a browser on the same Wi-Fi opens to upload .txt / .epub / .pdf files, the
  * destination folder and the files received. The upload server ([LanUpload], DATA) runs only while this page is the
  * top page and the activity is resumed: it starts on [onShown] / [onResume] and stops on [onPause], [onHidden] and
  * [onDestroy] (a restart gets a new access code). The screen stays on while the page is shown. Nothing here polls:
  * the page changes only when a file arrives or fails.
  */
 internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_WIFI, "Wi-Fi로 책 받기") {
+    private data class ReceivedItem(val name: String, val summary: String, val book: Book?)
+
     private lateinit var urlText: TextView
     private lateinit var statusText: TextView
     private lateinit var retryBar: View
@@ -43,7 +46,7 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
     /** A start is in flight (main thread only): set before the job launches, cleared once its IO work has returned. */
     private var starting = false
     /** Files received while this page lived (newest first); kept across a pause. */
-    private val received = ArrayList<Pair<String, String>>()
+    private val received = ArrayList<ReceivedItem>()
     private var shown = false
 
     override fun build(): View {
@@ -64,8 +67,8 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
         folderRow = ctx.infoRow("받는 폴더", "확인 중…").also(body::addView)
         // The rules of the transfer, with the address they are about (after 받은 파일 they read as that list's).
         body.addView(ctx.note(
-            "이 화면이 열려 있는 동안만 받습니다. 다시 열면 주소가 바뀝니다.\n" +
-                "TXT·EPUB 파일, 하나에 200MB까지 받습니다.\n" +
+            "이 화면이 열려 있는 동안만 받을 수 있습니다. 다시 열면 주소가 바뀝니다.\n" +
+                "TXT·EPUB·PDF 파일, 하나당 최대 200MB까지 받을 수 있습니다.\n" +
                 "게스트 Wi-Fi에서는 연결되지 않을 수 있습니다.",
         ))
 
@@ -135,7 +138,7 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             runCatching { LanUpload.destinationDir(activity.applicationContext) }.getOrNull()
         }?.also { destDir = it }
         if (dir == null) {
-            showFailure("받을 폴더를 만들지 못했습니다", "저장 공간과 파일 접근 권한을 확인한 뒤 [다시 시도]를 누르세요.")
+            showFailure("저장할 폴더를 만들지 못했습니다", "저장 공간과 파일 접근 권한을 확인한 뒤 [다시 시도]를 눌러 주세요.")
             return
         }
         folderRow.setInfoValue(FolderSets.displayName(dir.absolutePath, StorageAccess.primaryRoot()))
@@ -146,11 +149,11 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
         // Gone during the start: the caller's finally closes the server; nothing to show.
         if (!shown || !activity.isResumedNow) return
         if (result == null) {
-            showFailure(s.lastError ?: "전송을 시작하지 못했습니다", "Wi-Fi 연결을 확인한 뒤 [다시 시도]를 누르세요.")
+            showFailure(s.lastError ?: "Wi-Fi 전송을 시작하지 못했습니다", "Wi-Fi 연결을 확인한 뒤 [다시 시도]를 눌러 주세요.")
         } else {
             urlText.text = result.url
             urlText.setTextColor(Ink.BLACK)
-            statusText.text = "받은 파일은 바로 서재에 추가됩니다."
+            statusText.text = "받은 파일은 바로 서재에 추가됩니다. 목록을 누르면 바로 읽을 수 있습니다."
             statusText.visibility = View.VISIBLE
             retryBar.visibility = View.GONE
         }
@@ -178,7 +181,7 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
 
     private val listener = object : LanUpload.Listener {
         override fun onReceived(file: File, book: Book?, bytes: Long) {
-            received.add(0, file.name to SettingsFormat.received(bytes, book != null))
+            received.add(0, ReceivedItem(file.name, SettingsFormat.received(bytes, book != null), book))
             errorText.visibility = View.GONE
             fillReceived()
         }
@@ -198,7 +201,10 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             receivedBox.addView(ctx.note("아직 받은 파일이 없습니다."))
             return
         }
-        for ((name, line) in received) receivedBox.addView(ctx.row(name, line, titleMaxLines = 2))
+        for (item in received) {
+            val open: ((View) -> Unit)? = item.book?.let { b -> { ReaderActivity.open(activity, b) } }
+            receivedBox.addView(ctx.row(item.name, item.summary, titleMaxLines = 2, onClick = open))
+        }
     }
 
     private fun openWifiSettings() {

@@ -17,8 +17,8 @@ internal class PageTextBuilder(private val pageW: Float, private val pageH: Floa
 
     private fun norm(c: Char): Char = when {
         c.code < 32 || c.code == 0x7F -> '\u0000'
-        c == ' ' -> ' '
-        c == '﻿' || c == '​' || c == '‌' || c == '‍' || c == '­' -> '\u0000'
+        c == '\u00A0' -> ' '
+        c == '\uFEFF' || c == '\u200B' || c == '\u200C' || c == '\u200D' || c == '\u00AD' -> '\u0000'
         else -> c
     }
 

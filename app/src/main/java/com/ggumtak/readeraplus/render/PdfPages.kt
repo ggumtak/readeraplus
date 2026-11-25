@@ -308,13 +308,16 @@ class PdfPages private constructor(
 
         private fun pack(w: Int, h: Int): Long = (w.toLong() shl 32) or (h.toLong() and 0xFFFFFFFFL)
 
+        @SuppressLint("NewApi")
         private fun boundary(x: Float, y: Float) = SelectionBoundary(Point(x.toInt(), y.toInt()))
 
         private fun rect(b: FloatArray, sx: Float, sy: Float) = RectF(b[0] * sx, b[1] * sy, b[2] * sx, b[3] * sy)
 
+        @SuppressLint("NewApi")
         private fun runs(contents: List<PdfPageTextContent>): List<PdfText> =
             contents.filter { it.text.isNotEmpty() }.map { c -> PdfText(c.text, c.bounds.map { RectF(it) }) }
 
+        @SuppressLint("NewApi")
         private fun joined(contents: List<PdfPageTextContent>): PdfText? {
             val text = contents.joinToString("") { it.text }.trim()
             if (text.isEmpty()) return null
@@ -336,7 +339,7 @@ class PdfPages private constructor(
             val fd = try {
                 ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
             } catch (e: IOException) {
-                throw DocumentException("파일을 읽을 수 없습니다.\n${file.path}", e)
+                throw DocumentException("파일을 읽을 수 없습니다.", e)
             }
             val backend: Backend = try {
                 if (withText && hasPreV()) {
@@ -357,12 +360,12 @@ class PdfPages private constructor(
                 throw DocumentException("암호가 걸린 PDF는 열 수 없습니다.", e)
             } catch (t: Throwable) {
                 fd.close()
-                throw DocumentException("PDF 파일을 열 수 없습니다 (손상되었거나 지원하지 않는 형식).", t)
+                throw DocumentException("PDF 파일을 열 수 없습니다.\n손상되었거나 지원하지 않는 형식입니다.", t)
             }
             val pages = PdfPages(fd, backend, file, withText)
             if (pages.pageCount <= 0) {
                 pages.close()
-                throw DocumentException("쪽이 없는 PDF입니다.")
+                throw DocumentException("페이지가 없는 PDF 파일입니다.")
             }
             return pages
         }

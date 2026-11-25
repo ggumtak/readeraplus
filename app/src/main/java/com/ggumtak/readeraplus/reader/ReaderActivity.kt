@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.reader
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ComponentCallbacks2
 import android.content.Context
@@ -50,6 +51,7 @@ import com.ggumtak.readeraplus.reader.pdf.PdfActivity
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.format.DocumentException
 import com.ggumtak.readeraplus.format.Documents
+import com.ggumtak.readeraplus.format.LoadHints
 import com.ggumtak.readeraplus.format.epub.EpubBook
 import com.ggumtak.readeraplus.format.txt.TxtBook
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
@@ -71,6 +73,7 @@ import com.ggumtak.readeraplus.reader.extras.SelectionController
 import com.ggumtak.readeraplus.reader.extras.StatusSampleHost
 import com.ggumtak.readeraplus.reader.extras.TtsController
 import com.ggumtak.readeraplus.reader.extras.TxtOverrideHost
+import com.ggumtak.readeraplus.render.ChromePalette
 import com.ggumtak.readeraplus.render.Covers
 import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.Eink
@@ -704,7 +707,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             val done = imagePicked
             imagePicked = null
             // The reader was made again while the picker was in front: the waiting callback died with the old one.
-            if (done == null && resultCode == RESULT_OK) toast("사진을 다시 골라 주세요")
+            if (done == null && resultCode == RESULT_OK) toast("사진을 다시 선택하세요")
             done?.invoke(if (resultCode == RESULT_OK) data?.data else null)
             return
         }
@@ -847,7 +850,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         keeper.dispose()
         safely { tts?.release() }
         tts = null
-        safely { selection?.clear() }
+        safely { selection?.dispose() }
         selection = null
         thumbs?.close(); thumbs = null
         page.afterFirstFrame = null
@@ -1042,11 +1045,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         applyPageInsets()
     }
 
+    @SuppressLint("WrongConstant")
+    private fun applyOrientation(lock: Int) {
+        if (requestedOrientation != lock) requestedOrientation = lock
+    }
+
     private fun applyAppSettings() {
         // The brightness (window or device path) and page.brightnessSwipe: LightController is their only writer.
         light.onAppSettingsApplied()
         ReaderWindow.applyFullscreen(this, app.fullscreen)
-        if (requestedOrientation != app.orientationLock) requestedOrientation = app.orientationLock
+        applyOrientation(app.orientationLock)
         keeper.enabled = app.keepScreenOn
         applyCadence(Settings.reader)
         cadence.onChapter = app.einkRefreshOnChapter
@@ -1202,13 +1210,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun updateQuoteLook(eink: Boolean?) {
         val before = QuoteLook.generation
         QuoteLook.update(app.highlightLook, eink)
-        if (QuoteLook.generation != before) refreshDecor()
+        var redrawn = false
+        if (QuoteLook.generation != before) {
+            refreshDecor()
+            redrawn = true
+        }
         if (eink != einkClass) {
             einkClass = eink
             // A late device verdict changes only the body box, anchored after this frame; chrome keeps its size.
             handler.removeCallbacks(bandRelayout)
             handler.post(bandRelayout)
             pushChromeLook()
+            // On a cold-start phone the first frame used e-ink defaults while DeviceClass was null; repaint once with
+            // the rebuilt phone PageRenderer (e-ink devices already used eink=true, so zero extra e-ink redraw).
+            if (eink == false && !redrawn) refreshDecor()
         }
     }
 
@@ -1241,6 +1256,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val p = readerPalette ?: PagePalette.PAPER
         chrome.setLook(p, einkClass)
         returnNav.setLook(p, einkClass)
+        val cp = ChromePalette.of(p, einkClass)
+        statusText.setTextColor(cp.text)
+        statusText.background = borderBox(fill = cp.surface).apply { setStroke(dp(1), cp.edge) }
+        brightnessOverlay.setTextColor(cp.text)
+        brightnessOverlay.background = borderBox(fill = cp.surface).apply { setStroke(dp(1), cp.edge) }
+        endPanel?.setLook(p, einkClass)
     }
 
     /** "목차를 만드는 중…" while a big TXT is parsed in full (A5), else "불러오는 중…". */
@@ -1432,7 +1453,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 for (attempt in 0 until OPEN_LAYOUT_ATTEMPTS) {
                     val got = s.layout(sec)
                     if (got == null) {
-                        if (session === s && !s.isClosed) showError("페이지를 나누지 못했습니다")
+                        if (session === s && !s.isClosed) showError("책 페이지를 불러오지 못했습니다")
                         return@launch
                     }
                     laid = got
@@ -1591,7 +1612,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         loadSpeed()
         // A broken EPUB opens with what it holds; say once per book (per process) that some of it is missing.
         val missing = (s.document as? EpubBook)?.missingSpineItems ?: 0
-        if (missing > 0 && missingNoticeShown.add(id)) toast("이 책은 본문 파일 ${missing}개가 빠져 있어 그 부분을 건너뜁니다")
+        if (missing > 0 && missingNoticeShown.add(id)) toast("이 책은 일부 본문(${missing}개)이 빠져 있어 해당 부분을 건너뜁니다")
         if (ReaderPerf.turns) Log.d(ReaderPerf.TAG, "afterOpen ${SystemClock.uptimeMillis() - t0} ms")
     }
 
@@ -1673,7 +1694,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         stopAutoTurn(showToast = false)
         safely { tts?.release() }
         tts = null
-        safely { selection?.clear() }
+        safely { selection?.dispose() }
         selection = null
         navJob?.cancel()
         openJob?.cancel()
@@ -2021,7 +2042,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             val found = withContext(Dispatchers.Default) {
                 JumpAnchor.search(sec, s.sectionCount, anchorText, load = { i ->
                     val t = if (i == sec && center != null) center else try {
-                        s.document.loadSection(i).text
+                        LoadHints.asBackground { s.document.loadSection(i).text }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (t: Throwable) {
@@ -2732,7 +2753,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         returnNav.onJumpFailed() // a use of the row or the chip for this jump is undone (U §3.4)
         if (curLayout == null || layoutStale()) {
             // Nothing valid on screen to fall back to.
-            showError("페이지를 나누지 못했습니다")
+            showError("책 페이지를 불러오지 못했습니다")
         } else {
             // The old page stays: the return chip / strip (a return jump binds them with its page) match it again.
             if (chromeVisible) bindChrome() else returnNav.bind()
@@ -3879,7 +3900,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     // Keep reading the old parse rather than showing nothing.
                     readerTarget = old.settings
                     reopenDone.clear()
-                    toast("새 설정으로 책을 표시하지 못했습니다")
+                    toast("변경한 설정을 적용하지 못했습니다")
                     return@launch
                 }
                 // The return places in the old parse (its counts), found again in the new one below (U §3.5 item 8).
@@ -4528,8 +4549,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (action == TapAction.NONE) return super.dispatchKeyEvent(event)
         val assigned = KeyMap.isAssigned(code, a)
         if (chromeVisible && !assigned && KeyMap.isFocusKey(code)) return super.dispatchKeyEvent(event)
-        // While listening to TTS the (unassigned) volume keys control the speech volume.
-        if (!assigned && KeyMap.isVolumeKey(code) && ttsSpeaking()) return super.dispatchKeyEvent(event)
+        // While TTS is actively playing, (unassigned) volume keys control the speech volume; when paused, they turn pages.
+        if (!assigned && KeyMap.isVolumeKey(code) && ttsPlaying()) return super.dispatchKeyEvent(event)
+        if (safely { selection?.isActive } == true) return true
         if (endPanel?.isShowing == true || endLoading) return endPanelKey(event, action, assigned)
         if (event.action == KeyEvent.ACTION_UP) {
             heldKey.up(code)
@@ -4925,8 +4947,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     internal fun setOrientationLock(lock: Int) {
         saveApp(app.copy(orientationLock = lock))
-        requestedOrientation = lock
+        applyOrientation(lock)
         if (chromeVisible) bindChrome()
+    }
+
+    /** Reloads the open book's metadata (e.g. after editing title/author in 책 정보) and refreshes live UI. */
+    internal fun refreshBookMeta() {
+        val id = bookRef?.id ?: return
+        scope.launch {
+            val fresh = withContext(Dispatchers.IO) { runCatching { Library.book(id) }.getOrNull() } ?: return@launch
+            if (isDestroyed || bookRef?.id != id) return@launch
+            bookRef = fresh
+            if (chromeVisible) bindChrome()
+            refreshDecor(onlyIfChanged = true)
+        }
     }
 
     /** Saves [a] (built from the live [app]); the caller has already applied its own change to the views. */
@@ -4965,6 +4999,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /** TTS session active (the controller's own × may have stopped it, so ask it rather than remember). */
     private fun ttsSpeaking(): Boolean = tts != null && safely { tts?.isSpeaking } == true
+
+    /** TTS audio actively playing (false while paused, so volume keys can still turn pages). */
+    private fun ttsPlaying(): Boolean = tts != null && safely { tts?.isPlaying } == true
 
     /** 흑백 반전: a global setting (R2: never the session's effective settings, which carry this book's TXT options). */
     internal fun toggleInvert() {
@@ -5161,6 +5198,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /** The end panel, built and attached on first use (assigned before attaching: [isOwnView] must know it). */
     private fun endPanel(): EndPanel = endPanel ?: EndPanel(this, endActions).also {
         endPanel = it
+        it.setLook(readerPalette ?: PagePalette.PAPER, einkClass)
         it.attach(root)
     }
 
