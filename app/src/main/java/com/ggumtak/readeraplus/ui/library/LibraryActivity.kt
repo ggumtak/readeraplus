@@ -1059,7 +1059,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
                 extraBtn.contentDescription = "새 컬렉션"
                 extraBtn.visibility = View.VISIBLE
             }
-            shelf == Shelf.TRASH -> {
+            shelf == Shelf.TRASH && hasTrashItems() -> {
                 extraBtn.setImageResource(R.drawable.ic_delete_forever)
                 extraBtn.contentDescription = "휴지통 비우기"
                 extraBtn.visibility = View.VISIBLE
@@ -1069,6 +1069,9 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         // A group list has no books to show differently.
         viewBtn.visibility = if (LibraryText.isGrouped(shelf) && !inGroup) View.GONE else View.VISIBLE
     }
+
+    private fun hasTrashItems(): Boolean =
+        counts?.get(Shelf.TRASH)?.let { it > 0 } ?: (shelf == Shelf.TRASH && shownRows.isNotEmpty())
 
     private fun onExtraAction() {
         when (shelf) {
@@ -1252,6 +1255,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             }
         }
         if (rows.isEmpty()) showEmptyState() else hideEmptyState()
+        if (shelf == Shelf.TRASH) updateToolbar()
         afterFirstList()
     }
 
@@ -1584,7 +1588,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             if (tryStartForResult(specific, REQ_ALL_FILES)) return
             if (tryStartForResult(Intent(SystemSettings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION), REQ_ALL_FILES)) {
                 val name = getString(R.string.app_name)
-                toast("목록에서 ‘$name’${Josa.eulReul(name)} 찾아 허용하세요")
+                toast("목록에서 ‘$name’ 앱을 찾아 허용하세요")
                 return
             }
             showNoPermissionScreen()
@@ -1636,14 +1640,14 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
             putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/epub+zip", "text/plain", "application/pdf", "*/*"))
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
-        if (!tryStartForResult(intent, REQ_OPEN_FILE)) toast("파일 선택기를 열 수 없습니다")
+        if (!tryStartForResult(intent, REQ_OPEN_FILE)) toast("파일 선택 화면을 열 수 없습니다")
     }
 
     internal fun pickTree() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
         )
-        if (!tryStartForResult(intent, REQ_OPEN_TREE)) toast("폴더 선택기를 열 수 없습니다")
+        if (!tryStartForResult(intent, REQ_OPEN_TREE)) toast("폴더 선택 화면을 열 수 없습니다")
     }
 
     @Deprecated("Platform activity result (no AndroidX).")
@@ -1731,7 +1735,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
 
     private fun confirmTreeImport(uri: Uri, noPermission: Boolean) {
         val why = if (noPermission) "모든 파일 접근 권한이 없어 이 폴더를 직접 읽을 수 없습니다."
-        else "이 폴더는 파일 경로로 읽을 수 없는 저장소입니다."
+        else "이 폴더는 직접 스캔할 수 없는 저장소입니다."
         confirmDialog(
             title = "폴더에서 가져오기",
             message = "$why\n폴더 안의 TXT·EPUB·PDF 파일을 앱 저장소로 복사할까요?",
@@ -1757,11 +1761,17 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
      */
     private fun showOverflow(anchor: View) {
         val items = ArrayList<MenuItem>()
-        items += MenuItem("정렬: ${sort.label}", R.drawable.ic_sort) { chooseSort() }
-        items += MenuItem("보기: ${listMode.label}", modeIcon(listMode)) { chooseMode() }
-        if (shelf == Shelf.COLLECTIONS && group == null) items += MenuItem("새 컬렉션", R.drawable.ic_add) { newCollection(null) }
-        if (shelf == Shelf.TRASH) items += MenuItem("휴지통 비우기", R.drawable.ic_delete_forever) { confirmEmptyTrash() }
-        items += MenuItem("파일 열기", R.drawable.ic_file_open, groupStart = true) { openFilePicker() }
+        val inGroup = group != null
+        val showingBooks = !LibraryText.isGrouped(shelf) || inGroup
+        if (showingBooks && shelf != Shelf.READING_NOW) {
+            items += MenuItem("정렬: ${sort.label}", R.drawable.ic_sort) { chooseSort() }
+        }
+        if (showingBooks) {
+            items += MenuItem("보기: ${listMode.label}", modeIcon(listMode)) { chooseMode() }
+        }
+        if (shelf == Shelf.COLLECTIONS && !inGroup) items += MenuItem("새 컬렉션", R.drawable.ic_add) { newCollection(null) }
+        if (shelf == Shelf.TRASH && hasTrashItems()) items += MenuItem("휴지통 비우기", R.drawable.ic_delete_forever) { confirmEmptyTrash() }
+        items += MenuItem("파일 열기", R.drawable.ic_file_open, groupStart = items.isNotEmpty()) { openFilePicker() }
         // Books received there are in the database when this screen resumes: onResume reloads the list and counts.
         items += MenuItem("Wi-Fi로 책 받기", R.drawable.ic_wifi_receive) { SettingsActivity.open(this, SettingsActivity.PAGE_WIFI) }
         // "지금 스캔", as the row of 설정 → 책 스캔 that does the same.

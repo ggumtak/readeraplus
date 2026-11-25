@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Black on white everywhere; no transitions (e-ink). The items live in Base.AppTheme so that values-v31 can add
          the splash-screen attributes to AppTheme without repeating them (every activity theme inherits AppTheme). -->
     <style name="Base.AppTheme" parent="android:Theme.Material.Light.NoActionBar">
@@ -16,7 +16,7 @@
         <item name="android:windowLightStatusBar">true</item>
         <!-- White bar with dark buttons only where dark buttons exist (API 27+); black on API 26 (see colors.xml). -->
         <item name="android:navigationBarColor">@color/nav_bar</item>
-        <item name="android:windowLightNavigationBar">@bool/light_nav_bar</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">@bool/light_nav_bar</item>
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:windowContentTransitions">false</item>
         <item name="android:windowActivityTransitions">false</item>
@@ -36,7 +36,7 @@
         <!-- Before API 30 the reader drives the bars with systemUiVisibility flags that drop the light-navigation-bar
              flag, so its bar stays black there (white from API 30, see colors.xml). -->
         <item name="android:navigationBarColor">@color/reader_nav_bar</item>
-        <item name="android:windowLightNavigationBar">@bool/reader_light_nav_bar</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">@bool/reader_light_nav_bar</item>
     </style>
 
     <!-- Full-screen dialogs (TOC, search, about): the app theme minus FLAG_FULLSCREEN, so the dialog does not flip

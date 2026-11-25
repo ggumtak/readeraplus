@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import android.util.LruCache
 import android.widget.ImageView
 import com.ggumtak.readeraplus.data.Book
@@ -31,8 +32,11 @@ internal object CoverLoader {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount.coerceAtLeast(1)
     }
 
-    /** Keys whose generation failed (don't retry while scrolling). Main thread only. */
-    private val failed = HashSet<String>()
+    /**
+     * Key → `elapsedRealtime` of its last failed generation: not decoded again within [CoverRetry.WAIT_MS] (no retry
+     * per row rebind while scrolling), then tried again (a failure is transient, see [CoverRetry]). Main thread only.
+     */
+    private val failedAt = HashMap<String, Long>()
 
     /** key → views waiting for it. Guarded by [lock]. */
     private val pending = HashMap<String, ArrayList<WeakReference<ImageView>>>()
@@ -70,7 +74,7 @@ internal object CoverLoader {
             return
         }
         view.setImageDrawable(null)
-        if (key in failed) return
+        if (failedRecently(key)) return
         val app = context.applicationContext
         val submit: Boolean
         synchronized(lock) {
@@ -89,7 +93,7 @@ internal object CoverLoader {
     /**
      * Paged lists (NOTES_SPEC §10.3): decodes the covers of `books[from until to]` into the memory cache with no view
      * waiting, so the next page binds every cover from memory (one e-ink update per page). Keys already cached,
-     * failed or pending are skipped. Prefetches queue behind the covers the screen is waiting for. Main thread only.
+     * failed within [CoverRetry.WAIT_MS] or pending are skipped. Prefetches queue behind the covers the screen is waiting for. Main thread only.
      */
     fun prefetch(context: Context, books: List<Book>, from: Int, to: Int, w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
@@ -99,7 +103,7 @@ internal object CoverLoader {
         for (i in from.coerceAtLeast(0) until end) {
             val book = books[i]
             val key = keyFor(book, w, h)
-            if (key in failed || cache.get(key) != null) continue
+            if (failedRecently(key) || cache.get(key) != null) continue
             val queued = synchronized(lock) {
                 if (pending.containsKey(key)) false else { pending[key] = ArrayList(1); true }
             }
@@ -119,6 +123,8 @@ internal object CoverLoader {
             any
         }
         if (!wanted) return
+        // Covers.thumbnail catches everything itself (null = out of memory or no placeholder either); this only keeps
+        // a worker thread alive should that ever change.
         val bmp: Bitmap? = try {
             Covers.thumbnail(app, book, w, h)
         } catch (t: Throwable) {
@@ -126,7 +132,14 @@ internal object CoverLoader {
         }
         main.post {
             val waiters = synchronized(lock) { pending.remove(key) }
-            if (bmp != null) cache.put(key, bmp) else failed += key
+            if (bmp != null) {
+                cache.put(key, bmp)
+                failedAt.remove(key)
+            } else {
+                val now = SystemClock.elapsedRealtime()
+                failedAt[key] = now
+                CoverRetry.prune(failedAt, now, CoverRetry.WAIT_MS, CoverRetry.MAX_ENTRIES)
+            }
             waiters?.forEach { ref ->
                 val v = ref.get()
                 if (v != null && v.tag == key && bmp != null) v.setImageBitmap(bmp)
@@ -138,13 +151,21 @@ internal object CoverLoader {
     fun forget(bookId: Long) {
         val prefix = "${bookId}_"
         cache.snapshot().keys.filter { it.startsWith(prefix) }.forEach { cache.remove(it) }
-        failed.removeAll { it.startsWith(prefix) }
+        failedAt.keys.removeAll { it.startsWith(prefix) }
     }
 
-    /** Frees memory (called from onTrimMemory). */
+    /** Frees memory (called from onTrimMemory); failed keys may be tried again at once. */
     fun trim(all: Boolean) {
         if (all) cache.evictAll() else cache.trimToSize(MAX_BYTES / 2)
-        failed.clear()
+        failedAt.clear()
+    }
+
+    /** [key] failed less than [CoverRetry.WAIT_MS] ago (an expired entry is dropped). Main thread only. */
+    private fun failedRecently(key: String): Boolean {
+        val last = failedAt[key] ?: return false
+        if (!CoverRetry.mayTry(last, SystemClock.elapsedRealtime(), CoverRetry.WAIT_MS)) return true
+        failedAt.remove(key)
+        return false
     }
 
     /** LIFO work queue: ThreadPoolExecutor enqueues with offer() and takes from the head. */

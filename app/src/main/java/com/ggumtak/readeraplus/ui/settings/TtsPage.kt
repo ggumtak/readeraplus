@@ -42,6 +42,7 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
     private val pending = ArrayList<(TextToSpeech) -> Unit>()
     private var enginesGen = 0
     private var ttsGen = 0
+    private var destroyed = false
     private val main = Handler(Looper.getMainLooper())
 
     override fun build(): View {
@@ -76,9 +77,13 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
 
         body.section("엔진")
         engineRow = ctx.navRow("음성 엔진 설정", "…") { openEngineSettings() }.also(body::addView)
-        engineHint = ctx.note("한국어 음성이 없으면 음성 엔진 설정에서 받으세요.").apply { visibility = View.GONE }.also(body::addView)
+        engineHint = ctx.note("한국어 음성이 없으면 음성 엔진 설정에서 설치해 주세요.").apply { visibility = View.GONE }.also(body::addView)
         loadEngines()
         return ctx.pageScroll(body)
+    }
+
+    override fun onPause() {
+        tts?.let { runCatching { it.stop() } }
     }
 
     override fun onResume() {
@@ -106,7 +111,7 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
                     ri?.let { it.loadLabel(pm)?.toString() ?: it.serviceInfo.packageName } ?: ""
                 }.getOrNull()
             }
-            if (gen != enginesGen) return@launch
+            if (destroyed || gen != enginesGen) return@launch
             noEngine = name?.isEmpty()
             engineRow?.setSummary(when {
                 name == null -> "확인하지 못했습니다"
@@ -167,11 +172,17 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
 
     private fun onTtsInit(gen: Int, status: Int) {
         val t = tts
-        if (gen != ttsGen || t == null) return
+        if (destroyed || gen != ttsGen || t == null) return
         if (status == TextToSpeech.SUCCESS) {
             ttsReady = true
-            noKorean = runCatching { t.voices?.none { it.locale.language.lowercase(Locale.ROOT) == "ko" } }.getOrNull() == true
-            updateEngineHint()
+            activity.scope.launch {
+                val missingKo = withContext(Dispatchers.Default) {
+                    runCatching { t.voices?.none { it.locale.language.lowercase(Locale.ROOT) == "ko" } }.getOrNull() == true
+                }
+                if (destroyed || gen != ttsGen || tts !== t) return@launch
+                noKorean = missingKo
+                updateEngineHint()
+            }
             val work = pending.toList()
             pending.clear()
             for (f in work) f(t)
@@ -183,37 +194,43 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
 
     private fun speak(t: TextToSpeech) {
         val app = Settings.app
-        val voice = savedVoice(t)
-        val lang = if (voice != null) {
-            if (runCatching { t.setVoice(voice) }.getOrDefault(TextToSpeech.ERROR) == TextToSpeech.SUCCESS) {
-                TextToSpeech.LANG_AVAILABLE
-            } else {
-                runCatching { t.setLanguage(Locale.KOREAN) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
+        val gen = ttsGen
+        activity.scope.launch {
+            val (r, lang) = withContext(Dispatchers.Default) {
+                val voice = savedVoice(t, app.ttsVoice)
+                val l = if (voice != null) {
+                    if (runCatching { t.setVoice(voice) }.getOrDefault(TextToSpeech.ERROR) == TextToSpeech.SUCCESS) {
+                        TextToSpeech.LANG_AVAILABLE
+                    } else {
+                        runCatching { t.setLanguage(Locale.KOREAN) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
+                    }
+                } else {
+                    runCatching { t.setLanguage(Locale.KOREAN) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
+                }
+                t.setSpeechRate(app.ttsRate)
+                t.setPitch(app.ttsPitch)
+                runCatching { t.speak(SAMPLE, TextToSpeech.QUEUE_FLUSH, null, "settings-preview") }.getOrDefault(TextToSpeech.ERROR) to l
             }
-        } else {
-            runCatching { t.setLanguage(Locale.KOREAN) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
+            if (destroyed || gen != ttsGen || tts !== t) return@launch
+            showStatus(when {
+                r != TextToSpeech.SUCCESS -> "읽기를 시작하지 못했습니다"
+                lang == TextToSpeech.LANG_MISSING_DATA -> "한국어 음성이 없습니다. 음성 엔진 설정에서 설치해 주세요."
+                lang == TextToSpeech.LANG_NOT_SUPPORTED -> "이 음성 엔진은 한국어를 지원하지 않습니다."
+                else -> null
+            })
         }
-        t.setSpeechRate(app.ttsRate)
-        t.setPitch(app.ttsPitch)
-        val r = t.speak(SAMPLE, TextToSpeech.QUEUE_FLUSH, null, "settings-preview")
-        showStatus(when {
-            r != TextToSpeech.SUCCESS -> "읽기를 시작하지 못했습니다"
-            lang == TextToSpeech.LANG_MISSING_DATA -> "한국어 음성이 없습니다. 음성 엔진 설정에서 받으세요."
-            lang == TextToSpeech.LANG_NOT_SUPPORTED -> "이 음성 엔진은 한국어를 읽지 못합니다."
-            else -> null
-        })
     }
 
     // ---------------------------------------------------------------- voice (A13)
 
     /** The saved voice ([com.ggumtak.readeraplus.settings.AppSettings.ttsVoice]) if this engine has it. */
-    private fun savedVoice(t: TextToSpeech): Voice? {
-        val name = Settings.app.ttsVoice.ifEmpty { return null }
+    private fun savedVoice(t: TextToSpeech, name: String): Voice? {
+        if (name.isEmpty()) return null
         return runCatching { t.voices?.firstOrNull { it.name == name } }.getOrNull()
     }
 
     /** The engine's voices as the chooser lists them ([TtsVoices]): Korean and the saved voice's language. */
-    private fun voiceChoices(t: TextToSpeech): List<Pair<Voice, String>> {
+    private fun voiceChoices(t: TextToSpeech, saved: String): List<Pair<Voice, String>> {
         val voices: List<Voice> = runCatching { t.voices?.toList() }.getOrNull().orEmpty()
         val infos = voices.map { v ->
             TtsVoices.Info(
@@ -225,7 +242,6 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
                 notInstalled = v.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true,
             )
         }
-        val saved = Settings.app.ttsVoice
         val keep = infos.firstOrNull { it.name == saved }?.lang
         val byName = voices.associateBy { it.name }
         return TtsVoices.list(infos, keep).mapNotNull { (info, label) -> byName[info.name]?.let { it to label } }
@@ -235,11 +251,16 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
     private fun nameVoice() {
         withEngine { t ->
             val name = Settings.app.ttsVoice
-            val label = when {
-                name.isEmpty() -> TtsVoices.DEFAULT
-                else -> voiceChoices(t).firstOrNull { it.first.name == name }?.second ?: "없는 목소리 · 기본 목소리로 읽음"
+            val gen = ttsGen
+            activity.scope.launch {
+                val label = withContext(Dispatchers.Default) {
+                    when {
+                        name.isEmpty() -> TtsVoices.DEFAULT
+                        else -> voiceChoices(t, name).firstOrNull { it.first.name == name }?.second ?: "저장된 목소리를 찾을 수 없어 기본 목소리로 읽습니다"
+                    }
+                }
+                if (!destroyed && gen == ttsGen && tts === t) voiceRow?.setSummary(label)
             }
-            voiceRow?.setSummary(label)
         }
     }
 
@@ -247,25 +268,29 @@ internal class TtsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.P
     private fun chooseVoice() {
         showStatus(null)
         withEngine { t ->
-            if (activity.isFinishing || activity.isDestroyed) return@withEngine
-            val voices = voiceChoices(t)
-            if (voices.isEmpty()) {
-                showStatus("이 음성 엔진에는 고를 수 있는 목소리가 없습니다")
-                return@withEngine
-            }
             val current = Settings.app.ttsVoice
-            val sel = if (current.isEmpty()) 0 else voices.indexOfFirst { it.first.name == current }.let { if (it < 0) -1 else it + 1 }
-            ctx.chooser("목소리", listOf(TtsVoices.DEFAULT) + voices.map { it.second }, sel) { i ->
-                val name = if (i == 0) "" else voices[i - 1].first.name
-                editApp { it.copy(ttsVoice = name) }
-                voiceRow?.setSummary(if (i == 0) TtsVoices.DEFAULT else voices[i - 1].second)
-                // The page's engine may have been renewed while the chooser was open (onResume).
-                withEngine { speak(it) }
+            val gen = ttsGen
+            activity.scope.launch {
+                val voices = withContext(Dispatchers.Default) { voiceChoices(t, current) }
+                if (destroyed || gen != ttsGen || tts !== t || activity.isFinishing || activity.isDestroyed) return@launch
+                if (voices.isEmpty()) {
+                    showStatus("이 음성 엔진에서 선택할 수 있는 목소리가 없습니다")
+                    return@launch
+                }
+                val sel = if (current.isEmpty()) 0 else voices.indexOfFirst { it.first.name == current }.let { if (it < 0) -1 else it + 1 }
+                ctx.chooser("목소리", listOf(TtsVoices.DEFAULT) + voices.map { it.second }, sel) { i ->
+                    val name = if (i == 0) "" else voices[i - 1].first.name
+                    editApp { it.copy(ttsVoice = name) }
+                    voiceRow?.setSummary(if (i == 0) TtsVoices.DEFAULT else voices[i - 1].second)
+                    // The page's engine may have been renewed while the chooser was open (onResume).
+                    withEngine { speak(it) }
+                }
             }
         }
     }
 
     override fun onDestroy() {
+        destroyed = true
         releaseTts()
     }
 

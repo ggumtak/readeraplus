@@ -50,7 +50,7 @@ object TapZoneModel {
         TapAction.BOOKMARK -> "북마크"
         TapAction.TOC -> "목차"
         TapAction.SEARCH -> "검색"
-        TapAction.SETTINGS -> "읽기\n설정"
+        TapAction.SETTINGS -> "보기\n설정"
         TapAction.TTS -> "듣기"
         TapAction.NEXT_CHAPTER -> "다음\n챕터"
         TapAction.PREV_CHAPTER -> "이전\n챕터"

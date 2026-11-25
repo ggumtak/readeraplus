@@ -397,7 +397,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             allBtn.visibility = View.GONE
             col.addView(head, lp(MATCH_PARENT, ctx.dp(HEADER_DP)))
             col.addView(timeLine, lp(MATCH_PARENT, ctx.dp(INFO_DP)))
-            col.addView(gapsLine, lp(MATCH_PARENT, ctx.dp(40)))
+            col.addView(gapsLine, lp(MATCH_PARENT, ctx.dp(48)))
             col.addView(ctx.hairline())
             val frame = FrameLayout(ctx)
             frame.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
@@ -433,7 +433,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             val filtering = rows != null
             summary.text = when {
                 filtering -> TocText.filterSummary(query, rows?.size ?: 0)
-                usable && e != null -> TocText.summary(n, current, e.maxNumber, if (current >= 0) e.numberAt(current) else -1)
+                usable -> TocText.summary(n, current, e.maxNumber, if (current >= 0) e.numberAt(current) else -1)
                 else -> TocText.summary(n, current, -1, -1)
             }
             nowBtn.visibility = if (filtering) View.GONE else View.VISIBLE
@@ -753,11 +753,17 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
             MenuItem("이동", R.drawable.ic_bookmark) { goAndClose(DocPosition(b.section, b.offset)) },
             MenuItem("메모 편집", R.drawable.ic_edit) { editBookmarkNote(b, b.note, container) },
             MenuItem("삭제", R.drawable.ic_delete) {
-                scope.launch {
-                    val ok = withContext(Dispatchers.IO) { runCatching { Library.deleteBookmark(b.id) }.isSuccess }
-                    if (!ok) failed("삭제하지 못했습니다")
-                    loadBookmarks(container)
+                val delete = {
+                    scope.launch {
+                        val ok = withContext(Dispatchers.IO) { runCatching { Library.deleteBookmark(b.id) }.isSuccess }
+                        if (!ok) failed("삭제하지 못했습니다")
+                        loadBookmarks(container)
+                    }
+                    Unit
                 }
+                // A bare bookmark is one tap to put back; one with a memo takes the typed text with it, so it asks
+                // first, as a highlight does (a menu row is easy to hit by mistake on e-ink).
+                if (b.note.isBlank()) delete() else ctx.confirm("북마크 삭제", "메모가 있는 북마크입니다. 삭제할까요?", "삭제") { delete() }
             },
         ))
     }
@@ -826,7 +832,7 @@ internal class ContentsDialog(private val host: ReaderHost, initialTab: Int) {
         if (tab == 2) shareAll.visibility = if (list.isNotEmpty()) View.VISIBLE else View.GONE
         container.removeAllViews()
         if (all.isEmpty()) {
-            container.addView(ctx.illustratedEmpty("형광펜이 없습니다\n\n본문을 길게 누른 뒤 ‘형광펜’을 누르세요", R.drawable.ill_empty_highlights))
+            container.addView(ctx.illustratedEmpty("형광펜이 없습니다\n\n본문을 길게 눌러 ‘형광펜’을 선택하세요", R.drawable.ill_empty_highlights))
             return
         }
         val ink = QuoteLook.ink()

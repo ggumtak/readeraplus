@@ -53,12 +53,12 @@ import java.lang.ref.WeakReference
  * sheet), so the upper part of the page stays visible. Black on white; a phone slides it up ([SLIDE_MS]), e-ink shows it
  * at once; no scrolling, nothing that expands:
  *
- * 전체 읽기 설정 › · [닫기] / 글자 크기 / 굵기 / 줄 간격 / 문단 간격 / 좌우 여백 / 상하 여백 (− value +, 48 dp buttons
+ * 보기 설정 전체 › · [닫기] / 글자 크기 / 굵기 / 줄 간격 / 문단 간격 / 좌우 여백 / 상하 여백 (− value +, 48 dp buttons
  * on 48 dp rows) / 글꼴 (drop-down list) / 배경 (흰색 · 회색 · 검은색, [PageTheme]; picking one turns 흑백 반전 off)
  * ([QUICK_HEIGHT_DP][PopupGeometry.QUICK_HEIGHT_DP] = 432 dp).
  *
  * Everything else (styles, the other spacings, page breaks, status bands, page turning, keys, the TXT and EPUB
- * options) lives in 설정 → 읽기 설정 ([SettingsActivity.PAGE_READING]), which "전체 읽기 설정" opens; these seven rows
+ * options) lives in 설정 → 보기 설정 ([SettingsActivity.PAGE_READING]), which "보기 설정 전체" opens; these seven rows
  * are there too, with the same steps, ranges and values. Both edit the same GLOBAL [ReaderSettings] fields and reach
  * the page through the same path ([ReaderHost.applySettings] here, the reader's settings sync after 설정): steppers
  * are debounced (250 ms) so repeated taps cost one re-layout, the font applies at once. A change keeps the page's
@@ -213,8 +213,10 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
             toShown = { (it - FontManager.naturalWeight(cur.fontId)) / 50.0 },
             fromShown = { FontManager.naturalWeight(cur.fontId) + it.toFloat() * 50f },
         )
+        var refreshWeight: (() -> Unit)? = null
         root.addView(stepperRow("굵기", cur.fontWeight.toFloat().coerceAtLeast(minWeight), minWeight, 900f, 50f,
             { Fmt.weight(it.toInt(), FontManager.naturalWeight(cur.fontId)) }, floor = { minWeightOf(cur.fontId) }, entry = weightEntry,
+            onRefresh = { refreshWeight = it },
             onChange = stepper(seeThrough = false) { update(cur.copy(fontWeight = it.toInt()), debounce = true) },
         ))
         root.addView(stepperRow("줄 간격", cur.lineHeightPct.toFloat(), 100f, 300f, 5f, { Fmt.pct(it.toInt()) },
@@ -223,7 +225,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         root.addView(stepperRow("문단 간격", cur.paragraphSpacingPct.toFloat(), 0f, 300f, 10f, { Fmt.pct(it.toInt()) },
             onChange = stepper { update(cur.copy(paragraphSpacingPct = it.toInt()), debounce = true) },
         ))
-        // The margins as on 읽기 설정: "0" = the default margin (sides −20..+60 around MaruViewer's 20 dp; top and
+        // The margins as on 보기 설정: "0" = the default margin (sides −20..+60 around MaruViewer's 20 dp; top and
         // bottom, from the status bands, −15..+70 around their own 15 / 10 dp), in steps of 2 (stored values stay dp).
         // While 여백 사용 is off they show the margin the page has (QuickFields.sideUi / verticalUi). 상하 여백 moves
         // both sides from the value it showed (QuickFields.withVertical), so a pair off the defaults' line never jumps.
@@ -248,13 +250,13 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                 vertical = to
             },
         ))
-        root.addView(fontRow())
+        root.addView(fontRow { refreshWeight?.invoke() })
         root.addView(themeRow())
         return root
     }
 
     /**
-     * The top bar: "전체 읽기 설정 ›" on the left (설정 → 읽기 설정, after the pending change reached the page) and a
+     * The top bar: "보기 설정 전체 ›" on the left (설정 → 보기 설정, after the pending change reached the page) and a
      * 48 dp 닫기 on the right.
      */
     private fun topBar(): LinearLayout {
@@ -274,7 +276,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         all.addView(ctx.label(ALL_SETTINGS, Compact.LABEL_SP, bold = true, maxLines = 1))
         all.addView(ctx.icon(R.drawable.ic_chevron_right, 24))
         row.addView(all, lp(WRAP_CONTENT, ctx.dp(Compact.BAR_DP)))
-        // 상태 표시줄 (설정 → 읽기 설정 → 상태 표시줄) beside it: no extra row, the popup
+        // 상태 표시줄 (설정 → 상태 표시줄) beside it: no extra row, the popup
         // keeps its height.
         val status = ctx.horizontal {
             setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
@@ -295,7 +297,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
     }
 
     /** 글꼴: the font's name in its own face; the drop-down list of fonts (with 글꼴 추가 / 글꼴 관리). */
-    private fun fontRow(): LinearLayout {
+    private fun fontRow(onFontChanged: () -> Unit): LinearLayout {
         lateinit var row: LinearLayout
         lateinit var value: TextView
         row = ctx.compactRow {
@@ -304,6 +306,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
                     update(cur.copy(fontId = id))
                     value.text = fontName(id)
                     value.typeface = fontTypeface(id)
+                    onFontChanged()
                 } else {
                     host.applySettings(Settings.reader.copy(fontId = id))
                 }
@@ -394,6 +397,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         format: (Float) -> String,
         floor: (() -> Float)? = null,
         entry: StepperEntry = StepperEntry(),
+        onRefresh: ((() -> Unit) -> Unit)? = null,
         onChange: (Float) -> Unit,
     ): LinearLayout {
         var v = value
@@ -403,6 +407,12 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         // Fixed width for the widest possible value (at least the common column width): the − / + buttons stay put
         // while tapping repeatedly, and line up with the other rows' buttons.
         valueView.lockWidthForValues(min, max, step, format, minPx = ctx.dp(Compact.STEP_VALUE_DP))
+        (valueView.layoutParams as? LinearLayout.LayoutParams)?.height = ctx.dp(Compact.ROW_DP)
+        onRefresh?.invoke {
+            val lo = floor?.invoke() ?: min
+            v = v.coerceIn(lo, max)
+            valueView.text = format(v)
+        }
         fun apply(s: Float) {
             if (s == v) return
             v = s
@@ -415,7 +425,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         valueView.contentDescription = "$title 직접 입력"
         valueView.setOnClickListener {
             val lo = floor?.invoke() ?: min
-            InkNumPad.showValue(ctx, title, "지금 ${format(v)} · ${entry.range(lo, max)}", entry.digits, entry.signed,
+            InkNumPad.showValue(ctx, title, "현재 ${format(v)} · ${entry.range(lo, max)}", entry.digits, entry.signed,
                 entry.decimals) { typed ->
                 val nv = entry.valueFor(typed, lo, max) ?: return@showValue "${entry.range(lo, max)} 사이로 입력하세요"
                 apply(nv)
@@ -459,7 +469,7 @@ internal class ReadingSettingsPopup(private val host: ReaderHost, private val an
         /** A 배경 choice: 64 dp wide ("검은색" at 17 sp fits), drawn 40 dp tall; the view is the row's 48 dp (touch target). */
         private const val THEME_DP = 64
         private const val THEME_H_DP = 40
-        const val ALL_SETTINGS = "전체 읽기 설정"
+        const val ALL_SETTINGS = "보기 설정 전체"
         const val STATUS_SETTINGS = "상태 표시줄"
         /** Weak: a popup left open when the reader is destroyed must not pin the activity. */
         private var current: WeakReference<ReadingSettingsPopup>? = null

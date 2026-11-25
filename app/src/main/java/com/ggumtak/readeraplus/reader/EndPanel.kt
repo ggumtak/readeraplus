@@ -55,13 +55,18 @@ internal class EndPanel(private val ctx: Context, private val actions: Actions) 
     /** Full-size touch catcher: the page under it gets no taps while the panel shows. */
     private val cover: FrameLayout
     private val box: LinearLayout
+    private val heading: TextView
     private val title: TextView
     private val time: TextView
+    private val divider: View
     private val nextBlock: LinearLayout
     private val nextName: TextView
     private val finishedIcon: ImageView
+    private val finishedLabel: TextView
+    private val actionButtons = ArrayList<TextView>(4)
     private var nextFile: File? = null
     private var finished = false
+    private var look = com.ggumtak.readeraplus.render.ChromePalette.DEFAULT
 
     init {
         cover = FrameLayout(ctx).apply {
@@ -73,12 +78,14 @@ internal class EndPanel(private val ctx: Context, private val actions: Actions) 
             background = ctx.borderBox()
             setPadding(ctx.dp(20), ctx.dp(20), ctx.dp(20), ctx.dp(16))
         }
-        box.addView(ctx.label("다 읽었습니다", 20f, bold = true), lp())
+        heading = ctx.label("다 읽었습니다", 20f, bold = true)
+        box.addView(heading, lp())
         title = ctx.label("", 16f, maxLines = 2).apply { setPadding(0, ctx.dp(8), 0, 0) }
         box.addView(title, lp())
         time = ctx.label("", 14f, color = Ink.GRAY).apply { setPadding(0, ctx.dp(6), 0, ctx.dp(14)) }
         box.addView(time, lp())
-        box.addView(ctx.hairline())
+        divider = ctx.hairline()
+        box.addView(divider)
 
         nextBlock = ctx.vertical { setPadding(0, ctx.dp(14), 0, 0) }
         nextBlock.addView(button("다음 권 읽기 ›") { nextFile?.let { actions.onEndNextPart(it) } }, lp())
@@ -103,8 +110,9 @@ internal class EndPanel(private val ctx: Context, private val actions: Actions) 
             }
         }
         finishedIcon = ctx.icon(R.drawable.ic_check_box_outline_blank, 24)
+        finishedLabel = ctx.label(FINISHED_LABEL, 16f).apply { setPadding(ctx.dp(10), 0, 0, 0) }
         finishedRow.addView(finishedIcon)
-        finishedRow.addView(ctx.label(FINISHED_LABEL, 16f).apply { setPadding(ctx.dp(10), 0, 0, 0) }, lp(0, WRAP_CONTENT, 1f))
+        finishedRow.addView(finishedLabel, lp(0, WRAP_CONTENT, 1f))
         box.addView(finishedRow, lp().apply { topMargin = ctx.dp(8) })
 
         val buttons = ctx.horizontal { setPadding(0, ctx.dp(8), 0, 0) }
@@ -127,6 +135,26 @@ internal class EndPanel(private val ctx: Context, private val actions: Actions) 
         // Reachable with a remote's arrow keys (the reader passes them on while the panel shows).
         isFocusable = true
         setOnClickListener { onClick() }
+        actionButtons += this
+    }
+
+    /** Matches the active reading theme so dark/MARU pages never flash a bright white end card. */
+    fun setLook(page: com.ggumtak.readeraplus.render.PagePalette, eink: Boolean?) {
+        val next = com.ggumtak.readeraplus.render.ChromePalette.of(page, eink)
+        if (next === look) return
+        look = next
+        box.background = ctx.borderBox(fill = next.surface).apply { setStroke(ctx.dp(1), next.edge) }
+        heading.setTextColor(next.text)
+        title.setTextColor(next.text)
+        time.setTextColor(next.text2)
+        nextName.setTextColor(next.text2)
+        divider.setBackgroundColor(next.rule)
+        finishedLabel.setTextColor(next.text)
+        finishedIcon.imageTintList = android.content.res.ColorStateList.valueOf(next.text)
+        for (b in actionButtons) {
+            b.setTextColor(next.text)
+            b.background = ctx.borderBox(fill = next.surface).apply { setStroke(ctx.dp(1), next.edge) }
+        }
     }
 
     fun attach(root: FrameLayout) {

@@ -384,7 +384,13 @@ object FontManager {
         return if (Build.VERSION.SDK_INT >= 28) {
             Typeface.create(base, w, italic)
         } else {
-            Typeface.create(base, (if (w >= 600) Typeface.BOLD else 0) or (if (italic) Typeface.ITALIC else 0))
+            val style = when {
+                w >= 600 && italic -> Typeface.BOLD_ITALIC
+                w >= 600 -> Typeface.BOLD
+                italic -> Typeface.ITALIC
+                else -> Typeface.NORMAL
+            }
+            Typeface.create(base, style)
         }
     }
 

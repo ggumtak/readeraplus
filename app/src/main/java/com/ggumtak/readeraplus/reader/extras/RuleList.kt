@@ -175,14 +175,14 @@ internal object RuleEdit {
     fun build(f: Fields, enabled: Boolean = true): Built {
         val name = f.name.replace('\r', ' ').replace('\n', ' ').trim()
         if (f.find.isBlank()) return Built(null, "찾을 내용을 입력하세요")
-        if (f.find.indexOf('\n') >= 0 || f.find.indexOf('\r') >= 0) return Built(null, "찾을 내용은 한 줄로 적으세요")
-        if (f.replace.indexOf('\n') >= 0 || f.replace.indexOf('\r') >= 0) return Built(null, "바꿀 내용은 한 줄로 적으세요")
+        if (f.find.indexOf('\n') >= 0 || f.find.indexOf('\r') >= 0) return Built(null, "찾을 내용은 한 줄로 입력하세요")
+        if (f.replace.indexOf('\n') >= 0 || f.replace.indexOf('\r') >= 0) return Built(null, "바꿀 내용은 한 줄로 입력하세요")
         val replace = f.replace.trim()
         if (!f.regex) {
             return Built(RuleItem(name, RuleLiteral.quote(f.find), Matcher.quoteReplacement(replace), enabled), null)
         }
         var pattern = f.find.trim()
-        if (pattern.contains("=>")) return Built(null, "정규식에 ‘=>’를 쓰려면 ‘=[>]’로 적으세요")
+        if (pattern.contains("=>")) return Built(null, "정규식에 ‘=>’를 쓰려면 ‘=[>]’로 입력하세요")
         // A rule line starting with '#' is a comment to the parser: escape the character (same regex).
         if (pattern.startsWith("#")) pattern = "\\$pattern"
         val compiled = try {
@@ -262,7 +262,7 @@ internal object CleanupPacks {
             "추천·선호작·후원 부탁 줄",
             """^.*(추천|선호작|후원|구독|알림\s*설정|좋아요|댓글)[^.!?]{0,15}(부탁|눌러|해\s*주(세요|시면)).*$""",
             "",
-            warning = "대사에 쓰이면 함께 지워질 수 있음",
+            warning = "소설 대사에 포함된 경우 함께 지워질 수 있습니다",
         ),
         Pack("말줄임표 정리", """\.{3,}""", "…"),
     )

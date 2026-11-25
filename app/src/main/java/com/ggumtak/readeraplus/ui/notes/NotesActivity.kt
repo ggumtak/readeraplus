@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.DocumentsContract
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
@@ -117,6 +118,38 @@ class NotesActivity : Activity() {
         private const val STATE_EXPORT_ALL = "notes.s.exportAll"
 
         internal const val REQ_EXPORT = 7301
+
+        /**
+         * Open modes for the export target, in order. The picker may hand back an existing (older, longer) export the
+         * user chose to overwrite, and "w" does not truncate on every provider: the old tail would stay after the new
+         * text. So "wt" (write + truncate) first; "w" only when a provider rejects "wt" (throws or returns null).
+         */
+        internal val WRITE_MODES = listOf("wt", "w")
+
+        /** The first of [WRITE_MODES] the provider accepts. Static: the export job must not hold the Activity. */
+        private fun openForWrite(ctx: Context, uri: Uri): OutputStream {
+            val cr = ctx.contentResolver
+            var last: Exception? = null
+            for (mode in WRITE_MODES) {
+                try {
+                    cr.openOutputStream(uri, mode)?.let { return it }
+                } catch (e: Exception) {
+                    last = e
+                }
+            }
+            throw IOException("openOutputStream", last)
+        }
+
+        /**
+         * Best effort after a failed export (caller's IO thread): deletes the document, or when the provider cannot,
+         * empties it ("wt"). Both may fail (e.g. "wt" unsupported); the caller's failure toast is shown either way.
+         */
+        private fun discardPartial(ctx: Context, uri: Uri) {
+            val cr = ctx.contentResolver
+            val deleted = runCatching { DocumentsContract.deleteDocument(cr, uri) }.getOrDefault(false)
+            if (deleted) return
+            runCatching { cr.openOutputStream(uri, "wt")?.close() }
+        }
     }
 
     /** `adb shell setprop log.tag.RANotes DEBUG` (before the app starts) logs the hub's load timings. */
@@ -152,6 +185,8 @@ class NotesActivity : Activity() {
     /** `Library.notesGen` the shown data was read under. */
     private var loadedGen = Long.MIN_VALUE
     private var reloadToken = 0
+    /** [NotesWindow.token] a page-load failure was last told under (one toast per reload), or -1. */
+    private var pageFailToastToken = -1
     private var loading = false
     private var openedAt = 0L
 
@@ -316,6 +351,7 @@ class NotesActivity : Activity() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         releaseDrawHold()
+        com.ggumtak.readeraplus.reader.extras.PanelRegistry.closeAll(this)
         scope.cancel()
         super.onDestroy()
     }
@@ -324,6 +360,10 @@ class NotesActivity : Activity() {
     override fun onBackPressed() {
         if (selecting) {
             endSelection()
+            return
+        }
+        if (::searchRow.isInitialized && searchRow.visibility == View.VISIBLE) {
+            closeSearch()
             return
         }
         @Suppress("DEPRECATION") super.onBackPressed()
@@ -393,17 +433,17 @@ class NotesActivity : Activity() {
         root.addView(tabs, lp())
         root.addView(hairline())
 
-        // 48 dp with 40 dp chips: the book, order and colour choices (the ⋮ menu does not repeat them).
+        // 56 dp with 48 dp chips: the book, order and colour choices (the ⋮ menu does not repeat them).
         val filters = horizontal {
-            minimumHeight = dp(48)
+            minimumHeight = dp(56)
             setPadding(dp(16), dp(4), dp(16), dp(4))
         }
         bookChip = chip { if (q.bookId != null) setBook(null) else menus.bookChooser() }.apply { maxWidth = dp(150) }
         orderChip = chip { menus.orderChooser() }
         styleChip = chip { menus.styleChooser() }
-        filters.addView(bookChip, lp(WRAP_CONTENT, dp(40)))
-        filters.addView(orderChip, lp(WRAP_CONTENT, dp(40)).apply { leftMargin = dp(8) })
-        filters.addView(styleChip, lp(WRAP_CONTENT, dp(40)).apply { leftMargin = dp(8) })
+        filters.addView(bookChip, lp(WRAP_CONTENT, dp(48)))
+        filters.addView(orderChip, lp(WRAP_CONTENT, dp(48)).apply { leftMargin = dp(8) })
+        filters.addView(styleChip, lp(WRAP_CONTENT, dp(48)).apply { leftMargin = dp(8) })
         root.addView(filters, lp())
         root.addView(hairline())
 
@@ -465,7 +505,7 @@ class NotesActivity : Activity() {
     private fun chip(onClick: (View) -> Unit): TextView = label("", 14f, maxLines = 1).apply {
         gravity = Gravity.CENTER
         setPadding(dp(12), 0, dp(12), 0)
-        background = borderBox(radiusDp = 20f)
+        background = borderBox(radiusDp = 24f)
         setOnClickListener(onClick)
     }
 
@@ -505,7 +545,8 @@ class NotesActivity : Activity() {
                     handler.postDelayed(searchRunnable, NotesWindow.SEARCH_DEBOUNCE_MS)
                 }
             })
-            setOnEditorActionListener { _, _, _ ->
+            setOnEditorActionListener { _, _, ev ->
+                if (ev != null && ev.action != KeyEvent.ACTION_DOWN) return@setOnEditorActionListener false
                 handler.removeCallbacks(searchRunnable)
                 applySearch(text.toString())
                 hideKeyboard()
@@ -513,7 +554,9 @@ class NotesActivity : Activity() {
             }
         }
         row.addView(searchEdit, lp(0, WRAP_CONTENT, 1f))
-        row.addView(iconButton(R.drawable.ic_close, "지우기") { searchEdit.setText("") })
+        row.addView(iconButton(R.drawable.ic_close, "지우기") {
+            if (searchEdit.text.isNotEmpty()) searchEdit.setText("") else closeSearch()
+        })
         val col = vertical()
         col.addView(row, lp())
         col.addView(hairline())
@@ -680,6 +723,14 @@ class NotesActivity : Activity() {
             NotesPerf.log("page $p: ${SystemClock.uptimeMillis() - t0} ms")
             when (rowWindow.put(tok, p, page)) {
                 NotesWindow.Put.STALE -> {}
+                NotesWindow.Put.FAILED -> {
+                    // The page is out of flight again: the next bind or page turn over it asks once more (no retry
+                    // loop here). One toast per window token, i.e. per reload: on e-ink a toast is a redraw too.
+                    if (pageFailToastToken != tok) {
+                        pageFailToastToken = tok
+                        toast("노트를 불러오지 못했습니다")
+                    }
+                }
                 NotesWindow.Put.MOVE -> {
                     handler.removeCallbacks(moveTimeout)
                     val row = rowWindow.takeMove()
@@ -903,8 +954,7 @@ class NotesActivity : Activity() {
         val q0 = q
         scope.launch {
             val refs = withContext(Dispatchers.IO) { runCatching { Notes.refs(q0) }.getOrNull() } ?: return@launch
-            if (isDestroyed) return@launch
-            if (!selecting) enterSelection(null)
+            if (isDestroyed || !selecting || q != q0) return@launch
             for (r in refs) selected += r
             updateChrome()
             rebindVisible()
@@ -931,6 +981,10 @@ class NotesActivity : Activity() {
 
     /** Opens the document picker for an export of [refs] (null = the whole list under the query). */
     internal fun startExport(format: NotesExport.Format, refs: LongArray?) {
+        if (exporting) {
+            toast("내보내기가 이미 진행 중입니다")
+            return
+        }
         val title = if (q.bookId != null) filterBook?.title else null
         val name = NotesText.fileName(title, format.ext, System.currentTimeMillis())
         val i = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
@@ -948,7 +1002,7 @@ class NotesActivity : Activity() {
             } catch (e: ActivityNotFoundException) {
                 exportFormat = null
                 exportRefs = null
-                toast("저장할 곳을 고르는 화면을 열 수 없습니다")
+                toast("저장할 위치를 선택하는 화면을 열 수 없습니다")
             }
         }
     }
@@ -981,8 +1035,10 @@ class NotesActivity : Activity() {
         val main = Handler(Looper.getMainLooper())
         ReaderIo.launch {
             val t0 = SystemClock.uptimeMillis()
+            // Set once the target is open: from then on it may hold a partial (or truncated) file.
+            var opened = false
             val msg = try {
-                val n = openForWrite(app, uri).use { os ->
+                val n = openForWrite(app, uri).also { opened = true }.use { os ->
                     val w = BufferedWriter(OutputStreamWriter(os, Charsets.UTF_8))
                     val n = Notes.export(refs, q0, format, w, System.currentTimeMillis())
                     w.flush()
@@ -992,6 +1048,9 @@ class NotesActivity : Activity() {
                 NotesText.exportedToast(n)
             } catch (t: Throwable) {
                 Log.w(NotesPerf.TAG, "export failed", t)
+                // Never leave a cut-off file under a normal name. Not when the open itself failed: the target is then
+                // untouched, and it may be an older export the user chose to overwrite.
+                if (opened) discardPartial(app, uri)
                 ErrorLines.line("내보내지 못했습니다", t)
             }
             main.post {
@@ -1007,10 +1066,4 @@ class NotesActivity : Activity() {
         }
     }
 
-    /** Mode "w" first (a new document has nothing to truncate), "wt" when a provider rejects it. */
-    private fun openForWrite(ctx: Context, uri: Uri): OutputStream {
-        val cr = ctx.contentResolver
-        val first = try { cr.openOutputStream(uri, "w") } catch (e: Exception) { null }
-        return first ?: cr.openOutputStream(uri, "wt") ?: throw IOException("openOutputStream")
-    }
 }

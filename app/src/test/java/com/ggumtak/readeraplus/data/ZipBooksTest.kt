@@ -57,6 +57,8 @@ class ZipBooksTest {
         assertTrue(ZipBooks.isBookEntry("소설 1권.txt"))
         assertTrue(ZipBooks.isBookEntry("dir/Sub/Book.EPUB"))
         assertTrue(ZipBooks.isBookEntry("win\\path\\a.Txt"))
+        assertTrue(ZipBooks.isBookEntry("a.pdf"))
+        assertTrue(ZipBooks.isBookEntry("dir/Doc.PDF"))
         assertFalse(ZipBooks.isBookEntry("dir/"))
         assertFalse(ZipBooks.isBookEntry("a.txt/"))
         assertFalse(ZipBooks.isBookEntry("__MACOSX/a.txt"))
@@ -64,7 +66,7 @@ class ZipBooksTest {
         assertFalse(ZipBooks.isBookEntry("._a.txt"))
         assertFalse(ZipBooks.isBookEntry("dir/.hidden.epub"))
         assertFalse(ZipBooks.isBookEntry("cover.jpg"))
-        assertFalse(ZipBooks.isBookEntry("a.pdf"))
+        assertFalse(ZipBooks.isBookEntry("doc.docx"))
         assertFalse(ZipBooks.isBookEntry("a.txt.bak"))
         assertFalse(ZipBooks.isBookEntry(""))
     }
@@ -143,5 +145,68 @@ class ZipBooksTest {
         val f = writeZip("k.zip", listOf("한글 소설.txt" to 2048), Charset.forName("MS949"))
         val opened = ZipBooks.open(f)
         opened.zip.use { assertEquals(listOf("한글 소설.txt"), opened.entries.map { it.name }) }
+    }
+
+    @Test
+    fun copiesNeverTakeTheStoragesLastRoom() {
+        val min = ZipBooks.MIN_FREE_BYTES
+        // Exactly the reserve left after the entry: allowed; one byte less: not.
+        assertTrue(ZipBooks.hasRoom(min + 5_000_000, 5_000_000))
+        assertFalse(ZipBooks.hasRoom(min + 5_000_000 - 1, 5_000_000))
+        // An entry of unknown size counts as nothing here (the copy's own limits still apply).
+        assertTrue(ZipBooks.hasRoom(min, -1))
+        assertFalse(ZipBooks.hasRoom(min - 1, -1))
+        assertFalse(ZipBooks.hasRoom(0, 0))
+    }
+
+    private fun temp(text: String): File =
+        File(dir, "${BookCopies.COPY_PREFIX}${System.nanoTime()}${BookCopies.PART_SUFFIX}").apply { writeText(text) }
+
+    @Test
+    fun placeCopyAddsANewCopyAtAPathNotRemoved() {
+        val placed = ZipBooks.placeCopy(temp("story"), dir, "a.txt") { false }
+        assertEquals(File(dir, "a.txt"), placed)
+        assertEquals("story", File(dir, "a.txt").readText())
+    }
+
+    @Test
+    fun placeCopyDeletesANewCopyAtARemovedPath() {
+        val tmp = temp("story")
+        val placed = ZipBooks.placeCopy(tmp, dir, "a.txt") { it.name == "a.txt" }
+        assertEquals(null, placed)
+        // Neither the copy nor the temp file stays in the copy folder.
+        assertFalse(File(dir, "a.txt").exists())
+        assertFalse(tmp.exists())
+        assertEquals(0, dir.listFiles()!!.size)
+    }
+
+    @Test
+    fun placeCopyKeepsAReusedCopyAtARemovedPath() {
+        // An identical earlier copy (another row may point at it) is reused, not deleted, even when ignored.
+        File(dir, "a.txt").writeText("story")
+        val tmp = temp("story")
+        val placed = ZipBooks.placeCopy(tmp, dir, "a.txt") { it.name == "a.txt" }
+        assertEquals(null, placed)
+        assertEquals("story", File(dir, "a.txt").readText())
+        assertFalse(tmp.exists())
+    }
+
+    @Test
+    fun placeCopyDeletesOnlyTheNewNumberedCopy() {
+        // A different book already holds the name: the new copy becomes "a (2).txt", and only that one goes.
+        File(dir, "a.txt").writeText("other")
+        val placed = ZipBooks.placeCopy(temp("story"), dir, "a.txt") { it.name == "a (2).txt" }
+        assertEquals(null, placed)
+        assertEquals("other", File(dir, "a.txt").readText())
+        assertFalse(File(dir, "a (2).txt").exists())
+    }
+
+    @Test
+    fun settleTrackedTellsNewFromReused() {
+        val first = BookCopies.settleTracked(temp("story"), dir, "a.txt")
+        assertTrue(first.isNew)
+        val second = BookCopies.settleTracked(temp("story"), dir, "a.txt")
+        assertFalse(second.isNew)
+        assertEquals(first.file, second.file)
     }
 }

@@ -25,6 +25,7 @@ import android.widget.TextView
 import com.ggumtak.readeraplus.R
 import com.ggumtak.readeraplus.format.BookDocument
 import com.ggumtak.readeraplus.format.DocPosition
+import com.ggumtak.readeraplus.format.LoadHints
 import com.ggumtak.readeraplus.reader.KeyMap
 import com.ggumtak.readeraplus.reader.ReaderFormat
 import com.ggumtak.readeraplus.reader.ReaderHost
@@ -333,7 +334,7 @@ private class SearchDialog(private val host: ReaderHost, private var state: Sear
                 var s = st.scanned
                 while (s < total && count < SearchPanel.MAX_RESULTS) {
                     ensureActive()
-                    val text = texts.text(s) { i -> runCatching { doc.loadSection(i).text }.getOrNull() }
+                    val text = texts.text(s) { i -> runCatching { LoadHints.asBackground { doc.loadSection(i).text } }.getOrNull() }
                     if (text != null) {
                         TextSearch.scan(text, q) { off ->
                             batch.add(SearchPanel.Hit(s, off, off + q.length, SearchPanel.buildSnippet(text, off, off + q.length)))
@@ -489,9 +490,18 @@ internal object SearchNavBar {
         row.addView(ctx.flatIcon(R.drawable.ic_chevron_left, "이전 결과") {
             if (index > 0) SearchPanel.jumpTo(host, state, index - 1, remember = false)
         }.apply { visibility = if (index > 0) View.VISIBLE else View.INVISIBLE })
-        row.addView(ctx.flatIcon(R.drawable.ic_chevron_right, "다음 결과") {
-            if (index < state.hits.size - 1) SearchPanel.jumpTo(host, state, index + 1, remember = false)
-        }.apply { visibility = if (index < state.hits.size - 1) View.VISIBLE else View.INVISIBLE })
+        // Past the last result found so far, while the scan is unfinished ("3 / 57+": it stopped when the list
+        // closed), › opens the list again, which goes on scanning; it used to vanish with results still to come.
+        val hasNext = index < state.hits.size - 1
+        val unfinished = !state.complete
+        row.addView(ctx.flatIcon(R.drawable.ic_chevron_right, if (hasNext || !unfinished) "다음 결과" else "결과 더 찾기") {
+            if (hasNext) {
+                SearchPanel.jumpTo(host, state, index + 1, remember = false)
+            } else if (unfinished) {
+                remove()
+                SearchPanel.show(host, "")
+            }
+        }.apply { visibility = if (hasNext || unfinished) View.VISIBLE else View.INVISIBLE })
         row.setPadding(row.paddingLeft, row.paddingTop, row.paddingRight, Overlay.bottomInset(host.pageView))
         parent.addView(row, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
         barRef = WeakReference(row)

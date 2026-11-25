@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.update
 
+import android.app.ActivityManager
 import android.content.pm.PackageInstaller
 import org.json.JSONObject
 
@@ -42,6 +43,68 @@ internal object UpdateInfo {
     /** An automatic check is due [interval] ms after the last one (or when the clock went back). */
     fun due(now: Long, last: Long, interval: Long): Boolean = last <= 0L || now < last || now - last >= interval
 
+    /**
+     * The "last check" to store after a check that got no answer, so that [due] holds again [retry] ms from [now]
+     * instead of a whole [interval] later (never in the future: a clock that goes back makes a check due anyway).
+     */
+    fun retryStamp(now: Long, interval: Long, retry: Long): Long = (now - interval + retry).coerceIn(1L, now.coerceAtLeast(1L))
+
+    /** What a screen coming to the front does about a download that waits to be installed. */
+    enum class ResumeStep {
+        /** Nothing waits, or its permission prompt was shown already: the usual (due) update check. */
+        CHECK,
+        /** The install permission is there: install the waiting download now. */
+        INSTALL,
+        /** The permission is missing and was never asked for this build: show the prompt once. */
+        ASK,
+    }
+
+    /**
+     * [pending]: a verified download waits; [permitted]: the app may install packages; [asked]: the permission prompt
+     * was shown for that build already. Asking again on every visit would nag, and returning without checking would
+     * skip the automatic check for ever, so a refused prompt falls back to [ResumeStep.CHECK] (the download is kept and
+     * installed once the user allows it).
+     */
+    fun resumeStep(pending: Boolean, permitted: Boolean, asked: Boolean): ResumeStep = when {
+        !pending -> ResumeStep.CHECK
+        permitted -> ResumeStep.INSTALL
+        !asked -> ResumeStep.ASK
+        else -> ResumeStep.CHECK
+    }
+
+    /** What to do with the installer's confirm screen. */
+    enum class ConfirmStep {
+        /** Start it: the app is in front. */
+        SHOW,
+        /**
+         * No screen of the app shows: drop the session and keep the download pending (a start from the background is
+         * ignored without a word); the install goes on when the library or the settings list is next in front.
+         */
+        FOLD,
+        /**
+         * The app is in front but the screen cannot be opened (no intent, or starting it failed): drop the session
+         * and say so, without keeping it pending, or every return to the library would fail the same way again.
+         */
+        DROP,
+    }
+
+    /** [foreground]: [showsScreen]; [hasIntent]: the installer sent its confirm intent. */
+    fun confirmStep(foreground: Boolean, hasIntent: Boolean): ConfirmStep = when {
+        !foreground -> ConfirmStep.FOLD
+        hasIntent -> ConfirmStep.SHOW
+        else -> ConfirmStep.DROP
+    }
+
+    /**
+     * Whether the process [importance] (`ActivityManager.RunningAppProcessInfo`) means one of the app's screens shows:
+     * in front (100) or visible (200, e.g. the unfocused half of split screen), both of which may start an activity. A
+     * foreground service alone (125, TTS reading in the background) shows nothing, and a confirm screen started then
+     * is ignored; split screen with that service running also reports 125 and folds (the install goes on on return).
+     */
+    fun showsScreen(importance: Int): Boolean =
+        importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+            importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
+
     /** An APK starts with a ZIP local file header. */
     fun looksLikeApk(head: ByteArray): Boolean = head.contentEquals(byteArrayOf(0x50, 0x4b, 3, 4))
 
@@ -52,7 +115,7 @@ internal object UpdateInfo {
     fun buildOf(fileName: String): Int =
         APK_NAME.matchEntire(fileName)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-    fun offerMessage(latest: Int, current: Int): String = "새 버전이 있습니다 (빌드 $latest · 지금 $current).\n지금 업데이트할까요?"
+    fun offerMessage(latest: Int, current: Int): String = "새 버전이 있습니다 (빌드 $latest · 현재 $current).\n지금 업데이트할까요?\n설치가 끝나면 앱이 닫히므로 다시 열어 주세요."
 
     fun progressMessage(percent: Int): String = if (percent < 0) "내려받는 중…" else "내려받는 중… $percent%"
 

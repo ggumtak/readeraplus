@@ -36,7 +36,7 @@ import com.ggumtak.readeraplus.ui.kit.vertical
  * the auto-turn interval), 화면 터치 (the tap-zone mode with a visual preview, a 3×3 editor in 직접 지정, and the two
  * corner switches), 스와이프·길게 누르기 (swipes and the long-press time) and 버튼·키 (the volume keys, key hold, key →
  * action bindings with the "이 키로 할 동작" chooser, the key test). Every row is an app setting; the reading settings
- * live on 읽기 설정 (which links here), the brightness on 화면·밝기, the refreshes on e-ink 화면.
+ * live on 보기 설정, the brightness on 화면·밝기, the refreshes on e-ink 화면.
  */
 internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_PAGE_TURNING, "넘기기·터치·키") {
     private val modeRows = LinkedHashMap<TapZoneMode, View>()
@@ -361,7 +361,7 @@ internal class PageTurningPage(a: SettingsActivity) : SettingsPage(a, SettingsAc
 
     /** Live key tester: shows each key's code and what the reader does with it (consumes all keys but Back). */
     private fun showKeyTest() {
-        val out = ctx.label("아무 키나 누르세요.\n(뒤로 키: 닫기)\n\n코멧의 사용자 키가 안 되면 기기 설정(KeyPack)에서 볼륨 키로 지정해 보세요.", 17f).apply {
+        val out = ctx.label("아무 키나 누르세요.\n(뒤로 키: 닫기)\n\n사용자 정의 키가 인식되지 않으면 기기 설정에서 볼륨 키로 지정해 보세요.", 17f).apply {
             setPadding(ctx.dp(24), ctx.dp(16), ctx.dp(24), ctx.dp(8))
             setLineSpacing(0f, 1.2f)
             minLines = 5

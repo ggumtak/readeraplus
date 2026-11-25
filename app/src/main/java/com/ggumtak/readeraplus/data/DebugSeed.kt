@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.data
 
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -30,6 +31,7 @@ object DebugSeed {
     private const val PREFIX = "/debug-seed/"
     private const val BOOKS = 500
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     fun register(context: Context) {
         val app = context.applicationContext ?: context
         val receiver = object : BroadcastReceiver() {

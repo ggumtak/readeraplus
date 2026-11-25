@@ -368,4 +368,19 @@ class TxtChaptersTest {
         }
         assertEquals(hs, titles(TxtTestUtil.parse(sb.toString())))
     }
+
+    @Test
+    fun symbolPrefixedPeriodEndingsAndHanjaUnits() {
+        // Numbered/episode headings after decorative symbols may end with '.', plain sentences stay rejected.
+        assertFalse(TxtChapters.rejectEnding("◈ 002. 튜토리얼이 끝났다."))
+        assertFalse(TxtChapters.rejectEnding("◆ 35화. 회의를 시작하겠습니다."))
+        assertTrue(TxtChapters.rejectEnding("※ 끝났다."))
+        assertTrue(TxtChapters.rejectEnding("★ 별이 졌다."))
+        // Hanja chapter units (話/章/回/節/卷) are detected as K1 chapters and allowed to end with '.'.
+        val hanja = listOf("제1話. 서막이 열렸다.", "제2話. 두 번째 밤.", "제3話. 마지막 결투.")
+        assertEquals(hanja, titles(TxtTestUtil.parse(book(hanja))))
+        assertFalse(TxtChapters.rejectEnding("第1章. 시작되었다."))
+        assertTrue(TxtChapters.builtinMask("第3卷 외전") and TxtChapters.R_K1 != 0)
+        assertTrue(TxtChapters.builtinMask("2回 결전") and TxtChapters.R_K1 != 0)
+    }
 }

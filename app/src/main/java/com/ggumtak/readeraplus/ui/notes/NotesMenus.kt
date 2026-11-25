@@ -9,7 +9,6 @@ import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.BaseAdapter
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -44,7 +43,9 @@ import com.ggumtak.readeraplus.ui.kit.chooser
 import com.ggumtak.readeraplus.ui.kit.confirm
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.fullScreenDialog
+import com.ggumtak.readeraplus.ui.kit.hairline
 import com.ggumtak.readeraplus.ui.kit.horizontal
+import com.ggumtak.readeraplus.ui.kit.iconButton
 import com.ggumtak.readeraplus.ui.kit.InkEditText
 import com.ggumtak.readeraplus.ui.kit.inkCursor
 import com.ggumtak.readeraplus.ui.kit.label
@@ -59,7 +60,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.StringWriter
 
 /**
  * The hub's menus and dialogs (N §9.3–§9.5, §9.10): row menus, 전체 보기, editors, delete confirmations, the book,
@@ -117,20 +117,19 @@ internal class NotesMenus(private val a: NotesActivity) {
     private fun openBook(row: NoteRow) = open(row, null)
 
     private fun open(row: NoteRow, jump: ReaderJump?) {
-        val known = a.book(row.bookId)
         a.scope.launch {
-            val ok = withContext(Dispatchers.IO) {
+            val book = withContext(Dispatchers.IO) {
                 runCatching {
-                    val path = known?.path ?: Library.book(row.bookId)?.path
-                    path != null && File(path).isFile
-                }.getOrDefault(false)
+                    val b = Library.book(row.bookId) ?: return@runCatching null
+                    if (File(b.path).isFile) b else null
+                }.getOrNull()
             }
             if (a.isDestroyed) return@launch
-            if (!ok) {
+            if (book == null) {
                 a.toast("책 파일을 찾을 수 없습니다 · 노트는 그대로 있습니다")
                 return@launch
             }
-            ReaderActivity.open(a, row.bookId, jump)
+            ReaderActivity.open(a, book, jump)
         }
     }
 
@@ -283,22 +282,24 @@ internal class NotesMenus(private val a: NotesActivity) {
 
     // ============================================================================================ share and export
 
-    /** 공유: the TXT export of [refs] (null = the list) through ACTION_SEND, capped (N §5.7 [Δ]). */
+    /** 공유: the TXT export of [refs] (null = the list) through ACTION_SEND, streamed with cap (N §5.7 [Δ]). */
     fun shareList(refs: LongArray?) {
         val q0 = a.q
         a.scope.launch {
             val r = withContext(Dispatchers.IO) {
-                runCatching {
-                    val w = StringWriter()
-                    val n = Notes.export(refs, q0, NotesExport.Format.TXT, w, System.currentTimeMillis())
-                    n to NotesText.shareCap(w.toString(), n, TextActions.SHARE_MAX_CHARS)
-                }.getOrNull()
+                runCatching { Notes.share(refs, q0, System.currentTimeMillis()) }.getOrNull()
             }
-            if (a.isDestroyed || r == null) return@launch
-            val (n, capped) = r
-            if (n == 0) return@launch
-            if (capped.second) a.toast("노트가 많아 앞부분만 공유합니다")
-            TextActions.share(a, capped.first)
+            if (a.isDestroyed) return@launch
+            if (r == null) {
+                a.toast("공유할 내용을 불러오지 못했습니다")
+                return@launch
+            }
+            if (r.count == 0) {
+                a.toast("공유할 노트가 없습니다")
+                return@launch
+            }
+            if (r.cut) a.toast("노트가 많아 앞부분만 공유합니다")
+            TextActions.share(a, r.text)
         }
     }
 
@@ -356,12 +357,21 @@ internal class NotesMenus(private val a: NotesActivity) {
         root.addView(a.toolbar("책 선택", R.drawable.ic_arrow_back, onNav = { dialog?.dismiss() }), lp())
         val filter = InkEditText(a).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-            hint = "책 제목"
+            hint = "책 제목 검색"
             setSingleLine(true)
+            minHeight = a.dp(48)
+            background = null
             setTextColor(Ink.BLACK)
             inkCursor(singleLine = true)
         }
-        root.addView(FrameLayout(a).apply { setPadding(a.dp(16), a.dp(4), a.dp(16), a.dp(4)); addView(filter) }, lp())
+        val filterRow = a.horizontal {
+            minimumHeight = a.dp(52)
+            setPadding(a.dp(16), 0, a.dp(4), 0)
+            addView(filter, lp(0, WRAP_CONTENT, 1f))
+            addView(a.iconButton(R.drawable.ic_close, "지우기") { filter.setText("") })
+        }
+        root.addView(filterRow, lp())
+        root.addView(a.hairline())
         val list = InkListView(a)
         val total = books.sumOf { it.count }
         val adapter = BookAdapter(books, total) { b -> dialog?.dismiss(); a.setBook(b?.id) }

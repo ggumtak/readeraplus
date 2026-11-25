@@ -46,11 +46,14 @@ object FileScanner {
      *  when it returns true the scan ends with [Stopped]. [synced] learns whether the scan added, moved, refreshed
      *  or removed any book (false: the library's rows are as they were, so a list shown needs no reload). It is
      *  called once, after the books inside new / changed ZIP files were extracted ([ZipBooks]), so a scan that only
-     *  added books from a ZIP also reports a change. */
+     *  added books from a ZIP also reports a change. [zipStage] is called once (scan thread) when the scan starts
+     *  copying books out of a new or changed ZIP file, a step that can take tens of seconds with no [progress];
+     *  never when there is no such ZIP. */
     fun scan(
         context: Context,
         stopWhen: () -> Boolean = NEVER,
         synced: (changed: Boolean) -> Unit = {},
+        zipStage: (() -> Unit)? = null,
         progress: (Int) -> Unit = {},
     ): Int = synchronized(lock) {
         Library.init(context)
@@ -70,7 +73,7 @@ object FileScanner {
         val fromZips = if (walk.zips.isEmpty()) {
             0
         } else {
-            runCatching { ZipBooks.extractNew(context, walk.zips.map(::File), stopWhen) }
+            runCatching { ZipBooks.extractNew(context, walk.zips.map(::File), stopWhen, zipStage) }
                 .onFailure { Log.w(TAG, "zip extraction failed", it) }
                 .getOrDefault(0)
         }

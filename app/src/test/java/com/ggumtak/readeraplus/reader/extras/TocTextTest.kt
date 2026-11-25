@@ -146,6 +146,9 @@ class TocTextTest {
         assertEquals("약 1만 자", InfoText.volume(10_000, 0))
         assertEquals("약 9,600자 (약 15분)", InfoText.volume(9_550, 600))
         assertEquals("약 300자 (1분 미만)", InfoText.volume(300, 600))
+        assertEquals("99자", InfoText.volume(99, null))
+        assertEquals("42자 (1분 미만)", InfoText.volume(42, 600))
+        assertEquals("1자", InfoText.volume(1, null))
         assertNull(InfoText.volume(0, 600))
     }
 

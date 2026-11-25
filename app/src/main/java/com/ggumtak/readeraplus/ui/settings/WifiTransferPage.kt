@@ -7,6 +7,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.ggumtak.readeraplus.data.Book
 import com.ggumtak.readeraplus.data.LanUpload
+import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.dp
 import com.ggumtak.readeraplus.ui.kit.label
@@ -15,19 +16,22 @@ import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import android.provider.Settings as SystemSettings
 
 /**
- * "Wi-Fi로 책 받기" (T1-12): shows the address a browser on the same Wi-Fi opens to upload .txt / .epub files, the
+ * "Wi-Fi로 책 받기" (T1-12): shows the address a browser on the same Wi-Fi opens to upload .txt / .epub / .pdf files, the
  * destination folder and the files received. The upload server ([LanUpload], DATA) runs only while this page is the
  * top page and the activity is resumed: it starts on [onShown] / [onResume] and stops on [onPause], [onHidden] and
  * [onDestroy] (a restart gets a new access code). The screen stays on while the page is shown. Nothing here polls:
  * the page changes only when a file arrives or fails.
  */
 internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity.PAGE_WIFI, "Wi-Fi로 책 받기") {
+    private data class ReceivedItem(val name: String, val summary: String, val book: Book?)
+
     private lateinit var urlText: TextView
     private lateinit var statusText: TextView
     private lateinit var retryBar: View
@@ -39,8 +43,10 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
     private var server: LanUpload? = null
     private var destDir: File? = null
     private var startJob: Job? = null
+    /** A start is in flight (main thread only): set before the job launches, cleared once its IO work has returned. */
+    private var starting = false
     /** Files received while this page lived (newest first); kept across a pause. */
-    private val received = ArrayList<Pair<String, String>>()
+    private val received = ArrayList<ReceivedItem>()
     private var shown = false
 
     override fun build(): View {
@@ -61,8 +67,8 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
         folderRow = ctx.infoRow("받는 폴더", "확인 중…").also(body::addView)
         // The rules of the transfer, with the address they are about (after 받은 파일 they read as that list's).
         body.addView(ctx.note(
-            "이 화면이 열려 있는 동안만 받습니다. 다시 열면 주소가 바뀝니다.\n" +
-                "TXT·EPUB 파일, 하나에 200MB까지 받습니다.\n" +
+            "이 화면이 열려 있는 동안만 받을 수 있습니다. 다시 열면 주소가 바뀝니다.\n" +
+                "TXT·EPUB·PDF 파일, 하나당 최대 200MB까지 받을 수 있습니다.\n" +
                 "게스트 Wi-Fi에서는 연결되지 않을 수 있습니다.",
         ))
 
@@ -100,32 +106,56 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
         stopServer(paused = false)
     }
 
-    /** Starts the server when this page is on top of a resumed activity (the folder is resolved once, on IO). */
+    /**
+     * Starts the server when this page is on top of a resumed activity. The folder lookup and the server start run on
+     * IO (the start may open the library database and tries up to ten ports); [starting] keeps a second start out
+     * until the first one has returned, even after a pause cancelled it.
+     */
     private fun startIfVisible() {
         if (!shown || !activity.isResumedNow) return
-        if (server?.isRunning == true || startJob?.isActive == true) return
+        if (starting || server?.isRunning == true) return
+        starting = true
         startJob = activity.scope.launch {
-            val dir = destDir ?: withContext(Dispatchers.IO) {
-                runCatching { LanUpload.destinationDir(activity.applicationContext) }.getOrNull()
-            }?.also { destDir = it }
-            if (dir == null) {
-                showFailure("받을 폴더를 만들지 못했습니다", "저장 공간과 파일 접근 권한을 확인한 뒤 [다시 시도]를 누르세요.")
-                return@launch
+            try {
+                startNow()
+            } finally {
+                // Main thread, after any start on IO has returned (also when cancelled: withContext waits for its block).
+                starting = false
+                val s = server
+                if (!isActive || !shown || !activity.isResumedNow) {
+                    // The page went (or came back) while the server was starting: never leave that server open.
+                    if (s != null && s.isRunning) runCatching { s.stop() }
+                    // A resume during that start was turned away by [starting]: start again now.
+                    if (shown && activity.isResumedNow) startIfVisible()
+                }
             }
-            folderRow.setInfoValue(FolderSets.displayName(dir.absolutePath, StorageAccess.primaryRoot()))
-            // The page may have gone meanwhile (a pause during the folder lookup).
-            if (!shown || !activity.isResumedNow) return@launch
-            val s = server ?: LanUpload(activity.applicationContext, dir, listener).also { server = it }
-            val result = runCatching { s.start() }.getOrNull()
-            if (result == null) {
-                showFailure(s.lastError ?: "전송을 시작하지 못했습니다", "Wi-Fi 연결을 확인한 뒤 [다시 시도]를 누르세요.")
-            } else {
-                urlText.text = result.url
-                urlText.setTextColor(Ink.BLACK)
-                statusText.text = "받은 파일은 바로 서재에 추가됩니다."
-                statusText.visibility = View.VISIBLE
-                retryBar.visibility = View.GONE
-            }
+        }
+    }
+
+    /** Resolves the folder (once) and starts the server, both on IO; then shows the address or the failure. */
+    private suspend fun startNow() {
+        val dir = destDir ?: withContext(Dispatchers.IO) {
+            runCatching { LanUpload.destinationDir(activity.applicationContext) }.getOrNull()
+        }?.also { destDir = it }
+        if (dir == null) {
+            showFailure("저장할 폴더를 만들지 못했습니다", "저장 공간과 파일 접근 권한을 확인한 뒤 [다시 시도]를 눌러 주세요.")
+            return
+        }
+        folderRow.setInfoValue(FolderSets.displayName(dir.absolutePath, StorageAccess.primaryRoot()))
+        // The page may have gone meanwhile (a pause during the folder lookup).
+        if (!shown || !activity.isResumedNow) return
+        val s = server ?: LanUpload(activity.applicationContext, dir, listener).also { server = it }
+        val result = withContext(Dispatchers.IO) { runCatching { s.start() }.getOrNull() }
+        // Gone during the start: the caller's finally closes the server; nothing to show.
+        if (!shown || !activity.isResumedNow) return
+        if (result == null) {
+            showFailure(s.lastError ?: "Wi-Fi 전송을 시작하지 못했습니다", "Wi-Fi 연결을 확인한 뒤 [다시 시도]를 눌러 주세요.")
+        } else {
+            urlText.text = result.url
+            urlText.setTextColor(Ink.BLACK)
+            statusText.text = "받은 파일은 바로 서재에 추가됩니다. 목록을 누르면 바로 읽을 수 있습니다."
+            statusText.visibility = View.VISIBLE
+            retryBar.visibility = View.GONE
         }
     }
 
@@ -150,8 +180,8 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
     }
 
     private val listener = object : LanUpload.Listener {
-        override fun onReceived(file: File, book: Book?) {
-            received.add(0, file.name to SettingsFormat.received(file.length(), book != null))
+        override fun onReceived(file: File, book: Book?, bytes: Long) {
+            received.add(0, ReceivedItem(file.name, SettingsFormat.received(bytes, book != null), book))
             errorText.visibility = View.GONE
             fillReceived()
         }
@@ -171,7 +201,10 @@ internal class WifiTransferPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             receivedBox.addView(ctx.note("아직 받은 파일이 없습니다."))
             return
         }
-        for ((name, line) in received) receivedBox.addView(ctx.row(name, line, titleMaxLines = 2))
+        for (item in received) {
+            val open: ((View) -> Unit)? = item.book?.let { b -> { ReaderActivity.open(activity, b) } }
+            receivedBox.addView(ctx.row(item.name, item.summary, titleMaxLines = 2, onClick = open))
+        }
     }
 
     private fun openWifiSettings() {

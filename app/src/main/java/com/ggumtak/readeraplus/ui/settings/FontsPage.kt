@@ -42,6 +42,11 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
     private lateinit var listBox: LinearLayout
     private var rescanRow: View? = null
     private var loadGen = 0
+    private var destroyed = false
+
+    override fun onDestroy() {
+        destroyed = true
+    }
 
     override fun build(): View {
         val body = ctx.pageBody()
@@ -97,15 +102,15 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         listBox.addView(ctx.note("불러오는 중…"))
         activity.scope.launch {
             val fonts = withContext(Dispatchers.IO) { runCatching { FontManager.fonts() }.getOrDefault(emptyList()) }
-            if (gen != loadGen) return@launch
+            if (destroyed || gen != loadGen) return@launch
             val first = HashMap<String, Typeface>()
             var next = withContext(Dispatchers.IO) { loadFaces(fonts, 0, first, FIRST_BUDGET_MS) }
-            if (gen != loadGen) return@launch
+            if (destroyed || gen != loadGen) return@launch
             fill(fonts, first)
             while (next < fonts.size) {
                 val batch = HashMap<String, Typeface>()
                 next = withContext(Dispatchers.IO) { loadFaces(fonts, next, batch, BATCH_BUDGET_MS) }
-                if (gen != loadGen) return@launch
+                if (destroyed || gen != loadGen) return@launch
                 for ((id, face) in batch) rows[id]?.let { it.title.typeface = face; it.sample.typeface = face }
             }
         }
@@ -200,6 +205,7 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         ctx.confirm("글꼴 삭제", "‘${f.name}’ 글꼴을 삭제할까요?", ok = "삭제") {
             activity.scope.launch {
                 val ok = withContext(Dispatchers.IO) { runCatching { FontManager.deleteUserFont(f.id) }.isSuccess }
+                if (destroyed) return@launch
                 if (!ok) {
                     ctx.toast("삭제하지 못했습니다")
                     return@launch
@@ -214,6 +220,7 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         val appCtx = activity.applicationContext
         activity.scope.launch {
             withContext(Dispatchers.IO) { runCatching { FontManager.refresh(appCtx) } }
+            if (destroyed) return@launch
             load()
             ctx.toast("글꼴 목록을 새로 읽었습니다")
         }
@@ -263,6 +270,7 @@ internal class FontsPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
                         }
                 }
             }
+            if (destroyed) return@launch
             load()
             if (failed.isNotEmpty()) {
                 ctx.toast("추가하지 못한 파일 ${failed.size}개: ${failed.first()}")

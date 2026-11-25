@@ -54,15 +54,19 @@ import java.util.concurrent.ArrayBlockingQueue
  *   renamed when complete; a failed upload leaves nothing behind.
  * - Each finished file: `Library.addOrUpdateFile` on the handler thread, then [Listener.onReceived].
  *
- * Threading: [start] / [stop] on the main thread ([start] binds a socket: fast, no DNS). Listener callbacks are posted
- * to the main thread, and never after [stop].
+ * Threading: [start] on a worker thread (it may open the library database, lists the network interfaces and tries up
+ * to ten ports), never two at once on one instance; [stop] on any thread. Listener callbacks are posted to the main
+ * thread, and never after [stop].
  */
 class LanUpload(private val context: Context, private val destDir: File, private val listener: Listener) {
 
     /** Events for the page. Always called on the main thread. */
     interface Listener {
-        /** [file] was received and stored; [book] is its library entry, or null when adding it failed. */
-        fun onReceived(file: File, book: Book?)
+        /**
+         * [file] was received and stored ([bytes] long, read on the handler thread so the page never touches the disk);
+         * [book] is its library entry, or null when adding it failed.
+         */
+        fun onReceived(file: File, book: Book?, bytes: Long)
 
         /**
          * An upload was refused or failed; [message] is user text ("200MB보다 큰 파일은 받을 수 없습니다", …), [file] the
@@ -86,7 +90,11 @@ class LanUpload(private val context: Context, private val destDir: File, private
     val isRunning: Boolean
         get() = server != null
 
-    /** Starts the server (idempotent: returns the running one's result). Null when no Wi-Fi address or no free port. */
+    /**
+     * Starts the server (idempotent: returns the running one's result). Null when no Wi-Fi address or no free port.
+     * Blocking: call it off the main thread. A [stop] that ran while this was still binding does not see the new
+     * server; the caller stops it once this returns.
+     */
     fun start(): Result? {
         server?.let { return it.result }
         lastError = null
@@ -148,7 +156,10 @@ class LanUpload(private val context: Context, private val destDir: File, private
                 }
             },
             events = object : LanExchange.Events {
-                override fun received(file: File, book: Book?) = post { listener.onReceived(file, book) }
+                override fun received(file: File, book: Book?) {
+                    val bytes = file.length()
+                    post { listener.onReceived(file, book, bytes) }
+                }
                 override fun error(message: String, file: String?) = post { listener.onError(message, file) }
             },
         )
@@ -256,7 +267,7 @@ class LanUpload(private val context: Context, private val destDir: File, private
         private const val BUFFER = 64 * 1024
 
         internal const val NO_WIFI = "Wi-Fi에 연결되어 있지 않습니다"
-        internal val NO_PORT = "책 받기를 시작하지 못했습니다 (포트 ${PORTS.first}–${PORTS.last} 사용 중)"
+        internal val NO_PORT = "Wi-Fi 전송을 시작하지 못했습니다 (포트 ${PORTS.first}–${PORTS.last} 사용 중)"
 
         private val random by lazy { SecureRandom() }
 
@@ -389,7 +400,11 @@ internal class LanExchange(
             respondEarly(out, input, length, 400, BAD_REQUEST)
             return
         }
-        destDir.mkdirs()
+        if (!destDir.isDirectory && !destDir.mkdirs()) {
+            events.error(DISK_FAILED)
+            respondEarly(out, input, length, 500, DISK_FAILED)
+            return
+        }
         val free = destDir.usableSpace
         if (free in 0 until length + SPACE_MARGIN_BYTES) {
             events.error(NO_SPACE)
@@ -511,7 +526,7 @@ internal class LanExchange(
         private const val HTML = "text/html; charset=utf-8"
 
         internal const val TOO_LARGE = "200MB보다 큰 파일은 받을 수 없습니다"
-        internal const val WRONG_TYPE = "TXT·EPUB 파일만 받을 수 있습니다"
+        internal const val WRONG_TYPE = "TXT·EPUB·PDF 파일만 받을 수 있습니다"
         internal const val NO_SPACE = "저장 공간이 부족합니다"
         internal const val EMPTY = "빈 파일은 받을 수 없습니다"
         /** The file could not be written here (the folder, not the connection). */
@@ -610,13 +625,13 @@ internal class LanGuard(private val limit: Int = 10, private val blockMs: Long =
 /** File names received over the LAN (pure). */
 internal object LanNames {
     private const val MAX_NAME_BYTES = 200
-    private val ALLOWED_EXTENSIONS = setOf("txt", "epub")
+    private val ALLOWED_EXTENSIONS = setOf("txt", "epub", "pdf")
     private const val FORBIDDEN = "\\/:*?\"<>|"
 
     /**
      * A safe file name: path components stripped (both separators), `..`, control chars and `\ / : * ? " < > |`
      * removed, whitespace trimmed, Korean kept, at most 200 UTF-8 bytes (extension kept); null when nothing usable
-     * is left or the extension isn't .txt / .epub (case-insensitive). Also NFC (macOS browsers send decomposed
+     * is left or the extension isn't .txt / .epub / .pdf (case-insensitive). Also NFC (macOS browsers send decomposed
      * Hangul), without bidi controls (no "txt.exe" spoofing) and without leading dots (no hidden files).
      */
     fun sanitize(raw: String): String? {
@@ -703,7 +718,7 @@ internal object LanNames {
     }
 
     private fun isInvisibleControl(c: Char): Boolean =
-        c == '‎' || c == '‏' || c in '‪'..'‮' || c in '⁦'..'⁩' || c == '﻿'
+        c == '\u200E' || c == '\u200F' || c in '\u202A'..'\u202E' || c in '\u2066'..'\u2069' || c == '\uFEFF'
 
     /** The longest prefix of [s] of at most [maxBytes] UTF-8 bytes, never splitting a surrogate pair. */
     private fun fitUtf8(s: String, maxBytes: Int): String {
@@ -1094,11 +1109,18 @@ internal class MultipartReader(private val input: InputStream, boundary: String,
 
 /** The Wi-Fi address to bind (pure choice over the interfaces' addresses, plus the platform enumeration). */
 internal object LanNet {
-    /** The site-local IPv4 address of a `wlan*` interface (wlan0 first), or null. */
+    private fun rank(name: String): Int = when {
+        name.startsWith("wlan") -> 0
+        name.startsWith("swlan") || name.startsWith("ap") -> 1
+        name.startsWith("eth") -> 2
+        else -> -1
+    }
+
+    /** The site-local IPv4 address of a `wlan*` interface (wlan0 first), falling back to hotspot (`swlan*`/`ap*`) or Ethernet (`eth*`), or null. */
     fun pick(addresses: List<Pair<String, InetAddress>>): Inet4Address? =
         addresses.asSequence()
-            .filter { (name, a) -> name.startsWith("wlan") && a is Inet4Address && a.isSiteLocalAddress && !a.isLoopbackAddress }
-            .sortedBy { it.first }
+            .filter { (name, a) -> rank(name) >= 0 && a is Inet4Address && a.isSiteLocalAddress && !a.isLoopbackAddress }
+            .sortedWith(compareBy<Pair<String, InetAddress>>({ rank(it.first) }, { it.first }))
             .map { it.second as Inet4Address }
             .firstOrNull()
 
@@ -1148,17 +1170,17 @@ small{color:#555}
 </style></head><body>
 <h1>PureReader로 책 보내기</h1>
 <p>다 받을 때까지 기기에서 ‘Wi-Fi로 책 받기’ 화면을 열어 두세요.</p>
-<div id="drop">TXT·EPUB 파일을 여기에 끌어다 놓거나 고르세요<br><br><input type="file" id="f" multiple accept=".txt,.epub"></div>
+<div id="drop">TXT·EPUB·PDF 파일을 여기에 끌어다 놓거나 선택하세요<br><br><input type="file" id="f" multiple accept=".txt,.epub,.pdf"></div>
 <ul id="list"></ul>
-<p><small>파일 하나에 200MB까지</small></p>
+<p><small>파일 하나당 최대 200MB</small></p>
 <script>
 var q=[],busy=0,L=document.getElementById('list'),M=${LanUpload.MAX_FILE_BYTES},
 U=location.pathname.replace(/\/+${'$'}/,'')+'/upload';
 function show(li,f,t,e){li.textContent=f.name+' · '+t;li.className=e?'err':'';}
 function add(fs){for(var i=0;i<fs.length;i++){var li=document.createElement('li');L.appendChild(li);
-show(li,fs[i],'기다리는 중');q.push([fs[i],li]);}next();}
+show(li,fs[i],'대기 중');q.push([fs[i],li]);}next();}
 function next(){if(busy||!q.length)return;var t=q.shift(),f=t[0],li=t[1];
-if(!/\.(txt|epub)${'$'}/i.test(f.name)){show(li,f,'TXT·EPUB 파일만 보낼 수 있습니다',1);return next();}
+if(!/\.(txt|epub|pdf)${'$'}/i.test(f.name)){show(li,f,'TXT·EPUB·PDF 파일만 보낼 수 있습니다',1);return next();}
 if(f.size>M){show(li,f,'200MB보다 큰 파일은 보낼 수 없습니다',1);return next();}
 busy=1;var x=new XMLHttpRequest(),d=new FormData();d.append('file',f,f.name);x.open('POST',U);
 x.upload.onprogress=function(e){if(e.lengthComputable)show(li,f,Math.floor(e.loaded*100/e.total)+'%');};

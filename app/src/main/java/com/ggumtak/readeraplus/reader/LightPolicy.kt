@@ -17,21 +17,21 @@ internal object LightPolicy {
     const val RESTORE_MODE = 2
 
     const val SWIPE_SUBTITLE = "왼쪽 가장자리를 위아래로 밀기"
-    const val SWIPE_SUBTITLE_NONE = "이 기기에서는 밝기 스와이프를 쓸 수 없습니다"
+    const val SWIPE_SUBTITLE_NONE = "이 기기에서는 밝기 스와이프를 사용할 수 없습니다"
     const val DEVICE_OFF = "조명이 안 바뀔 때 켜세요"
     const val DEVICE_ON_RESTORE = "나가면 원래 밝기로"
     const val DEVICE_ON_KEEP = "나가도 이 밝기 유지"
     const val DEVICE_ON_KEEP_AUTO = "나가도 이 밝기 유지 · 자동 밝기는 다시 켬"
     const val DEVICE_NO_PERMISSION = "권한 필요 · 눌러서 허용"
-    const val DEVICE_NONE = "이 기기는 앱이 조명을 바꿀 수 없습니다"
+    const val DEVICE_NONE = "이 기기에서는 앱이 조명을 조절할 수 없습니다"
     const val PANEL_SUBTITLE = "밝기 · 색온도(따뜻한 빛)"
     const val PANEL_SUBTITLE_NONE = "밝기와 색온도는 기기 조명에서 조절합니다"
 
     /** Dialog A (brightness.md §5.3) before the "시스템 설정 수정" page; the system list names the app PureReader. */
     const val DEVICE_DIALOG = "이 기기의 조명은 앱 화면 밝기를 따르지 않을 수 있습니다. ‘시스템 설정 수정’을 허용하면 " +
-        "리더가 기기 밝기를 직접 바꿉니다.\n\n" +
+        "앱이 기기 밝기를 직접 조절합니다.\n\n" +
         "· 다른 앱에도 같은 밝기가 적용됩니다\n" +
-        "· 리더를 나가면 원래 밝기로 돌아갑니다\n" +
+        "· 책을 닫으면 원래 밝기로 돌아갑니다\n" +
         "· 다음 화면에서 ‘PureReader’를 찾아 허용한 뒤 돌아오세요"
 
     /** Dialog C (brightness.md §5.5): the firmware hides that page; the adb command follows on its own line. */

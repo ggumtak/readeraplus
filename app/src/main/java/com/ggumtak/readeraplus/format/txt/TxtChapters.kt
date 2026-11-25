@@ -52,7 +52,7 @@ internal object TxtChapters {
      * '.' ("35화. 회의를 시작하겠습니다."). A space alone after the unit is not enough ("3화 보고 잤어요." stays a sentence).
      */
     private val EPISODE_TITLE: Pattern = Pattern.compile(
-        "$OPEN?\\s*(?:[제第]\\s*)?\\d{1,5}\\s*(?:화|장|회|편|부|권|막|절)\\s*$CLOSE?\\s*$SEP\\s*\\S"
+        "$OPEN?\\s*(?:[제第]\\s*)?\\d{1,5}\\s*(?:화|장|회|편|부|권|막|절|話|章|回|節|卷)\\s*$CLOSE?\\s*$SEP\\s*\\S"
     )
     private val K5: Pattern = Pattern.compile("[=\\-*~#]{3,}\\s*(\\S.{0,40}?)\\s*[=\\-*~#]{3,}")
     private val K6: Pattern = Pattern.compile("\\S.{0,30}?\\s+\\d{1,5}\\s*화")
@@ -300,7 +300,9 @@ internal object TxtChapters {
         val last = t[n - 1]
         val prev = t[n - 2]
         if (last == '.' && prev in '가'..'힣') {
-            if (NUMBERED_TITLE.matcher(t).lookingAt() || EPISODE_TITLE.matcher(t).lookingAt()) return false
+            val lead = symbolLead(t)
+            val body = if (lead > 0 && lead < n) t.substring(lead) else t
+            if (NUMBERED_TITLE.matcher(body).lookingAt() || EPISODE_TITLE.matcher(body).lookingAt()) return false
             return !(n >= 3 && isUnit(prev) && t[n - 3] in '0'..'9')
         }
         if ((last == '”' || last == '"' || last == '’') && (prev == '?' || prev == '!' || prev == '.' || prev == '…')) {
@@ -315,7 +317,7 @@ internal object TxtChapters {
     }
 
     private fun isUnit(c: Char): Boolean = when (c) {
-        '화', '장', '회', '편', '부', '권', '막', '절' -> true
+        '화', '장', '회', '편', '부', '권', '막', '절', '話', '章', '回', '節', '卷' -> true
         else -> false
     }
 

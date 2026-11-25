@@ -425,7 +425,7 @@ object R3Rows {
     /** Under the 가로 화면 row: where it applies. */
     const val LANDSCAPE_NOTE = "화면을 가로로 돌렸을 때만 적용됩니다. 스크롤로 볼 때는 한 쪽입니다."
 
-    // ---- 화면 색 (읽기 설정 → 스타일; 웹소설 = 마루뷰어, 2026-10-04)
+    // ---- 화면 색 (보기 설정 → 색; 웹소설 = 마루뷰어, 2026-10-04)
 
     val PAGE_THEMES: List<PageTheme> = listOf(PageTheme.PAPER, PageTheme.MARU, PageTheme.BLACK)
 

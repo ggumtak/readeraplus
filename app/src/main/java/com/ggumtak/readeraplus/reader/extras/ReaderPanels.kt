@@ -44,8 +44,8 @@ object ReaderPanels {
     }
 
     /** "책 정보" dialog (also used from the library with document == null). */
-    fun showDocumentInfo(activity: Activity, book: Book, document: BookDocument?) {
-        InfoDialogs.documentInfo(activity, book, document)
+    fun showDocumentInfo(activity: Activity, book: Book, document: BookDocument?, onSaved: (() -> Unit)? = null) {
+        InfoDialogs.documentInfo(activity, book, document, onSaved)
     }
 
     /**

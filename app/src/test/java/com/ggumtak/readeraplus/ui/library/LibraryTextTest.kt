@@ -202,6 +202,17 @@ class LibraryTextTest {
     }
 
     @Test
+    fun statusText_showsTheZipStageInsteadOfTheStalledCount() {
+        assertEquals("ZIP에서 책을 꺼내는 중…", LibraryText.statusText(true, 120, false, 0, 0, zipping = true))
+        assertEquals(
+            "ZIP에서 책을 꺼내는 중… · 가져오는 중… 3/10",
+            LibraryText.statusText(true, 0, true, 3, 10, zipping = true),
+        )
+        // A silent (hidden) scan shows nothing, ZIP stage or not.
+        assertNull(LibraryText.statusText(false, 0, false, 0, 0, zipping = true))
+    }
+
+    @Test
     fun emptyMessage_searchAndShelves() {
         assertEquals("‘마법’ 검색 결과가 없습니다.", LibraryText.emptyMessage(Shelf.ALL, " 마법 ", false))
         // The buttons under the message say how to add books.

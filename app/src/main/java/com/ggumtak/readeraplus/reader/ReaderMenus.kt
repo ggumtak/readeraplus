@@ -53,7 +53,7 @@ internal fun ReaderActivity.showOverflowMenu(anchor: View) {
         MenuItem(ScrollWiring.autoItem(scrollMode, autoTurnOn), R.drawable.ic_timer) { toggleAutoTurn() },
         // After the popup has disappeared from the panel, or its outline stays as ghosting.
         MenuItem("화면 새로고침", R.drawable.ic_refresh) { refreshAfterDraw(POPUP_GONE_MS) },
-        MenuItem("책 정보", R.drawable.ic_info, groupStart = true) { guarded { ReaderPanels.showDocumentInfo(this, bk, document) } },
+        MenuItem("책 정보", R.drawable.ic_info, groupStart = true) { guarded { ReaderPanels.showDocumentInfo(this, bk, document) { refreshBookMeta() } } },
         MenuItem("내 리뷰", R.drawable.ic_rate_review) { guarded { ReaderPanels.showReview(this) } },
         MenuItem("즐겨찾기·컬렉션", R.drawable.ic_playlist_add) { showAddMenu(anchor, bk) },
     )
@@ -153,7 +153,7 @@ private fun ReaderActivity.showCollections(id: Long) {
 
 /**
  * Long-press on the rotation button: pick a fixed orientation or follow the sensor (설정's 화면 방향 choices). The button
- * next to 취소 switches the 가로 화면 between one page across the width and two side by side (읽기 설정's 가로 화면): it
+ * next to 취소 switches the 가로 화면 between one page across the width and two side by side (화면·밝기's 가로 화면): it
  * names the other choice, and the reader lays out again from the first character shown.
  */
 internal fun ReaderActivity.showOrientationChooser() {

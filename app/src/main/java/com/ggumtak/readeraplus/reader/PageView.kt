@@ -214,7 +214,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                 if (!drawFailed) Log.w(TAG, "scroll draw failed", t)
                 drawFailed = true
                 canvas.drawColor(Color.WHITE)
-                canvas.drawText("페이지를 그리지 못했습니다", 12f * resources.displayMetrics.density,
+                canvas.drawText("페이지를 표시하지 못했습니다", 12f * resources.displayMetrics.density,
                     errorPaint.textSize * 2f, errorPaint)
                 false
             }
@@ -234,7 +234,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
             if (!drawFailed) Log.w(TAG, "page draw failed", t)
             drawFailed = true
             canvas.drawColor(Color.WHITE)
-            canvas.drawText("페이지를 그리지 못했습니다: ${t.javaClass.simpleName}", f.left, f.top + errorPaint.textSize * 2, errorPaint)
+            canvas.drawText("페이지를 표시하지 못했습니다", f.left, f.top + errorPaint.textSize * 2, errorPaint)
         }
         finishFirstFrame()
         if (openTraceFrom != 0L || turnTraceFrom != 0L) logTraces(drawFrom)
@@ -331,7 +331,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                     return true
                 }
                 trackExtraTaps(ev)
-                if (!tracking || longPressFired) return true
+                if (!tracking) return true
                 val i = ev.findPointerIndex(primaryId)
                 if (i < 0) return true
                 val dx = ev.getX(i) - downX
@@ -446,7 +446,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         velocityTracker?.addMovement(ev)
         when (ev.actionMasked) {
             MotionEvent.ACTION_MOVE -> {
-                if (!tracking || multiIgnored || longPressFired) return true
+                if (!tracking || multiIgnored) return true
                 val index = ev.findPointerIndex(primaryId)
                 if (index < 0) return true
                 val x = ev.getX(index); val y = ev.getY(index)
@@ -490,13 +490,13 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
                     tracker?.computeCurrentVelocity(1000, maxFling)
                     noteInput(PerfLines.INPUT_SWIPE, primaryDownAt, ev.eventTime)
                     input.release(downY - y, -(tracker?.getYVelocity(primaryId) ?: 0f))
-                } else if (!scrollStopper && !longPressFired) {
+                } else if (!scrollStopper) {
                     val dx = x - downX; val dy = y - downY
                     maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
                     when (Gestures.end(dx, dy, maxDist, tapSlop, swipeMin, swipeToTurn, false)) {
                         GestureEnd.NEXT -> swipe(SwipeDir.NEXT, primaryDownAt, ev.eventTime)
                         GestureEnd.PREV -> swipe(SwipeDir.PREV, primaryDownAt, ev.eventTime)
-                        GestureEnd.TAP -> deliverTap(downX, downY, primaryDownAt, ev.eventTime)
+                        GestureEnd.TAP -> if (!longPressFired) deliverTap(downX, downY, primaryDownAt, ev.eventTime)
                         GestureEnd.NONE -> {}
                     }
                 }
@@ -599,7 +599,6 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         removeCallbacks(longPress)
         if (!tracking) return
         tracking = false
-        if (longPressFired) return
         if (brightnessDragging) {
             finishBrightness(ev)
             return
@@ -609,7 +608,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         maxDist = maxOf(maxDist, Math.abs(dx), Math.abs(dy))
         if (multi) {
             // Another finger touched meanwhile: only a short, still touch counts (a tap), never a swipe.
-            if (maxDist <= tapSlop && ev.eventTime - primaryDownAt < longPressMs) {
+            if (!longPressFired && maxDist <= tapSlop && ev.eventTime - primaryDownAt < longPressMs) {
                 deliverTap(downX, downY, primaryDownAt, ev.eventTime)
             }
             return
@@ -617,7 +616,7 @@ class PageView(context: Context, private val cb: Callbacks) : View(context) {
         when (Gestures.end(dx, dy, maxDist, tapSlop, swipeMin, swipeToTurn, verticalSwipe)) {
             GestureEnd.NEXT -> swipe(SwipeDir.NEXT, primaryDownAt, ev.eventTime)
             GestureEnd.PREV -> swipe(SwipeDir.PREV, primaryDownAt, ev.eventTime)
-            GestureEnd.TAP -> deliverTap(downX, downY, primaryDownAt, ev.eventTime)
+            GestureEnd.TAP -> if (!longPressFired) deliverTap(downX, downY, primaryDownAt, ev.eventTime)
             GestureEnd.NONE -> {}
         }
     }

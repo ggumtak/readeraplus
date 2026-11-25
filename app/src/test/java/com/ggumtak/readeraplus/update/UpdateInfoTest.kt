@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.update
 
+import android.app.ActivityManager
 import android.content.pm.PackageInstaller
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -68,6 +69,59 @@ class UpdateInfoTest {
     }
 
     @Test
+    fun aCheckWithoutAnAnswerIsDueAgainAfterTheRetryTime() {
+        val h12 = 12L * 60 * 60 * 1000
+        val m30 = 30L * 60 * 1000
+        val now = 100L * h12
+        val stamp = UpdateInfo.retryStamp(now, h12, m30)
+        assertFalse(UpdateInfo.due(now, stamp, h12))
+        assertFalse(UpdateInfo.due(now + m30 - 1, stamp, h12))
+        assertTrue(UpdateInfo.due(now + m30, stamp, h12))
+        // A clock near zero (a device without a set time): the stamp stays a valid "checked" mark, never in the future.
+        val early = UpdateInfo.retryStamp(1_000, h12, m30)
+        assertTrue(early in 1..1_000)
+    }
+
+    @Test
+    fun aWaitingUpdateIsInstalledAskedForOnceOrLeftToTheUsualCheck() {
+        // Nothing waits: the usual check, whatever the permission.
+        assertEquals(UpdateInfo.ResumeStep.CHECK, UpdateInfo.resumeStep(pending = false, permitted = true, asked = false))
+        assertEquals(UpdateInfo.ResumeStep.CHECK, UpdateInfo.resumeStep(pending = false, permitted = false, asked = true))
+        // Permitted: installs, also after the prompt (the user allowed it on the system page).
+        assertEquals(UpdateInfo.ResumeStep.INSTALL, UpdateInfo.resumeStep(pending = true, permitted = true, asked = false))
+        assertEquals(UpdateInfo.ResumeStep.INSTALL, UpdateInfo.resumeStep(pending = true, permitted = true, asked = true))
+        // Not permitted: the prompt once, then the automatic check is no longer skipped.
+        assertEquals(UpdateInfo.ResumeStep.ASK, UpdateInfo.resumeStep(pending = true, permitted = false, asked = false))
+        assertEquals(UpdateInfo.ResumeStep.CHECK, UpdateInfo.resumeStep(pending = true, permitted = false, asked = true))
+    }
+
+    @Test
+    fun theConfirmScreenIsShownOnlyInFront() {
+        assertEquals(UpdateInfo.ConfirmStep.SHOW, UpdateInfo.confirmStep(foreground = true, hasIntent = true))
+        // No screen: kept pending, installed on the next return.
+        assertEquals(UpdateInfo.ConfirmStep.FOLD, UpdateInfo.confirmStep(foreground = false, hasIntent = true))
+        assertEquals(UpdateInfo.ConfirmStep.FOLD, UpdateInfo.confirmStep(foreground = false, hasIntent = false))
+        // In front without an intent: dropped with a word, not retried on every return.
+        assertEquals(UpdateInfo.ConfirmStep.DROP, UpdateInfo.confirmStep(foreground = true, hasIntent = false))
+    }
+
+    @Test
+    fun onlyAShownScreenCountsAsInFront() {
+        assertEquals(100, ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND)
+        assertEquals(125, ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE)
+        assertEquals(200, ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE)
+        assertTrue(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND))
+        assertTrue(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE))
+        // TTS reading in the background: its foreground service shows no screen.
+        assertFalse(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE))
+        assertFalse(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE))
+        assertFalse(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE))
+        assertFalse(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED))
+        assertFalse(UpdateInfo.showsScreen(ActivityManager.RunningAppProcessInfo.IMPORTANCE_GONE))
+        assertFalse(UpdateInfo.showsScreen(0))
+    }
+
+    @Test
     fun apkHeaderAndCachedNames() {
         assertTrue(UpdateInfo.looksLikeApk(byteArrayOf(0x50, 0x4B, 3, 4)))
         assertFalse(UpdateInfo.looksLikeApk("<htm".toByteArray()))
@@ -81,7 +135,10 @@ class UpdateInfoTest {
 
     @Test
     fun messages() {
-        assertEquals("새 버전이 있습니다 (빌드 185 · 지금 184).\n지금 업데이트할까요?", UpdateInfo.offerMessage(185, 184))
+        assertEquals(
+            "새 버전이 있습니다 (빌드 185 · 현재 184).\n지금 업데이트할까요?\n설치가 끝나면 앱이 닫히므로 다시 열어 주세요.",
+            UpdateInfo.offerMessage(185, 184),
+        )
         assertEquals("내려받는 중… 40%", UpdateInfo.progressMessage(40))
         assertEquals("내려받는 중…", UpdateInfo.progressMessage(-1))
         assertNull(UpdateInfo.failureMessage(PackageInstaller.STATUS_SUCCESS))

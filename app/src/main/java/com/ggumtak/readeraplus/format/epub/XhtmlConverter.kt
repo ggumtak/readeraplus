@@ -507,6 +507,9 @@ internal class XhtmlConverter(
                 if (decl.has(CssDecl.ML)) f.insetL += decl.marginLeft.coerceIn(0f, MAX_INSET_STEP)
                 if (decl.has(CssDecl.PL)) f.insetL += decl.paddingLeft.coerceIn(0f, MAX_INSET_STEP)
                 if (f.insetL > MAX_INSET) f.insetL = MAX_INSET
+                if (decl.has(CssDecl.MR)) f.insetR += decl.marginRight.coerceIn(0f, MAX_INSET_STEP)
+                if (decl.has(CssDecl.PR)) f.insetR += decl.paddingRight.coerceIn(0f, MAX_INSET_STEP)
+                if (f.insetR > MAX_INSET) f.insetR = MAX_INSET
             }
             if (decl.has(CssDecl.MT) && decl.marginTop >= MIN_MARGIN_EM && name != "body" && name != "html") {
                 pendingMarginTop = maxOf(pendingMarginTop, decl.marginTop.coerceAtMost(MAX_MARGIN_EM))

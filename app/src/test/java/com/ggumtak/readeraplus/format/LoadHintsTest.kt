@@ -34,4 +34,26 @@ class LoadHintsTest {
         assertFalse(seen.third)
         assertFalse(onThread { LoadHints.isBackground })
     }
+
+    @Test
+    fun asBackgroundRestoresStateEvenOnException() {
+        onThread {
+            assertFalse(LoadHints.isBackground)
+            val inside = LoadHints.asBackground { LoadHints.isBackground }
+            assertTrue(inside)
+            assertFalse(LoadHints.isBackground)
+            try {
+                LoadHints.asBackground {
+                    assertTrue(LoadHints.isBackground)
+                    throw IllegalStateException("boom")
+                }
+            } catch (_: IllegalStateException) {
+            }
+            assertFalse(LoadHints.isBackground)
+            // Already-background threads stay background after nested asBackground.
+            LoadHints.markBackground()
+            assertTrue(LoadHints.asBackground { LoadHints.isBackground })
+            assertTrue(LoadHints.isBackground)
+        }
+    }
 }

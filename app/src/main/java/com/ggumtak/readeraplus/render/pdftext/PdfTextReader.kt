@@ -222,6 +222,12 @@ class PdfTextReader private constructor(
             } catch (e: StackOverflowError) {
                 closeQuietly(raf)
                 throw PdfTextException("unreadable PDF", e)
+            } catch (e: OutOfMemoryError) {
+                closeQuietly(raf)
+                throw PdfTextException("PDF too large for memory", e)
+            } catch (t: Throwable) {
+                closeQuietly(raf)
+                throw t
             }
         }
 

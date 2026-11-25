@@ -62,6 +62,7 @@ import com.ggumtak.readeraplus.ui.kit.toast
 import com.ggumtak.readeraplus.ui.kit.vertical
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.hypot
@@ -105,6 +106,8 @@ class SelectionController(private val host: ReaderHost) {
 
     /** The handle being dragged, with where its finger is (screen px) and the grab offset to its anchor. */
     private var dragHandle: HandleView? = null
+    /** Which end of the selection [dragHandle] currently moves (flips if the user drags past the other handle). */
+    private var dragIsStart = false
     private var dragRawX = 0f
     private var dragRawY = 0f
     private var dragGrabDx = 0f
@@ -117,6 +120,8 @@ class SelectionController(private val host: ReaderHost) {
     /** Edge dwell ([EdgeDwell]): the page turn a held point in an edge zone asks for, and the wait for its page. */
     private val dwell = EdgeDwell()
     private val dwellFire = Runnable { fireDwell() }
+    /** [zoneNow]'s page geometry for the drag going on; dropped when a drag starts, a page shows or the selection goes. */
+    private val zoneGeometry = DragGeometryMemo()
     /** An edge turn was asked for and its page is not shown yet: its [onPageChanged] extends instead of clearing. */
     private var turnPending = false
     private var turnLayout: SectionLayout? = null
@@ -224,6 +229,7 @@ class SelectionController(private val host: ReaderHost) {
         paletteMode = false
         active = true
         fromLongPress = true
+        zoneGeometry.invalidate()
         pressX = x
         pressY = y
         pressDragged = false
@@ -266,6 +272,7 @@ class SelectionController(private val host: ReaderHost) {
             MotionEvent.ACTION_UP -> {
                 main.removeCallbacks(reselect)
                 releaseDwell()
+                zoneGeometry.invalidate()
                 if (fromLongPress) {
                     fromLongPress = false
                     showActions()
@@ -277,6 +284,7 @@ class SelectionController(private val host: ReaderHost) {
             MotionEvent.ACTION_CANCEL -> {
                 main.removeCallbacks(reselect)
                 releaseDwell()
+                zoneGeometry.invalidate()
                 if (fromLongPress) showActions()
                 fromLongPress = false
                 tapCandidate = false
@@ -291,7 +299,9 @@ class SelectionController(private val host: ReaderHost) {
         fromLongPress = false
         tapCandidate = false
         dragHandle = null
+        dragIsStart = false
         cancelDwell()
+        zoneGeometry.invalidate()
         main.removeCallbacks(reselect)
         editingQuote = null
         paletteMode = false
@@ -303,6 +313,12 @@ class SelectionController(private val host: ReaderHost) {
         if (wasActive && section >= 0) runCatching { host.setHighlights("selection", section, emptyList()) }
         section = -1
         sectionText = null
+    }
+
+    /** Clears active selection and cancels any pending coroutines on activity destroy. */
+    fun dispose() {
+        clear()
+        scope.cancel()
     }
 
     /**
@@ -324,6 +340,8 @@ class SelectionController(private val host: ReaderHost) {
         turnPending = false
         turnLayout = null
         main.removeCallbacks(turnTimeout)
+        // Another page: the edge zones are measured again on the next check.
+        zoneGeometry.invalidate()
         // Scroll: a settle gives the virtual page back to the anchor's section; the selection's section stays in focus.
         host.holdSection(section)
         val now = host.currentLayout
@@ -366,7 +384,9 @@ class SelectionController(private val host: ReaderHost) {
         val off = host.hitTest(x, y)
         if (off < 0 || host.hitSection(x) != section) return
         val text = span.layout.content.text
-        val o = off.coerceIn(span.start, span.end - 1)
+        // A page with no char (an empty section) has nothing to extend to.
+        val o = SelectionDrag.clampOffset(off, span.start, span.end)
+        if (o < 0) return
         val s = minOf(anchorStart, clusterStart(text, o))
         val e = maxOf(anchorEnd, clusterEnd(text, o))
         setRange(s, e)
@@ -389,9 +409,34 @@ class SelectionController(private val host: ReaderHost) {
         val off = host.hitTest(px, py)
         if (off < 0 || host.hitSection(px) != section) return
         val text = span.layout.content.text
-        val o = off.coerceIn(span.start, span.end - 1)
-        if (h.start) setRange(clusterStart(text, o.coerceAtMost(selEnd - 1)), selEnd)
-        else setRange(selStart, maxOf(clusterEnd(text, o), clusterEnd(text, selStart)))
+        val o = SelectionDrag.clampOffset(off, span.start, span.end)
+        if (o < 0) return
+        // Allow handles to cross naturally without dropping the touch target (dragHandle stays bound to the touched view).
+        if (dragIsStart) {
+            val cs = clusterStart(text, o)
+            if (cs < selEnd) {
+                setRange(cs, selEnd)
+            } else {
+                val ce = clusterEnd(text, o)
+                if (ce > selEnd) {
+                    val pivot = selEnd
+                    dragIsStart = false
+                    setRange(pivot, ce)
+                }
+            }
+        } else {
+            val ce = clusterEnd(text, o)
+            if (ce > selStart) {
+                setRange(selStart, ce)
+            } else {
+                val cs = clusterStart(text, o)
+                if (cs < selStart) {
+                    val pivot = selStart
+                    dragIsStart = true
+                    setRange(cs, pivot)
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------ edge dwell
@@ -403,15 +448,20 @@ class SelectionController(private val host: ReaderHost) {
         if (!onCurrentSection()) return Zone.NONE
         val len = sectionText?.length ?: return Zone.NONE
         val v = host.pageView
-        val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density, host.pageCutoutTop,
-            emPx = AndroidTextMeasurer.emPxFor(ctx, Settings.reader.fontSizeSp),
-            naturalLinePx = AndroidTextMeasurer.naturalLinePxFor(ctx, Settings.reader))
+        // Called on every MOVE of a drag: the geometry (font metrics included) is computed once per drag and page.
+        if (!zoneGeometry.matches(v.width, v.height)) {
+            val g = LayoutKeys.geometry(Settings.reader, v.width, v.height, ctx.resources.displayMetrics.density, host.pageCutoutTop,
+                emPx = AndroidTextMeasurer.emPxFor(ctx, Settings.reader.fontSizeSp),
+                naturalLinePx = AndroidTextMeasurer.naturalLinePxFor(ctx, Settings.reader))
+            zoneGeometry.store(v.width, v.height, g.contentTop, ctx.dpF(EDGE_ZONE_DP.toFloat()))
+        }
+        val top = zoneGeometry.contentTop
         val h = dragHandle
-        val allowNext = (h == null || !h.start) && SelectionSpan.canTurn(true, page.start, page.end, len)
-        val allowPrev = (h == null || h.start) && SelectionSpan.canTurn(false, page.start, page.end, len)
+        val allowNext = (h == null || !dragIsStart) && SelectionSpan.canTurn(true, page.start, page.end, len)
+        val allowPrev = (h == null || dragIsStart) && SelectionSpan.canTurn(false, page.start, page.end, len)
         // Use the visible layout's actual height (including the e-ink body-only bottom reserve).
-        return EdgeZone.of(dragY, g.contentTop.toFloat(), (g.contentTop + page.layout.config.height).toFloat(),
-            ctx.dpF(EDGE_ZONE_DP.toFloat()), allowNext, allowPrev)
+        return EdgeZone.of(dragY, top.toFloat(), (top + page.layout.config.height).toFloat(),
+            zoneGeometry.zonePx, allowNext, allowPrev)
     }
 
     /** The held point moved (or a page showed): starts, keeps or drops the dwell timer. */
@@ -612,10 +662,12 @@ class SelectionController(private val host: ReaderHost) {
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     dragHandle = h
+                    dragIsStart = h.start
                     dragRawX = ev.rawX
                     dragRawY = ev.rawY
                     dragGrabDx = h.anchorX - ev.rawX
                     dragGrabDy = h.anchorY - ev.rawY
+                    zoneGeometry.invalidate()
                     cancelDwell()
                     hideActions()
                     // The handle's own touch stream: the page view sees none of it, so no tap or swipe is recognised.
@@ -628,9 +680,16 @@ class SelectionController(private val host: ReaderHost) {
                     moveDraggedHandle()
                     armDwell()
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                MotionEvent.ACTION_UP -> {
+                    if (dragHandle === h) dragHandle = null
+                    releaseDwell()
+                    zoneGeometry.invalidate()
+                    showActions()
+                }
+                MotionEvent.ACTION_CANCEL -> {
                     if (dragHandle === h) dragHandle = null
                     cancelDwell()
+                    zoneGeometry.invalidate()
                     showActions()
                 }
             }
@@ -664,7 +723,7 @@ class SelectionController(private val host: ReaderHost) {
             SelectionActions.Id.READ_ALOUD -> readAloud()
             SelectionActions.Id.DELETE_PHRASE ->
                 // Rules apply per source line: a selection across a line break can't become one (T1-10).
-                if (selectionIsOneLine()) deletePhrase() else ctx.toast("여러 줄은 한 번에 지울 수 없습니다 · 한 줄 안에서 고르세요")
+                if (selectionIsOneLine()) deletePhrase() else ctx.toast("여러 줄은 한 번에 지울 수 없습니다 · 한 줄 안에서 선택하세요")
         }
     }
 
@@ -691,6 +750,11 @@ class SelectionController(private val host: ReaderHost) {
         hideActions()
 
         val dm = ctx.resources.displayMetrics
+        val root = host.pageView.rootView
+        val winW = if (root != null && root.width > 0) root.width else dm.widthPixels
+        val winH = if (root != null && root.height > 0) root.height else dm.heightPixels
+        val topInset = Overlay.topInset(host.pageView)
+        val bottomInset = Overlay.bottomInset(host.pageView)
         val eink = PopupCard.eink(ctx)
         val shadow = PopupCard.shadowRoom(ctx, eink)
         val margin = maxOf(ctx.dp(8), shadow)
@@ -698,7 +762,7 @@ class SelectionController(private val host: ReaderHost) {
         overflowIds = overflow
         // The row and the card's frame within the margins: the card then sits centred with equal room on both sides,
         // its first and last labels as far from its edges.
-        val actionRow = buildActionRow(primary, dm.widthPixels - 2 * margin - 2 * PopupCard.frame(ctx))
+        val actionRow = buildActionRow(primary, winW - 2 * margin - 2 * PopupCard.frame(ctx))
         val content = ctx.vertical()
         val q = editingQuote
         if (q != null) {
@@ -718,7 +782,7 @@ class SelectionController(private val host: ReaderHost) {
 
         val built = PopupCard.build(ctx, eink, content)
         built.window.measure(
-            View.MeasureSpec.makeMeasureSpec(dm.widthPixels, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(winW, View.MeasureSpec.AT_MOST),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
         val w = built.window.measuredWidth - 2 * built.pad
@@ -731,9 +795,14 @@ class SelectionController(private val host: ReaderHost) {
             top = minOf(top, r.top)
             bottom = maxOf(bottom, r.bottom)
         }
-        val x = ((dm.widthPixels - w) / 2).coerceAtLeast(0)
-        val y = PaletteGeometry.selectionY(loc[1] + originY + top, loc[1] + originY + bottom, h, ctx.dp(10),
-            startHandle?.sizePx ?: ctx.dp(40), margin, dm.heightPixels)
+        val safeH = (winH - topInset - bottomInset).coerceAtLeast(h + 2 * margin)
+        val x = ((winW - w) / 2).coerceAtLeast(0)
+        val y = topInset + PaletteGeometry.selectionY(
+            loc[1] + originY + top - topInset,
+            loc[1] + originY + bottom - topInset,
+            h, ctx.dp(10),
+            startHandle?.sizePx ?: ctx.dp(40), margin, safeH,
+        )
         val pw = PopupWindow(built.window, PopupCard.width(built), WRAP_CONTENT, false).apply {
             animationStyle = 0
             elevation = 0f
@@ -816,6 +885,11 @@ class SelectionController(private val host: ReaderHost) {
         if (ids.isEmpty()) return
         hideMenus()
         val dm = ctx.resources.displayMetrics
+        val root = host.pageView.rootView
+        val winW = if (root != null && root.width > 0) root.width else dm.widthPixels
+        val winH = if (root != null && root.height > 0) root.height else dm.heightPixels
+        val topInset = Overlay.topInset(host.pageView)
+        val bottomInset = Overlay.bottomInset(host.pageView)
         val eink = PopupCard.eink(ctx)
         val margin = maxOf(ctx.dp(8), PopupCard.shadowRoom(ctx, eink))
         val list = ctx.vertical { minimumWidth = ctx.dp(MENU_MIN_WIDTH_DP) }
@@ -839,12 +913,13 @@ class SelectionController(private val host: ReaderHost) {
         }
         val built = PopupCard.build(ctx, eink, scroll)
         built.window.measure(
-            View.MeasureSpec.makeMeasureSpec(dm.widthPixels, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(winW, View.MeasureSpec.AT_MOST),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
         val w = built.window.measuredWidth - 2 * built.pad
+        val safeH = (winH - topInset - bottomInset).coerceAtLeast(ctx.dp(MENU_ROW_DP) + 2 * margin)
         // A menu taller than the screen scrolls inside its card.
-        val h = minOf(built.window.measuredHeight - 2 * built.pad, dm.heightPixels - 2 * margin)
+        val h = minOf(built.window.measuredHeight - 2 * built.pad, safeH - 2 * margin)
         // Window coordinates of the cell: the popup's x / y are relative to the window, not the screen.
         val at = IntArray(2)
         val pv = IntArray(2)
@@ -854,8 +929,8 @@ class SelectionController(private val host: ReaderHost) {
         host.pageView.getLocationInWindow(pw)
         val ax = at[0] - (pv[0] - pw[0])
         val ay = at[1] - (pv[1] - pw[1])
-        val x = PaletteGeometry.popupX(ax + anchor.width - w / 2f, w, dm.widthPixels, margin)
-        val y = PaletteGeometry.belowY(ay, ay + anchor.height, h, ctx.dp(4), margin, dm.heightPixels)
+        val x = PaletteGeometry.popupX(ax + anchor.width - w / 2f, w, winW, margin)
+        val y = topInset + PaletteGeometry.belowY(ay - topInset, ay + anchor.height - topInset, h, ctx.dp(4), margin, safeH)
         val popup = PopupWindow(built.window, PopupCard.width(built), h + 2 * built.pad, true).apply {
             animationStyle = 0
             elevation = 0f
@@ -998,7 +1073,7 @@ class SelectionController(private val host: ReaderHost) {
         if (phrase.isEmpty()) return
         val shown = if (phrase.length > PHRASE_SHOWN) phrase.take(PHRASE_SHOWN) + "…" else phrase
         val d = ctx.alert().setTitle("이 문구 지우기")
-            .setMessage("‘$shown’${Josa.eulReul(phrase)} 이 책에서 지웁니다.\n‘바꾸기 규칙’에서 되돌릴 수 있습니다.")
+            .setMessage("‘$shown’ 문구를 이 책에서 지웁니다.\n‘바꾸기 규칙’에서 되돌릴 수 있습니다.")
             .setPositiveButton("줄 전체 지우기") { _, _ -> addPhraseRule(h, bookId, phrase, wholeLine = true) }
             .setNeutralButton("이 문구만") { _, _ -> addPhraseRule(h, bookId, phrase, wholeLine = false) }
             .setNegativeButton("취소", null)
@@ -1020,7 +1095,7 @@ class SelectionController(private val host: ReaderHost) {
             if (runCatching { host.book.id }.getOrNull() != bookId) return@applyTxtOverride
             val text = host.currentLayout?.content?.text ?: return@applyTxtOverride
             if (text.indexOf(phrase) >= 0) {
-                ctx.toast("원문과 모양이 달라 지우지 못했습니다")
+                ctx.toast("원문과 표기가 달라 자동으로 지우지 못했습니다 · ‘바꾸기 규칙’에서 직접 추가하세요")
             } else {
                 ctx.toast("지웠습니다 · ‘바꾸기 규칙’에서 되돌릴 수 있습니다")
             }
@@ -1093,8 +1168,10 @@ class SelectionController(private val host: ReaderHost) {
             val saved = added
             if (saved == null) {
                 if (before != null && sameBook(q.bookId)) applyQuoteHighlights(q.section, QuoteCache.get(q.bookId) ?: before ?: emptyList())
-                ctx.toast("저장하지 못했습니다")
-                if (onFailed != null && !ctx.isFinishing && !ctx.isDestroyed) onFailed()
+                if (!ctx.isFinishing && !ctx.isDestroyed) {
+                    ctx.toast("저장하지 못했습니다")
+                    onFailed?.invoke()
+                }
                 return@launch
             }
             // The reload failed: the cache still gets the row the insert returned, but only on top of a list it knew.
@@ -1151,7 +1228,7 @@ class SelectionController(private val host: ReaderHost) {
                     editingQuote = editingQuote?.copy(style = q.style)
                     paletteRow?.check(q.style)
                 }
-                ctx.toast("저장하지 못했습니다")
+                if (!ctx.isFinishing && !ctx.isDestroyed) ctx.toast("저장하지 못했습니다")
                 return@launch
             }
             QuoteCache.put(bookId, all)

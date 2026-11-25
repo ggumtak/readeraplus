@@ -228,7 +228,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         val cw = layout.config.width.toFloat()
         if (right != null) {
             drawSpread(canvas, layout, pageIndex, contentLeft, contentTop, cw, viewWidth, viewHeight, decor, right)
-            if (images != null) prefetchNeighbours(layout, pageIndex)
+            if (images != null) prefetchSpreadNeighbours(layout, pageIndex, right)
             return
         }
         val ribbonH = if (decor.bookmarked) RibbonMath.height(density, contentTop, contentLeft + cw, viewWidth) else 0f
@@ -286,8 +286,13 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         for (ln in page.lines) {
             val img = ln.imageBlock ?: continue
             if (cache.get(img.src, imgW(ln), imgH(ln), visible) == null && cache.isKnownFailure(img.src, imgW(ln), imgH(ln)))
-                failedImages.add(ln)
+                rememberFailedImage(ln)
         }
+    }
+
+    private fun rememberFailedImage(ln: LineInfo) {
+        if (failedImages.size >= MAX_FAILED_IMAGES) failedImages.clear()
+        failedImages.add(ln)
     }
 
     /** True when page [pageIndex] has an image that is not decoded yet. */
@@ -298,7 +303,7 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
             val ln = lines[i]
             val img = ln.imageBlock ?: continue
             if (failedImages.contains(ln)) continue
-            if (cache.isKnownFailure(img.src, imgW(ln), imgH(ln))) failedImages.add(ln)
+            if (cache.isKnownFailure(img.src, imgW(ln), imgH(ln))) rememberFailedImage(ln)
             else if (cache.peek(img.src, imgW(ln), imgH(ln)) == null) return true
         }
         return false
@@ -318,6 +323,29 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         imagePrefetcher.submit {
             if (next) preload(layout, pageIndex + 1, visible = false)
             if (prev) preload(layout, pageIndex - 1, visible = false)
+        }
+    }
+
+    /** Spread variant: prefetches the next and previous 2-page spreads (and the next section's page if [right] crosses into it). */
+    private fun prefetchSpreadNeighbours(layout: SectionLayout, pageIndex: Int, right: SpreadPage) {
+        val cache = images ?: return
+        val clears = cache.clears
+        if (prefetchedLayout === layout && prefetchedPage == pageIndex && prefetchedClears == clears) return
+        prefetchedLayout = layout
+        prefetchedPage = pageIndex
+        prefetchedClears = clears
+        val rl = right.layout
+        val crossNext = rl != null && rl !== layout
+        val next0 = if (crossNext) needsDecode(cache, rl!!, right.pageIndex + 1) else needsDecode(cache, layout, pageIndex + 2)
+        val next1 = if (crossNext) needsDecode(cache, rl!!, right.pageIndex + 2) else needsDecode(cache, layout, pageIndex + 3)
+        val prev0 = needsDecode(cache, layout, pageIndex - 1)
+        val prev1 = needsDecode(cache, layout, pageIndex - 2)
+        if (!next0 && !next1 && !prev0 && !prev1) return
+        imagePrefetcher.submit {
+            if (next0) preload(if (crossNext) rl!! else layout, if (crossNext) right.pageIndex + 1 else pageIndex + 2, visible = false)
+            if (next1) preload(if (crossNext) rl!! else layout, if (crossNext) right.pageIndex + 2 else pageIndex + 3, visible = false)
+            if (prev0) preload(layout, pageIndex - 1, visible = false)
+            if (prev1) preload(layout, pageIndex - 2, visible = false)
         }
     }
 
@@ -665,45 +693,54 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
                 continue
             }
             if (ln.isRule || ln.end <= ln.start) continue
-            var any = false
+            var kindMask = 0
             for (k in 0 until hs.size) {
                 val h = hs[k]
-                if (h.start < ln.end && h.end > ln.start && h.end > h.start) { any = true; break }
+                if (h.start < ln.end && h.end > ln.start && h.end > h.start) {
+                    kindMask = kindMask or (1 shl h.kind.ordinal)
+                }
             }
-            if (!any) continue
+            if (kindMask == 0) continue
             val right = positions(layout, ln)
             val s = ln.start
             val t = top + LineGeometry.bandTop(layout, ln)
             val bt = top + LineGeometry.bandBottom(layout, ln)
-            val uy = underlineY(top + ln.baseline, em)
-            for (pass in 0..1) for (k in 0 until hs.size) {
-                val h = hs[k]
-                val a = maxOf(h.start, s)
-                val b = minOf(h.end, ln.end)
-                if (a >= b) continue
-                val l = left + xs[a - s]
-                val r = left + if (b >= ln.end) right else xs[b - s]
-                if (pass == 0) {
-                    when (h.kind) {
-                        HighlightKind.QUOTE -> {
-                            val style = QuoteStyles.of(h.style)
-                            if (quoteHasFill[style]) canvas.drawRect(l, t, r, bt, quoteFill[style])
+            val uy = underlineY(CrispText.baselineY(top + ln.baseline), maxOf(em, (bt - t) * 0.85f))
+            // Deterministic Z-order: QUOTE underneath, then TTS, SEARCH, SELECTION on top so opaque quotes never hide active states.
+            for (pass in 0..1) {
+                for (layer in LAYER_ORDER) {
+                    if ((kindMask and (1 shl layer.ordinal)) == 0) continue
+                    for (k in 0 until hs.size) {
+                        val h = hs[k]
+                        if (h.kind != layer) continue
+                        val a = maxOf(h.start, s)
+                        val b = minOf(h.end, ln.end)
+                        if (a >= b) continue
+                        val l = left + xs[a - s]
+                        val r = left + if (b >= ln.end) right else xs[b - s]
+                        if (pass == 0) {
+                            when (layer) {
+                                HighlightKind.QUOTE -> {
+                                    val style = QuoteStyles.of(h.style)
+                                    if (quoteHasFill[style]) canvas.drawRect(l, t, r, bt, quoteFill[style])
+                                }
+                                HighlightKind.SELECTION -> fillRect(canvas, l, t, r, bt, if (eink) grey(0xAA) else SelectionColors.fill(palette.dark))
+                                HighlightKind.SEARCH -> fillRect(canvas, l, t, r, bt, grey(0xBB))
+                                HighlightKind.TTS -> fillRect(canvas, l, t, r, bt, grey(if (palette.dark) 0xCC else 0xEE))
+                            }
+                        } else when (layer) {
+                            HighlightKind.QUOTE -> {
+                                val style = QuoteStyles.of(h.style)
+                                drawQuoteLine(canvas, quoteLine[style], l, t, r, bt, uy, if (quoteAccent[style]) accentLine else line)
+                            }
+                            HighlightKind.SEARCH -> {
+                                rect.set(l + 0.5f, t + 0.5f, r - 0.5f, bt - 0.5f)
+                                canvas.drawRect(rect, outline)
+                            }
+                            HighlightKind.TTS -> canvas.drawRect(l, uy, r, uy + 2f * onePx, line)
+                            HighlightKind.SELECTION -> {}
                         }
-                        HighlightKind.SELECTION -> fillRect(canvas, l, t, r, bt, if (eink) grey(0xAA) else SelectionColors.fill(palette.dark))
-                        HighlightKind.SEARCH -> fillRect(canvas, l, t, r, bt, grey(0xBB))
-                        HighlightKind.TTS -> fillRect(canvas, l, t, r, bt, grey(0xEE))
                     }
-                } else when (h.kind) {
-                    HighlightKind.QUOTE -> {
-                        val style = QuoteStyles.of(h.style)
-                        drawQuoteLine(canvas, quoteLine[style], l, t, r, bt, uy, if (quoteAccent[style]) accentLine else line)
-                    }
-                    HighlightKind.SEARCH -> {
-                        rect.set(l + 0.5f, t + 0.5f, r - 0.5f, bt - 0.5f)
-                        canvas.drawRect(rect, outline)
-                    }
-                    HighlightKind.TTS -> canvas.drawRect(l, uy, r, uy + 2f * onePx, line)
-                    HighlightKind.SELECTION -> {}
                 }
             }
         }
@@ -887,6 +924,11 @@ class PageRenderer(context: Context, private val measurer: AndroidTextMeasurer, 
         }
         if (RibbonMath.halo(eink)) canvas.drawPath(ribbon, ribbonHalo)
         canvas.drawPath(ribbon, ribbonPaint)
+    }
+
+    private companion object {
+        const val MAX_FAILED_IMAGES = 256
+        val LAYER_ORDER = arrayOf(HighlightKind.QUOTE, HighlightKind.TTS, HighlightKind.SEARCH, HighlightKind.SELECTION)
     }
 }
 

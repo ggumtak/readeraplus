@@ -90,7 +90,7 @@ internal class PenPanel(
             setPadding(ctx.dp(20), 0, ctx.dp(20), 0)
         }
         custom = ColorChip(ctx).also { it.chipColor = color }
-        head.addView(ctx.label("지금 색", 15f, color = PdfSheet.SUB), lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(ctx.label("현재 색상", 15f, color = PdfSheet.SUB), lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         head.addView(custom, LinearLayout.LayoutParams(ctx.dp(40), ctx.dp(32)))
         col.addView(head, lp())
         hueBar = hsvRow(ctx, col, "색상", 360, Math.round(hsv[0]).coerceIn(0, 360)) { hsv[0] = it.toFloat() }

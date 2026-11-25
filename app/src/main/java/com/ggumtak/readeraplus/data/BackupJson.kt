@@ -476,7 +476,7 @@ internal object BackupJson {
 
     /** Parses a backup file; throws [IllegalArgumentException] when it is not a JSON object. */
     fun parse(text: String): BackupData {
-        val t = text.removePrefix("﻿").trim()
+        val t = text.removePrefix("\uFEFF").trim()
         val root = try {
             JSONObject(t)
         } catch (e: JSONException) {

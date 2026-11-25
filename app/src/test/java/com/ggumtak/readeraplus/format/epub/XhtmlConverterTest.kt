@@ -479,4 +479,13 @@ class XhtmlConverterTest {
         val c = convert("<table><tr> <td> a </td> <td> b </td> </tr></table>")
         assertEquals(listOf("a  ·  b"), blockTexts(c))
     }
+
+    @Test
+    fun rightMarginAndPaddingSetInsetRight() {
+        val head = "<style>.box { margin: 0 2em 0 1em; padding-right: 0.5em }</style>"
+        val c = convert(html("<p class=\"box\">인용문</p>", head))
+        val st = para(c, 0).style
+        assertEquals(1f, st.insetLeftEm, 0.001f)
+        assertEquals(2.5f, st.insetRightEm, 0.001f)
+    }
 }

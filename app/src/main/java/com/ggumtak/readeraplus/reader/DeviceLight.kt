@@ -99,8 +99,8 @@ internal object DeviceLight {
         val out = targetOut
         val c = ctx
         if (!out.isNaN() && c != null) write(c, out)
-        lastWriteAt = SystemClock.uptimeMillis()
-        if (settleWanted) persistLast()
+        // Persist only once no newer write is queued behind this one (avoids saving a stale level and dropping settleWanted).
+        if (settleWanted && !queued.get()) persistLast()
     }
 
     private fun write(c: Context, out: Float) {
@@ -139,6 +139,7 @@ internal object DeviceLight {
             if (level != lastWritten) {
                 SystemSettings.System.putInt(cr, KEY, level)
                 lastWritten = level
+                lastWriteAt = SystemClock.uptimeMillis()
             }
             deviceOut = LightCurve.fraction(level)
             noPermission = false
@@ -183,7 +184,7 @@ internal object DeviceLight {
         if (!queued.get()) hh.post(persistTask)
     }
 
-    private val persistTask = Runnable { persistLast() }
+    private val persistTask = Runnable { if (settleWanted && !queued.get()) persistLast() }
 
     private fun persistLast() {
         settleWanted = false
@@ -208,8 +209,10 @@ internal object DeviceLight {
         hh.post(restoreTask)
     }
 
-    private val restoreTask = Runnable {
-        val c = ctx ?: return@Runnable
+    private val restoreTask = Runnable { runRestore(restoreLevel) }
+
+    private fun runRestore(level: Boolean) {
+        val c = ctx ?: return
         val p = prefs(c)
         var out = -1f
         if (p.getBoolean(K_PENDING, false)) {
@@ -222,7 +225,7 @@ internal object DeviceLight {
                 val mode = p.getInt(K_ORIG_MODE, MANUAL)
                 // A reinstall (auto backup restored this file) must not put back a months-old value.
                 val stampOk = p.getLong(K_STAMP, 0L) == installStamp(c)
-                val act = LightPolicy.restoreActions(stampOk, restoreLevel, orig, current, last, mode != MANUAL)
+                val act = LightPolicy.restoreActions(stampOk, level, orig, current, last, mode != MANUAL)
                 if (act and LightPolicy.RESTORE_LEVEL != 0) SystemSettings.System.putInt(cr, KEY, orig)
                 if (act and LightPolicy.RESTORE_MODE != 0) SystemSettings.System.putInt(cr, KEY_MODE, mode)
                 val now = if (act and LightPolicy.RESTORE_LEVEL != 0) orig else current
@@ -251,7 +254,10 @@ internal object DeviceLight {
         if (ReaderPresence.inFront) return
         if (!prefs(ctx).getBoolean(K_PENDING, false)) return
         val level = try { Settings.app.brightnessRestore } catch (t: Throwable) { true }
-        restore(level)
+        // Run on the light thread and re-check ReaderPresence there so a reader that opened meanwhile is never cancelled.
+        h().post {
+            if (!ReaderPresence.inFront && !queued.get()) runRestore(level)
+        }
     }
 
     // ---------------------------------------------------------------- reads / external changes
@@ -282,6 +288,12 @@ internal object DeviceLight {
             if (p.getBoolean(K_PENDING, false)) p.edit().putInt(K_ORIG, v).putInt(K_LAST, v).apply()
             lastWritten = v
             onExternal?.let { main.post(it) }
+        } else if (lastWritten >= 0 && !queued.get() && v != lastWritten && since < ECHO_MS) {
+            // Firmware quantized/clamped our own write inside the echo window: adopt the stored level so a later
+            // refresh() past ECHO_MS does not misread it as an external change and overwrite K_ORIG.
+            lastWritten = v
+            val p = prefs(c)
+            if (p.getBoolean(K_PENDING, false)) p.edit().putInt(K_LAST, v).apply()
         }
     }
 

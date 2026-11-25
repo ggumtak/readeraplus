@@ -25,8 +25,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * "이 책의 TXT 정리" (T1-9): the TXT options of the book the reader has open ([OpenBook]), reached from the main list
- * and 읽기 설정. The rows show the book's effective values (`Settings.reader.withTxt(override)`, the TXT defaults
+ * "이 책의 TXT 정리" (T1-9): the TXT options of the book the reader has open ([OpenBook]), reached from the main
+ * list and the empty table of contents. The rows show the book's effective values (`Settings.reader.withTxt(override)`, the TXT defaults
  * page's wording); a change becomes the book's override ([TxtEdits.overrideFor]), saved at once (BookPrefs, in order)
  * and handed to the reader, which re-parses the book once when it is back in front, however many rows changed. A new
  * 인코딩 is saved in the library and makes the reader re-open the book. The global defaults and other books are never
@@ -104,9 +104,9 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
         // Both rows are about the defaults: the section shows only while the book has options of its own.
         ownViews.clear()
         ownViews += body.section("기본값")
-        ownViews += ctx.row(SAVE_DEFAULTS, "이 설정을 TXT 정리 (모든 책)로 저장") { saveAsDefaults() }.also(body::addView)
+        ownViews += ctx.row(SAVE_DEFAULTS, "이 설정을 ‘TXT 정리 (모든 책)’ 기본값으로 저장") { saveAsDefaults() }.also(body::addView)
         ownViews += ctx.row(CLEAR_OWN, "바꾸기 규칙 포함 · 기본값을 따릅니다") { clearOwn() }.also(body::addView)
-        followsNote = ctx.note("이 책은 TXT 정리 (모든 책)를 따릅니다.").also(body::addView)
+        followsNote = ctx.note("이 책은 ‘TXT 정리 (모든 책)’ 설정을 따릅니다.").also(body::addView)
         refreshActions()
         return ctx.pageScroll(body)
     }
@@ -166,7 +166,7 @@ internal class BookTxtPage(a: SettingsActivity) : SettingsPage(a, SettingsActivi
     private fun saveAsDefaults() {
         ctx.confirm(
             SAVE_DEFAULTS,
-            "이 책의 TXT 정리를 TXT 정리 (모든 책)로 저장할까요? 다른 TXT 책은 다음에 열 때 다시 정리합니다.",
+            "이 책의 설정을 모든 TXT 책의 기본값으로 저장할까요? 다른 TXT 책은 다음에 열 때 다시 정리합니다.",
             "저장",
         ) {
             val global = Settings.reader.withTxt(override)

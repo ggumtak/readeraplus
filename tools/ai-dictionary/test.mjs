@@ -119,7 +119,7 @@ test('keys persist only when requested and can be forgotten or used in memory',(
   assert.equal(api.loadKey(blocked),'');assert.throws(()=>api.saveKey(blocked,key,true),/quota/);
 });
 
-function ui({savedKey='',savedPrefs,hash='',fetch=async()=>reply(),abort=AbortController,sharedStorage}={}) {
+function ui({savedKey='',savedPrefs,hash='',search='',fetch=async()=>reply(),abort=AbortController,sharedStorage}={}) {
   let document;
   const walk=n=>[n,...n.children.flatMap(walk)];
   function matches(n,s) {
@@ -128,7 +128,7 @@ function ui({savedKey='',savedPrefs,hash='',fetch=async()=>reply(),abort=AbortCo
     return n.tagName===s.toUpperCase();
   }
   class Node {
-    constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.events={};this.attributes={};this.value='';this._text='';this.hidden=false;this.checked=false;this.className='';this.style={setProperty(k,v){this[k]=v;}};this.classList={remove:()=>{}};this.scrollHeight=1000;this.clientHeight=800;this.offsetParent={};}
+    constructor(tag='div'){this.tagName=tag.toUpperCase();this.children=[];this.events={};this.attributes={};this.value='';this._text='';this.hidden=false;this.checked=false;this.className='';this.style={setProperty(k,v){this[k]=v;}};this.classList={remove:()=>{},add:c=>{(this.classes??=[]).push(c);}};this.scrollHeight=1000;this.clientHeight=800;this.offsetParent={};}
     get textContent(){return this._text+this.children.map(x=>x.textContent).join('');}
     set textContent(v){this.children.forEach(n=>n.parent=null);this.children=[];this._text=String(v);}
     get firstChild(){return this.children[0]??null;}
@@ -159,7 +159,7 @@ function ui({savedKey='',savedPrefs,hash='',fetch=async()=>reply(),abort=AbortCo
   if(savedPrefs)s.setItem('reader-ai-preferences',JSON.stringify(savedPrefs));
   document={getElementById:id=>nodes[id],querySelectorAll:q=>body.querySelectorAll(q),events:{},addEventListener(type,fn){this.events[type]=fn;},documentElement:new Node('html'),createElement:tag=>new Node(tag),createTextNode:text=>Object.assign(new Node('text'),{textContent:text}),createDocumentFragment:()=>new Node('fragment')};
   const window={innerHeight:800,events:{},addEventListener(type,fn){this.events[type]=fn;}};
-  const location={hash};
+  const location={hash,search};
   const context=vm.createContext({fetch,Response,ReadableStream,TextDecoder,AbortController:abort,URL,URLSearchParams,localStorage:s,document,location,window,setTimeout,clearTimeout});
   vm.runInContext(script,context);
   return {nodes,storage:s,document,window,location,walk};
@@ -532,4 +532,47 @@ test('picture blocks are validated before the network',async()=>{
   for(const content of [[img('QUJD')],[img('a b'),{type:'text',text:'x'}],[{...img('QUJD'),source:{type:'url',url:'https://example.com/a.jpg'}},{type:'text',text:'x'}],[img('QUJD'),{type:'text',text:' '}],[img('QUJD'),{type:'text',text:'x'.repeat(2011)}]])
     await assert.rejects(api.request(key,{...options,messages:[{role:'user',content}]},()=>{}),/invalid_request/);
   assert.equal(n,1);
+});
+
+test('the e-ink query switches on the e-ink class and nothing else changes',()=>{
+  assert.equal(ui({search:'?eink=1'}).document.documentElement.classes?.includes('eink'),true);
+  assert.equal(ui({search:'?x=1&eink=1'}).document.documentElement.classes?.includes('eink'),true);
+  assert.equal(ui({hash:'#q=word&eink=1'}).document.documentElement.classes?.includes('eink'),true);
+  for(const search of ['','?eink=0','?eink=true'])assert.equal(ui({search}).document.documentElement.classes,undefined);
+  assert.equal(ui({hash:'#q=word&eink=0'}).document.documentElement.classes,undefined);
+  assert.match(html,/\.eink \.hint,[^{]*\{font-size:14px\}/);
+  assert.match(html,/\.eink \[aria-checked="true"\][^{]*\{background:#000;color:#fff;font-weight:700\}/);
+});
+
+test('empty new conversations are not persisted or listed, and the same word can be looked up again after reset',async()=>{
+  const calls=[];const app=ui({savedKey:key,hash:'#q='+encodeURIComponent('귀접 뜻'),fetch:async(u,i)=>{calls.push(JSON.parse(i.body));return reply();}});
+  await settle();assert.equal(calls.length,1);
+  click(app.nodes.new);click(app.nodes.new);
+  const index=JSON.parse(app.storage.getItem('reader-ai-sessions-v1'));
+  assert.equal(index.items.length,1);
+  click(app.nodes.menu);assert.equal(app.nodes['recent-list'].querySelectorAll('.recent-open').length,1);
+  app.window.events.hashchange();await settle();
+  assert.equal(calls.length,2);assert.equal(calls[1].messages[0].content,'귀접 뜻');
+});
+
+test('connecting an API key from settings returns to settings with unsaved edits intact',()=>{
+  const app=ui({});
+  click(app.nodes.settings);
+  app.nodes.instructions.value='초안 지침';
+  click(app.nodes['settings-key']);
+  assert.equal(app.nodes['key-dialog'].hidden,false);assert.equal(app.nodes['settings-dialog'].hidden,true);
+  app.nodes['api-key'].value=key;submit(app.nodes['key-form']);
+  assert.equal(app.nodes['key-dialog'].hidden,true);assert.equal(app.nodes['settings-dialog'].hidden,false);
+  assert.equal(app.nodes.instructions.value,'초안 지침');
+});
+
+test('every tappable control is at least 48px and visible text uses the polite formal ending',()=>{
+  for(const sel of ['icon','send','search-toggle','recent-delete','close','jump'])
+    for(const m of html.matchAll(new RegExp('\\.'+sel+'\\{[^}]*?(?<![-\\w])(width|height):(\\d+)px','g')))assert.ok(Number(m[2])>=48,sel+' '+m[0]);
+  for(const sel of ['attach button','small-button','model-pill','effort','choice','danger','done','menu-row','settings-model'])
+    assert.match(html,new RegExp('\\.'+sel+'\\{[^}]*min-(height|width):48px'),sel);
+  // "~할까요?" stays: it is the app's own question form ("이 형광펜을 삭제할까요?").
+  const visible=html.replace(/var DEFAULT_INSTRUCTIONS=.*\n/,'').replace(/placeholder="예: [^"]*"/,'').replace(/설명해 주세요/g,'');
+  assert.equal(/[가-힣](어요|아요|해요|돼요|네요|예요|에요|나요)(?![가-힣])/.test(visible),false);
+  assert.equal(/궁금하세요|질문하세요/.test(visible),false);
 });

@@ -538,10 +538,10 @@ internal class LightController(private val host: LightHost) {
         val a = host.activity
         if (a.isFinishing || a.isDestroyed) return
         a.alert()
-            .setTitle("앱에서 조명을 바꿀 수 없습니다")
+            .setTitle("앱에서 밝기를 조절할 수 없습니다")
             .setMessage(
-                "이 기기는 다른 앱이 조명을 바꾸는 방법을 열어 두지 않았습니다. 원래 밝기로 되돌렸습니다.\n" +
-                    "밝기와 색온도는 화면 위에서 아래로 내려 기기 조명에서 조절하세요."
+                "이 기기에서는 앱이 화면 조명을 직접 조절할 수 없어 원래 밝기로 되돌렸습니다.\n" +
+                    "화면 위에서 아래로 내려 기기의 빠른 설정에서 밝기와 색온도를 조절하세요."
             )
             .setNegativeButton("닫기", null)
             .setPositiveButton("기기 설정 열기") { _, _ -> onOpenPanel() }

@@ -17,4 +17,15 @@ object LoadHints {
     /** True on a thread marked by [markBackground]. */
     val isBackground: Boolean
         get() = background.get() == true
+
+    /** Runs [block] on the current thread marked as a background loader, restoring the prior state afterwards. */
+    fun <T> asBackground(block: () -> T): T {
+        if (isBackground) return block()
+        background.set(true)
+        return try {
+            block()
+        } finally {
+            background.remove()
+        }
+    }
 }

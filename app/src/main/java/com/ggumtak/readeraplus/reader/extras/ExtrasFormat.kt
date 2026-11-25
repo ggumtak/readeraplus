@@ -382,7 +382,7 @@ internal object SearchText {
 internal object PopupGeometry {
     /** The quick options' rows under the top bar: 글자 크기, 굵기, 줄 간격, 문단 간격, 좌우 여백, 상하 여백, 글꼴, 배경. */
     const val QUICK_ROWS = 8
-    /** The whole popup: the top bar ("전체 읽기 설정 ›" · 닫기) and [QUICK_ROWS] rows (48 + 8 × 48 = 432 dp). */
+    /** The whole popup: the top bar ("보기 설정 전체 ›" · 닫기) and [QUICK_ROWS] rows (48 + 8 × 48 = 432 dp). */
     const val QUICK_HEIGHT_DP = Compact.BAR_DP + QUICK_ROWS * Compact.ROW_DP
     /** Space left beside the popup, both sides together (dp): it is centred, 8 dp from each edge. */
     const val SIDE_GAP_DP = 16
@@ -460,7 +460,7 @@ internal object PopupGeometry {
 }
 
 /**
- * "상태 표시" wording (U §5.5, A §2.7): slot wording, which rows show and 외톨이 줄 방지's summary (읽기 설정). The bands
+ * "상태 표시" wording (U §5.5, A §2.7): slot wording, which rows show and 외톨이 줄 방지's summary (보기 설정). The bands
  * have their own places since 2026-10-05 (`StatusBands`): a band that comes or goes re-lays the page at the same first
  * character, and no margin hides one any more, so there is no fit note.
  */

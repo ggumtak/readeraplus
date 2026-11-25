@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.reader
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ComponentCallbacks2
 import android.content.Context
@@ -50,6 +51,7 @@ import com.ggumtak.readeraplus.reader.pdf.PdfActivity
 import com.ggumtak.readeraplus.format.DocPosition
 import com.ggumtak.readeraplus.format.DocumentException
 import com.ggumtak.readeraplus.format.Documents
+import com.ggumtak.readeraplus.format.LoadHints
 import com.ggumtak.readeraplus.format.epub.EpubBook
 import com.ggumtak.readeraplus.format.txt.TxtBook
 import com.ggumtak.readeraplus.format.txt.TxtDocuments
@@ -65,10 +67,13 @@ import com.ggumtak.readeraplus.reader.extras.QuoteCache
 import com.ggumtak.readeraplus.reader.extras.QuoteRows
 import com.ggumtak.readeraplus.reader.extras.ReaderEndHost
 import com.ggumtak.readeraplus.reader.extras.ReaderPanels
+import com.ggumtak.readeraplus.reader.extras.SearchNavBar
+import com.ggumtak.readeraplus.reader.extras.SearchPanel
 import com.ggumtak.readeraplus.reader.extras.SelectionController
 import com.ggumtak.readeraplus.reader.extras.StatusSampleHost
 import com.ggumtak.readeraplus.reader.extras.TtsController
 import com.ggumtak.readeraplus.reader.extras.TxtOverrideHost
+import com.ggumtak.readeraplus.render.ChromePalette
 import com.ggumtak.readeraplus.render.Covers
 import com.ggumtak.readeraplus.render.DeviceClass
 import com.ggumtak.readeraplus.render.Eink
@@ -190,6 +195,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         private const val SIDE_BOTH = 0
         private const val SIDE_LEFT = 1
         private const val SIDE_RIGHT = 2
+
+        /**
+         * The sticky battery broadcast through [ctx]: `percent shl 1`, its low bit set while charging; -1 when it
+         * cannot be read. Packed so the background read in [battery] hands both values back without an object.
+         */
+        private fun readBattery(ctx: Context, filter: IntentFilter): Int = try {
+            val i = ctx.registerReceiver(null, filter)
+            val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+            val charging = i?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) == BatteryManager.BATTERY_STATUS_CHARGING
+            if (level >= 0 && scale > 0) (level * 100 / scale shl 1) or (if (charging) 1 else 0) else -1
+        } catch (_: Throwable) {
+            -1
+        }
     }
 
     private enum class Nav { OPEN, TURN, JUMP, RELAYOUT }
@@ -415,6 +434,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private var batteryAt = 0L
     /** The sticky battery broadcast's filter, built once (the battery is read at most once a minute). */
     private val batteryFilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+    /** A background battery read ([battery]) is running: a stale value does not start a second one. */
+    private var batteryReading = false
     /** The status slots of the page on screen: one shared [StatusModel.decor], filled from [statusInputs]. */
     private val status = StatusModel()
     private val statusInputs = StatusInputs()
@@ -685,6 +706,8 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         if (requestCode == REQ_PICK_IMAGE) {
             val done = imagePicked
             imagePicked = null
+            // The reader was made again while the picker was in front: the waiting callback died with the old one.
+            if (done == null && resultCode == RESULT_OK) toast("사진을 다시 선택하세요")
             done?.invoke(if (resultCode == RESULT_OK) data?.data else null)
             return
         }
@@ -827,7 +850,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         keeper.dispose()
         safely { tts?.release() }
         tts = null
-        safely { selection?.clear() }
+        safely { selection?.dispose() }
         selection = null
         thumbs?.close(); thumbs = null
         page.afterFirstFrame = null
@@ -1022,11 +1045,16 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         applyPageInsets()
     }
 
+    @SuppressLint("WrongConstant")
+    private fun applyOrientation(lock: Int) {
+        if (requestedOrientation != lock) requestedOrientation = lock
+    }
+
     private fun applyAppSettings() {
         // The brightness (window or device path) and page.brightnessSwipe: LightController is their only writer.
         light.onAppSettingsApplied()
         ReaderWindow.applyFullscreen(this, app.fullscreen)
-        if (requestedOrientation != app.orientationLock) requestedOrientation = app.orientationLock
+        applyOrientation(app.orientationLock)
         keeper.enabled = app.keepScreenOn
         applyCadence(Settings.reader)
         cadence.onChapter = app.einkRefreshOnChapter
@@ -1182,13 +1210,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     private fun updateQuoteLook(eink: Boolean?) {
         val before = QuoteLook.generation
         QuoteLook.update(app.highlightLook, eink)
-        if (QuoteLook.generation != before) refreshDecor()
+        var redrawn = false
+        if (QuoteLook.generation != before) {
+            refreshDecor()
+            redrawn = true
+        }
         if (eink != einkClass) {
             einkClass = eink
             // A late device verdict changes only the body box, anchored after this frame; chrome keeps its size.
             handler.removeCallbacks(bandRelayout)
             handler.post(bandRelayout)
             pushChromeLook()
+            // On a cold-start phone the first frame used e-ink defaults while DeviceClass was null; repaint once with
+            // the rebuilt phone PageRenderer (e-ink devices already used eink=true, so zero extra e-ink redraw).
+            if (eink == false && !redrawn) refreshDecor()
         }
     }
 
@@ -1221,6 +1256,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val p = readerPalette ?: PagePalette.PAPER
         chrome.setLook(p, einkClass)
         returnNav.setLook(p, einkClass)
+        val cp = ChromePalette.of(p, einkClass)
+        statusText.setTextColor(cp.text)
+        statusText.background = borderBox(fill = cp.surface).apply { setStroke(dp(1), cp.edge) }
+        brightnessOverlay.setTextColor(cp.text)
+        brightnessOverlay.background = borderBox(fill = cp.surface).apply { setStroke(dp(1), cp.edge) }
+        endPanel?.setLook(p, einkClass)
     }
 
     /** "목차를 만드는 중…" while a big TXT is parsed in full (A5), else "불러오는 중…". */
@@ -1412,7 +1453,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 for (attempt in 0 until OPEN_LAYOUT_ATTEMPTS) {
                     val got = s.layout(sec)
                     if (got == null) {
-                        if (session === s && !s.isClosed) showError("페이지를 나누지 못했습니다")
+                        if (session === s && !s.isClosed) showError("책 페이지를 불러오지 못했습니다")
                         return@launch
                     }
                     laid = got
@@ -1571,7 +1612,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         loadSpeed()
         // A broken EPUB opens with what it holds; say once per book (per process) that some of it is missing.
         val missing = (s.document as? EpubBook)?.missingSpineItems ?: 0
-        if (missing > 0 && missingNoticeShown.add(id)) toast("이 책은 본문 파일 ${missing}개가 빠져 있어 그 부분을 건너뜁니다")
+        if (missing > 0 && missingNoticeShown.add(id)) toast("이 책은 일부 본문(${missing}개)이 빠져 있어 해당 부분을 건너뜁니다")
         if (ReaderPerf.turns) Log.d(ReaderPerf.TAG, "afterOpen ${SystemClock.uptimeMillis() - t0} ms")
     }
 
@@ -1653,7 +1694,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         stopAutoTurn(showToast = false)
         safely { tts?.release() }
         tts = null
-        safely { selection?.clear() }
+        safely { selection?.dispose() }
         selection = null
         navJob?.cancel()
         openJob?.cancel()
@@ -1746,9 +1787,12 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             changedSections.addAll(quoteRows.keys); changedSections.addAll(nextQuotes.keys)
             for (mark in bookmarks) changedSections.add(mark.section)
             for (mark in nextMarks) changedSections.add(mark.section)
+            // Grouped once (order kept), not filtered per section: a section without marks is null on both sides
+            // where a filter gave two empty lists, so the same sections are bumped.
+            val oldBySection = bookmarks.groupBy { it.section }
+            val newBySection = nextMarks.groupBy { it.section }
             for (sec in changedSections) {
-                if (quoteRows[sec] != nextQuotes[sec] ||
-                    bookmarks.filter { it.section == sec } != nextMarks.filter { it.section == sec }) bumpThumbDecor(sec)
+                if (quoteRows[sec] != nextQuotes[sec] || oldBySection[sec] != newBySection[sec]) bumpThumbDecor(sec)
             }
             bookmarks = nextMarks
             if (quotesCurrent) {
@@ -1998,7 +2042,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             val found = withContext(Dispatchers.Default) {
                 JumpAnchor.search(sec, s.sectionCount, anchorText, load = { i ->
                     val t = if (i == sec && center != null) center else try {
-                        s.document.loadSection(i).text
+                        LoadHints.asBackground { s.document.loadSection(i).text }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (t: Throwable) {
@@ -2709,7 +2753,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         returnNav.onJumpFailed() // a use of the row or the chip for this jump is undone (U §3.4)
         if (curLayout == null || layoutStale()) {
             // Nothing valid on screen to fall back to.
-            showError("페이지를 나누지 못했습니다")
+            showError("책 페이지를 불러오지 못했습니다")
         } else {
             // The old page stays: the return chip / strip (a return jump binds them with its page) match it again.
             if (chromeVisible) bindChrome() else returnNav.bind()
@@ -3530,20 +3574,37 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         return StatusClock.minuteOfDay(now, zone.getOffset(now))
     }
 
-    /** Battery percent from the sticky broadcast, read at most once a minute (on page turns only). */
+    /**
+     * Battery percent from the sticky broadcast, read at most once a minute (on page turns only). Only the first read
+     * (none yet, or reset on resume) runs here; later a value older than a minute is returned as is and a fresh one is
+     * read on [ReaderIo] for the next page, so a page turn never waits on the system call. The late value is not
+     * drawn by itself (one e-ink update per action).
+     */
     private fun battery(): Int {
         val now = SystemClock.uptimeMillis()
-        if (batteryLevel >= 0 && now - batteryAt < 60_000) return batteryLevel
-        batteryAt = now
-        batteryLevel = try {
-            val i = registerReceiver(null, batteryFilter)
-            val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-            val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
-            batteryCharging = i?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) == BatteryManager.BATTERY_STATUS_CHARGING
-            if (level >= 0 && scale > 0) level * 100 / scale else -1
-        } catch (t: Throwable) {
-            batteryCharging = false
-            -1
+        if (batteryLevel < 0) {
+            batteryAt = now
+            val r = readBattery(this, batteryFilter)
+            batteryLevel = if (r < 0) -1 else r shr 1
+            batteryCharging = r >= 0 && (r and 1) != 0
+            return batteryLevel
+        }
+        if (now - batteryAt >= 60_000 && !batteryReading) {
+            batteryReading = true
+            batteryAt = now
+            val app = applicationContext
+            val filter = batteryFilter
+            ReaderIo.launch {
+                val r = readBattery(app, filter)
+                // Fields are written on the main thread only; a reader destroyed meanwhile drops the value.
+                handler.post {
+                    batteryReading = false
+                    if (!isDestroyed && r >= 0) {
+                        batteryLevel = r shr 1
+                        batteryCharging = (r and 1) != 0
+                    }
+                }
+            }
         }
         return batteryLevel
     }
@@ -3839,7 +3900,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     // Keep reading the old parse rather than showing nothing.
                     readerTarget = old.settings
                     reopenDone.clear()
-                    toast("새 설정으로 책을 표시하지 못했습니다")
+                    toast("변경한 설정을 적용하지 못했습니다")
                     return@launch
                 }
                 // The return places in the old parse (its counts), found again in the new one below (U §3.5 item 8).
@@ -4476,16 +4537,21 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val code = event.keyCode
-        if (code == KeyEvent.KEYCODE_BACK || session == null || errorPanel.visibility == View.VISIBLE) {
-            return super.dispatchKeyEvent(event)
+        if (code == KeyEvent.KEYCODE_BACK || errorPanel.visibility == View.VISIBLE) return super.dispatchKeyEvent(event)
+        if (session == null) {
+            // Still opening (a large TXT takes seconds): a page key pressed early is swallowed, so the volume keys do
+            // not change the media volume and bring up its panel over the book. Every other key is the system's.
+            val early = KeyMap.action(code, event.isShiftPressed, app)
+            return if (early == TapAction.NEXT || early == TapAction.PREV) true else super.dispatchKeyEvent(event)
         }
         val a = app
         val action = KeyMap.action(code, event.isShiftPressed, a)
         if (action == TapAction.NONE) return super.dispatchKeyEvent(event)
         val assigned = KeyMap.isAssigned(code, a)
         if (chromeVisible && !assigned && KeyMap.isFocusKey(code)) return super.dispatchKeyEvent(event)
-        // While listening to TTS the (unassigned) volume keys control the speech volume.
-        if (!assigned && KeyMap.isVolumeKey(code) && ttsSpeaking()) return super.dispatchKeyEvent(event)
+        // While TTS is actively playing, (unassigned) volume keys control the speech volume; when paused, they turn pages.
+        if (!assigned && KeyMap.isVolumeKey(code) && ttsPlaying()) return super.dispatchKeyEvent(event)
+        if (safely { selection?.isActive } == true) return true
         if (endPanel?.isShowing == true || endLoading) return endPanelKey(event, action, assigned)
         if (event.action == KeyEvent.ACTION_UP) {
             heldKey.up(code)
@@ -4589,14 +4655,25 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        when {
-            endPanel?.isShowing == true -> closeEndPanel()
-            safely { selection?.isActive } == true -> safely { selection?.clear() }
-            ttsSpeaking() -> safely { tts?.stop() }
-            // The search-results bar goes first; the next BACK leaves the book.
-            safely { ReaderPanels.closeSearchBar(this) } == true -> {}
-            chromeVisible -> closeChrome()
-            else -> {
+        // The topmost thing on screen closes first ([BackOrder]): the bars before TTS and the search-results bar.
+        val searchBar = safely { SearchNavBar.isShown(this) } == true
+        val step = BackOrder.next(
+            endPanel = endPanel?.isShowing == true,
+            selection = safely { selection?.isActive } == true,
+            chrome = chromeVisible,
+            tts = ttsSpeaking(),
+            searchBar = searchBar,
+        )
+        // A highlight the hidden results bar left behind goes too (a no-op without one: no redraw).
+        if (BackOrder.dropsSearchHighlight(step, searchBar)) safely { SearchPanel.clearHighlight(this) }
+        when (step) {
+            BackOrder.Step.END_PANEL -> closeEndPanel()
+            BackOrder.Step.SELECTION -> safely { selection?.clear() }
+            BackOrder.Step.CHROME -> closeChrome()
+            BackOrder.Step.TTS -> safely { tts?.stop() }
+            // The search-results bar (and its highlight) goes before the book; the next BACK leaves it.
+            BackOrder.Step.SEARCH_BAR -> safely { ReaderPanels.closeSearchBar(this) }
+            BackOrder.Step.EXIT -> {
                 @Suppress("DEPRECATION")
                 super.onBackPressed()
             }
@@ -4762,10 +4839,13 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         override fun onRotation() {
             val lock = if (app.orientationLock != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
                 ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            } else if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             } else {
-                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                // The way the screen is held now, of the four (plain 가로 flipped a phone held the other way round).
+                @Suppress("DEPRECATION")
+                val rotation = runCatching {
+                    (if (Build.VERSION.SDK_INT >= 30) display else windowManager.defaultDisplay)?.rotation
+                }.getOrNull() ?: RotationLock.ROTATION_0
+                RotationLock.forDisplay(rotation, resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
             }
             setOrientationLock(lock)
         }
@@ -4867,8 +4947,20 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     internal fun setOrientationLock(lock: Int) {
         saveApp(app.copy(orientationLock = lock))
-        requestedOrientation = lock
+        applyOrientation(lock)
         if (chromeVisible) bindChrome()
+    }
+
+    /** Reloads the open book's metadata (e.g. after editing title/author in 책 정보) and refreshes live UI. */
+    internal fun refreshBookMeta() {
+        val id = bookRef?.id ?: return
+        scope.launch {
+            val fresh = withContext(Dispatchers.IO) { runCatching { Library.book(id) }.getOrNull() } ?: return@launch
+            if (isDestroyed || bookRef?.id != id) return@launch
+            bookRef = fresh
+            if (chromeVisible) bindChrome()
+            refreshDecor(onlyIfChanged = true)
+        }
     }
 
     /** Saves [a] (built from the live [app]); the caller has already applied its own change to the views. */
@@ -4907,6 +4999,9 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
 
     /** TTS session active (the controller's own × may have stopped it, so ask it rather than remember). */
     private fun ttsSpeaking(): Boolean = tts != null && safely { tts?.isSpeaking } == true
+
+    /** TTS audio actively playing (false while paused, so volume keys can still turn pages). */
+    private fun ttsPlaying(): Boolean = tts != null && safely { tts?.isPlaying } == true
 
     /** 흑백 반전: a global setting (R2: never the session's effective settings, which carry this book's TXT options). */
     internal fun toggleInvert() {
@@ -4951,7 +5046,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     internal fun openAppSettings(settingsPage: String? = null) {
         light.markOwnLaunch()
-        // The open book goes along, so 읽기 설정 can offer its own TXT options ([takeSettingsEdits] takes them back).
+        // The open book goes along, so 설정 can offer its own TXT options ([takeSettingsEdits] takes them back).
         val b = bookRef
         val book = if (b != null && session != null) OpenBook.Info(b.id, b.title, b.format, b.encoding, bookOverride) else null
         SettingsActivity.open(this, settingsPage, book)
@@ -5103,6 +5198,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
     /** The end panel, built and attached on first use (assigned before attaching: [isOwnView] must know it). */
     private fun endPanel(): EndPanel = endPanel ?: EndPanel(this, endActions).also {
         endPanel = it
+        it.setLook(readerPalette ?: PagePalette.PAPER, einkClass)
         it.attach(root)
     }
 

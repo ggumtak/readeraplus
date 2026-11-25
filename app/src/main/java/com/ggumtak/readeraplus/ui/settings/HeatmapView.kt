@@ -6,9 +6,11 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import com.ggumtak.readeraplus.ui.kit.Ink
 import com.ggumtak.readeraplus.ui.kit.dpF
 import com.ggumtak.readeraplus.ui.kit.sp
+import kotlin.math.abs
 
 /**
  * The 잔디 of "읽기 기록" (T1-6): [HeatmapModel.WEEKS] × 7 cells (13 dp, 3 dp gaps; smaller when the width is short),
@@ -22,6 +24,10 @@ internal class HeatmapView(context: Context) : View(context) {
 
     private var grid: HeatGrid? = null
     private var selected = -1
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private var downX = 0f
+    private var downY = 0f
+    private var moved = false
 
     private val cellMax = context.dpF(13f)
     private val gap = context.dpF(3f)
@@ -106,8 +112,22 @@ internal class HeatmapView(context: Context) : View(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val g = grid ?: return false
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> return true
+            MotionEvent.ACTION_DOWN -> {
+                downX = event.x
+                downY = event.y
+                moved = false
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (abs(event.x - downX) > touchSlop || abs(event.y - downY) > touchSlop) moved = true
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                moved = true
+                return true
+            }
             MotionEvent.ACTION_UP -> {
+                if (moved) return true
                 val i = hit(event.x, event.y) ?: return true
                 if (g.days[i] == 0) return true
                 if (i != selected) {
