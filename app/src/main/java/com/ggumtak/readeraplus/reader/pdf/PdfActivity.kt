@@ -1,5 +1,7 @@
 package com.ggumtak.readeraplus.reader.pdf
 
+import com.ggumtak.readeraplus.sync.ReadingSync
+import com.ggumtak.readeraplus.sync.SyncPoint
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
@@ -246,6 +248,21 @@ class PdfActivity : Activity() {
         keeper.enabled = a.keepScreenOn
         pageView.swipeEnabled = a.swipeToTurn
         applyViewerPrefs()
+        syncSession?.let { sync ->
+            val before = current
+            ReadingSync.checkOnReturn(applicationContext, sync) {
+                if (resumed && !isFinishing && !isDestroyed && syncSession === sync && current == before && !annotating) {
+                    confirm("다른 기기에서 읽은 위치가 있습니다", "이 책을 그 위치에서 이어 읽을까요?", "이어 읽기") {
+                        val id = book?.id ?: return@confirm
+                        syncSession = null
+                        closeDocument()
+                        val reopen = Intent(this, PdfActivity::class.java).putExtra(ReaderActivity.EXTRA_BOOK_ID, id)
+                        setIntent(reopen)
+                        startOpen(reopen)
+                    }
+                }
+            }
+        }
         tracker.resume(SystemClock.elapsedRealtime(), dayClock.day(System.currentTimeMillis()))
     }
 
@@ -390,6 +407,8 @@ class PdfActivity : Activity() {
 
     // ================================================================== opening / closing
 
+    private var syncSession: ReadingSync.Session? = null
+
     private fun startOpen(intent: Intent) {
         openingId = intent.getLongExtra(ReaderActivity.EXTRA_BOOK_ID, -1L)
         showMessage("불러오는 중…")
@@ -414,9 +433,11 @@ class PdfActivity : Activity() {
                 val text = p.canReadText
                 // Through the notes thread: a save still pending from an earlier viewer is on disk before this read.
                 val dir = notesDir()
+                val sync = ReadingSync.open(applicationContext, b)
                 val loaded = notesIo.submit(Callable { PdfNotesStore.load(dir, b.id) }).get()
                 handler.post {
                     if (gen != generation || isDestroyed) return@post
+                    syncSession = sync
                     onOpened(b, count, loaded, text)
                 }
             } catch (t: Throwable) {
@@ -441,10 +462,11 @@ class PdfActivity : Activity() {
         canReadText = text
         pageView.notes = loaded
         chrome.setTitle(b.title)
-        val start = if (restoredPage >= 0) restoredPage else b.posSection
+        val start = syncSession?.opening?.section ?: (if (restoredPage >= 0) restoredPage else b.posSection)
         restoredPage = -1
         pageView.resetZoom()
         goTo(PdfMath.clampPage(start, count), fromEnd = false)
+        syncSession?.start(current, 0)
     }
 
     /** Saves the position, ends the document's reading time and closes it on the render thread. */
@@ -466,6 +488,7 @@ class PdfActivity : Activity() {
         current = -1
         updateBadge()
         generation++
+        syncSession = null
         book = null
         autoMarkedBook = -1L
         openingId = -1L
@@ -1421,14 +1444,14 @@ class PdfActivity : Activity() {
         }
     }
 
-    private val saveRunnable = Runnable { flushPosition() }
+    private val saveRunnable = Runnable { flushPosition(closing = false) }
 
     private fun schedulePositionSave() {
         handler.removeCallbacks(saveRunnable)
         handler.postDelayed(saveRunnable, SAVE_DELAY_MS)
     }
 
-    private fun flushPosition() {
+    private fun flushPosition(closing: Boolean = true) {
         handler.removeCallbacks(saveRunnable)
         val b = book ?: return
         val page = current
@@ -1438,6 +1461,7 @@ class PdfActivity : Activity() {
         // Stamped here: the IO pool may run two saves out of order, and the later `at` wins.
         val at = System.currentTimeMillis()
         ReaderIo.launch { Library.savePosition(id, page, 0, progress, at) }
+        syncSession?.let { ReadingSync.save(applicationContext, it, SyncPoint(page, 0, progress, ""), closing) }
     }
 
     private fun trackPage() {

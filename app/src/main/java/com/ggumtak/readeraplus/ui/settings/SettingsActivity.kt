@@ -44,6 +44,7 @@ class SettingsActivity : Activity() {
         /** Scan folders / excluded folders / scan now. */
         const val PAGE_SCAN = "scan"
         /** Backup file export / restore. */
+        const val PAGE_SYNC = "progress_sync"
         const val PAGE_BACKUP = "backup"
         /** Dictionary, translator and web search. */
         const val PAGE_LOOKUP = "lookup"
@@ -143,6 +144,7 @@ class SettingsActivity : Activity() {
         PAGE_FONTS -> FontsPage(this)
         PAGE_TTS -> TtsPage(this)
         PAGE_SCAN -> ScanPage(this)
+        PAGE_SYNC -> ProgressSyncPage(this)
         PAGE_BACKUP -> BackupPage(this)
         PAGE_LOOKUP -> LookupPage(this)
         PAGE_ABOUT -> AboutPage(this)
