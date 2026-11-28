@@ -15,6 +15,7 @@ import com.ggumtak.readeraplus.reader.ReaderActivity
 import com.ggumtak.readeraplus.ui.kit.row
 import com.ggumtak.readeraplus.sync.DEFAULT_SERVER
 import com.ggumtak.readeraplus.sync.ReadingSync
+import com.ggumtak.readeraplus.sync.SupabaseAuth
 import com.ggumtak.readeraplus.sync.SyncAccount
 import com.ggumtak.readeraplus.sync.SyncHttpError
 import com.ggumtak.readeraplus.ui.kit.confirm
@@ -58,13 +59,16 @@ internal class ProgressSyncPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             })
             return
         }
-        body.section("Google Drive")
-        body.addView(ctx.note("두 기기에서 같은 Google 계정을 선택하세요. PureReader 폴더에 읽던 위치를 보관하고, 책 파일 전송은 연결 후 켤 수 있습니다."))
-        body.addView(ctx.textButton("Google Drive 연결") { chooseDrive(null) })
-        body.addView(ctx.textButton(if (showOther) "다른 연결 방식 접기" else "WebDAV · KOReader 연결") {
+        body.section("이메일 서재 · Supabase")
+        if (SupabaseAuth.configured(ctx)) {
+            body.addView(ctx.note("두 기기에서 같은 이메일로 로그인하세요. 책 파일 전송은 따로 켤 수 있습니다."))
+            emailControls()
+        } else body.addView(ctx.note("이 버전에는 이메일 서재 서버가 아직 연결되지 않았습니다."))
+        body.addView(ctx.textButton(if (showOther) "다른 연결 방식 접기" else "다른 연결 방식") {
             if (!busy) { showOther = !showOther; render() }
         })
         if (!showOther) return
+        body.addView(ctx.textButton("Google Drive 연결") { chooseDrive(null) })
         body.section(if (dav) "책 파일과 위치 · 개인 WebDAV" else "읽던 위치만 · KOReader")
         body.addView(ctx.textButton(if (dav) "위치만 동기화하는 계정 사용" else "책 파일도 동기화하는 계정 사용") {
             if (!busy) { dav = !dav; render() }
@@ -80,6 +84,24 @@ internal class ProgressSyncPage(a: SettingsActivity) : SettingsPage(a, SettingsA
         }
         if (dav) body.addView(ctx.textButton("개인 저장소 연결") { connect(false) })
         else body.addView(ctx.buttonBar(ctx.textButton("로그인") { connect(false) }, ctx.textButton("새 계정 만들기") { connect(true) }))
+    }
+
+    private fun emailControls() {
+        val email = field("이메일", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
+        val secret = field("비밀번호", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        fun submit(signup: Boolean) {
+            val name = email.text.toString().trim()
+            val password = secret.text.toString()
+            if (!android.util.Patterns.EMAIL_ADDRESS.matcher(name).matches() || password.isEmpty()) {
+                status.text = "이메일과 비밀번호를 입력하세요."
+                return
+            }
+            runTask {
+                val account = SupabaseAuth.signIn(ctx, name, password, signup)
+                ReadingSync.connect(ctx, account, false)
+            }
+        }
+        body.addView(ctx.buttonBar(ctx.textButton("이메일 로그인") { submit(false) }, ctx.textButton("회원가입") { submit(true) }))
     }
 
     private fun chooseDrive(existingUser: String?) {
@@ -168,7 +190,13 @@ internal class ProgressSyncPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             if (gone) return@launch
             if (error == null) render() else {
                 val http = generateSequence(error) { it.cause }.filterIsInstance<SyncHttpError>().firstOrNull()
+                if (generateSequence(error) { it.cause }.any { it is SupabaseAuth.VerifyEmail }) {
+                    status.text = "이메일을 확인한 다음 같은 주소로 로그인하세요."
+                    return@launch
+                }
                 status.text = when (http?.status) {
+                    400, 422 -> "이메일·비밀번호와 이메일 확인 여부를 확인하세요."
+                    429 -> "요청이 많습니다. 잠시 후 다시 시도하세요."
                     401 -> "계정 권한을 확인하고 다시 연결하세요."
                     402, 409 -> "이미 사용 중인 아이디입니다."
                     403 -> "서버가 요청을 허용하지 않았습니다. 가입 허용 여부를 확인하세요."

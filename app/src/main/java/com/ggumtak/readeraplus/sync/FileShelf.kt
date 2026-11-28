@@ -12,7 +12,8 @@ internal interface FileShelf {
 
     companion object {
         fun open(c: Context, a: SyncAccount, allow: () -> Boolean = { true }): FileShelf =
-            if (a.drive) DriveShelf({ DriveAuthorization.token(c, a.user) }, allow)
+            if (a.supabase) SupabaseAuth.shelf(c, a, allow)
+            else if (a.drive) DriveShelf({ DriveAuthorization.token(c, a.user) }, allow)
             else { require(a.dav); DavShelf(a, allow) }
     }
 }

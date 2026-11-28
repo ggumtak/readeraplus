@@ -27,25 +27,30 @@ internal object AccountVault {
         }.generateKey()
     }
 
-    fun save(ctx: Context, a: SyncAccount) {
+    @Synchronized fun save(ctx: Context, a: SyncAccount) {
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.ENCRYPT_MODE, key(true))
         require(c.iv.size == 12)
-        val json = JSONObject().put("server", a.server).put("user", a.user).put("key", a.key).put("device", a.device).put("dav", a.dav).put("drive", a.drive)
+        val json = JSONObject().put("server", a.server).put("user", a.user).put("key", a.key).put("device", a.device).put("dav", a.dav).put("drive", a.drive).put("supabase", a.supabase)
         val bytes = c.iv + c.doFinal(json.toString().toByteArray(Charsets.UTF_8))
         val f = file(ctx)
         val out = f.startWrite()
         try { out.write(bytes); f.finishWrite(out) } catch (e: Exception) { f.failWrite(out); throw e }
     }
 
-    fun read(ctx: Context): SyncAccount? {
+    @Synchronized fun read(ctx: Context): SyncAccount? {
         val bytes = try { file(ctx).readFully() } catch (_: java.io.FileNotFoundException) { return null }
         require(bytes.size in 29..16384)
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.DECRYPT_MODE, key(false), GCMParameterSpec(128, bytes, 0, 12))
         val j = JSONObject(String(c.doFinal(bytes, 12, bytes.size - 12), Charsets.UTF_8))
-        return SyncAccount(serverUrl(j.getString("server")), j.getString("user"), j.getString("key"), j.getString("device"), j.optBoolean("dav"), j.optBoolean("drive"))
+        return SyncAccount(serverUrl(j.getString("server")), j.getString("user"), j.getString("key"), j.getString("device"), j.optBoolean("dav"), j.optBoolean("drive"), j.optBoolean("supabase"))
     }
 
-    fun clear(ctx: Context) = file(ctx).delete()
+    @Synchronized fun replaceSession(ctx: Context, account: SyncAccount) {
+        check(read(ctx)?.device == account.device)
+        save(ctx, account)
+    }
+
+    @Synchronized fun clear(ctx: Context) = file(ctx).delete()
 }

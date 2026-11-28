@@ -17,8 +17,8 @@ internal fun serverUrl(raw: String): String {
 }
 
 internal fun ByteArray.hex(): String = joinToString("") { "%02x".format(it) }
-internal data class SyncAccount(val server: String, val user: String, val key: String, val device: String, val dav: Boolean = false, val drive: Boolean = false) {
-    val supportsBooks get() = dav || drive
+internal data class SyncAccount(val server: String, val user: String, val key: String, val device: String, val dav: Boolean = false, val drive: Boolean = false, val supabase: Boolean = false) {
+    val supportsBooks get() = dav || drive || supabase
     companion object {
         fun from(raw: String, name: String, password: String, dav: Boolean = false): SyncAccount {
             val user = name.trim()
