@@ -1,5 +1,9 @@
 package com.ggumtak.readeraplus.ui.settings
 
+import android.app.Activity
+import android.content.Intent
+import com.ggumtak.readeraplus.sync.DriveConnectActivity
+import java.util.UUID
 import android.text.InputType
 import android.view.View
 import android.widget.EditText
@@ -24,6 +28,7 @@ internal class ProgressSyncPage(a: SettingsActivity) : SettingsPage(a, SettingsA
     private lateinit var status: TextView
     private var busy = false
     private var gone = false
+    private var showOther = false
     private var dav = true
     private var shelf: List<ShelfBook>? = null
 
@@ -40,7 +45,11 @@ internal class ProgressSyncPage(a: SettingsActivity) : SettingsPage(a, SettingsA
         val user = ReadingSync.user(ctx)
         if (user != null) {
             body.addView(ctx.infoRow("연결된 계정", user))
-            if (CloudBooks.isDav(ctx)) fileControls()
+            if (CloudBooks.usesDrive(ctx)) {
+                body.addView(ctx.note("Google Drive · PureReader 폴더"))
+                body.addView(ctx.textButton("Google 권한 다시 연결") { chooseDrive(user) })
+            }
+            if (CloudBooks.supportsFiles(ctx)) fileControls()
             body.addView(ctx.textButton("연결 확인 · 대기 중인 위치 보내기") { runTask { ReadingSync.retry(ctx) } })
             body.addView(ctx.textButton("이 기기 로그아웃") {
                 activity.confirm("이 기기에서 로그아웃할까요?", "아직 보내지 않은 동기화 기록은 지워집니다. 기기에서 읽던 위치는 보관합니다.") {
@@ -49,6 +58,13 @@ internal class ProgressSyncPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             })
             return
         }
+        body.section("Google Drive")
+        body.addView(ctx.note("두 기기에서 같은 Google 계정을 선택하세요. PureReader 폴더에 읽던 위치를 보관하고, 책 파일 전송은 연결 후 켤 수 있습니다."))
+        body.addView(ctx.textButton("Google Drive 연결") { chooseDrive(null) })
+        body.addView(ctx.textButton(if (showOther) "다른 연결 방식 접기" else "WebDAV · KOReader 연결") {
+            if (!busy) { showOther = !showOther; render() }
+        })
+        if (!showOther) return
         body.section(if (dav) "책 파일과 위치 · 개인 WebDAV" else "읽던 위치만 · KOReader")
         body.addView(ctx.textButton(if (dav) "위치만 동기화하는 계정 사용" else "책 파일도 동기화하는 계정 사용") {
             if (!busy) { dav = !dav; render() }
@@ -65,6 +81,24 @@ internal class ProgressSyncPage(a: SettingsActivity) : SettingsPage(a, SettingsA
         if (dav) body.addView(ctx.textButton("개인 저장소 연결") { connect(false) })
         else body.addView(ctx.buttonBar(ctx.textButton("로그인") { connect(false) }, ctx.textButton("새 계정 만들기") { connect(true) }))
     }
+
+    private fun chooseDrive(existingUser: String?) {
+        if (busy) return
+        activity.startActivityForResult(Intent(activity, DriveConnectActivity::class.java)
+            .putExtra("reauthorize", existingUser), DRIVE_REQUEST)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
+        if (requestCode != DRIVE_REQUEST) return false
+        val name = data?.getStringExtra("account")
+        if (resultCode == Activity.RESULT_OK && !name.isNullOrBlank()) {
+            val account = SyncAccount("https://www.googleapis.com", name, "", UUID.randomUUID().toString(), drive = true)
+            runTask { ReadingSync.connect(ctx, account, false) }
+        } else data?.getStringExtra("error")?.let { status.text = it }
+        return true
+    }
+
+    private companion object { const val DRIVE_REQUEST = 5701 }
 
     private fun fileControls() {
         body.section("책 파일")
@@ -135,7 +169,7 @@ internal class ProgressSyncPage(a: SettingsActivity) : SettingsPage(a, SettingsA
             if (error == null) render() else {
                 val http = generateSequence(error) { it.cause }.filterIsInstance<SyncHttpError>().firstOrNull()
                 status.text = when (http?.status) {
-                    401 -> "아이디 또는 비밀번호가 맞지 않습니다."
+                    401 -> "계정 권한을 확인하고 다시 연결하세요."
                     402, 409 -> "이미 사용 중인 아이디입니다."
                     403 -> "서버가 요청을 허용하지 않았습니다. 가입 허용 여부를 확인하세요."
                     else -> "연결하지 못했습니다. 네트워크와 서버 주소를 확인하고 다시 시도하세요."

@@ -50,10 +50,20 @@ internal object ReadingSync {
 
     /** Called from an IO dispatcher. Existing credentials and pending edits survive a failed sign-in. */
     fun connect(c: Context, account: SyncAccount, register: Boolean) = serial {
-        if (account.dav) DavShelf(account).connect() else SyncApi(account).login(register)
+        when {
+            account.drive -> DriveShelf({ DriveAuthorization.token(c, account.user) }).connect()
+            account.dav -> DavShelf(account).connect()
+            else -> SyncApi(account).login(register)
+        }
+        val existing = AccountVault.read(c)
+        if (account.drive && existing?.drive == true && existing.user == account.user &&
+            prefs(c).getString("account", null) == existing.device) {
+            message(c, "Google Drive에 다시 연결했습니다.")
+            return@serial true
+        }
         AccountVault.save(c, account)
         invalidate()
-        prefs(c).edit().clear().putString("user", account.user).putString("account", account.device).putBoolean("dav", account.dav)
+        prefs(c).edit().clear().putString("user", account.user).putString("account", account.device).putBoolean("dav", account.dav).putBoolean("drive", account.drive)
             .putString("status", "연결됐습니다. 두 기기에서 같은 책 파일을 여세요.").commit()
     }
 
@@ -98,8 +108,8 @@ internal object ReadingSync {
             val doc = document(c, book)
             val p = prefs(c)
             if (account.device != p.getString("account", null)) return@serial null
-            if (account.dav) CloudBooks.onOpen(c, book, doc.removePrefix("pr1_"), account.device)
-            val result = runCatching { reconcile(p, account, doc) }
+            if (account.supportsBooks) CloudBooks.onOpen(c, book, doc.removePrefix("pr1_"), account.device)
+            val result = runCatching { reconcile(c, p, account, doc) }
             val remote = result.getOrNull()
             if (result.isFailure) message(c, "서버에 연결하지 못했습니다. 기기에 저장하고 다음 연결 때 다시 시도합니다.")
             val base = p.getString("base.$doc", "") ?: ""
@@ -145,7 +155,7 @@ internal object ReadingSync {
                 val account = AccountVault.read(c) ?: return@execute
                 if (p.contains("pending.${session.document}")) flush(c, session.document)
                 if (p.contains("pending.${session.document}")) return@execute
-                val remote = if (account.dav) DavShelf(account).readProgress(session.document).first
+                val remote = if (account.supportsBooks) FileShelf.open(c, account).readProgress(session.document).first
                     else SyncApi(account).read(session.document)
                 if (remote != null && remote.id != session.base) {
                     android.os.Handler(android.os.Looper.getMainLooper()).post { changed() }
@@ -160,7 +170,7 @@ internal object ReadingSync {
         val p = prefs(c)
         try {
             val account = AccountVault.read(c) ?: return
-            reconcile(p, account, doc)
+            reconcile(c, p, account, doc)
         } catch (_: Exception) {
             message(c, "보낼 위치가 기기에 저장됐습니다. 연결 후 다시 시도할 수 있습니다.")
         }
@@ -171,17 +181,17 @@ internal object ReadingSync {
         val docs = p.all.keys.filter { it.startsWith("pending.") }
         if (docs.isEmpty()) {
             val account = AccountVault.read(c) ?: return@serial
-            if (account.dav) DavShelf(account).list() else SyncApi(account).login(false)
+            if (account.supportsBooks) FileShelf.open(c, account).list() else SyncApi(account).login(false)
             message(c, "연결됐습니다. 전송 대기 중인 위치가 없습니다.")
         } else {
             for (key in docs) flush(c, key.removePrefix("pending."))
         }
     }
 
-    private fun reconcile(p: SharedPreferences, account: SyncAccount, doc: String): SyncRecord? {
+    private fun reconcile(c: Context, p: SharedPreferences, account: SyncAccount, doc: String): SyncRecord? {
         val api = SyncApi(account)
-        val dav = if (account.dav) DavShelf(account) else null
-        val (remote, tag) = dav?.readProgress(doc) ?: (api.read(doc) to null)
+        val shelf = if (account.supportsBooks) FileShelf.open(c, account) else null
+        val (remote, tag) = shelf?.readProgress(doc) ?: (api.read(doc) to null)
         val version = remote?.id.orEmpty()
         val key = "pending.$doc"
         val pending = p.getString(key, null)
@@ -197,9 +207,9 @@ internal object ReadingSync {
         val accepted = when (decision) {
             Replay.SEND -> {
                 p.edit().putString("attempt.$doc", local.id).commit()
-                if (dav == null) api.write(doc, local) else {
+                if (shelf == null) api.write(doc, local) else {
                     check(remote == null || tag != null)
-                    check(dav.putProgress(doc, local, tag))
+                    check(shelf.putProgress(doc, local, tag))
                 }
                 local
             }

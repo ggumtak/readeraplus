@@ -19,7 +19,7 @@ internal data class ShelfBook(val hash: String, val name: String, val size: Long
     fun json(): JSONObject = JSONObject().put("sha256", hash).put("name", name).put("size", size)
 }
 
-internal class DavShelf(private val account: SyncAccount, private val allowTransfer: () -> Boolean = { true }) {
+internal class DavShelf(private val account: SyncAccount, private val allowTransfer: () -> Boolean = { true }) : FileShelf {
     private val catalog = "PureReader-shelf-v1.json"
     private data class Manifest(val books: List<ShelfBook>, val etag: String?)
     private fun open(name: String, method: String) =
@@ -98,7 +98,7 @@ internal class DavShelf(private val account: SyncAccount, private val allowTrans
         }, tag)
     }
 
-    fun list(): List<ShelfBook> = manifest().books
+    override fun list(): List<ShelfBook> = manifest().books
 
     fun connect() {
         val current = manifest()
@@ -109,15 +109,15 @@ internal class DavShelf(private val account: SyncAccount, private val allowTrans
         if (current.etag == null) check(manifest().etag != null)
     }
 
-    fun readProgress(doc: String): Pair<SyncRecord?, String?> {
+    override fun readProgress(doc: String): Pair<SyncRecord?, String?> {
         val (json, tag) = readJson("PureReader-position-$doc.json", 16384)
         return json?.let { SyncRecord.decode(it.toString()) } to tag
     }
 
-    fun putProgress(doc: String, record: SyncRecord, expected: String?): Boolean =
+    override fun putProgress(doc: String, record: SyncRecord, expected: String?): Boolean =
         putJson("PureReader-position-$doc.json", JSONObject(record.encode()), expected)
 
-    fun upload(book: ShelfBook, input: File) {
+    override fun upload(book: ShelfBook, input: File) {
         var snapshot = manifest()
         if (snapshot.books.any { it.hash == book.hash }) return
         require(input.length() == book.size)
@@ -145,7 +145,7 @@ internal class DavShelf(private val account: SyncAccount, private val allowTrans
         throw IOException("Catalog changed")
     }
 
-    fun download(book: ShelfBook, target: File) {
+    override fun download(book: ShelfBook, target: File) {
         val conn = open(book.objectName, "GET")
         try {
             if (conn.responseCode != 200) throw SyncHttpError(conn.responseCode)
