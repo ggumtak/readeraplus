@@ -15,13 +15,14 @@ import java.util.concurrent.Executors
 internal object CloudBooks {
     private val uploads = Executors.newSingleThreadExecutor()
     private fun prefs(c: Context) = c.getSharedPreferences("reading_sync", Context.MODE_PRIVATE)
-    fun isDav(c: Context) = prefs(c).getBoolean("dav", false)
+    fun supportsFiles(c: Context) = prefs(c).getBoolean("dav", false) || usesDrive(c)
+    fun usesDrive(c: Context) = prefs(c).getBoolean("drive", false)
     fun enabled(c: Context) = prefs(c).getBoolean("files", false)
     fun setEnabled(c: Context, value: Boolean) = prefs(c).edit().putBoolean("files", value).apply()
     fun status(c: Context): String = prefs(c).getString("fileStatus", "").orEmpty()
 
     private fun account(c: Context): SyncAccount = checkNotNull(AccountVault.read(c)).also {
-        check(it.dav && it.device == prefs(c).getString("account", null) && enabled(c))
+        check(it.supportsBooks && it.device == prefs(c).getString("account", null) && enabled(c))
     }
 
     fun onOpen(c: Context, book: Book, hash: String, owner: String) {
@@ -34,7 +35,7 @@ internal object CloudBooks {
             val file = File(book.path)
             try {
                 val name = LanNames.sanitize(book.fileName) ?: return@execute
-                val cloud = DavShelf(account(c)) { enabled(c) && p.getString("account", null) == owner }
+                val cloud = FileShelf.open(c, account(c)) { enabled(c) && p.getString("account", null) == owner }
                 val item = ShelfBook(hash, name, file.length())
                 val snapshot = File.createTempFile("sync-upload-", ".part", c.cacheDir)
                 try {
@@ -54,7 +55,7 @@ internal object CloudBooks {
         }
     }
 
-    fun list(c: Context): List<ShelfBook> = DavShelf(account(c)).list()
+    fun list(c: Context): List<ShelfBook> = FileShelf.open(c, account(c)).list()
 
     private fun matches(file: File, item: ShelfBook): Boolean {
         if (!file.isFile || file.length() != item.size) return false
@@ -81,7 +82,7 @@ internal object CloudBooks {
             check(free == 0L || item.size <= free - 8L * 1024 * 1024) { "저장 공간이 부족합니다." }
             val part = File.createTempFile(BookCopies.IMPORT_PREFIX, BookCopies.PART_SUFFIX, dir)
             try {
-                DavShelf(a) { enabled(c) && p.getString("account", null) == a.device }.download(item, part)
+                FileShelf.open(c, a) { enabled(c) && p.getString("account", null) == a.device }.download(item, part)
                 check(account(c).device == a.device)
                 BookCopies.settle(part, dir, item.name)
             } finally { part.delete() }

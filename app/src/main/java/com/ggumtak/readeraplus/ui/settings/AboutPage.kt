@@ -67,7 +67,7 @@ internal class AboutPage(a: SettingsActivity) : SettingsPage(a, SettingsActivity
         })
         head.addView(ctx.label("TXT · EPUB · PDF, 읽기에 집중하는 리더", 15f).apply { setPadding(0, ctx.dp(10), 0, 0) })
         head.addView(ctx.label(
-            keepAll("사전·웹 검색, AI 사전, 앱 업데이트(GitHub)에 인터넷을 사용합니다. 읽던 위치 동기화에 로그인하면 선택한 서버로 책 식별값과 읽은 위치를 보냅니다. ‘Wi-Fi로 책 받기’ 화면이 열려 있을 때만 같은 Wi-Fi에서 파일을 받습니다."),
+            keepAll("사전·웹 검색, AI 사전, 앱 업데이트(GitHub)에 인터넷을 사용합니다. 읽던 위치 동기화에 로그인하면 선택한 Google Drive 또는 동기화 서버로 책 식별값과 읽은 위치를 보냅니다. ‘Wi-Fi로 책 받기’ 화면이 열려 있을 때만 같은 Wi-Fi에서 파일을 받습니다."),
             14f,
             color = Ink.GRAY,
         ).apply { setPadding(0, ctx.dp(8), 0, 0); setLineSpacing(0f, 1.15f) })

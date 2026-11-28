@@ -75,6 +75,7 @@ kotlin {
 }
 
 dependencies {
+    implementation("com.google.android.gms:play-services-auth:21.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     testImplementation("junit:junit:4.13.2")
     // Real (pure-Java) framework classes for JVM tests, matching tools/unittest.sh; org.json explicitly too.

@@ -31,7 +31,7 @@ internal object AccountVault {
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.ENCRYPT_MODE, key(true))
         require(c.iv.size == 12)
-        val json = JSONObject().put("server", a.server).put("user", a.user).put("key", a.key).put("device", a.device).put("dav", a.dav)
+        val json = JSONObject().put("server", a.server).put("user", a.user).put("key", a.key).put("device", a.device).put("dav", a.dav).put("drive", a.drive)
         val bytes = c.iv + c.doFinal(json.toString().toByteArray(Charsets.UTF_8))
         val f = file(ctx)
         val out = f.startWrite()
@@ -44,7 +44,7 @@ internal object AccountVault {
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.DECRYPT_MODE, key(false), GCMParameterSpec(128, bytes, 0, 12))
         val j = JSONObject(String(c.doFinal(bytes, 12, bytes.size - 12), Charsets.UTF_8))
-        return SyncAccount(serverUrl(j.getString("server")), j.getString("user"), j.getString("key"), j.getString("device"), j.optBoolean("dav"))
+        return SyncAccount(serverUrl(j.getString("server")), j.getString("user"), j.getString("key"), j.getString("device"), j.optBoolean("dav"), j.optBoolean("drive"))
     }
 
     fun clear(ctx: Context) = file(ctx).delete()

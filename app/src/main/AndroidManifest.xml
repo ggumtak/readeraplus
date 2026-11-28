@@ -54,6 +54,8 @@
         android:supportsRtl="false"
         android:theme="@style/AppTheme">
 
+        <activity android:name=".sync.DriveConnectActivity" android:exported="false" />
+
         <!-- Standard launch mode on purpose: a singleTask launcher root would clear the task (finishing an open
              ReaderActivity, its TTS and dialogs) whenever the app is relaunched from its home-screen icon. -->
         <activity
