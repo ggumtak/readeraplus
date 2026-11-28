@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.reader
 
+import android.view.InputDevice
 import android.view.KeyEvent
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_MODE_FAST
@@ -14,6 +15,22 @@ import org.junit.Test
 
 class KeyMapTest {
     private val d = AppSettings()
+
+    @Test
+    fun rapidKeyboardTapsUseHeldKeyDirectlyWhileButtonRemotesKeepBounceProtection() {
+        val next = KeyEvent.KEYCODE_F5
+        val prev = KeyEvent.KEYCODE_A
+        val app = d.copy(nextPageKeys = setOf(next), keyBindings = mapOf(prev to TapAction.PREV))
+        val held = HeldKey()
+        for ((index, code) in listOf(next, next, prev, next).withIndex()) {
+            val action = KeyMap.action(code, false, app)
+            assertFalse(KeyMap.needsBounceFilter(code, action, app, InputDevice.KEYBOARD_TYPE_ALPHABETIC))
+            assertTrue(KeyMap.needsBounceFilter(code, action, app, InputDevice.KEYBOARD_TYPE_NON_ALPHABETIC))
+            assertEquals(HeldKey.Step.TURN, held.down(code, 0, index * 40L, KeyHold.REPEAT, KeyMap.REPEAT_MS))
+            assertEquals(HeldKey.Step.NONE, held.down(code, 1, index * 40L + 10, KeyHold.REPEAT, KeyMap.REPEAT_MS))
+            held.up(code)
+        }
+    }
 
     @Test
     fun builtInNextAndPrev() {

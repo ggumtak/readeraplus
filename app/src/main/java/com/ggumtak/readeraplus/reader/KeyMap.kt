@@ -1,5 +1,6 @@
 package com.ggumtak.readeraplus.reader
 
+import android.view.InputDevice
 import android.view.KeyEvent
 import com.ggumtak.readeraplus.settings.AppSettings
 import com.ggumtak.readeraplus.settings.EINK_MODE_FAST
@@ -100,6 +101,14 @@ object KeyMap {
      */
     fun isBuiltIn(keyCode: Int): Boolean =
         isVolumeKey(keyCode) || resolve(keyCode, false, BUILT_IN) != KeyAction.NONE
+
+    /** Letter keyboards report distinct presses; only button-like devices need page-key bounce filtering. */
+    fun needsBounceFilter(code: Int, action: TapAction, app: AppSettings, keyboardType: Int): Boolean {
+        if (!isAssigned(code, app)) return false
+        val paging = action == TapAction.NEXT || action == TapAction.PREV
+        if (paging && keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC) return false
+        return !isBuiltIn(code) || code in app.nextPageKeys || code in app.prevPageKeys
+    }
 
     /**
      * Auto-repeat pace of a held page key in "계속 넘기기" (T1-4): 150 ms in the FAST e-ink mode, else 250 ms (the

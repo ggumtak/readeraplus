@@ -13,10 +13,11 @@ internal object UpdateInfo {
     private val APK_NAME = Regex("""ReaderaPlus-(\d{1,9})\.apk""")
     private val SHA256 = Regex("""sha256:([0-9a-fA-F]{64})""")
 
-    data class Latest(val build: Int, val url: String, val size: Long, val sha256: String?)
+    data class Patch(val url: String, val size: Long, val sha256: String)
+    data class Latest(val build: Int, val url: String, val size: Long, val sha256: String?, val patch: Patch? = null)
 
     /** Pick the newest uploaded APK from the release CI publishes under the latest tag. */
-    fun parse(text: String): Latest? {
+    fun parse(text: String, currentBuild: Int = 0): Latest? {
         val release = runCatching { JSONObject(text) }.getOrNull() ?: return null
         if (release.optString("tag_name") != "latest" || release.optBoolean("draft")) return null
         val assets = release.optJSONArray("assets") ?: return null
@@ -35,7 +36,20 @@ internal object UpdateInfo {
             if (digest.isNotEmpty() && sha256 == null) continue
             newest = Latest(build, url, size, sha256)
         }
-        return newest
+        val target = newest ?: return null
+        if (target.sha256 == null || currentBuild !in 1 until target.build) return target
+        val patchName = "ReaderaPlus-${currentBuild}-${target.build}.rpd"
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            if (asset.optString("state") != "uploaded" || asset.optString("name") != patchName) continue
+            val url = asset.optString("browser_download_url")
+            val size = asset.optLong("size", -1)
+            val hash = SHA256.matchEntire(asset.optString("digest")) ?: continue
+            if (url == DOWNLOAD_BASE + patchName && size in 1 until target.size) {
+                return target.copy(patch = Patch(url, size, hash.groupValues[1].lowercase()))
+            }
+        }
+        return target
     }
 
     fun isNewer(latest: Latest, currentBuild: Int): Boolean = latest.build > currentBuild
@@ -116,6 +130,12 @@ internal object UpdateInfo {
         APK_NAME.matchEntire(fileName)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
     fun offerMessage(latest: Int, current: Int): String = "새 버전이 있습니다 (빌드 $latest · 현재 $current).\n지금 업데이트할까요?\n설치가 끝나면 앱이 닫히므로 다시 열어 주세요."
+
+    fun downloadDescription(latest: Latest): String {
+        fun mb(bytes: Long) = String.format(java.util.Locale.KOREA, "%.2f MB", bytes / 1_000_000.0)
+        val patch = latest.patch ?: return "전체 다운로드 ${mb(latest.size)}"
+        return "변경분 ${mb(patch.size)} · 전체 ${mb(latest.size)}\n변경분을 적용할 수 없으면 전체 파일을 내려받습니다."
+    }
 
     fun progressMessage(percent: Int): String = if (percent < 0) "내려받는 중…" else "내려받는 중… $percent%"
 

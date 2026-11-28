@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Original PureReader artwork: source SVG in art/purereader. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="32dp" android:height="32dp" android:viewportWidth="64" android:viewportHeight="64">
-    <path android:pathData="M8,15 C16,12 24,14 30,19 L30,50 C23,45 16,43 8,46 Z M34,19 C40,14 48,12 56,15 L56,46 C48,43 41,45 34,50 Z M17,23 L22,23 C30,23 30,35 22,35 L20,35 L20,41 L17,41 Z M20,26 L20,32 L22,32 C26,32 26,26 22,26 Z M40,25 H50 V28 H40 Z M40,32 H50 V35 H40 Z M40,39 H47 V42 H40 Z" android:fillColor="#151515" android:fillType="evenOdd" />
-    <path android:pathData="M8,51 C16,48 24,50 32,55 C40,50 48,48 56,51" android:strokeColor="#151515" android:strokeWidth="2.4" android:strokeLineCap="round" android:strokeLineJoin="round" />
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp" android:height="32dp"
+    android:viewportWidth="64" android:viewportHeight="64">
+    <path android:fillColor="#151515"
+        android:pathData="M 9.14,25.39 C 15.93,21.80 23.73,23.05 29.04,28.01 C 28.18,35.76 27.55,41.69 28.69,47.79 C 23.73,40.32 13.08,40.09 6.29,47.39 Z" />
+    <path android:fillColor="#151515"
+        android:pathData="M 29.72,47.96 C 29.09,42.32 29.55,34.85 30.80,27.95 C 32.11,19.97 44.37,18.66 48.99,11.08 C 51.84,22.42 49.21,32.80 41.46,37.64 C 35.88,41.23 31.60,41.69 29.72,50.70 Z" />
+    <path android:fillColor="#151515"
+        android:pathData="M 31.49,50.41 C 34.85,43.74 38.61,43.29 42.60,40.72 C 47.16,37.81 49.73,32.85 50.64,24.70 C 52.29,24.88 53.89,25.45 54.97,26.07 L 57.65,47.28 C 49.78,42.15 38.61,43.74 31.49,50.41 Z" />
+    <path android:fillColor="#151515"
+        android:pathData="M 6.46,48.93 C 15.18,44.37 24.76,46.19 30.06,52.06 C 36.05,45.79 48.30,44.60 57.48,49.21 L 57.94,52.41 C 48.70,48.47 36.73,48.53 31.71,52.23 Q 30.40,53.49 29.21,52.35 C 24.59,48.25 14.33,48.81 6.01,52.35 Z" />
 </vector>
