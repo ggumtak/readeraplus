@@ -1,5 +1,8 @@
 package com.ggumtak.readeraplus.reader
 
+import com.ggumtak.readeraplus.sync.ReadingSync
+import com.ggumtak.readeraplus.sync.SyncPoint
+import com.ggumtak.readeraplus.ui.kit.confirm
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ComponentCallbacks2
@@ -289,6 +292,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
      */
     private var openOwnsViewport = false
     /** PLAN §1.6.2: [afterOpen] is still due for the book being opened (once per open, whichever session shows it). */
+    private var syncSession: ReadingSync.Session? = null
     private var afterOpenPending = false
     /** Runs [afterOpen] after the first successful body draw ([PageView.afterFirstFrame]). */
     private val afterFirstPage = Runnable {
@@ -795,6 +799,22 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
             (curSection != pausedSection || curPageIdx != pausedPageIdx)
         ) {
             refreshAfterDraw(0L)
+        }
+        val sync = syncSession
+        if (sync != null && pausedSection >= 0 && !ttsSpeaking() && peek.savesPosition) {
+            val before = anchor
+            ReadingSync.checkOnReturn(applicationContext, sync) {
+                if (inFront && !isFinishing && !isDestroyed && syncSession === sync && anchor == before && !ttsSpeaking() && peek.savesPosition) {
+                    confirm("다른 기기에서 읽은 위치가 있습니다", "이 책을 그 위치에서 이어 읽을까요?", "이어 읽기") {
+                        val id = bookRef?.id ?: return@confirm
+                        syncSession = null
+                        closeCurrentBook()
+                        val reopen = Intent(this, ReaderActivity::class.java).putExtra(EXTRA_BOOK_ID, id)
+                        setIntent(reopen)
+                        startOpen(reopen)
+                    }
+                }
+            }
         }
         turnedInBackground = false
         pausedSection = -1
@@ -1388,7 +1408,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                     // A12-2: a user font's catalogue (a folder scan) is read here rather than by the renderer on the
                     // main thread; after the parse, when the font warm-up has usually scanned already.
                     loadUserFont(eff.fontId)
-                    Opened(b, d, readTextPosition(b.id), over, eff)
+                    Opened(b, d, readTextPosition(b.id), over, eff, ReadingSync.open(applicationContext, b))
                 }
                 val b = opened.book
                 val d = opened.document
@@ -1419,14 +1439,18 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 // A TXT position saved under other parse options (chapter detection, replace rules, encoding, ...)
                 // is found again by its char fraction instead of reading stale (section, offset) coordinates.
                 val remap = TextPositions.remapFraction(storedPos, sigText, b.posSection, b.posOffset, b.progress)
-                val saved = if (remap != null) s.counts.locateFraction(remap) else DocPosition(b.posSection, b.posOffset)
+                val synced = opened.sync?.opening
+                val saved = if (synced != null) {
+                    if (synced.signature == sigText.orEmpty()) DocPosition(synced.section, synced.offset)
+                    else s.counts.locateFraction(synced.fraction)
+                } else if (remap != null) s.counts.locateFraction(remap) else DocPosition(b.posSection, b.posOffset)
                 val kept = place?.let { ReaderRestore.start(it, b.id, b.lastReadAt, remapped = remap != null) }
                 // A restored peek only holds for the restored page; the DB row won (newer, remapped): read normally.
                 if (place != null && kept == null) peek.reset()
                 val target = if (kept == null && jump != null) {
                     ReaderJump.resolve(jump, noteSig, s.sectionCount) { f -> s.counts.locateFraction(f) }
                 } else null
-                val start = kept ?: target ?: saved
+                val start = target ?: (if (synced != null && peek.savesPosition) saved else kept ?: saved)
                 val sec = start.section.coerceIn(0, s.sectionCount - 1)
                 anchor = DocPosition(sec, start.offset.coerceAtLeast(0))
                 sigSession = s
@@ -1486,6 +1510,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
                 // A renderer failure shows the error panel: the jump stays in the intent for [다시 시도], no return
                 // point or peek, and afterOpen waits for a page that really shows.
                 if (!shown || session !== s) return@launch
+                syncSession = opened.sync?.also { it.start(anchor.section, anchor.offset) }
                 // Still another generation after every attempt (the view kept resizing): lay it out once more now that
                 // a page is up (relayout() needs one).
                 if (l.config != s.generation?.config) relayout()
@@ -1532,6 +1557,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         val textPosition: String?,
         val override: TxtOverride?,
         val settings: ReaderSettings,
+        val sync: ReadingSync.Session?,
     )
 
     /** [bookId]'s own TXT options (IO thread), or null (none, or the read failed: the defaults apply). */
@@ -1703,6 +1729,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         afterOpenPending = false
         session?.close()
         session = null
+        syncSession = null
         bookRef = null
         bookOverride = null
         readerTarget = null
@@ -5420,6 +5447,10 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         ReaderIo.launch {
             Library.savePosition(b.id, pos.section, pos.offset, prog, at)
             if (persistText) Library.notesChanged()
+        }
+        syncSession?.let { sync ->
+            val point = SyncPoint(pos.section, pos.offset, s.counts.charProgress(pos.section, pos.offset), sigPlain.orEmpty())
+            ReadingSync.save(applicationContext, sync, point, persistText)
         }
         if (persistText) writeTextPosition(b, s, pos)
     }

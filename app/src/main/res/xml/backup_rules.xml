@@ -2,4 +2,5 @@
 <full-backup-content>
     <!-- WebView localStorage includes the user's Claude key; keep it on this device. -->
     <exclude domain="root" path="app_webview/" />
+    <exclude domain="sharedpref" path="reading_sync.xml" />
 </full-backup-content>

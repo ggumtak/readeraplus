@@ -1773,6 +1773,7 @@ class LibraryActivity : Activity(), LibraryJobs.Listener {
         if (shelf == Shelf.TRASH && hasTrashItems()) items += MenuItem("휴지통 비우기", R.drawable.ic_delete_forever) { confirmEmptyTrash() }
         items += MenuItem("파일 열기", R.drawable.ic_file_open, groupStart = items.isNotEmpty()) { openFilePicker() }
         // Books received there are in the database when this screen resumes: onResume reloads the list and counts.
+        items += MenuItem("동기화 서재", R.drawable.ic_library_books) { SettingsActivity.open(this, SettingsActivity.PAGE_SYNC) }
         items += MenuItem("Wi-Fi로 책 받기", R.drawable.ic_wifi_receive) { SettingsActivity.open(this, SettingsActivity.PAGE_WIFI) }
         // "지금 스캔", as the row of 설정 → 책 스캔 that does the same.
         items += MenuItem("지금 스캔", R.drawable.ic_refresh, groupStart = true) { manualScan() }

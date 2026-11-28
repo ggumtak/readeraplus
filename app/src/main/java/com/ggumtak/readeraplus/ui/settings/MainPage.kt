@@ -95,6 +95,7 @@ internal class MainPage(a: SettingsActivity) :
     private fun addData(body: LinearLayout, app: AppSettings) {
         body.section("기록·데이터")
         body.addView(ctx.navRow("읽기 기록", "읽은 시간 · 연속 기록 · 다 읽은 책") { activity.push(SettingsActivity.PAGE_STATS) })
+        body.addView(ctx.navRow("동기화 서재", "내 기기에서 책 파일 · 읽던 위치 이어받기") { activity.push(SettingsActivity.PAGE_SYNC) })
         backupRow = ctx.navRow("백업·복원", backupSummary(app)) { activity.push(SettingsActivity.PAGE_BACKUP) }.also(body::addView)
         cacheRow = ctx.row("캐시 비우기", "계산 중…") { clearCache() }.also(body::addView)
     }
