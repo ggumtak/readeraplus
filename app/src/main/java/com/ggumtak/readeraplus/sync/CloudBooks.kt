@@ -15,7 +15,7 @@ import java.util.concurrent.Executors
 internal object CloudBooks {
     private val uploads = Executors.newSingleThreadExecutor()
     private fun prefs(c: Context) = c.getSharedPreferences("reading_sync", Context.MODE_PRIVATE)
-    fun supportsFiles(c: Context) = prefs(c).getBoolean("dav", false) || usesDrive(c)
+    fun supportsFiles(c: Context) = prefs(c).getBoolean("dav", false) || usesDrive(c) || prefs(c).getBoolean("supabase", false)
     fun usesDrive(c: Context) = prefs(c).getBoolean("drive", false)
     fun enabled(c: Context) = prefs(c).getBoolean("files", false)
     fun setEnabled(c: Context, value: Boolean) = prefs(c).edit().putBoolean("files", value).apply()

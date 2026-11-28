@@ -1,0 +1,5 @@
+<resources>
+    <!-- Public mobile client configuration for the app owner's project. -->
+    <string name="reader_supabase_url" translatable="false"></string>
+    <string name="reader_supabase_key" translatable="false"></string>
+</resources>

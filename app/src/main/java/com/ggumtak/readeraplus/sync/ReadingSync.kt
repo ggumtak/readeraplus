@@ -51,11 +51,18 @@ internal object ReadingSync {
     /** Called from an IO dispatcher. Existing credentials and pending edits survive a failed sign-in. */
     fun connect(c: Context, account: SyncAccount, register: Boolean) = serial {
         when {
+            account.supabase -> SupabaseAuth.checkShelf(c, account)
             account.drive -> DriveShelf({ DriveAuthorization.token(c, account.user) }).connect()
             account.dav -> DavShelf(account).connect()
             else -> SyncApi(account).login(register)
         }
         val existing = AccountVault.read(c)
+        if (account.supabase && existing?.supabase == true && account.server == existing.server &&
+            SupabaseAuth.uid(account) == SupabaseAuth.uid(existing) && prefs(c).getString("account", null) == existing.device) {
+            AccountVault.save(c, account.copy(device = existing.device))
+            message(c, "이메일 서재에 다시 연결했습니다.")
+            return@serial true
+        }
         if (account.drive && existing?.drive == true && existing.user == account.user &&
             prefs(c).getString("account", null) == existing.device) {
             message(c, "Google Drive에 다시 연결했습니다.")
@@ -63,7 +70,7 @@ internal object ReadingSync {
         }
         AccountVault.save(c, account)
         invalidate()
-        prefs(c).edit().clear().putString("user", account.user).putString("account", account.device).putBoolean("dav", account.dav).putBoolean("drive", account.drive)
+        prefs(c).edit().clear().putString("user", account.user).putString("account", account.device).putBoolean("dav", account.dav).putBoolean("drive", account.drive).putBoolean("supabase", account.supabase)
             .putString("status", "연결됐습니다. 두 기기에서 같은 책 파일을 여세요.").commit()
     }
 
