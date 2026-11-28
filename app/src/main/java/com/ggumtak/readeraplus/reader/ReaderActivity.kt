@@ -4559,7 +4559,7 @@ class ReaderActivity : Activity(), ReaderHost, PageJumpHost, BookInsightsHost, T
         }
         if (event.action != KeyEvent.ACTION_DOWN) return true
         // Vendor function / fingerprint keys and remotes bounce: one touch must turn one page.
-        if ((assigned && !KeyMap.isBuiltIn(code)) || code in a.nextPageKeys || code in a.prevPageKeys) {
+        if (assigned && KeyMap.needsBounceFilter(code, action, a, event.device?.keyboardType ?: 0)) {
             if (!learnedRepeatFilter.accept(event.repeatCount, event.eventTime)) {
                 if (event.repeatCount == 0) heldKey.cancel()
                 return true

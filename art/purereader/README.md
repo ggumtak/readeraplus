@@ -1,6 +1,6 @@
 # PureReader artwork
 
-Original vector artwork created for this app. The open book carries a cut-out P on the left page and three reading lines on the right. The launcher, drawer header and About page share that mark.
+Original vector artwork created for this app. The open book has a raised page and a curved lower edge. Its launcher uses warm paper on dark green. The launcher, drawer header and About page share that mark.
 
 These SVGs are editable source assets. Their Android VectorDrawable counterparts are in `app/src/main/res/drawable/` with matching filenames. Keep each pair in sync when editing geometry. Launcher layers use a 108-unit viewport and keep the mark inside the adaptive icon safe area; `ic_launcher_monochrome` uses transparent cut-outs so Android can tint it correctly.
 
@@ -13,7 +13,7 @@ These SVGs are editable source assets. Their Android VectorDrawable counterparts
 | `ill_empty_search`, `ill_empty_trash`, `ill_no_access` | No matches, empty trash, missing storage permission |
 | `ill_empty_notes`, `ill_empty_bookmarks`, `ill_empty_highlights`, `ill_empty_words` | Empty notes tabs and reader bookmark/highlight tabs |
 
-Navigation icons use 24-unit viewports and 1.8-unit rounded strokes. Illustrations use 96-unit viewports and 2–2.6-unit strokes, with white occlusion fills where objects overlap. Do not apply a single color filter to the illustrations: that would fill their white counters. All graphics are static black/white vectors; no network, bitmap decoding or animation is added. Loading and error messages keep their existing text-only presentation.
+Navigation icons use 24-unit viewports and 1.8-unit rounded strokes. Illustrations use 96-unit viewports and 2–2.6-unit strokes, with white occlusion fills where objects overlap. Do not apply a single color filter to the illustrations: that would fill their white counters. All graphics are static vectors; no network, bitmap decoding or animation is added. Loading and error messages keep their existing text-only presentation.
 
 The product name is PureReader. `com.ggumtak.readeraplus`, the repository name, the backup format marker and the APK/update transport filenames remain stable to retain compatibility with existing installs and backups. New reader screenshots are saved under `Pictures/PureReader`; existing pictures are left where they were saved.
 

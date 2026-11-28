@@ -23,6 +23,23 @@ class UpdateInfoTest {
         """{"tag_name":"$tag","prerelease":true,"draft":$draft,"assets":[${assets.joinToString(",")}]}"""
 
     @Test
+    fun patchMustMatchBothBuildsAndHaveTrustedSizesUrlsAndDigests() {
+        val digest = "\"sha256:${"ab".repeat(32)}\""
+        val apk = asset("ReaderaPlus-189.apk", size = 400, digest = digest)
+        val name = "ReaderaPlus-181-189.rpd"
+        val patch = asset(name, size = 100, digest = digest)
+        val info = UpdateInfo.parse(release(patch, apk), 181)!!
+        assertEquals(base + name, info.patch?.url)
+        assertNull(UpdateInfo.parse(release(patch, apk), 182)!!.patch)
+        for (bad in listOf(asset(name, size = 100), asset(name, size = 400, digest = digest),
+            asset(name, url = base + "other", size = 20, digest = digest),
+            asset("ReaderaPlus-181-188.rpd", size = 10, digest = digest))) {
+            assertNull(UpdateInfo.parse(release(apk, bad), 181)!!.patch)
+        }
+        assertNull(UpdateInfo.parse(release(asset("ReaderaPlus-189.apk"), patch), 181)!!.patch)
+    }
+
+    @Test
     fun picksTheNewestUploadedApkWithItsSizeAndDigest() {
         val sha = "9f83c54a5a5503aed916a2f2420198dc71a772ca75806ace7f3759ed0facbdac"
         val latest = UpdateInfo.parse(

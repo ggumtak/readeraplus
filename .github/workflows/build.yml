@@ -126,8 +126,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Compare the signed bytes against the previous published build, which can skip CI run numbers.
+          previous_dir="$(mktemp -d)"
+          if gh release download latest --pattern 'ReaderaPlus-*.apk' --dir "$previous_dir"; then
+            previous=("$previous_dir"/ReaderaPlus-*.apk)
+            if [[ ${#previous[@]} == 1 && $(basename "${previous[0]}") =~ ^ReaderaPlus-([0-9]+)\.apk$ ]]; then
+              from="${BASH_REMATCH[1]}"
+              if (( from < GITHUB_RUN_NUMBER )); then
+                python3 tools/update/make_delta.py "${previous[0]}" "dist/ReaderaPlus-${GITHUB_RUN_NUMBER}.apk" \
+                  "dist/ReaderaPlus-${from}-${GITHUB_RUN_NUMBER}.rpd"
+              fi
+            fi
+          fi
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest dist/*.apk \
+          gh release create latest dist/* \
             --target "${GITHUB_SHA}" \
             --prerelease \
             --title "ReaderaPlus build ${GITHUB_RUN_NUMBER}" \

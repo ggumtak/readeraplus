@@ -158,7 +158,7 @@ internal object AppUpdater {
             val latest = withContext(Dispatchers.IO) {
                 runCatching {
                     sweep(app)
-                    getText(UpdateInfo.LATEST_URL)?.let(UpdateInfo::parse)
+                    getText(UpdateInfo.LATEST_URL)?.let { UpdateInfo.parse(it, BuildConfig.VERSION_CODE) }
                 }.getOrNull().also { answer ->
                     // No answer (offline when the library opened): the automatic check tries again in 30 min, not 12 h.
                     val now = System.currentTimeMillis()
@@ -181,7 +181,7 @@ internal object AppUpdater {
     private fun offer(activity: Activity, latest: UpdateInfo.Latest) {
         activity.alert()
             .setTitle("업데이트")
-            .setMessage(UpdateInfo.offerMessage(latest.build, BuildConfig.VERSION_CODE))
+            .setMessage(UpdateInfo.offerMessage(latest.build, BuildConfig.VERSION_CODE) + "\n\n" + UpdateInfo.downloadDescription(latest))
             .setPositiveButton("업데이트") { _, _ -> download(activity, latest) }
             .setNegativeButton("나중에") { _, _ -> prefs(activity).edit().putInt(K_SKIPPED, latest.build).apply() }
             .showNoAnim()
@@ -199,18 +199,12 @@ internal object AppUpdater {
             .setCancelable(false)
             .showNoAnim()
         scope.launch {
-            var shownBucket = -1
             val file = withContext(Dispatchers.IO) {
                 runCatching {
-                    fetchApk(app, latest, cancelled) { percent ->
-                        // Every 10 %: each change is an e-ink update (bucket -1 ensures 0% updates immediately).
-                        val bucket = percent / 10
-                        if (bucket != shownBucket) {
-                            shownBucket = bucket
-                            scope.launch {
-                                if (alive(activity) && dialog.isShowing) {
-                                    dialog.setMessage(UpdateInfo.progressMessage(percent))
-                                }
+                    fetchApk(app, latest, cancelled) { stage, percent ->
+                        scope.launch {
+                            if (alive(activity) && dialog.isShowing) {
+                                dialog.setMessage(if (percent < 0) stage else "$stage $percent%")
                             }
                         }
                     }
@@ -334,36 +328,74 @@ internal object AppUpdater {
     }
 
     /** The APK of [latest] in cache/update, downloaded unless an earlier attempt finished it. */
-    private fun fetchApk(context: Context, latest: UpdateInfo.Latest, cancelled: AtomicBoolean, progress: (Int) -> Unit): File? {
+    private fun fetchApk(
+        context: Context, latest: UpdateInfo.Latest, cancelled: AtomicBoolean, progress: (String, Int) -> Unit,
+    ): File? {
         val dir = File(context.cacheDir, DIR).apply { mkdirs() }
         val target = File(dir, UpdateInfo.fileName(latest.build))
         if (isExpectedApk(context, target, latest)) return target
         val part = File(dir, "download-${latest.build}.apk")
-        val conn = open(latest.url)
         try {
-            if (conn.responseCode != 200) return null
-            val total = conn.contentLengthLong
-            if (total >= 0 && total != latest.size) return null
-            var done = 0L
-            conn.inputStream.use { input ->
-                part.outputStream().use { out ->
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        if (cancelled.get()) return null
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        done += n
-                        if (done > latest.size) return null
-                        out.write(buf, 0, n)
-                        progress((done * 100 / latest.size).toInt())
+            val patch = latest.patch
+            if (patch != null) {
+                val delta = File(dir, "download-${latest.build}.rpd")
+                val applied = try {
+                    downloadFile(patch.url, patch.size, delta, cancelled) { progress("변경분 받는 중…", it) }
+                    check(sha256(delta) == patch.sha256)
+                    progress("변경분 적용 중…", -1)
+                    delta.inputStream().use { input ->
+                        part.outputStream().buffered().use { output ->
+                            ApkDelta.apply(File(context.applicationInfo.sourceDir), input, output, latest.size, cancelled::get)
+                        }
                     }
+                    isExpectedApk(context, part, latest)
+                } catch (_: Exception) {
+                    false
+                } finally {
+                    delta.delete()
                 }
+                if (cancelled.get()) return null
+                if (applied) return if (part.renameTo(target)) target else null
             }
+            downloadFile(latest.url, latest.size, part, cancelled) { progress("전체 파일 받는 중…", it) }
             if (cancelled.get() || !isExpectedApk(context, part, latest)) return null
             return if (part.renameTo(target)) target else null
         } finally {
-            conn.disconnect()
             part.delete()
+        }
+    }
+
+    private fun downloadFile(url: String, size: Long, file: File, cancelled: AtomicBoolean, progress: (Int) -> Unit) {
+        check(!cancelled.get())
+        progress(0)
+        val conn = open(url)
+        try {
+            check(conn.responseCode == 200)
+            val total = conn.contentLengthLong
+            check(total < 0 || total == size)
+            var done = 0L
+            var bucket = 0
+            conn.inputStream.use { input ->
+                file.outputStream().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        check(!cancelled.get())
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        done += n
+                        check(done <= size)
+                        out.write(buf, 0, n)
+                        val next = (done * 10 / size).toInt()
+                        if (next != bucket) {
+                            bucket = next
+                            progress(next * 10)
+                        }
+                    }
+                }
+            }
+            check(done == size)
+        } finally {
+            conn.disconnect()
         }
     }
 
@@ -380,22 +412,23 @@ internal object AppUpdater {
         if (file.length() != latest.size) return false
         val head = ByteArray(4)
         if (!file.inputStream().use { it.read(head) == head.size && UpdateInfo.looksLikeApk(head) }) return false
-        if (latest.sha256 != null) {
-            val digest = MessageDigest.getInstance("SHA-256")
-            file.inputStream().use { input ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    digest.update(buffer, 0, count)
-                }
-            }
-            val hash = digest.digest().joinToString("") { "%02x".format(it) }
-            if (hash != latest.sha256) return false
-        }
+        if (latest.sha256 != null && sha256(file) != latest.sha256) return false
         val archive = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0) ?: return false
         val version = if (Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()
         return archive.packageName == context.packageName && version == latest.build.toLong()
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     /** Drops every cached download: a failed install must not reuse a file that may be cut short. */
