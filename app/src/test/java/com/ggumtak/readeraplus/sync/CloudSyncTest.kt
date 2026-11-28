@@ -1,6 +1,9 @@
 package com.ggumtak.readeraplus.sync
 
-import com.sun.net.httpserver.HttpServer
+import java.io.DataInputStream
+import java.net.ServerSocket
+import java.net.Socket
+import kotlin.concurrent.thread
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -10,39 +13,50 @@ import java.util.UUID
 
 class CloudSyncTest {
     @Test fun twoDevicesDiscoverDownloadVerifyAndResumeTheSameBook() {
-        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        val objects = mutableMapOf<String, Pair<ByteArray, String>>()
+        val server = ServerSocket().apply { bind(InetSocketAddress("127.0.0.1", 0)) }
+        val objects = java.util.concurrent.ConcurrentHashMap<String, Pair<ByteArray, String>>()
         var revision = 0
-        server.createContext("/private/") { ex ->
-            ex.use {
-                if (ex.requestHeaders.getFirst("Authorization") != "Basic YTpi") {
-                    ex.sendResponseHeaders(401, -1); return@use
-                }
-                val path = ex.requestURI.path
-                val old = objects[path]
-                if (ex.requestMethod == "PUT") {
-                    val data = ex.requestBody.readBytes()
-                    val tag = ex.requestHeaders.getFirst("If-Match")
-                    val create = ex.requestHeaders.getFirst("If-None-Match") == "*"
-                    if ((create && old != null) || (!create && (tag == null || tag != old?.second))) {
-                        ex.sendResponseHeaders(412, -1)
-                    } else {
-                        objects[path] = data to "\"${++revision}\""
-                        ex.sendResponseHeaders(201, -1)
+        val thread = thread(isDaemon = true) {
+            while (!server.isClosed) {
+                val socket = try { server.accept() } catch (_: java.net.SocketException) { break }
+                socket.use {
+                    val input = DataInputStream(socket.getInputStream().buffered())
+                    @Suppress("DEPRECATION")
+                    fun line(): String = input.readLine().orEmpty()
+                    val request = line().split(' ')
+                    val method = request.first()
+                    val path = request[1]
+                    val headers = mutableMapOf<String, String>()
+                    while (true) {
+                        val header = line()
+                        if (header.isEmpty()) break
+                        headers[header.substringBefore(':').lowercase()] = header.substringAfter(':').trim()
                     }
-                } else if (old == null) ex.sendResponseHeaders(404, -1)
-                else {
-                    ex.responseHeaders.add("ETag", old.second)
-                    ex.sendResponseHeaders(200, old.first.size.toLong())
-                    ex.responseBody.write(old.first)
+                    val data = ByteArray(headers["content-length"]?.toInt() ?: 0)
+                    input.readFully(data)
+                    val old = objects[path]
+                    when {
+                        headers["authorization"] != "Basic YTpi" -> respond(socket, 401)
+                        method == "PUT" -> {
+                            val tag = headers["if-match"]
+                            val create = headers["if-none-match"] == "*"
+                            if ((create && old != null) || (!create && (tag == null || tag != old?.second))) {
+                                respond(socket, 412)
+                            } else {
+                                objects[path] = data to "\"${++revision}\""
+                                respond(socket, 201)
+                            }
+                        }
+                        old == null -> respond(socket, 404)
+                        else -> respond(socket, 200, old.first, old.second, method == "HEAD")
+                    }
                 }
             }
         }
-        server.start()
         val original = File.createTempFile("original", ".txt")
         val restored = File.createTempFile("restored", ".txt")
         try {
-            val a = SyncAccount("http://127.0.0.1:${server.address.port}/private", "a", "b", "deviceA", true)
+            val a = SyncAccount("http://127.0.0.1:${server.localPort}/private", "a", "b", "deviceA", true)
             val first = DavShelf(a)
             val second = DavShelf(a.copy(device = "deviceB"))
             first.connect()
@@ -67,8 +81,20 @@ class CloudSyncTest {
             assertThrows(IllegalArgumentException::class.java) { second.download(book, restored) }
             assertThrows(SyncHttpError::class.java) { DavShelf(a.copy(key = "wrong")).list() }
         } finally {
-            server.stop(0); restored.delete(); original.delete()
+            server.close(); thread.join(2000); restored.delete(); original.delete()
         }
+    }
+
+    private fun respond(socket: Socket, status: Int, body: ByteArray = byteArrayOf(), tag: String? = null, head: Boolean = false) {
+        val headers = buildString {
+            append("HTTP/1.1 $status Result\r\nConnection: close\r\nContent-Length: ${body.size}\r\n")
+            if (tag != null) append("ETag: $tag\r\n")
+            append("\r\n")
+        }
+        val output = socket.getOutputStream()
+        output.write(headers.toByteArray(Charsets.US_ASCII))
+        if (!head) output.write(body)
+        output.flush()
     }
 
     @Test fun offlineEditsRequireTheirBaseOrAnAlreadyAppliedRecord() {
